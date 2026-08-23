@@ -1528,7 +1528,7 @@ refresh can publish after teardown (:794).
 ## Recommendation
 
 **Task-sizing update (2026-08-23, §8):** every PR below is decomposed into
-sub-PRs at a ≤200-line review budget — 16 tracked PRs → **51 PR-sized tasks**
+sub-PRs at a ≤200-line review budget — 16 tracked PRs → **53 PR-sized tasks**
 (PR 0 → 0a–0g, chains per §8). Gates moved since the survey: **#2661 merged**
 (Chain B apply PRs unblocked), **#2543 still open** (Chain A held), and the
 watchdog owner's stream is active (#2772 pins, #2779 open extraction) so B5d
@@ -1612,9 +1612,9 @@ chain PRs: B1–B6, C1–C4, A1–A5; 17 counting the `output-limiter-hook.ts`
 policy-core addition, which stays a single small task in that series).
 Question answered: is each PR the smallest unit that fits a focused review?
 Verdict: **only 4 were already at budget (B4, B6, C4, A5); the other 12
-decompose into 47 slices — 51 PR-sized tasks in all** — PR 0 → 7, B1 → 4,
-B2 → 2, B3 → 3, B5 → 10, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
-A4 → 2, plus the 4 unsplit parents (52 tasks counting the separate
+decompose into 49 slices — 53 PR-sized tasks in all** — PR 0 → 7, B1 → 4,
+B2 → 2, B3 → 3, B5 → 12, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
+A4 → 2, plus the 4 unsplit parents (54 tasks counting the separate
 output-limiter addition).
 
 Budget rule per sub-PR: production Δ ≲100 lines (hard cap ~150 only for
@@ -1676,7 +1676,7 @@ post-acquisition revalidation passes (including the ACP setup-window
 revalidation that closes the stale-spawn-never-closed gap); 0d–0g are
 independent leaves.
 
-### 8.2 Chain B → twenty-one sub-PRs
+### 8.2 Chain B → twenty-three sub-PRs
 
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
@@ -1691,25 +1691,27 @@ independent leaves.
 | B3c | finalizer post-await generation/identity guards (:1315–1360) — closes B1d's pinned window in production | ~40 | ~60 |
 | B4 | teardown-liturgy dedup: one parameterized helper, four call sites (unsplit) | ~90 | ~40 |
 | B5a | attempt-token primitive: invalidated before retry recursion (:1150); PreToolUse hook binds to it (:518 region) | ~70 | ~90 |
-| B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267) | ~60 | ~80 |
+| B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267), plus finalizer revalidation after the idle await before clearing shared fields and owner-binding the detached `processExitSnapshot.then(...)` continuation that can publish `query.trigger` for the successor | ~70 | ~90 |
 | B5c | ACP terminal: full lifecycle resnapshot before beginTerminalIdle (:938) + post-effect resnapshot/fence-cancel before setIdle (:953) | ~50 | ~70 |
 | B5d | **all** post-await watchdog-write fencing at the watchdog boundary — `scheduleCooldown` :233–237 pre-generation-check write, `triedKeys`/`chain` :149–176, detached `fireImmediateFallback` finally :346–355 — lands on #2779's pure gates; owner coordination, excluded-module rule holds | ~30 | ~50 |
 | B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143) incl. the post-publication `onIdleCallback` (:157–160 region), releaseIdleWaiters episode filter (:79); replacement-during-publish pin | ~80 | ~100 |
 | B5f | ownership-fenced SDK dispatch **for both runners**: generation/owner token propagated through `handleSDKMessage` into the shared handler context and validated before its fence; `isCleaningUp()` joins dispatch-entry validation (cleanup-without-replacement); ACP's generationless dispatch (:925–929 region) fenced identically; late old-generation result pin | ~70 | ~90 |
-| B5g | ACP adapter generation binding: `onAccepted`/`onConfigOptionsUpdate` pre-yield callbacks (acp-query-adapter :53–68), `onMessageEnqueued` (:485) + startup-timer (:487–493) close only the owned query object (:491–520); the adapter's unconditional finally (:701–704) is generation/claim-fenced so a stopped adapter cannot `markACPDeliveryFailed` the replacement's re-enqueued row; enqueue-during-stale-handshake + adapter-exit-after-replacement pins | ~60 | ~80 |
+| B5g | ACP adapter + handshake-continuation generation binding: `onAccepted`/`onConfigOptionsUpdate` pre-yield callbacks (acp-query-adapter :53–68), `onMessageEnqueued` (:485) + startup-timer (:487–493) close only the owned query object (:491–520); the stale handshake continuation that overwrites `_lastConsumedUserMessage`, creates/assigns the adapter to the replacement-owned `ctx.queryObject`, and installs a startup timer is revalidated after each await and before those shared writes; the adapter's unconditional finally (:701–704) is generation/claim-fenced so a stopped adapter cannot `markACPDeliveryFailed` the replacement's re-enqueued row; enqueue-during-stale-handshake + adapter-exit-after-replacement pins | ~70 | ~90 |
 | B5h | ACP retry-arm revalidation: entry check (:802–804 region) stale after awaited setIdle/process-exit — revalidate after each retry await and before the re-enqueue/queryObject-close/process-exit-reset/recursion (:839–858); replacement-during-ACP-retry pin | ~50 | ~70 |
 | B5i | whole-catch ownership fencing in both runners: revalidate before the entire catch — QueryRunner `errorManager.handleError` (:838 region) and ACP's own catch (:679–693) with its unscoped drain; `drainDeliveryWaitersOnTerminalSDKMessage` (:804–812) skips or owner-scopes when the emitting generation no longer owns the session; stale-handler-publishes-nothing pin | ~60 | ~80 |
 | B5j | notice-publication fallback: error-display helpers that return false on a failed persist (save ignored, emit-only path) publish a non-persisted `session.error` fallback — the `api_validation` route skips `errorManager` by design, so a gated save failure must not silence the session; returned-false pins for both callers | ~30 | ~40 |
+| B5k | prompt-generator boundary fencing at the message-queue seam: ownership checked before entering `messageQueue.messageGenerator` and immediately after each yield (a stale continuation awaiting `onModelsFetched()` snapshots the *replacement's* generation at :603–606 / message-queue :272–283, claims its prompt, and mutates processing state :610–615); stale claims requeued; late pulls of `createMessageGeneratorWrapper` bound identically; the pre-yield `onMessageYielded` consumption callback (message-queue :316–323) validates the run owner — passed into `MessageQueue` — before marking the durable message consumed/published, or is suppressed until after the wrapper's check; iterators bind to B5a's attempt token | ~80 | ~100 |
+| B5l | permission-callback fencing in both runners: the generationless `createCanUseToolCallback` installs (query-runner :517–519, acp :438) bind to the run generation/attempt token and reject stale requests — ACP permission notifications invoke it out-of-band (:547 → :281–298) and a late request from a stopped process can supersede the replacement's pending question (:164–185) without passing the SDK-message guard; late-callback replacement pin (the PreToolUse-hook half of this binding is B5a's) | ~50 | ~70 |
 | B6 | cleanup + ADR note | ~15 | doc ~40 |
 
 Order: B1\* → B2\* → B3\* (B3c is region-independent of B3a/b and can lead);
 B4 after B3; **B5a ∥ B5e first (primitives), then B5f (dispatch consumes the
-token), then B5b, B5c, B5g, B5h, B5i in parallel; B5d coordinates with #2779;
-B5j is an independent leaf**. B5's setup-window revalidation (stale ACP spawn
-after `stop()`'s snapshot) is owned by 0c, not duplicated here. Chain C apply
-PRs follow the **complete B5 series (B5a–B5j)** — C's exceptional-exit
-contract consumes the dispatch/catch fencing of B5f/B5i, not only B5e's
-owner-scoped idle (§5).
+token), then B5b, B5c, B5g, B5h, B5i, B5k, B5l in parallel; B5d coordinates
+with #2779; B5j is an independent leaf**. B5's setup-window revalidation
+(stale ACP spawn after `stop()`'s snapshot) is owned by 0c, not duplicated
+here. Chain C apply PRs follow the **complete B5 series (B5a–B5l)** — C's
+exceptional-exit contract consumes the dispatch/catch fencing of B5f/B5i,
+not only B5e's owner-scoped idle (§5).
 
 ### 8.3 Chain C → nine sub-PRs
 
