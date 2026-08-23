@@ -274,7 +274,7 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(reviewer?.customPrompt).toContain('multiple Task general-purpose sub-agents');
+    expect(reviewer?.customPrompt).toContain('dispatch dedicated Task general-purpose sub-agents');
     expect(reviewer?.customPrompt).not.toContain('reviewer-explorer');
     expect(reviewer?.customPrompt).not.toContain('reviewer-fact-checker');
   });

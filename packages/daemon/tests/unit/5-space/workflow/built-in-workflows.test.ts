@@ -17,10 +17,13 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
   builtInWorkflowRequiresPrMerge,
+  CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
   CODER_ONLY_WORKFLOW,
+  CODER_OWNED_MERGE_PROMPT,
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
   getBuiltInWorkflows,
@@ -29,8 +32,11 @@ import {
   mergeNodeStructuralFieldsFromTemplate,
   RESEARCH_WORKFLOW,
   RETIRED_MERGER_RAW_MERGE_GUARD,
+  RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
+  RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
   RETIRED_PR_MERGER_SLOT_PROMPT,
   REVIEW_ONLY_WORKFLOW,
+  REVIEW_POLICY_GUIDANCE,
   REVIEWER_ZERO_FINDINGS_GATE,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   seedBuiltInWorkflows,
@@ -366,6 +372,44 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'its recorded base_ref equals the current baseRefName'
     );
+  });
+
+  test('coder prompt falls back to internal review when bots are unavailable or dead', () => {
+    expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies');
+    expect(CODER_ONLY_PROMPT).toContain('internal-fallback');
+    expect(CODER_ONLY_PROMPT).toContain('six internal review dimensions');
+    expect(CODER_ONLY_PROMPT).toContain('without sub-agent fan-out');
+    expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
+    expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
+    expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
+    expect(CODER_ONLY_PROMPT).not.toContain('there is no internal backstop');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('internal fallback review');
+  });
+
+  test('shared review policy vocabulary and external bot gate reach every consumer', () => {
+    expect(REVIEW_POLICY_GUIDANCE).toContain('**Review source**');
+    expect(REVIEW_POLICY_GUIDANCE).toContain(
+      '`both` — both the external bots and the internal reviewer must pass'
+    );
+    expect(REVIEW_POLICY_GUIDANCE).toContain('`auto` (default)');
+    expect(REVIEW_POLICY_GUIDANCE).toContain('**Review depth**');
+    expect(REVIEW_POLICY_GUIDANCE).toContain('The most recent explicit instruction wins');
+    expect(REVIEW_POLICY_GUIDANCE).toContain('message delivered to your session');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('DISCOVER the bots actually available');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Verdicts are language, so read them');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Silence is NOT a pass');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Poll the gate every 60 seconds');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('kind: "external-review-gate", key: "gate"');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'the run-scoped `gh api graphql` lookup is permitted by your contract'
+    );
+    expect(CODER_ONLY_PROMPT).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(REVIEW_POLICY_GUIDANCE);
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('always send the gated PR handoff');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('verifies the external gate and is the backup');
+    expect(CODER_OWNED_MERGE_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
+    expect(CODING_WORKFLOW.nodes[0]!.agents[0]!.customPrompt!.value).toBe(CODER_OWNED_MERGE_PROMPT);
   });
 
   test('merge instructions sync fork PRs from the base repository remote', () => {
@@ -1513,6 +1557,79 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateHash).toBe('customized-stale-prompt-hash');
     expect(after.templateHash).not.toBe(
       computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
+    );
+  });
+
+  test('re-stamp upgrades pre-review-modes coder prompts to the policy-aware template', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+    const coderOnly = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
+    const coderOnlyNode = coderOnly.nodes[0]!;
+
+    const staleCoding = manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: { value: RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    const staleCoderOnly = manager.updateWorkflow(coderOnly.id, {
+      nodes: coderOnly.nodes.map((n) =>
+        n.id !== coderOnlyNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? { ...a, customPrompt: { value: RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT } }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    expect(staleCoding).toBeTruthy();
+    expect(staleCoderOnly).toBeTruthy();
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-review-modes-a',
+      coding.id
+    );
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-review-modes-b',
+      coderOnly.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
+
+    const afterCoding = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = afterCoding.nodes.find((n) => n.name === 'Coding')!;
+    expect(afterCodingNode.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
+    expect(afterCodingNode.agents[0]!.customPrompt?.value).toContain('Review policy');
+    expect(afterCoding.templateHash).toBe(
+      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!)
+    );
+
+    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
+    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toContain(
+      'the internal fallback applies'
+    );
+    expect(afterCoderOnly.templateHash).toBe(
+      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODER_ONLY_WORKFLOW.name)!)
     );
   });
 

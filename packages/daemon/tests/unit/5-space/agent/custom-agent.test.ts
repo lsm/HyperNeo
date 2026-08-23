@@ -20,7 +20,11 @@ import {
 } from '../../../../src/lib/space/agents/custom-agent';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
-import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import {
+  CODING_WORKFLOW,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  REVIEW_POLICY_GUIDANCE,
+} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
@@ -805,6 +809,33 @@ describe('createCustomAgentInit', () => {
     expect(prompt).toBe('A stricter, focused reviewer prompt.');
     expect(prompt).not.toContain(REVIEWER_SYSTEM_CONTRACT);
     expect(init.promptProvenance?.source).toBe('workflow_node_replaced_prompt');
+  });
+
+  it('REVIEWER_SYSTEM_CONTRACT selects role by review source and dispatch by review depth', () => {
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('Your role by review source');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are THE gate');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are the verifier and the backup');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('treat it as a pointer, not proof');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('unresolved bot findings are your findings too');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('you become the gate');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('Dispatch by review depth');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('coverage is invariant');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'Folding lenses together is acceptable ONLY at this depth'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'a second independent sub-agent pass on the highest-risk dimension'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('Delta rounds (3+) run one tier lighter');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('the latest explicit instruction wins');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(REVIEW_POLICY_GUIDANCE);
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'You do not trigger external review bots — the implementer does'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'only the `light` review depth folds them into a single pass'
+    );
   });
 
   it('injects Coding workflow coder-owned handoff guidance into system prompt', () => {

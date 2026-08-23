@@ -1,4 +1,16 @@
+import {
+  type ArtifactShape,
+  deriveArtifactKey,
+  isArtifactShape,
+  normalizeLinkData,
+  resolveLegacyShape,
+} from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import type { Database as BunDatabase } from '../sqlite-compat';
+import { createEvolutionTables } from './evolution';
+import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
@@ -8,18 +20,7 @@ import { runMigration184 as runMigration184External } from './m184-backfill-revi
 import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
 import { runMigration196 as runMigration196External } from './m196-scope-reviewer-bash-patterns';
 import { runMigration198 } from './m198-session-counters';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
-import {
-  deriveArtifactKey,
-  isArtifactShape,
-  normalizeLinkData,
-  resolveLegacyShape,
-  type ArtifactShape,
-} from '@hyperneo/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { createEvolutionTables } from './evolution';
-import { createLongHorizonAgentTables } from './long-horizon-agents';
-import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import { runMigration205 } from './m205-restamp-reviewer-review-modes';
 
 export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   ensureMigrationMarkersTable(db);
@@ -435,7 +436,6 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(197), () => runMigration197(db));
 
   run(migrationMarkerKey(198), () => runMigration198(db));
-
   run(migrationMarkerKey(199), () => runMigration199(db));
 
   run(migrationMarkerKey(200), () => runMigration200(db));
@@ -447,6 +447,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(203), () => runMigration203(db));
 
   run(migrationMarkerKey(204), () => runMigration204(db));
+  run(migrationMarkerKey(205), () => runMigration205(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -6044,9 +6045,7 @@ export function runMigration108(db: BunDatabase): void {
           }
         }
         if (mutated) update.run(JSON.stringify(config), row.id);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
 }
@@ -8296,7 +8295,7 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
 
 function generateValidHandle(name: string, existingHandles: string[]): string {
   const maxLen = 60;
-  let base = slugify(name, existingHandles);
+  const base = slugify(name, existingHandles);
   if (validateSlug(base) === null) return base;
 
   for (let len = maxLen; len > 0; len--) {
