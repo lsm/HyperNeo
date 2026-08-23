@@ -471,7 +471,7 @@ describe('coder-only workflow template', () => {
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal artifact IS the gate of record');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'Under `both` an empty gate set is NOT an internal run'
+      'Under `both` OR explicit `external` an empty gate set is NOT an internal run'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       're-run the gate cycle under the CURRENT source'
@@ -489,6 +489,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'the merged commit never passed the current policy'
     );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never as an external pass');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
     );
@@ -543,6 +544,12 @@ describe('coder-only workflow template', () => {
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'review-source or review-depth instruction is newer than that note'
     );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a merge must never proceed under a policy the verified note predates'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'do NOT call mark_complete: report the mismatch'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('depth: "<light|standard|deep|auto>"');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
@@ -563,7 +570,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       'Only a "verified" note is proof of the base the Reviewer last inspected'
     );
-    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('(`Reviewed base: <name>@<baseRefOid>`');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      '(`Reviewed head <headRefOid> on base <name>@<baseRefOid>`'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('or the head moved and returned');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('base_oid: "<baseRefOid>"');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('base_oid: "<baseRefOid>"');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
