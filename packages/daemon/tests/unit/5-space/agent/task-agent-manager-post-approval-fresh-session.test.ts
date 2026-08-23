@@ -682,6 +682,54 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(updates).toEqual([]);
   });
 
+  test('a fresh create whose bind CAS loses aborts before streaming: session unregistered, nothing left bound (PR #2770 review)', async () => {
+    const pendingExec = makeExecutionRow({
+      id: 'exec-fresh-lost',
+      agentSessionId: null,
+      status: 'pending',
+      startedAt: null,
+    });
+    const unregistered: string[] = [];
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: {
+        registerSession: () => {},
+        unregisterSession: async (id: string) => {
+          unregistered.push(id);
+        },
+      },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: {
+        getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+      },
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [pendingExec],
+        listByNode: () => [pendingExec],
+        listByAgentSessionId: () => [],
+        update: () => null,
+        casExecutionStatus: () => 'superseded',
+      },
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    } as unknown as TaskAgentManagerConfig);
+
+    const spawnPromise = tam.createSubSession(TASK_ID, 'fresh-lost-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage fresh-create-bind');
+    const internal = tam as unknown as {
+      subSessions: Map<string, Map<string, AgentSessionType>>;
+      agentSessionIndex: Map<string, AgentSessionType>;
+    };
+    expect(internal.subSessions.get(TASK_ID)?.size ?? 0).toBe(0);
+    expect(internal.agentSessionIndex.size).toBe(0);
+    expect(unregistered).toEqual(['fresh-lost-id']);
+    expect(pendingExec.status).toBe('pending');
+    expect(pendingExec.agentSessionId).toBeNull();
+  });
+
   test('fresh create binds the new session to the matching pending execution through the bindable-status CAS', async () => {
     const pendingExec = makeExecutionRow({
       id: 'exec-pending',

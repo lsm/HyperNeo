@@ -1210,9 +1210,10 @@ export class TaskAgentManager {
             }
           );
           if (outcome === 'superseded') {
-            log.info(
-              `TaskAgentManager: skipped binding new session ${sessionId} to execution ${match.id} — status moved concurrently`
-            );
+            this.subSessions.get(taskId)?.delete(sessionId);
+            this.agentSessionIndex.delete(sessionId);
+            void this.config.sessionManager.unregisterSession(sessionId).catch(() => {});
+            throw new SpawnSupersededError(match.id, 'fresh-create-bind');
           }
         } else if (match && match.agentSessionId) {
           log.warn(
