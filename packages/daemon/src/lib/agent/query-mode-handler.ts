@@ -120,20 +120,24 @@ export class QueryModeHandler {
       ops: {
         saveRow: async (message, sendStatus) => {
           const dbId = this.ctx.db.saveUserMessage(sessionId, message, sendStatus);
-          await this.ctx.internalEventBus.publish('messages.statusChanged', {
-            sessionId,
-            messageIds: [dbId],
-            status: sendStatus,
-          });
+          await this.ctx.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: [dbId],
+              status: sendStatus,
+            })
+            .catch(() => {});
           return dbId;
         },
         markSuperseded: async (dbIds) => {
           this.ctx.db.updateMessageStatus(dbIds, 'consumed');
-          await this.ctx.internalEventBus.publish('messages.statusChanged', {
-            sessionId,
-            messageIds: dbIds,
-            status: 'consumed',
-          });
+          await this.ctx.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: dbIds,
+              status: 'consumed',
+            })
+            .catch(() => {});
         },
       },
     });

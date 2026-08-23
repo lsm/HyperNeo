@@ -16,6 +16,8 @@ export interface ExternalEventEssenceEntry {
   body?: string;
   title?: string;
   state?: string;
+  environment?: string;
+  description?: string;
   checkName?: string;
   conclusion?: string;
   commentId?: string;
@@ -42,6 +44,8 @@ const ESSENCE_ENTRY_FIELDS = [
   'body',
   'title',
   'state',
+  'environment',
+  'description',
   'checkName',
   'conclusion',
   'commentId',
@@ -240,9 +244,21 @@ function renderDigestGroup(group: DigestGroup): string {
     case 'check': {
       const cancelled = events.filter((entry) => cancelledConclusion(entry.conclusion)).length;
       const mostlyCancelled = cancelled > count / 2 ? ' — most cancelled by your own pushes' : '';
+      const byConclusion = new Map<string, number>();
+      for (const entry of events) {
+        const conclusion = entry.conclusion ?? 'failed';
+        byConclusion.set(conclusion, (byConclusion.get(conclusion) ?? 0) + 1);
+      }
+      const counts = [...byConclusion.entries()].sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+      );
+      const countText =
+        counts.length === 1
+          ? `${counts[0][0]} ×${counts[0][1]}`
+          : `${count} runs (${counts.map(([conclusion, runs]) => `${conclusion} ×${runs}`).join(', ')})`;
       return (
         `- CI check "${latest.checkName ?? 'unknown check'}": ` +
-        `${latest.conclusion ?? 'failed'} ×${count}, latest ${digestTimestamp(latest)}${mostlyCancelled}` +
+        `${countText}, latest ${digestTimestamp(latest)}${mostlyCancelled}` +
         `${digestLinkSuffix(latest)}`
       );
     }
@@ -275,8 +291,16 @@ function renderDigestGroup(group: DigestGroup): string {
         `- Reactions on ${essenceScopeLabel(latest)}: ×${count}, ` +
         `latest ${latest.body ?? 'reaction'} by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest)}`
       );
-    case 'other':
-      return `- ${latest.topic}: ×${count} (latest ${digestTimestamp(latest)})${digestLinkSuffix(latest)}`;
+    case 'other': {
+      const parts = [`${latest.topic}: ×${count} (latest ${digestTimestamp(latest)})`];
+      if (latest.state) parts.push(`state: ${latest.state}`);
+      if (latest.environment) parts.push(`environment: ${latest.environment}`);
+      const snippet = digestSnippet(latest.description ?? latest.body);
+      if (snippet) parts.push(`"${snippet}"`);
+      if (latest.externalUrl) parts.push(latest.externalUrl);
+      parts.push(`latest eventId: ${latest.eventId}`);
+      return `- ${parts.join(' — ')}`;
+    }
   }
 }
 

@@ -155,7 +155,9 @@ describe('parseDeferredExternalEventText', () => {
     expect(parseDeferredExternalEventText('not json')).toBeNull();
     expect(parseDeferredExternalEventText('{"type":"external_event","topic":"t"}')).toBeNull();
   });
+});
 
+describe('parseDeferredDeliveryRow', () => {
   it('reads the essence from a deferred delivery row', () => {
     const text = checkText('chk-1', at(16, 34), 'failure');
     const entry = parseDeferredDeliveryRow(row('db-1', 'u-1', text));
@@ -263,8 +265,8 @@ describe('buildExternalEventDigestMessage', () => {
     expect(lines).toHaveLength(7);
     expect(lines[0]).toBe('External events while you were working (30 events, PR #2828):');
     expect(lines[1]).toBe(
-      '- CI check "Build Binary (linux-x64)": failure ×11, latest 16:34 UTC — ' +
-        `most cancelled by your own pushes — ${PR_URL}#check-11`
+      '- CI check "Build Binary (linux-x64)": 11 runs (canceled ×6, failure ×5), ' +
+        `latest 16:34 UTC — most cancelled by your own pushes — ${PR_URL}#check-11`
     );
     expect(lines[2]).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
@@ -322,7 +324,7 @@ describe('buildExternalEventDigestMessage', () => {
       ...fields,
     }));
     const digest = buildExternalEventDigestMessage(essences);
-    expect(digest).toContain('CI check "lint": failure ×3');
+    expect(digest).toContain('CI check "lint": 3 runs (failure ×2, canceled ×1)');
     expect(digest).not.toContain('most cancelled');
   });
 
@@ -333,6 +335,46 @@ describe('buildExternalEventDigestMessage', () => {
     ]);
     expect(digest).toContain('External events while you were working (2 events, PR #9):');
     expect(digest).toContain('github/o/r/pull_request/9.merge_group_polled: ×2');
+    expect(digest).toContain('latest eventId: u-2');
+  });
+
+  it('preserves actionable payload fields on other-tier lines', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'dep-1',
+        topic: 'github/o/r/pull_request/9.deployment_status_failure',
+        prNumber: 9,
+        state: 'failure',
+        environment: 'production',
+        description: 'Deploy failed: health check timed out',
+        occurredAt: at(16, 5),
+      },
+    ]);
+    expect(digest).toContain('state: failure');
+    expect(digest).toContain('environment: production');
+    expect(digest).toContain('"Deploy failed: health check timed out"');
+    expect(digest).toContain('latest eventId: dep-1');
+  });
+
+  it('collapses a single-conclusion check group without a runs clause', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'c-1',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        checkName: 'lint',
+        conclusion: 'failure',
+        occurredAt: at(16),
+      },
+      {
+        eventId: 'c-2',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        checkName: 'lint',
+        conclusion: 'failure',
+        occurredAt: at(16, 10),
+      },
+    ]);
+    expect(digest).toContain('CI check "lint": failure ×2');
+    expect(digest).not.toContain('runs (');
   });
 
   it('uses a singular header for a single event and omits scope without a PR', () => {
