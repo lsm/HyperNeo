@@ -196,6 +196,8 @@ vi.mock('../CustomEndpointEditor.tsx', () => ({
 
 import { ProvidersSettings } from '../ProvidersSettings.tsx';
 import { globalStore } from '../../../lib/global-store.ts';
+import { ConnectionNotReadyError } from '../../../lib/errors.ts';
+import { connectionState } from '../../../lib/state.ts';
 
 function createMockProvider(
   id: string,
@@ -226,6 +228,7 @@ describe('ProvidersSettings', () => {
     mockListProviders.mockResolvedValue({ providers: [] });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
     globalStore.systemState.value = null;
+    connectionState.value = 'connecting';
   });
 
   afterEach(() => {
@@ -695,6 +698,85 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
     });
+  });
+
+  it('shows error toast and misleading empty state when mounted while disconnected', async () => {
+    mockListProviders.mockRejectedValue(new ConnectionNotReadyError('Not connected to server'));
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('No providers configured.');
+    });
+  });
+
+  it('loses the mount-vs-connect race: fetches at mount while the WebSocket connect is pending', async () => {
+    let connectSettled = false;
+    let resolveConnect: () => void;
+    new Promise<void>((resolve) => {
+      resolveConnect = () => {
+        connectSettled = true;
+        resolve();
+      };
+    });
+
+    mockListProviders.mockImplementation(() => {
+      if (connectSettled) {
+        return Promise.resolve({
+          providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+        });
+      }
+      return Promise.reject(new ConnectionNotReadyError('Not connected to server'));
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('No providers configured.');
+    });
+
+    expect(mockListProviders).toHaveBeenCalledTimes(1);
+    expect(connectSettled).toBe(false);
+
+    resolveConnect!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(connectSettled).toBe(true);
+    expect(mockListProviders).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('No providers configured.');
+  });
+
+  it('performs no refetch after a later successful connect (terminal failure today)', async () => {
+    let connected = false;
+    mockListProviders.mockImplementation(() => {
+      if (connected) {
+        return Promise.resolve({
+          providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+        });
+      }
+      return Promise.reject(new ConnectionNotReadyError('Not connected to server'));
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('No providers configured.');
+    });
+
+    connected = true;
+    connectionState.value = 'connected';
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListProviders).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('No providers configured.');
+    expect(container.textContent).not.toContain('Anthropic');
   });
 
   it('shows warning toast when auth status fails', async () => {
