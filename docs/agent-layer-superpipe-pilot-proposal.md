@@ -1626,7 +1626,7 @@ counted separately from production code.** If tests must also fit inside the
 additive-core/enrollment slice whose prod+test estimate exceeds ~200 splits
 its full table suite into a companion pins PR that immediately follows —
 under the current table estimates that is 0a (~230), 0b (~285), and 0c
-(~220) only; every other core/apply/cleanup slice already fits as-is.
+(~230) only; every other core/apply/cleanup slice already fits as-is.
 
 Sub-PR IDs are letter suffixes on the reviewed parent (B5a = first slice of
 B5), so §5's reviewed scope carries over unchanged. **Namespace task titles
