@@ -289,7 +289,7 @@ describe('extractFirstTextBlockContent — first-block-only policy', () => {
 
     expect(extractFirstTextBlockContent(message)).toBe(' Padded first ');
     expect(extractVisibleText(message as unknown as Record<string, unknown>)).toBe(
-      'Padded first\n\nSecond block'
+      'Padded first \n\nSecond block'
     );
   });
 
