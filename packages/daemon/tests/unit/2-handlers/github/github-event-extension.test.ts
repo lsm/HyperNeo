@@ -9766,4 +9766,114 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await extension.stop();
     }
   });
+
+  test('polling paginates review pages beyond the first hundred rows', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const requestUrl = String(url);
+      calls.push(requestUrl);
+      const path = new URL(requestUrl).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/pulls/7')) {
+        return pollingResponse({
+          ...createPullRequestRow(7),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      }
+      if (path.endsWith('/pulls/7/reviews')) {
+        const page = new URL(requestUrl).searchParams.get('page') ?? '1';
+        if (page === '1') {
+          const pending = Array.from({ length: 100 }, (_, index) => ({
+            id: 5000 + index,
+            state: 'PENDING',
+            user: { login: 'dev', type: 'User' },
+          }));
+          return pollingResponse(pending);
+        }
+        return pollingResponse([
+          {
+            id: 801,
+            state: 'APPROVED',
+            submitted_at: '2026-01-07T00:00:00Z',
+            user: { login: 'devin-ai-integration[bot]', type: 'Bot' },
+          },
+        ]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(calls.some((url) => url.includes('/pulls/7/reviews?per_page=100&page=2'))).toBe(true);
+      const verdicts = received.filter((item) => item.topic.endsWith('.review_submitted'));
+      expect(verdicts).toHaveLength(1);
+      expect(verdicts[0].payload.state).toBe('APPROVED');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('merge-conflict sequence counters survive a pull request leaving the tracked set', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    let prRow: Record<string, unknown> = createPullRequestRow(7);
+    let pullDetail: Record<string, unknown> = {
+      ...createPullRequestRow(7),
+      mergeable: false,
+      mergeable_state: 'dirty',
+    };
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([prRow]);
+      if (path.endsWith('/pulls/7')) return pollingResponse(pullDetail);
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(received.filter((item) => item.topic.endsWith('.merge_conflict'))).toHaveLength(1);
+
+      prRow = createPullRequestRow(7, { state: 'closed', updated_at: '2026-02-01T00:00:00Z' });
+      pullDetail = { ...createPullRequestRow(7), state: 'closed' };
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      const cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
+      expect(cursor.mergeConflictSequences?.[7]).toBe(1);
+      expect(cursor.mergeConflictStates?.[7]).toBeUndefined();
+    } finally {
+      await extension.stop();
+    }
+  });
 });

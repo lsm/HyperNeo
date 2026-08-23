@@ -773,6 +773,32 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
           user: { login: 'dev', type: 'User' },
         })
       ).toBeNull();
+      expect(
+        normalizeGitHubReview(watched, 7, {
+          id: 559,
+          state: 'pending',
+          user: { login: 'dev', type: 'User' },
+        })
+      ).toBeNull();
+    });
+
+    test('lowercase polling states still match verdict states and normalize to uppercase', () => {
+      const normalized = normalizeGitHubReview(watched, 7, {
+        id: 560,
+        state: 'approved',
+        submitted_at: '2026-01-01T00:00:00Z',
+        user: { login: 'dev', type: 'User' },
+      })!;
+      expect(normalized.payload).toMatchObject({ state: 'APPROVED' });
+    });
+
+    test('webhook review payloads use the same uppercase state casing', () => {
+      const normalized = normalizeGitHubWebhook('pull_request_review', 'delivery-1', {
+        ...reviewWebhook(),
+        review: { ...(reviewWebhook() as { review: Record<string, unknown> }).review },
+      })!;
+      expect(normalized.payload).toMatchObject({ state: 'APPROVED', reviewer: 'dev' });
+      expect(normalized.dedupeKey).toBe('acme/widgets:review:555:submitted');
     });
   });
 

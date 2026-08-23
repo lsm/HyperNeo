@@ -242,7 +242,7 @@ export function normalizeGitHubWebhook(
       title,
       reviewId,
       reviewNodeId: nodeId,
-      state: getString(review.state),
+      state: getString(review.state).toUpperCase(),
       reviewer: actor.login,
       reviewerBot: isBotActor(actor.login, actor.type),
       submittedAt: getString(review.submitted_at),
@@ -1093,7 +1093,7 @@ export function normalizeGitHubReview(
   const obj = asObject(review);
   const id = getNumber(obj.id);
   if (!id || !prNumber) return null;
-  const state = getString(obj.state);
+  const state = getString(obj.state).toUpperCase();
   if (!REVIEW_VERDICT_STATES.has(state)) return null;
   const user = userFrom(obj.user);
   const submittedAt = getString(obj.submitted_at);

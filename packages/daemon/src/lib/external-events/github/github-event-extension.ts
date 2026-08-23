@@ -2882,92 +2882,102 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         break;
       }
       const reviewQuery = new URLSearchParams({ per_page: '100' });
-      const reviewHeaders = gitHubPollingHeaders(token);
-      if (reviewEtags[prNumber]) reviewHeaders['If-None-Match'] = reviewEtags[prNumber];
-      let reviewResponse: Response;
-      try {
-        reviewResponse = await fetchImpl(
-          `${base}/pulls/${prNumber}/reviews?${reviewQuery.toString()}`,
-          {
-            headers: reviewHeaders,
-            signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+      let reviewPage = 1;
+      while (true) {
+        const reviewHeaders = gitHubPollingHeaders(token);
+        if (reviewPage === 1 && reviewEtags[prNumber]) {
+          reviewHeaders['If-None-Match'] = reviewEtags[prNumber];
+        }
+        if (reviewPage > 1) reviewQuery.set('page', String(reviewPage));
+        let reviewResponse: Response;
+        try {
+          reviewResponse = await fetchImpl(
+            `${base}/pulls/${prNumber}/reviews?${reviewQuery.toString()}`,
+            {
+              headers: reviewHeaders,
+              signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+            }
+          );
+        } catch (err) {
+          if (!pollErrorMessage) {
+            pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
           }
-        );
-      } catch (err) {
-        if (!pollErrorMessage) {
-          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
-        }
-        partialScan = true;
-        continue;
-      }
-      const reviewRateLimit = parseRateLimitHeaders(reviewResponse);
-      latestRateLimit = mergeRateLimitInfo(latestRateLimit, reviewRateLimit);
-      if (reviewResponse.status === 304) continue;
-      if (reviewRateLimit.limited) {
-        if (
-          reviewResponse.status === 429 &&
-          reviewRateLimit.remaining > 0 &&
-          !reviewRateLimit.retryAfter
-        ) {
-          this.applyRateLimit({
-            remaining: reviewRateLimit.remaining,
-            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
-            limited: true,
-            retryAfter: true,
-          });
-        } else {
-          this.applyRateLimit(reviewRateLimit);
-        }
-        partialScan = true;
-        break;
-      }
-      if (!reviewResponse.ok) {
-        const errorText = await reviewResponse.text();
-        if (
-          (reviewResponse.status === 403 || reviewResponse.status === 429) &&
-          isRateLimitError(errorText)
-        ) {
-          const secondaryDelayMs = reviewRateLimit.retryAfter
-            ? reviewRateLimit.resetAt - Date.now()
-            : RATE_LIMIT_MIN_BACKOFF_MS;
-          this.applyRateLimit({
-            remaining: reviewRateLimit.remaining,
-            resetAt: Date.now() + secondaryDelayMs,
-            limited: true,
-            retryAfter: true,
-          });
           partialScan = true;
           break;
         }
-        if (!pollErrorMessage) {
-          pollErrorMessage =
-            errorText.trim().slice(0, 160) || `reviews HTTP ${reviewResponse.status}`;
+        const reviewRateLimit = parseRateLimitHeaders(reviewResponse);
+        latestRateLimit = mergeRateLimitInfo(latestRateLimit, reviewRateLimit);
+        if (reviewResponse.status === 304) break;
+        if (reviewRateLimit.limited) {
+          if (
+            reviewResponse.status === 429 &&
+            reviewRateLimit.remaining > 0 &&
+            !reviewRateLimit.retryAfter
+          ) {
+            this.applyRateLimit({
+              remaining: reviewRateLimit.remaining,
+              resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+              limited: true,
+              retryAfter: true,
+            });
+          } else {
+            this.applyRateLimit(reviewRateLimit);
+          }
+          partialScan = true;
+          break;
         }
-        partialScan = true;
-        continue;
-      }
-      const reviewEtag = reviewResponse.headers.get('ETag');
-      if (reviewEtag) reviewEtags[prNumber] = reviewEtag;
-      const reviews = await reviewResponse.json();
-      if (!Array.isArray(reviews)) continue;
-      for (const review of reviews) {
-        const reviewId = reviewRowIdFrom(review);
-        if (!reviewId || seenReviewIds[reviewId]) continue;
-        const event = normalizeGitHubReview(watched, prNumber, review);
-        if (!event) continue;
-        if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+        if (!reviewResponse.ok) {
+          const errorText = await reviewResponse.text();
+          if (
+            (reviewResponse.status === 403 || reviewResponse.status === 429) &&
+            isRateLimitError(errorText)
+          ) {
+            const secondaryDelayMs = reviewRateLimit.retryAfter
+              ? reviewRateLimit.resetAt - Date.now()
+              : RATE_LIMIT_MIN_BACKOFF_MS;
+            this.applyRateLimit({
+              remaining: reviewRateLimit.remaining,
+              resetAt: Date.now() + secondaryDelayMs,
+              limited: true,
+              retryAfter: true,
+            });
+            partialScan = true;
+            break;
+          }
+          if (!pollErrorMessage) {
+            pollErrorMessage =
+              errorText.trim().slice(0, 160) || `reviews HTTP ${reviewResponse.status}`;
+          }
+          partialScan = true;
+          break;
+        }
+        const reviewEtag = reviewResponse.headers.get('ETag');
+        if (reviewPage === 1 && reviewEtag) reviewEtags[prNumber] = reviewEtag;
+        const reviews = await reviewResponse.json();
+        if (!Array.isArray(reviews) || reviews.length === 0) break;
+        for (const review of reviews) {
+          const reviewId = reviewRowIdFrom(review);
+          if (!reviewId || seenReviewIds[reviewId]) continue;
+          const event = normalizeGitHubReview(watched, prNumber, review);
+          if (!event) continue;
+          if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+            seenReviewIds[reviewId] = true;
+            continue;
+          }
+          await this.publishEvent(watched.spaceId, event, this.context);
           seenReviewIds[reviewId] = true;
-          continue;
+          count++;
         }
-        await this.publishEvent(watched.spaceId, event, this.context);
-        seenReviewIds[reviewId] = true;
-        count++;
+        if (reviews.length < 100) break;
+        reviewPage++;
       }
+      if (partialScan) break;
       if (
-        Number.isFinite(reviewRateLimit.remaining) &&
-        reviewRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+        latestRateLimit &&
+        Number.isFinite(latestRateLimit.remaining) &&
+        latestRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
       ) {
-        this.applyRateLimit(reviewRateLimit);
+        this.applyRateLimit(latestRateLimit);
         partialScan = true;
         break;
       }
@@ -3080,9 +3090,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     for (const key of Object.keys(mergeConflictStates)) {
       if (!trackedPrSet.has(Number(key))) delete mergeConflictStates[Number(key)];
-    }
-    for (const key of Object.keys(mergeConflictSequences)) {
-      if (!trackedPrSet.has(Number(key))) delete mergeConflictSequences[Number(key)];
     }
     for (const key of Object.keys(mergeConflictEtags)) {
       if (!trackedPrSet.has(Number(key))) delete mergeConflictEtags[Number(key)];
