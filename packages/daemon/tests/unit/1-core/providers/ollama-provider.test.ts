@@ -49,7 +49,21 @@ describe('OllamaProvider', () => {
     expect(await provider.isAvailable()).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:11434/api/tags', {
       headers: undefined,
+      signal: expect.any(AbortSignal),
     });
+  });
+
+  it('reports local Ollama unavailable when the availability probe times out', async () => {
+    const fetchMock = mock(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    expect(await provider.isAvailable()).toBe(false);
   });
 
   it('loads models from /api/tags for local Ollama', async () => {

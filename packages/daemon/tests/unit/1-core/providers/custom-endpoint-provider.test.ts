@@ -118,6 +118,40 @@ describe('CustomEndpointProvider', () => {
     });
   });
 
+  it('returns configured models from getCachedModels without probing', () => {
+    const fetchImpl = mock(async () => {
+      throw new Error('probe must not run');
+    }) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+
+    const models = p.getCachedModels();
+
+    expect(models?.map((m) => m.id)).toEqual(['qwen2.5-7b', 'qwen2.5-vl-7b']);
+    expect(models?.[0]).toMatchObject({
+      id: 'qwen2.5-7b',
+      name: 'qwen2.5-7b',
+      provider: 'custom:lmstudio',
+      family: 'lmstudio',
+      contextWindow: 32000,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('matches between getCachedModels and a healthy getModels listing', async () => {
+    const fetchImpl = mock(
+      async () => new Response('[]', { status: 200 })
+    ) as unknown as typeof fetch;
+    const p = new CustomEndpointProvider(baseConfig, {
+      bridgeFactory: makeFakeBridge().factory,
+      bridgeFetchImpl: fetchImpl,
+    });
+
+    expect(p.getCachedModels()).toEqual(await p.getModels());
+  });
+
   it('probes the configured endpoint before returning the model list', async () => {
     const fetchImpl = mock(
       async () => new Response('[]', { status: 200 })

@@ -145,19 +145,28 @@ export function composeMessagePage(
   };
 }
 
-export function extractVisibleText(msg: Record<string, unknown>): string {
-  const parts: string[] = [];
+export type TextBlockExtractionPolicy = 'first-block-only' | 'join-all';
+
+export function extractTextBlockContents(
+  msg: Record<string, unknown>,
+  policy: TextBlockExtractionPolicy
+): string[] {
   const message = msg.message as Record<string, unknown> | undefined;
   const content = message?.content;
-  if (Array.isArray(content)) {
-    for (const block of content as Array<Record<string, unknown>>) {
-      if (block.type === 'text' && typeof block.text === 'string') {
-        parts.push(block.text);
-      }
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  const texts: string[] = [];
+  for (const block of content as Array<Record<string, unknown>>) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      texts.push(block.text);
+      if (policy === 'first-block-only') break;
     }
-  } else if (typeof content === 'string') {
-    parts.push(content);
   }
+  return texts;
+}
+
+export function extractVisibleText(msg: Record<string, unknown>): string {
+  const parts = extractTextBlockContents(msg, 'join-all');
   if (msg.type === 'result' && typeof msg.result === 'string') {
     parts.push(msg.result);
   }
@@ -179,17 +188,12 @@ export function extractToolCallNames(msg: Record<string, unknown>): string[] {
 }
 
 export function extractFirstTextBlockContent(message: SDKMessage): string {
-  const content = (
-    message as { message?: { content?: string | Array<{ type: string; text?: string }> } }
-  ).message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    const textBlock = content.find(
-      (block): block is { type: 'text'; text: string } => block.type === 'text'
-    );
-    return textBlock?.text || '';
-  }
-  return '';
+  return (
+    extractTextBlockContents(
+      message as unknown as Record<string, unknown>,
+      'first-block-only'
+    )[0] ?? ''
+  );
 }
 
 export interface RenderableTextMessageRow {

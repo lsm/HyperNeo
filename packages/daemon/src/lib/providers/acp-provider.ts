@@ -134,18 +134,21 @@ export class AcpProvider implements Provider {
     return command ? getAcpCommandIdentity(command) : undefined;
   }
 
+  private tryGetCommandIdentity(): string | undefined {
+    try {
+      return this.getCommandIdentity();
+    } catch {
+      return undefined;
+    }
+  }
+
   setAcpModels(models: AcpConfiguredModel[] | undefined): void {
     this.curatedModels = models;
     this.rebuildModelsFromCurated();
   }
 
   private rebuildModelsFromCurated(): void {
-    let commandIdentity: string | undefined;
-    try {
-      commandIdentity = this.getCommandIdentity();
-    } catch {
-      commandIdentity = undefined;
-    }
+    const commandIdentity = this.tryGetCommandIdentity();
     if (commandIdentity && this.curatedModels !== undefined) {
       this.cachedModels =
         this.curatedModels.length > 0
@@ -231,7 +234,13 @@ export class AcpProvider implements Provider {
   }
 
   getCachedModels(): ModelInfo[] | null {
-    return this.cachedModels;
+    if (this.cachedModels) return this.cachedModels;
+    if (!this.tryGetCommandIdentity()) return null;
+    const contextWindow = this.getContextWindow();
+    return AcpProvider.MODELS.map((model) => ({
+      ...model,
+      contextWindow,
+    }));
   }
 
   setConfigOptions(configOptions: AcpConfigOption[]): void {

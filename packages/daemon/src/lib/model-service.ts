@@ -14,6 +14,8 @@ import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
 import { DeepSeekProvider } from './providers/deepseek-provider.js';
+import { MinimaxProvider } from './providers/minimax-provider.js';
+import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -75,6 +77,8 @@ const STATIC_MODEL_METADATA: ModelInfo[] = [
   ...GlmProvider.MODELS,
   ...KimiProvider.MODELS,
   ...DeepSeekProvider.MODELS,
+  ...MinimaxProvider.MODELS,
+  ...COPILOT_ANTHROPIC_MODELS,
 ];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
 const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
@@ -145,24 +149,43 @@ function getAvailableProviders(): Provider[] {
   return registry.getAll();
 }
 
+function applyRefreshedModels(
+  cacheKey: string,
+  fetchedModels: ModelInfo[],
+  previousModels: ModelInfo[] | undefined
+): void {
+  if (fetchedModels.length > 0) {
+    const mergedModels = mergeWithFallbackModels(fetchedModels);
+    if (previousModels && previousModels.length > mergedModels.length) {
+      modelsCache.set(cacheKey, previousModels);
+    } else {
+      modelsCache.set(cacheKey, mergedModels);
+    }
+    cacheTimestamps.set(cacheKey, Date.now());
+    return;
+  }
+  if (!previousModels || previousModels.length === 0) {
+    const registry = getProviderRegistry();
+    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+    modelsCache.set(cacheKey, filteredFallbacks);
+    cacheTimestamps.set(cacheKey, Date.now());
+  }
+}
+
 async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
   if (refreshInProgress.has(cacheKey)) {
     return;
   }
 
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
+  const previousModels = modelsCache.get(cacheKey);
 
   const refreshPromise = (async () => {
     try {
       const result = await loadModelsFromProviders();
-      const isCurrentGeneration = (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart;
-      if (isCurrentGeneration) {
+      if ((cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
         applyProviderLoadOutcome(result);
-      }
-      if (result.models.length > 0 && isCurrentGeneration) {
-        const mergedModels = mergeWithFallbackModels(result.models);
-        modelsCache.set(cacheKey, mergedModels);
-        cacheTimestamps.set(cacheKey, Date.now());
+        applyRefreshedModels(cacheKey, result.models, previousModels);
       }
       /* v8 ignore next 2 */
     } catch {}
@@ -380,22 +403,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       return;
     }
     applyProviderLoadOutcome(result);
-    const { models } = result;
-    if (models.length > 0) {
-      const mergedModels = mergeWithFallbackModels(models);
-      if (previousModels && previousModels.length > mergedModels.length) {
-        modelsCache.set(cacheKey, previousModels);
-        cacheTimestamps.set(cacheKey, Date.now());
-        return;
-      }
-      modelsCache.set(cacheKey, mergedModels);
-      cacheTimestamps.set(cacheKey, Date.now());
-    } else if (!previousModels || previousModels.length === 0) {
-      const registry = getProviderRegistry();
-      const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-      modelsCache.set(cacheKey, filteredFallbacks);
-      cacheTimestamps.set(cacheKey, Date.now());
-    }
+    applyRefreshedModels(cacheKey, result.models, previousModels);
   })();
 
   refreshInProgress.set(cacheKey, refreshPromise);
@@ -493,7 +501,10 @@ export async function getModelInfo(
   }
 
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
-  return findInModels(staticProviderModels, idOrAlias) ?? null;
+  const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
+  return providerId === 'anthropic-copilot' && staticModel
+    ? overlayCodexStaticMetadata(staticModel)
+    : staticModel;
 }
 
 export async function getSessionModelInfo(
@@ -530,7 +541,7 @@ export async function isValidModel(
     return false;
   }
 
-  if (sessionApiKey?.trim()) {
+  if (sessionApiKey?.trim() && providerId !== 'anthropic-copilot') {
     return true;
   }
 

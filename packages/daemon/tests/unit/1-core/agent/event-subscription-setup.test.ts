@@ -63,6 +63,7 @@ describe('EventSubscriptionSetup', () => {
     mockQueryModeHandler = {
       handleQueryTrigger: mock(async () => ({ success: true, messageCount: 1 })),
       replayPendingMessagesForImmediateMode: mock(async () => {}),
+      replayPendingMessagesForAutomaticTurnEnd: mock(async () => {}),
       sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
     } as unknown as QueryModeHandler;
 
@@ -402,13 +403,25 @@ describe('EventSubscriptionSetup', () => {
     });
 
     describe('query.trigger handler', () => {
-      it('should call queryModeHandler.replayPendingMessagesForImmediateMode', async () => {
+      it('routes through the guarded automatic-turn-end replay, not the raw orchestration', async () => {
         setup.setup();
 
         const callback = registeredCallbacks.get('query.trigger')!;
         await callback({ sessionId: 'test-session-id' });
 
-        expect(mockQueryModeHandler.replayPendingMessagesForImmediateMode).toHaveBeenCalled();
+        expect(mockQueryModeHandler.replayPendingMessagesForAutomaticTurnEnd).toHaveBeenCalled();
+        expect(mockQueryModeHandler.replayPendingMessagesForImmediateMode).not.toHaveBeenCalled();
+      });
+
+      it('never routes around the guarded entry when manual mode is set', async () => {
+        mockContext.session.config.queryMode = 'manual';
+        setup.setup();
+
+        const callback = registeredCallbacks.get('query.trigger')!;
+        await callback({ sessionId: 'test-session-id' });
+
+        expect(mockQueryModeHandler.replayPendingMessagesForAutomaticTurnEnd).toHaveBeenCalled();
+        expect(mockQueryModeHandler.handleQueryTrigger).not.toHaveBeenCalled();
       });
     });
   });

@@ -124,6 +124,18 @@ describe('removeProviderFromRegistry', () => {
     expect(registry.has('test-provider')).toBe(false);
   });
 
+  it('skips logout but still shuts down and unregisters when preserveCredentials is set', async () => {
+    const registry = getProviderRegistry();
+    const provider = createMockProvider({ id: 'test-provider' });
+    registry.register(provider);
+
+    await removeProviderFromRegistry('test-provider', { preserveCredentials: true });
+
+    expect(provider.logout).not.toHaveBeenCalled();
+    expect(provider.shutdown).toHaveBeenCalled();
+    expect(registry.has('test-provider')).toBe(false);
+  });
+
   it('is a no-op when provider is not in registry', async () => {
     const registry = getProviderRegistry();
     expect(registry.has('missing')).toBe(false);

@@ -6,6 +6,7 @@ import {
   type SpaceGoalServiceDeps,
 } from '../../../src/lib/space/goals/goal-service';
 import type { GoalOwnerResolutionDecision } from '../../../src/lib/space/goals/goal-owner-resolution';
+import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../src/storage/repositories/space-goal-outcome-notification-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -24,6 +25,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
   let task: SpaceTask;
   let notification: SpaceGoalOutcomeNotification;
   let resolution: GoalOwnerResolutionDecision;
+  let resolutions: Record<string, GoalOwnerResolutionDecision>;
   let coordinatorAgent: { id: string; handle: string; status: string } | null;
 
   function claimParams(
@@ -55,10 +57,11 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
+    resolutions = {};
     coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'active' };
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
-      getPrimaryGoalOwner: mock(() => resolution),
+      getPrimaryGoalOwner: mock((goalId: string) => resolutions[goalId] ?? resolution),
       getCoordinator: mock(() => coordinatorAgent),
       getById: mock((id: string) =>
         coordinatorAgent && id === coordinatorAgent.id ? coordinatorAgent : null
@@ -66,6 +69,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     } as unknown as SpaceGoalServiceDeps['longHorizonAgentRepo'];
     service = new SpaceGoalService({
       goalRepo,
+      goalEventRepo: new SpaceGoalEventRepository(db as never),
       taskRepo,
       spaceRepo,
       scheduleService: {} as unknown as ScheduleService,
@@ -270,5 +274,147 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     );
 
     expect(result).toEqual({ status: 'not_found' });
+  });
+
+  describe('listClaimableOutcomeNotifications', () => {
+    it('discovers the pending notification for the resolved owner', () => {
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.id)).toEqual([notification.id]);
+    });
+
+    it('excludes goals the caller does not own', () => {
+      const otherGoal = service.createGoal({ spaceId: goal.spaceId, title: 'Other' });
+      resolutions[otherGoal.id] = {
+        action: 'resolved',
+        owner: { agentId: 'agent-2', relationship: 'owner', createdAt: Date.now() },
+        conflicts: [],
+      };
+      const otherTask = taskRepo.createTask({
+        spaceId: goal.spaceId,
+        title: 'Other task',
+        goalId: otherGoal.id,
+      });
+      notificationRepo.create({
+        spaceId: goal.spaceId,
+        goalId: otherGoal.id,
+        taskId: otherTask.id,
+        terminalGeneration: 1,
+        goalRevision: otherGoal.revision,
+        payload: {
+          summary: '',
+          taskStatus: 'done',
+          taskTitle: 'Other task',
+          goalTitle: 'Other',
+        },
+      });
+
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.goalId)).toEqual([goal.id]);
+    });
+
+    it('returns nothing for an unauthorized caller', () => {
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-2',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications).toEqual([]);
+    });
+
+    it('discovers notifications the active coordinator can claim as fallback', () => {
+      resolution = { action: 'coordinator_fallback', coordinatorAgentId: 'coordinator-1' };
+
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'coordinator-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.id)).toEqual([notification.id]);
+    });
+  });
+
+  describe('applyOutcomeGoalUpdate', () => {
+    it('applies summary, next steps, and progress atomically', () => {
+      const updated = service.applyOutcomeGoalUpdate({
+        goalId: goal.id,
+        summary: 'Reviewed',
+        nextSteps: ['Next'],
+        progress: 50,
+        sourceTaskId: task.id,
+      });
+
+      expect(updated.summary).toBe('Reviewed');
+      expect(updated.nextSteps).toEqual(['Next']);
+      expect(updated.progress).toBe(50);
+      expect(updated.revision).toBe(goal.revision + 1);
+    });
+
+    it('replaces metric values and accumulates numeric observations as deltas', () => {
+      service.applyOutcomeGoalUpdate({ goalId: goal.id, metrics: { activated: 5 } });
+      const updated = service.applyOutcomeGoalUpdate({
+        goalId: goal.id,
+        observations: [
+          { key: 'activated', value: 3 },
+          { key: 'converted', value: 2 },
+        ],
+      });
+
+      expect(updated.metrics.activated).toBe(8);
+      expect(updated.metrics.converted).toBe(2);
+    });
+
+    it('does not update recurring-goal progress through outcome review', () => {
+      const recurring = service.createGoal({
+        spaceId: goal.spaceId,
+        title: 'Recurring',
+        type: 'recurring',
+        progress: 10,
+      });
+
+      const updated = service.applyOutcomeGoalUpdate({
+        goalId: recurring.id,
+        summary: 'Reviewed',
+        progress: 80,
+      });
+
+      expect(updated.progress).toBe(10);
+      expect(updated.summary).toBe('Reviewed');
+    });
+
+    it('rejects a numeric observation colliding with a non-numeric metric', () => {
+      service.applyOutcomeGoalUpdate({ goalId: goal.id, metrics: { health: 'green' } });
+
+      expect(() =>
+        service.applyOutcomeGoalUpdate({
+          goalId: goal.id,
+          observations: [{ key: 'health', value: 1 }],
+        })
+      ).toThrow(/non-numeric metric "health"/);
+    });
+
+    it('records a goal event referencing the reviewed task', () => {
+      service.applyOutcomeGoalUpdate({
+        goalId: goal.id,
+        summary: 'Reviewed',
+        sourceTaskId: task.id,
+      });
+
+      const events = new SpaceGoalEventRepository(db as never).listByGoal(goal.id);
+      expect(events.some((e) => e.eventType === 'updated' && e.sourceTaskId === task.id)).toBe(
+        true
+      );
+    });
   });
 });
