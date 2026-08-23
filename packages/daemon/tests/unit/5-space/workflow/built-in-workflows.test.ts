@@ -471,6 +471,12 @@ describe('coder-only workflow template', () => {
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal artifact IS the gate of record');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'Under `both` an empty gate set is NOT an internal run'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      're-run the gate cycle under the CURRENT source'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
@@ -510,6 +516,9 @@ describe('coder-only workflow template', () => {
       'a mismatch in EITHER value invalidates the gate'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a note still in its dispatch-time `pending` state is NOT proof'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'revalidate it BEFORE requesting any re-approval'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
@@ -517,13 +526,16 @@ describe('coder-only workflow template', () => {
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
-      'A source switch itself triggers that next handoff'
+      'a source switch itself triggers that next handoff'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       'treats the note as stale and refreshes it the same way'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
-      'the base the REVIEWER actually inspected, not merely the base at dispatch'
+      'PENDING state only — a dispatch-time snapshot proves nothing'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'Only a "verified" note is proof of the base the Reviewer last inspected'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('(`Reviewed base: <name>`');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
