@@ -270,7 +270,7 @@ describe('Model Service', () => {
 
       await refreshModels();
 
-      expect(getAvailableModels('global')).toEqual([providerModel]);
+      expect(getAvailableModels('global')).toEqual(supersedingModels);
     });
 
     it('skips the post-refresh re-apply when the cache is cleared mid-refresh', async () => {

@@ -389,7 +389,7 @@ export function updateProviderModelsInCache(
     return false;
   }
 
-  pendingProviderSlices.delete(pendingSliceKey(cacheKey, providerId));
+  pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
   modelsCache.set(cacheKey, [
     ...cachedModels.filter((model) => model.provider !== providerId),
     ...models,
