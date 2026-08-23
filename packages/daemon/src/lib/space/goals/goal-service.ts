@@ -245,6 +245,23 @@ export class SpaceGoalService {
     return this.createImmediateTaskInternal(goalId, context);
   }
 
+  retryQueuedRunsForSpace(spaceId: string): number {
+    const goals = this.deps.goalRepo.list({ spaceId, status: 'active' });
+    let created = 0;
+    for (const goal of goals) {
+      if (!goal.autoTriggerNext || !goal.pendingNextRun || goal.activeTaskId) continue;
+      try {
+        this.createImmediateTask(goal.id, { source: 'system' });
+        created += 1;
+      } catch (err) {
+        log.warn(
+          `Retry queued run threw for goal "${goal.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    return created;
+  }
+
   private createImmediateTaskInternal(
     goalId: string,
     context?: SpaceGoalMutationContext,
