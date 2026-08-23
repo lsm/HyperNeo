@@ -1084,6 +1084,26 @@ describe('SpaceGoalService', () => {
     expect(notificationRepo.countByGoal(goal.id, 'superseded')).toBe(1);
   });
 
+  it('keeps the current generation pending when a terminal transition is retried', () => {
+    const goal = service.createGoal({ spaceId, title: 'Retry outcome' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+    service.handleTaskTerminal(task.task!.id, {
+      fromStatus: 'in_progress',
+      updates: { status: 'done' },
+    });
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(1);
+
+    service.handleTaskTerminal(task.task!.id, {
+      fromStatus: 'in_progress',
+      updates: { status: 'done' },
+    });
+    const pending = notificationRepo.listPendingByGoal(goal.id);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.status).toBe('pending');
+  });
+
   it('rolls back the terminal write and notification together when notification creation fails', () => {
     const goal = service.createGoal({ spaceId, title: 'Atomic goal' });
     const task = service.createImmediateTask(goal.id);
