@@ -458,6 +458,26 @@ export function createTables(db: BunDatabase): void {
 	    `);
 
   db.exec(`
+      CREATE TABLE IF NOT EXISTS space_goal_outcome_notifications (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        goal_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        terminal_generation INTEGER NOT NULL DEFAULT 0,
+        goal_revision INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'superseded', 'acknowledged', 'rejected')),
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(goal_id, task_id, terminal_generation),
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE CASCADE,
+        FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
+      )
+    `);
+
+  db.exec(`
       CREATE TABLE IF NOT EXISTS short_id_counters (
         entity_type TEXT NOT NULL,
         scope_id    TEXT NOT NULL,
@@ -981,6 +1001,14 @@ function createIndexes(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_goal_pending
+      ON space_goal_outcome_notifications(goal_id, status, created_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
+      ON space_goal_outcome_notifications(task_id, terminal_generation)`
   );
 
   db.exec(
