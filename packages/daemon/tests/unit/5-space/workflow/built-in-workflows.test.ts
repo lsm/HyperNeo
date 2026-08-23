@@ -393,6 +393,12 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies ONLY under `auto`');
     expect(CODER_ONLY_PROMPT).toContain('escalate saying the repository has no external reviewer');
     expect(CODER_ONLY_PROMPT).toContain('the merge cannot proceed under the selected source');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'Capture `headRefOid`, `baseRefName`, and `baseRefOid` BEFORE starting the fallback review'
+    );
+    expect(CODER_ONLY_PROMPT).toContain(
+      'so the merge procedure reads the gate that actually covers the current head'
+    );
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
     expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
@@ -490,6 +496,12 @@ describe('coder-only workflow template', () => {
       'the merged commit never passed the current policy'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never as an external pass');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'Accept `MERGED` as verified ONLY when the final `baseRefOid` still equals'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'Accept `MERGED` as verified ONLY when the final `baseRefOid` still equals'
+    );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
     );

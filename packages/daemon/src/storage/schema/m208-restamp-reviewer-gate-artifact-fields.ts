@@ -70,7 +70,7 @@ export function runMigration208(db: BunDatabase): void {
     const pristine =
       row.custom_prompt === OLD_REVIEWER_PROMPT_PRE_GATE_ARTIFACT_FIELDS &&
       row.description === reviewer.description &&
-      JSON.stringify(storedTools) === JSON.stringify(reviewer.tools);
+      [...storedTools].sort().join('\u0000') === [...(reviewer.tools ?? [])].sort().join('\u0000');
     if (!pristine) continue;
 
     update.run(reviewer.customPrompt, computeAgentTemplateHash(reviewer), row.id);

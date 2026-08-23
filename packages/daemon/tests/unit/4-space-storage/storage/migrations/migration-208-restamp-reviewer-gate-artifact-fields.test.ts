@@ -131,6 +131,26 @@ describe('migration 208 — reviewer gate-artifact-fields contract restamp', () 
     expect(row.template_hash).toBe(computeAgentTemplateHash(REVIEWER_PRESET));
   });
 
+  test('re-stamps a pristine Reviewer row whose tools are stored in a different order', () => {
+    const spaceId = 'space-m208-reordered';
+    insertSpace(db, spaceId);
+    insertAgent(db, {
+      id: 'agent-reordered',
+      spaceId,
+      name: 'Reviewer',
+      customPrompt: OLD_REVIEWER_PROMPT_PRE_GATE_ARTIFACT_FIELDS,
+      description: REVIEWER_PRESET.description,
+      tools: JSON.stringify([...(REVIEWER_PRESET.tools ?? [])].reverse()),
+      templateName: 'Reviewer',
+    });
+
+    runMigration208(db);
+
+    const row = getAgentRow(db, 'agent-reordered');
+    expect(row.custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
+    expect(row.template_hash).toBe(computeAgentTemplateHash(REVIEWER_PRESET));
+  });
+
   test('leaves a Reviewer row with customized tools untouched', () => {
     const spaceId = 'space-m208-e';
     insertSpace(db, spaceId);
