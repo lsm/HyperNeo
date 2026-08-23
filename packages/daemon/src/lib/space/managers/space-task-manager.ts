@@ -254,7 +254,7 @@ export class SpaceTaskManager {
     }
 
     const reopened = isTerminalTaskStatus(task.status) && !isTerminalTaskStatus(newStatus);
-    if (reopened) {
+    if (reopened && newStatus === 'open') {
       updates.startedAt = null;
     }
     const updated = this.taskRepo.updateTask(taskId, updates);
@@ -266,7 +266,7 @@ export class SpaceTaskManager {
       this.onTaskReopened?.(taskId);
     }
 
-    if (newStatus === 'done') {
+    if (newStatus === 'done' && !task.goalId) {
       try {
         this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
       } catch (err) {

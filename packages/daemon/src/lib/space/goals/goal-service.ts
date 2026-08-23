@@ -316,6 +316,15 @@ export class SpaceGoalService {
     if (!existing?.goalId) return null;
     const goal = this.deps.goalRepo.getById(existing.goalId);
     if (!goal || goal.spaceId !== existing.spaceId) return null;
+    const nextStatus = transition?.updates?.status ?? existing.status;
+    if (!isTerminalTaskStatus(nextStatus)) {
+      return {
+        goal,
+        nextTask: null as SpaceTask | null,
+        terminalGeneration: existing.terminalGeneration,
+        notification: null as SpaceGoalOutcomeNotification | null,
+      };
+    }
     const result = this.runAtomic(() => {
       const task =
         transition?.updates && Object.keys(transition.updates).length > 0
