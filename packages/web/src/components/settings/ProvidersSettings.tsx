@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -92,6 +92,7 @@ export function ProvidersSettings() {
     envBacked?: boolean;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
+  const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
@@ -127,7 +128,17 @@ export function ProvidersSettings() {
           nextRegions[p.id] = readKimiRegion(p);
         }
       }
-      setKimiRegions((prev) => ({ ...nextRegions, ...prev }));
+      const syncedRegions = lastSyncedKimiRegions.current;
+      setKimiRegions((prev) => {
+        const merged: Record<string, 'china' | 'global'> = { ...nextRegions };
+        for (const [id, edited] of Object.entries(prev)) {
+          if (id in nextRegions && edited !== syncedRegions[id]) {
+            merged[id] = edited;
+          }
+        }
+        return merged;
+      });
+      lastSyncedKimiRegions.current = nextRegions;
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
       }
