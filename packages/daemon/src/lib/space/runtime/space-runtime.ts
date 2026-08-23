@@ -7428,6 +7428,15 @@ export class SpaceRuntime {
       ) {
         return;
       }
+      const promptTooLongState = this.promptTooLongRecovery.get(`${runId}:${execution.id}`);
+      if (
+        promptTooLongState?.awaitingContinue ||
+        promptTooLongState?.continueNagPending ||
+        promptTooLongState?.awaitingResume ||
+        promptTooLongState?.compactRetryPending
+      ) {
+        return;
+      }
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       if (lastMessage) silenceSignals.push(lastMessage.timestamp);
       if (!classifyLastMessageForIdleAgent(lastMessage).terminal) return;

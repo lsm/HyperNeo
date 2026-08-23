@@ -529,6 +529,64 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(1);
     });
+
+    test('stays quiet while a prompt-too-long recovery phase is pending', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Prompt Too Long Pending Run');
+      const execution = seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'ptl-pending-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('ptl-pending-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      (rt as any).promptTooLongRecovery.set(`${runId}:${execution.id}`, {
+        compactAttempts: 1,
+        compactRetryPending: false,
+        awaitingContinue: true,
+        awaitingContinueAfterDbId: 'ptl-continue-db-id',
+        awaitingContinueSince: Date.now() - 30_000,
+        continueNagPending: false,
+        continueNagAttempts: 0,
+        awaitingResume: false,
+        awaitingResumeAfterDbId: null,
+        awaitingResumeSince: null,
+        awaitingResumeLastProgressDbId: null,
+      });
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
+    });
+
+    test('fires when the prompt-too-long recovery state is dormant', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Prompt Too Long Dormant Run');
+      const execution = seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'ptl-dormant-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('ptl-dormant-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      (rt as any).promptTooLongRecovery.set(`${runId}:${execution.id}`, {
+        compactAttempts: 2,
+        compactRetryPending: false,
+        awaitingContinue: false,
+        awaitingContinueAfterDbId: null,
+        awaitingContinueSince: null,
+        continueNagPending: false,
+        continueNagAttempts: 0,
+        awaitingResume: false,
+        awaitingResumeAfterDbId: null,
+        awaitingResumeSince: null,
+        awaitingResumeLastProgressDbId: null,
+      });
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(1);
+    });
   });
 
   describe('rate limiting', () => {
