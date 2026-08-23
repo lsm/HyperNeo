@@ -871,14 +871,29 @@ Boundary caveats, recorded for the same reason as pilot 3's:
 **Compensation: none registered, and the durable arm stays deferred.** Every
 effect is idempotent or escalating — a repeated interrupt is harmless,
 unregister is idempotent, terminate is the escalation itself — so the flow
-registers no compensations at all. The deferred durable arm ("Stage failures"
-above) has no consumer here: a daemon crash mid-flow leaves at worst a
-stopped-but-still-registered session, which caller re-entry reconciles
-without unwinding anything — `rehydrate` rebuilds the in-memory index from
-the DB, and the next park/shutdown re-runs `stopSessionsVerified`, whose
-missing-session branch unregisters. No cross-process consumer of a
-compensation record exists, so the deferral holds until one does;
-`DEFERRED_DURABLE_COMPENSATION_ARMS` in the S2 contract suite pins it.
+registers no compensations at all. What a daemon crash mid-flow actually
+leaves (corrected after review of this sweep): the unregister/detach effects
+are in-memory-only — cache removal and pid preservation, no DB rows — so the
+persistent residue is a possibly-live orphaned SDK process (the interrupt or
+escalation that never ran) and, for the park caller, stale `in_progress`
+node-execution rows, because `parkInFlightExecutionsForTask` runs after the
+verified stop and never ran. Nothing re-runs the ladder for that residue:
+`rehydrate()` iterates `listActive()`, which excludes `stopped`;
+`parkStoppedWorkflowTask` throws on the invalid `stopped → stopped`
+transition before reaching `stopSessionsVerified`; and the space-shutdown
+caller finds no in-memory sessions, so its verified stop runs with an empty
+list. The residue is reconciled forward, not by unwinding: a later space stop
+runs `parkInFlightExecutionsForSpace`, a DB-level sweep that resets stale
+execution rows regardless of in-memory state, and a task resume
+(`stopped → in_progress` is a valid transition) re-admits the run to the
+tick; orphaned processes have no startup sweep and end by their own exit or
+manual kill. That is the actual reason the durable arm stays deferred: no
+consumer exists for a compensation record — nothing at startup looks for
+incomplete unwinds, the in-memory targets of the inverse operations are gone
+with the process, and the durable harms are repaired by forward DB sweeps
+rather than inverse effects. `DEFERRED_DURABLE_COMPENSATION_ARMS` in the S2
+contract suite pins the deferral; a flow whose effects carry durable inverse
+obligations would reopen it.
 
 **The closing sweep found no dead inline copies.** The S5 swap deleted the
 whole ladder — the inline loop, `gatherStopVerificationSnapshot`,
