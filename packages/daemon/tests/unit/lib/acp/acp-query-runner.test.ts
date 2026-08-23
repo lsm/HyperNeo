@@ -842,6 +842,9 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('acp-session-1');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'acp-session-1',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+      }),
     });
   });
 
@@ -872,12 +875,15 @@ describe('AcpQueryRunner', () => {
     expect(client.resumeSession).not.toHaveBeenCalled();
     expect(client.createSession).toHaveBeenCalledWith('/tmp/acp-session', []);
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
-      acpSessionId: undefined,
+      acpSessionId: 'acp-session-1',
       metadata: expect.objectContaining({
         acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
         acpContextUsageEstimate: undefined,
       }),
     });
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
+    }
     expect(ctx.session.metadata.acpInstructionsSent).toBe(true);
     expect(client.sendPrompt.mock.calls[0][0]).toEqual([
       {
@@ -915,6 +921,34 @@ describe('AcpQueryRunner', () => {
       []
     );
     expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('keeps the old ACP session id when the replacement command fails to start', async () => {
+    const client = createMockClient();
+    client.initialize.mockImplementation(async () => {
+      throw new Error('replacement agent unavailable');
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('other-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
+      expect(call[1]).not.toHaveProperty('metadata');
+    }
+    expect(ctx.session.acpSessionId).toBe(undefined);
     expect(ctx.session.metadata.acpCommandIdentity).toBe(
       getAcpCommandIdentityDigest('mock-acp --stdio')
     );
@@ -1000,6 +1034,9 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('resumed-acp-session');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'resumed-acp-session',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+      }),
     });
   });
 

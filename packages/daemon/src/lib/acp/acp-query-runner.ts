@@ -352,6 +352,8 @@ function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
 type AcpClientFactory = (options: AcpClientOptions) => AcpClient;
 
 export class AcpQueryRunner {
+  private pendingAcpIdentityMetadata = false;
+
   private _lastConsumedUserMessage: {
     uuid: string;
     content: string | MessageContent[];
@@ -458,28 +460,20 @@ export class AcpQueryRunner {
       const { command, args } = parseAcpCommand(acpCommand);
       const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
       const storedIdentity = session.metadata?.acpCommandIdentity;
-      if (
-        session.acpSessionId &&
-        storedIdentity !== undefined &&
-        storedIdentity !== commandIdentity
-      ) {
-        session.acpSessionId = undefined;
-        session.metadata = {
-          ...session.metadata,
-          acpCommandIdentity: commandIdentity,
-          acpInstructionsSent: undefined,
-          acpContextUsageEstimate: undefined,
-        };
-        this.ctx.db.updateSession(session.id, {
-          acpSessionId: undefined,
-          metadata: session.metadata,
-        });
-      } else if (storedIdentity !== commandIdentity) {
+      if (storedIdentity !== commandIdentity) {
+        if (session.acpSessionId && storedIdentity !== undefined) {
+          session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          };
+        }
         session.metadata = {
           ...session.metadata,
           acpCommandIdentity: commandIdentity,
         };
-        this.ctx.db.updateSession(session.id, { metadata: session.metadata });
+        this.pendingAcpIdentityMetadata = true;
       }
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
@@ -1070,8 +1064,13 @@ export class AcpQueryRunner {
 
   private persistAcpSessionId(acpSessionId: string | undefined): void {
     const { session, db } = this.ctx;
-    if (session.acpSessionId === acpSessionId) return;
+    if (session.acpSessionId === acpSessionId && !this.pendingAcpIdentityMetadata) return;
     session.acpSessionId = acpSessionId;
+    if (this.pendingAcpIdentityMetadata) {
+      this.pendingAcpIdentityMetadata = false;
+      db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
+      return;
+    }
     db.updateSession(session.id, { acpSessionId });
   }
 
