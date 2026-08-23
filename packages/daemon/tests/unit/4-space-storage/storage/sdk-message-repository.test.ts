@@ -4471,7 +4471,7 @@ describe('SDKMessageRepository', () => {
       expect(searchAfterFlush({ query: 'refused searchable' }).results).toEqual([]);
     });
 
-    it('removes search rows for retraction arrays outside model refusal fallback messages', () => {
+    it('keeps search rows for retraction arrays outside model refusal fallback messages', () => {
       createSearchIndex();
       repository.saveSDKMessage(
         'session-1',
@@ -4489,7 +4489,7 @@ describe('SDKMessageRepository', () => {
       expect(db.prepare(`SELECT COUNT(*) AS count FROM sdk_message_replacements`).get()).toEqual({
         count: 0,
       });
-      expect(searchAfterFlush({ query: 'orphan retraction' }).results).toEqual([]);
+      expect(searchAfterFlush({ query: 'orphan retraction' }).results).toHaveLength(1);
     });
 
     it('keeps fallback-retracted messages out during search index rebuild', () => {

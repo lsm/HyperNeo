@@ -382,16 +382,7 @@ export class SDKMessageRepository {
   }
 
   private getSupersededMessageUuids(message: SDKMessage): string[] {
-    const maybeSuperseding = message as SDKMessage & {
-      supersedes?: unknown;
-      retracted_message_uuids?: unknown;
-    };
-    return [
-      ...(Array.isArray(maybeSuperseding.supersedes) ? maybeSuperseding.supersedes : []),
-      ...(Array.isArray(maybeSuperseding.retracted_message_uuids)
-        ? maybeSuperseding.retracted_message_uuids
-        : []),
-    ].filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
+    return extractReplacementEdges(message).map((edge) => edge.targetUuid);
   }
 
   private deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void {
