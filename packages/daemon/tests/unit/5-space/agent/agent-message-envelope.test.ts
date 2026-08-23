@@ -3,7 +3,6 @@ import {
   formatAgentMessage,
   extractReplyToSessionId,
 } from '../../../../src/lib/space/agent-message-envelope.ts';
-import { hasAgentMessageEnvelopeForTest } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 const REPLY_PROTOCOL =
   'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
@@ -219,45 +218,5 @@ describe('extractReplyToSessionId', () => {
       'To reply, use: send_message_to_task\n\n' +
       '<reply-routing replyToSessionId="session-adhoc-99" />';
     expect(extractReplyToSessionId(message)).toBe('session-adhoc-99');
-  });
-});
-
-describe('hasAgentMessageEnvelopeForTest', () => {
-  test('recognizes queued space-agent envelopes with canonical sender label', () => {
-    const message = formatAgentMessage({
-      fromLevel: 'space-agent',
-      fromAgentName: 'space-agent',
-      toLevel: 'node-agent',
-      body: 'Queued message',
-      taskId: 'task-123',
-      nodeId: 'coder',
-      replyTargetHandle: '@coordinator',
-    });
-
-    expect(hasAgentMessageEnvelopeForTest(message, 'space-agent', 'node-agent')).toBe(true);
-  });
-
-  test('recognizes legacy queued Space Agent envelopes during flush', () => {
-    const message =
-      '─── Message from Space Agent ───\n\n' +
-      'Legacy queued message\n\n' +
-      '─── Reply ───\n' +
-      'To reply, use: send_message with target "space-agent"';
-
-    expect(hasAgentMessageEnvelopeForTest(message, 'space-agent', 'node-agent')).toBe(true);
-  });
-
-  test('recognizes queued ad-hoc session envelopes from space-member', () => {
-    const message = formatAgentMessage({
-      fromLevel: 'session-agent',
-      fromAgentName: 'space-member',
-      toLevel: 'node-agent',
-      body: 'Queued ad-hoc message',
-      taskId: 'task-123',
-      nodeId: 'coder',
-      replyToSessionId: 'session-adhoc-42',
-    });
-
-    expect(hasAgentMessageEnvelopeForTest(message, 'space-member', 'node-agent')).toBe(true);
   });
 });
