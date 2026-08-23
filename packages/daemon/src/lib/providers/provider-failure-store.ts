@@ -20,7 +20,7 @@ const CREDENTIAL_MESSAGE_PATTERNS: readonly RegExp[] = [
   /\(http 40[13]\)/i,
   /invalid acp command/i,
   /acp_command not set/i,
-  /acp agent process error/i,
+  /acp agent process error:.*\b(?:enoent|eacces|enotdir|eisdir)\b/i,
   /unsupported acp protocol version/i,
 ];
 

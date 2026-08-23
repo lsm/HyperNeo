@@ -1177,6 +1177,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   } catch (error) {
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
+    void import('./lib/model-service')
+      .then(({ clearModelsCache }) => clearModelsCache())
+      .catch(() => {});
     abortAgentMemoryEmbeddingModelPrefetch();
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;

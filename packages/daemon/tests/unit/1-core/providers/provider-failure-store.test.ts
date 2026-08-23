@@ -71,6 +71,12 @@ describe('provider failure classification', () => {
     );
     expect(classifyProviderFailureMessage('ACP agent process exited')).toBe('transient');
     expect(classifyProviderFailureMessage('Initialize failed: agent overloaded')).toBe('transient');
+    expect(classifyProviderFailureMessage('ACP agent process error: spawn foo EAGAIN')).toBe(
+      'transient'
+    );
+    expect(classifyProviderFailureMessage('ACP agent process error: spawn foo EMFILE')).toBe(
+      'transient'
+    );
   });
 
   it('defaults unclassified errors to transient', () => {
