@@ -434,6 +434,55 @@ describe('live-query-lifecycle', () => {
     });
   });
 
+  describe('snapshot retry disabled', () => {
+    it('moves to awaiting-snapshot without arming a backoff timer', () => {
+      const initial = createLiveQueryLifecycleState({ snapshotRetryEnabled: false });
+      expect(initial.state.config).toEqual({
+        snapshotRetryDelayMs: 2000,
+        maxSnapshotRetries: 5,
+        snapshotRetryEnabled: false,
+      });
+      const resolved = transitionLiveQueryLifecycle(initial.state, {
+        type: 'subscribed',
+        generation: 1,
+      });
+      expect(resolved.state).toEqual(
+        fixtureState('awaiting-snapshot', {
+          generation: 1,
+          snapshotRetries: 0,
+          config: { ...FIXTURE_CONFIG, snapshotRetryEnabled: false },
+        })
+      );
+      expect(resolved.effects).toEqual([]);
+    });
+
+    it('never exhausts a retry budget across transport-error resubscribes', () => {
+      const initial = createLiveQueryLifecycleState({ snapshotRetryEnabled: false });
+      let state = initial.state;
+      for (let i = 0; i < 10; i += 1) {
+        const dropped = transitionLiveQueryLifecycle(state, {
+          type: 'transport-error',
+          generation: state.generation,
+        });
+        expect(dropped.state.status).toBe('subscribing');
+        expect(dropped.state.snapshotRetries).toBe(0);
+        expect(dropped.effects).toEqual([
+          { kind: 're-snapshot', generation: state.generation + 1 },
+        ]);
+        const resolved = transitionLiveQueryLifecycle(dropped.state, {
+          type: 'subscribed',
+          generation: dropped.state.generation,
+        });
+        expect(resolved.state.status).toBe('awaiting-snapshot');
+        expect(resolved.state.snapshotRetries).toBe(0);
+        expect(resolved.effects).toEqual([]);
+        state = resolved.state;
+      }
+      expect(state.status).toBe('awaiting-snapshot');
+      expect(state.snapshotRetries).toBe(0);
+    });
+  });
+
   describe('disposed', () => {
     it('stays disposed for every event and never re-declares cleanup', () => {
       const disposed = fixtureState('disposed');

@@ -5,6 +5,13 @@ import type {
   LiveQuerySnapshotEvent,
 } from '@hyperneo/shared';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import {
+  createLiveQueryLifecycleState,
+  type LiveQueryLifecycleEffect,
+  type LiveQueryLifecycleEvent,
+  type LiveQueryLifecycleState,
+  transitionLiveQueryLifecycle,
+} from '../lib/live-query-lifecycle';
 import { useMessageHub } from './useMessageHub';
 
 type ProjectionScope = 'task_timeline' | 'workflow_log';
@@ -52,6 +59,8 @@ function applyDelta(
   return sortRows(Array.from(next.values()));
 }
 
+type LifecycleStorePayload = LiveQuerySnapshotEvent | LiveQueryDeltaEvent | null;
+
 export function useActorMessageProjections({
   scope,
   taskId,
@@ -92,52 +101,92 @@ export function useActorMessageProjections({
     setRows([]);
     setLoadedForKey(null);
 
+    const initial = createLiveQueryLifecycleState({ snapshotRetryEnabled: false });
+    let lifecycle: LiveQueryLifecycleState = initial.state;
+
+    const dispatch = (event: LiveQueryLifecycleEvent): LiveQueryLifecycleEffect[] => {
+      const result = transitionLiveQueryLifecycle(lifecycle, event);
+      lifecycle = result.state;
+      return result.effects;
+    };
+
+    const executeEffects = (
+      effects: LiveQueryLifecycleEffect[],
+      payload: LifecycleStorePayload = null
+    ): void => {
+      for (const effect of effects) {
+        if (effect.kind === 're-snapshot') {
+          const hub = getHub();
+          if (!hub) continue;
+          hub
+            .request('liveQuery.subscribe', {
+              queryName: query.queryName,
+              params: query.params,
+              subscriptionId,
+            })
+            .then(() => {
+              executeEffects(dispatch({ type: 'subscribed', generation: effect.generation }));
+            })
+            .catch(() => {
+              executeEffects(dispatch({ type: 'snapshot-failed', generation: effect.generation }));
+            });
+          continue;
+        }
+        if (effect.kind !== 'emit-to-store') continue;
+        if (effect.emission.type === 'snapshot') {
+          const snapshot = payload as LiveQuerySnapshotEvent | null;
+          setRows(sortRows((snapshot?.rows as ActorMessageProjectionRow[]) ?? []));
+          setLoadedForKey(query.key);
+          continue;
+        }
+        if (effect.emission.type === 'delta') {
+          const delta = payload as LiveQueryDeltaEvent | null;
+          if (delta) setRows((prev) => applyDelta(prev, delta));
+          continue;
+        }
+        setLoadedForKey(query.key);
+      }
+    };
+
+    executeEffects(initial.effects);
+
     const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      setRows(sortRows((event.rows as ActorMessageProjectionRow[]) ?? []));
-      setLoadedForKey(query.key);
+      if (event.subscriptionId !== subscriptionId) return;
+      executeEffects(
+        dispatch({ type: 'snapshot-arrived', generation: lifecycle.generation }),
+        event
+      );
     });
 
     const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      setRows((prev) => applyDelta(prev, event));
+      if (event.subscriptionId !== subscriptionId) return;
+      executeEffects(dispatch({ type: 'delta-arrived', generation: lifecycle.generation }), event);
     });
 
     const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
+      if (event.subscriptionId !== subscriptionId) return;
       if (event.phase === 'delta') {
-        subscribe();
+        executeEffects(dispatch({ type: 'transport-error', generation: lifecycle.generation }));
         return;
       }
-      setLoadedForKey(query.key);
-    });
-
-    const subscribe = () => {
-      const hub = getHub();
-      if (!hub) return;
-      hub
-        .request('liveQuery.subscribe', {
-          queryName: query.queryName,
-          params: query.params,
-          subscriptionId,
+      executeEffects(
+        dispatch({
+          type: 'snapshot-failed',
+          generation: lifecycle.generation,
+          message: event.message,
         })
-        .catch(() => {
-          if (activeSubIdRef.current === subscriptionId) {
-            setLoadedForKey(query.key);
-          }
-        });
-    };
+      );
+    });
 
     const unsubReconnect = getHub()?.onConnection((state) => {
       if (state !== 'connected') return;
       if (activeSubIdRef.current !== subscriptionId) return;
       setLoadedForKey(null);
-      subscribe();
+      executeEffects(dispatch({ type: 'transport-error', generation: lifecycle.generation }));
     });
 
-    subscribe();
-
     return () => {
+      executeEffects(dispatch({ type: 'unsubscribe' }));
       unsubSnapshot();
       unsubDelta();
       unsubError();
