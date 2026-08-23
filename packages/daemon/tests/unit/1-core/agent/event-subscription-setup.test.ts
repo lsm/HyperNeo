@@ -62,6 +62,7 @@ describe('EventSubscriptionSetup', () => {
 
     mockQueryModeHandler = {
       handleQueryTrigger: mock(async () => ({ success: true, messageCount: 1 })),
+      replayPendingMessagesForImmediateMode: mock(async () => {}),
       sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
     } as unknown as QueryModeHandler;
 
@@ -401,13 +402,13 @@ describe('EventSubscriptionSetup', () => {
     });
 
     describe('query.trigger handler', () => {
-      it('should call queryModeHandler.handleQueryTrigger', async () => {
+      it('should call queryModeHandler.replayPendingMessagesForImmediateMode', async () => {
         setup.setup();
 
         const callback = registeredCallbacks.get('query.trigger')!;
         await callback({ sessionId: 'test-session-id' });
 
-        expect(mockQueryModeHandler.handleQueryTrigger).toHaveBeenCalled();
+        expect(mockQueryModeHandler.replayPendingMessagesForImmediateMode).toHaveBeenCalled();
       });
     });
   });

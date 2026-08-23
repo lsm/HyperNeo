@@ -14,7 +14,10 @@ import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
-import { isMessageDeliveryV2Enabled } from '../agent/message-delivery';
+import {
+  isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
+} from '../agent/message-delivery';
 import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
@@ -205,16 +208,18 @@ export class MessagePersistence {
             .catch(() => {});
           throw new Error(`Session ${sessionId} is archived`);
         }
-        const outbox = persistAndEnqueueDelivery({
-          db: this.db.getDatabase(),
-          sdkMessageRepo: this.db.getSDKMessageRepo(),
-          jobQueue: jobQueueRepo,
-          sessionId,
-          message: sdkUserMessage,
-          sendStatus,
-          origin,
-          delivery: { origin: 'chat' },
-        });
+        const outbox = await withSessionResetCoordination(sessionId, async () =>
+          persistAndEnqueueDelivery({
+            db: this.db.getDatabase(),
+            sdkMessageRepo: this.db.getSDKMessageRepo(),
+            jobQueue: jobQueueRepo,
+            sessionId,
+            message: sdkUserMessage,
+            sendStatus,
+            origin,
+            delivery: { origin: 'chat' },
+          })
+        );
         dbMessageId = outbox.dbMessageId;
         outboxRole = outbox.role;
         if (outboxRole === 'turn') {
@@ -264,7 +269,9 @@ export class MessagePersistence {
         );
 
       if (shouldDispatchToQuery && !useV2Delivery) {
-        await agentSession.startQueryAndEnqueue(messageId, messageContent);
+        await withSessionResetCoordination(sessionId, async () => {
+          await agentSession.startQueryAndEnqueue(messageId, messageContent);
+        });
       }
       if (shouldDispatchToQuery) {
         await this.internalEventBus

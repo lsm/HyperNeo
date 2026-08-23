@@ -3,13 +3,16 @@ export type InjectContextResetReason =
   | 'session_busy'
   | 'no_prior_context'
   | 'slot_not_reset'
-  | 'delivery_job_active';
+  | 'delivery_job_active'
+  | 'unconsumed_work_pending';
 
 export type InjectContextResetPlan =
   | { action: 'clear_before_deliver' }
   | { action: 'deliver_without_clear'; reason: InjectContextResetReason };
 
-export type TurnEndFlushContextResetPlan = { action: 'flush_without_clear' };
+export type TurnEndFlushContextResetPlan =
+  | { action: 'clear_then_flush' }
+  | { action: 'flush_without_clear'; reason?: 'active_delivery_job' };
 
 export function planInjectContextReset(args: {
   inputKind: string;
@@ -17,6 +20,7 @@ export function planInjectContextReset(args: {
   hasPriorContext: boolean;
   slotResetsContext: boolean;
   hasActiveDeliveryJob: boolean;
+  hasUnconsumedDeliveredWork: boolean;
 }): InjectContextResetPlan {
   if (args.inputKind !== 'task') {
     return { action: 'deliver_without_clear', reason: 'not_task_input' };
@@ -33,12 +37,28 @@ export function planInjectContextReset(args: {
   if (args.hasActiveDeliveryJob) {
     return { action: 'deliver_without_clear', reason: 'delivery_job_active' };
   }
+  if (args.hasUnconsumedDeliveredWork) {
+    return { action: 'deliver_without_clear', reason: 'unconsumed_work_pending' };
+  }
   return { action: 'clear_before_deliver' };
 }
 
-export function planTurnEndFlushContextReset(_args: {
+export function planTurnEndFlushContextReset(args: {
   slotResetsContext: boolean;
-  deliverableCount: number;
+  hasPriorContext: boolean;
+  hasActiveDeliveryJob: boolean;
+  taskDeliverableCount: number;
 }): TurnEndFlushContextResetPlan {
+  if (
+    args.slotResetsContext &&
+    args.hasPriorContext &&
+    !args.hasActiveDeliveryJob &&
+    args.taskDeliverableCount > 0
+  ) {
+    return { action: 'clear_then_flush' };
+  }
+  if (args.slotResetsContext && args.hasPriorContext && args.hasActiveDeliveryJob) {
+    return { action: 'flush_without_clear', reason: 'active_delivery_job' };
+  }
   return { action: 'flush_without_clear' };
 }
