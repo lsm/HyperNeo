@@ -24,6 +24,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
   let task: SpaceTask;
   let notification: SpaceGoalOutcomeNotification;
   let resolution: GoalOwnerResolutionDecision;
+  let resolutions: Record<string, GoalOwnerResolutionDecision>;
   let coordinatorAgent: { id: string; handle: string; status: string } | null;
 
   function claimParams(
@@ -55,10 +56,11 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
+    resolutions = {};
     coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'active' };
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
-      getPrimaryGoalOwner: mock(() => resolution),
+      getPrimaryGoalOwner: mock((goalId: string) => resolutions[goalId] ?? resolution),
       getCoordinator: mock(() => coordinatorAgent),
       getById: mock((id: string) =>
         coordinatorAgent && id === coordinatorAgent.id ? coordinatorAgent : null
@@ -285,6 +287,11 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
 
     it('excludes goals the caller does not own', () => {
       const otherGoal = service.createGoal({ spaceId: goal.spaceId, title: 'Other' });
+      resolutions[otherGoal.id] = {
+        action: 'resolved',
+        owner: { agentId: 'agent-2', relationship: 'owner', createdAt: Date.now() },
+        conflicts: [],
+      };
       const otherTask = taskRepo.createTask({
         spaceId: goal.spaceId,
         title: 'Other task',
