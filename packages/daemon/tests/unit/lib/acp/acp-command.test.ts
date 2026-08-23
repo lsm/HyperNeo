@@ -325,6 +325,21 @@ describe('redactCommandSecrets', () => {
     ]);
   });
 
+  test('conservatively redacts scripts past the recursion cutoff', () => {
+    let nested = 'curl --token topsecret';
+    for (let i = 0; i < 4; i++) {
+      nested = `sh -c ${JSON.stringify(nested)}`;
+    }
+    const display = redactCommandSecrets('sh', ['-c', nested]);
+    expect(display.join(' ')).toContain('[redacted script]');
+    const sensitive = `sh -c ${JSON.stringify(`sh -c ${JSON.stringify('curl --token topsecret')}`)}`;
+    expect(getAcpCommandIdentityDigest(sensitive)).toBe(
+      getAcpCommandIdentityDigest(sensitive.replace('topsecret', 'othersafe'))
+    );
+    const benign = redactCommandSecrets('sh', ['-c', `sh -c 'echo plain'`]);
+    expect(benign.join(' ')).not.toContain('[redacted');
+  });
+
   test('redacts leading assignments inside shell scripts', () => {
     expect(
       getAcpCommandIdentityDigest("sh -c 'MODE=prod API_TOKEN=topsecret curl https://a'")

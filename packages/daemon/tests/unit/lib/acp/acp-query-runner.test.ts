@@ -742,6 +742,8 @@ describe('AcpQueryRunner', () => {
       canUseTool: async () => ({ behavior: 'deny', message: 'Denied' }),
     });
 
+    const content = 'blocked';
+
     try {
       await runner.start();
       await promptStarted;
@@ -750,7 +752,7 @@ describe('AcpQueryRunner', () => {
         constructorOptions[0].onFsWrite?.({
           sessionId: 'acp-session-1',
           path: target,
-          content: 'blocked',
+          content,
         })
       ).rejects.toThrow('ACP filesystem write denied');
       await expect(readFile(target, 'utf-8')).rejects.toThrow();
@@ -759,12 +761,12 @@ describe('AcpQueryRunner', () => {
         expect.objectContaining({
           questions: [
             expect.objectContaining({
-              question: `Allow write ${target}?`,
+              question: `Allow write ${target} (${content.length} chars)?`,
               header: 'ACP approval',
             }),
           ],
         }),
-        expect.objectContaining({ displayName: `write ${target}` })
+        expect.objectContaining({ displayName: `write ${target} (${content.length} chars)` })
       );
       releasePrompt();
       await ctx.queryPromise;

@@ -60,8 +60,13 @@ function redactUrlUserinfo(value: string): string {
   return match ? `${match[1]}[redacted]${match[3]}` : value;
 }
 
+const SCRIPT_SENSITIVITY_PATTERN =
+  /(^|\s)--?[^\s'"]*(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)|(^|\s)-[hu]\b/i;
+
 function redactShellCommand(script: string, depth: number): string {
-  if (depth <= 0) return script;
+  if (depth <= 0) {
+    return SCRIPT_SENSITIVITY_PATTERN.test(script) ? '[redacted script]' : script;
+  }
   try {
     const parsed = parseAcpCommandWithSpans(script);
     const tokens = [parsed.command, ...parsed.args];

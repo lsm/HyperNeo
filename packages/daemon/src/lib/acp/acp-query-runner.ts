@@ -316,7 +316,7 @@ async function authorizeAcpFsWrite(
       sessionId: params.sessionId,
       toolCall: {
         toolCallId: generateUUID(),
-        title: `write ${params.path}`,
+        title: `write ${params.path} (${params.content.length} chars)`,
         kind: 'edit',
         rawInput: { file_path: params.path, content: params.content },
       },

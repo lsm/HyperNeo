@@ -247,6 +247,25 @@ describe('QueryLifecycleManager', () => {
       clearTimeout(newerTimer);
     });
 
+    test('terminates agent processes discovered during the stop window', async () => {
+      const lateProcess = { pid: 4242, kill: mock(() => {}) } as never;
+      let call = 0;
+      snapshotTrackedAgentProcessesSpy.mockImplementation(() => {
+        call++;
+        return call === 1 ? [] : ([[4242, lateProcess]] as never);
+      });
+
+      manager = new QueryLifecycleManager(mockContext);
+      await manager.stop();
+
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(2);
+      expect(terminateTrackedAgentProcessesSpy.mock.calls[1][0]).toEqual({
+        forceDelayMs: expect.any(Number),
+        processes: [[4242, lateProcess]],
+        noPidProcesses: [],
+      });
+    });
+
     test('aborts a controller installed by the stopped query during the stop window', async () => {
       const lateController = new AbortController();
       mockContext.queryPromise = new Promise(() => {});
