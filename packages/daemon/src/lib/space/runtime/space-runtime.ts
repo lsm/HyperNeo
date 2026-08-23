@@ -4270,7 +4270,15 @@ export class SpaceRuntime {
       return { task: updatedTask, run: updatedRun };
     });
 
-    const recovered = recoverTx();
+    this.config.reactiveDb?.beginTransaction();
+    let recovered: { task: SpaceTask; run: SpaceWorkflowRun };
+    try {
+      recovered = recoverTx();
+      this.config.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.config.reactiveDb?.abortTransaction();
+      throw err;
+    }
     await this.ensureExecutorRegistered(recovered.run);
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
