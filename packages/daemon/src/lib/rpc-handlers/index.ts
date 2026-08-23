@@ -448,6 +448,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     longHorizonAgentRepo,
     outcomeNotificationRepo,
     evolutionScopeService,
+    reactiveDb: deps.reactiveDb,
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
@@ -503,7 +504,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceId,
       deps.reactiveDb,
       evolutionScopeService,
-      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId)
+      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      (taskId, fromStatus) =>
+        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true })
     );
   };
 
@@ -682,8 +685,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     spaceTaskManagerFactory,
     deps.internalEventBus,
-    spaceRuntimeService,
-    spaceGoalService
+    spaceRuntimeService
   );
 
   setupTaskScheduleHandlers(deps.messageHub, {
@@ -947,7 +949,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceId,
       deps.reactiveDb,
       evolutionScopeService,
-      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId)
+      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      (taskId, fromStatus) =>
+        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true })
     );
   };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());

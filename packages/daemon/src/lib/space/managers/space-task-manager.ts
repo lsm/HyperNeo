@@ -79,7 +79,8 @@ export class SpaceTaskManager {
     private spaceId: string,
     private reactiveDb?: ReactiveDatabase,
     private evolutionScopeService?: EvolutionScopeService,
-    private onTaskReopened?: (taskId: string) => void
+    private onTaskReopened?: (taskId: string) => void,
+    private onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
   }
@@ -257,16 +258,27 @@ export class SpaceTaskManager {
     if (reopened && newStatus === 'open') {
       updates.startedAt = null;
     }
-    const updated = this.db.transaction(() => {
-      const result = this.taskRepo.updateTask(taskId, updates);
-      if (!result) {
-        throw new Error(`Failed to update task: ${taskId}`);
-      }
-      if (reopened) {
-        this.onTaskReopened?.(taskId);
-      }
-      return result;
-    })();
+    this.reactiveDb?.beginTransaction();
+    let updated: SpaceTask;
+    try {
+      updated = this.db.transaction(() => {
+        const result = this.taskRepo.updateTask(taskId, updates);
+        if (!result) {
+          throw new Error(`Failed to update task: ${taskId}`);
+        }
+        if (reopened) {
+          this.onTaskReopened?.(taskId);
+        }
+        if (isTerminalTaskStatus(newStatus)) {
+          this.onTerminalTransition?.(taskId, task.status);
+        }
+        return result;
+      })();
+      this.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.reactiveDb?.abortTransaction();
+      throw err;
+    }
 
     if (newStatus === 'done') {
       if (!task.goalId) {

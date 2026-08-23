@@ -3575,7 +3575,30 @@ export class SpaceRuntime {
     if (previous && params.status !== undefined && params.status !== previous.status) {
       assertValidSpaceTaskTransition(previous.status, params.status);
     }
-    let updated = this.config.taskRepo.updateTask(taskId, params);
+    const isTerminal = (status: SpaceTaskStatus): boolean =>
+      status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived';
+    const reopensFromTerminal =
+      previous &&
+      params.status !== undefined &&
+      isTerminal(previous.status) &&
+      !isTerminal(params.status);
+    let updated: SpaceTask | null;
+    if (reopensFromTerminal) {
+      this.config.reactiveDb?.beginTransaction();
+      try {
+        updated = this.config.db.transaction(() => {
+          const result = this.config.taskRepo.updateTask(taskId, params);
+          this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
+          return result;
+        })();
+        this.config.reactiveDb?.commitTransaction();
+      } catch (err) {
+        this.config.reactiveDb?.abortTransaction();
+        throw err;
+      }
+    } else {
+      updated = this.config.taskRepo.updateTask(taskId, params);
+    }
     if (updated) {
       let emitUpdated = true;
 
@@ -4162,6 +4185,7 @@ export class SpaceRuntime {
         postApprovalSourceNodeId: null,
         reportedStatus: null,
         reportedSummary: null,
+        ...(targetStatus === 'open' ? { startedAt: null } : {}),
         ...(options.description !== undefined ? { description: options.description } : {}),
       });
       if (!updatedTask) throw new Error(`Failed to update task: ${task.id}`);
@@ -4265,10 +4289,19 @@ export class SpaceRuntime {
         }
       }
 
+      this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
       return { task: updatedTask, run: updatedRun };
     });
 
-    const recovered = recoverTx();
+    this.config.reactiveDb?.beginTransaction();
+    let recovered: { task: SpaceTask; run: SpaceWorkflowRun };
+    try {
+      recovered = recoverTx();
+      this.config.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.config.reactiveDb?.abortTransaction();
+      throw err;
+    }
     await this.ensureExecutorRegistered(recovered.run);
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
@@ -8310,7 +8343,12 @@ export class SpaceRuntime {
         spaceId,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       );
       this.taskManagers.set(spaceId, manager);
     }

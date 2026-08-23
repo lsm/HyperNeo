@@ -11,12 +11,6 @@ import {
   type UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 
-const TERMINAL_TASK_STATUSES = new Set<SpaceTaskStatus>([
-  'done',
-  'blocked',
-  'cancelled',
-  'archived',
-]);
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import type { SpaceManager } from '../space/managers/space-manager';
@@ -24,7 +18,6 @@ import type { SpaceTaskManager } from '../space/managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
 import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router';
-import type { SpaceGoalService } from '../space/goals/goal-service';
 import { arraysEqual } from '../utils/array-utils';
 
 const log = new Logger('space-task-handlers');
@@ -91,8 +84,7 @@ export function setupSpaceTaskHandlers(
   workflowManager: SpaceWorkflowManager,
   taskManagerFactory: SpaceTaskManagerFactory,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  spaceRuntimeService?: SpaceRuntimeService,
-  spaceGoalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>
+  spaceRuntimeService?: SpaceRuntimeService
 ): void {
   messageHub.onRequest('spaceTask.create', async (data) => {
     const params = data as CreateSpaceTaskParams & { draft?: boolean; goalId?: unknown };
@@ -302,7 +294,6 @@ export function setupSpaceTaskHandlers(
 
     let task: SpaceTask;
     let emitTaskUpdated = true;
-    let handleGoalTerminal = true;
     const emitCascadedTasks = async (cascadedTasks: SpaceTask[]) => {
       if (!emitTaskUpdated) return;
       for (const cascadedTask of cascadedTasks) {
@@ -469,7 +460,6 @@ export function setupSpaceTaskHandlers(
               updateParams
             );
             emitTaskUpdated = false;
-            handleGoalTerminal = false;
           } else if (parkingStoppedWorkflowTask) {
             if (!spaceRuntimeService) {
               throw new Error(
@@ -545,7 +535,6 @@ export function setupSpaceTaskHandlers(
         task = dependencyUpdate.task;
         if (dependencyUpdate.handledByRuntime) {
           emitTaskUpdated = false;
-          handleGoalTerminal = false;
         }
       }
     } else {
@@ -558,19 +547,6 @@ export function setupSpaceTaskHandlers(
       task = dependencyUpdate.task;
       if (dependencyUpdate.handledByRuntime) {
         emitTaskUpdated = false;
-        handleGoalTerminal = false;
-      }
-    }
-
-    if (handleGoalTerminal && spaceGoalService && TERMINAL_TASK_STATUSES.has(task.status)) {
-      try {
-        spaceGoalService.handleTaskTerminal(task.id, {
-          fromStatus: currentTaskForOverrides.status,
-        });
-      } catch (err) {
-        log.warn(
-          `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
-        );
       }
     }
 
