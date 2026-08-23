@@ -196,6 +196,34 @@ function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boole
   return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
 }
 
+type ProviderModelLoadResult =
+  | { status: 'loaded'; models: ModelInfo[] }
+  | { status: 'unavailable'; models: ModelInfo[] }
+  | { status: 'failed'; models: ModelInfo[] };
+
+function fallbackModelsFor(provider: Provider): ModelInfo[] {
+  const cached = provider.getCachedModels?.();
+  if (cached && cached.length > 0) {
+    return cached;
+  }
+  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+}
+
+async function loadProviderModels(provider: Provider): Promise<ProviderModelLoadResult> {
+  try {
+    if (!(await provider.isAvailable())) {
+      return { status: 'unavailable', models: [] };
+    }
+    const models = await provider.getModels();
+    if (models.length > 0) {
+      return { status: 'loaded', models };
+    }
+    return { status: 'failed', models: fallbackModelsFor(provider) };
+  } catch {
+    return { status: 'failed', models: fallbackModelsFor(provider) };
+  }
+}
+
 async function loadModelsFromProviders(): Promise<ModelInfo[]> {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
@@ -207,17 +235,13 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
   const providers = getAvailableProviders();
 
   const results = await Promise.allSettled(
-    providers.map(async (provider) => {
-      const available = await provider.isAvailable();
-      if (!available) return [];
-      return provider.getModels();
-    })
+    providers.map((provider) => loadProviderModels(provider))
   );
 
   const allModels: ModelInfo[] = [];
   results.forEach((result) => {
     /* v8 ignore next 2 */
-    if (result.status === 'fulfilled') allModels.push(...result.value);
+    if (result.status === 'fulfilled') allModels.push(...result.value.models);
   });
 
   return allModels;

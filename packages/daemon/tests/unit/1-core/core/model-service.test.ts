@@ -1445,8 +1445,8 @@ describe('Model Service', () => {
     });
   });
 
-  describe('probe-based provider failures (characterization)', () => {
-    it('omits a provider whose getModels probe rejects from the cache built by refreshModels', async () => {
+  describe('probe-based provider failures (fallback)', () => {
+    it('serves a provider via the static fallback when its getModels probe rejects', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
@@ -1466,10 +1466,12 @@ describe('Model Service', () => {
 
       const models = getAvailableModels('global');
       expect(models.some((m) => m.provider === 'anthropic')).toBe(true);
-      expect(models.some((m) => m.provider === 'glm')).toBe(false);
+      expect(models.filter((m) => m.provider === 'glm').map((m) => m.id)).toEqual(
+        GlmProvider.MODELS.map((m) => m.id)
+      );
     });
 
-    it('admits the provider again once its probe succeeds on a later refreshModels', async () => {
+    it('keeps the provider listed via fallback and still refreshes once the probe succeeds', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
@@ -1487,13 +1489,106 @@ describe('Model Service', () => {
       registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, mutableFetch));
 
       await refreshModels();
-      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
+      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(true);
 
       upstreamAccepts = true;
       await refreshModels();
 
       const models = getAvailableModels('global');
       expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(true);
+    });
+
+    it('treats an empty getModels result from an available provider as a failed fetch', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(true);
+    });
+
+    it('falls back to static metadata when isAvailable throws', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-codex',
+        getModels: async () => {
+          throw new Error('unreachable');
+        },
+        isAvailable: async () => {
+          throw new Error('saveCredentials: EACCES read-only auth dir');
+        },
+      } as ProviderLike);
+
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'anthropic-codex' && m.id === 'gpt-5.5')).toBe(true);
+    });
+
+    it('prefers getCachedModels over static metadata in the fallback', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      const cachedMarker: ModelInfo = {
+        id: 'glm-cached-marker',
+        name: 'GLM Cached Marker',
+        alias: 'glm-cached',
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 100000,
+        description: 'Curated ACP-style cached entry',
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        getModels: async () => {
+          throw new Error('Z.ai API key rejected (HTTP 401)');
+        },
+        isAvailable: async () => true,
+        getCachedModels: () => [cachedMarker],
+      } as ProviderLike);
+
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.id === 'glm-cached-marker')).toBe(true);
+      expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(false);
+    });
+
+    it('does not serve fallback models for a provider that reports itself unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        getModels: async () => {
+          throw new Error('getModels must not run when unavailable');
+        },
+        isAvailable: async () => false,
+      } as ProviderLike);
+
+      await refreshModels();
+
+      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
     });
   });
 });
