@@ -341,8 +341,8 @@ export class SpaceGoalService {
       const terminalGeneration = task.terminalGeneration;
       if (
         this.deps.outcomeNotificationRepo
-          ?.listPendingByGoal(goal.id)
-          .some((n) => n.taskId === taskId && n.terminalGeneration === terminalGeneration)
+          ?.listByTask(taskId)
+          .some((n) => n.terminalGeneration === terminalGeneration)
       ) {
         return {
           goal,

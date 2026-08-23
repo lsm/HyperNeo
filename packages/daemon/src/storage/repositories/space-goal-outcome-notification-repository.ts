@@ -64,6 +64,16 @@ export class SpaceGoalOutcomeNotificationRepository {
     return rows.map(rowToNotification);
   }
 
+  listByTask(taskId: string): SpaceGoalOutcomeNotification[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_goal_outcome_notifications
+					 WHERE task_id = ? ORDER BY created_at ASC`
+      )
+      .all(taskId) as Record<string, unknown>[];
+    return rows.map(rowToNotification);
+  }
+
   supersedeForTask(taskId: string): number {
     const result = this.db
       .prepare(
