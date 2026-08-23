@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 import {
   buildModelListUrl,
   extractAzureDeploymentModel,
+  fetchRemoteModelList,
   normalizeModelList,
+  type RemoteModelListEntry,
 } from '../../../../../src/lib/providers/shared/model-list';
 
 describe('extractAzureDeploymentModel', () => {
@@ -118,5 +120,197 @@ describe('normalizeModelList', () => {
   it('returns an empty list for missing payloads', () => {
     expect(normalizeModelList('openai-chat', undefined)).toEqual([]);
     expect(normalizeModelList('ollama-native', {})).toEqual([]);
+  });
+});
+
+describe('fetchRemoteModelList', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function installFetch(
+    respond: (url: string, init?: RequestInit) => Promise<unknown>
+  ): Array<{ url: string; init?: RequestInit }> {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    global.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const target = String(url);
+      calls.push({ url: target, init });
+      return respond(target, init);
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  const okResponse = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it('fetches the provider-declared URL with the declared headers and normalizes the list', async () => {
+    const calls = installFetch(async () =>
+      okResponse({
+        data: [
+          { id: 'glm-4.7', object: 'model' },
+          { id: 'not-a-model', object: 'listing' },
+        ],
+      })
+    );
+
+    const models = await fetchRemoteModelList({
+      url: 'https://api.example.com/paas/v4/models',
+      headers: { Authorization: 'Bearer sk-test' },
+    });
+
+    expect(models).toEqual([{ id: 'glm-4.7' }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://api.example.com/paas/v4/models');
+    expect(calls[0].init?.headers).toEqual({ Authorization: 'Bearer sk-test' });
+  });
+
+  it('normalizes the anthropic-messages shape with display names', async () => {
+    installFetch(async () =>
+      okResponse({ data: [{ id: 'kimi-k2', type: 'model', display_name: 'Kimi K2' }] })
+    );
+
+    const models = await fetchRemoteModelList({
+      url: 'https://api.example.com/v1/models',
+      type: 'anthropic-messages',
+    });
+
+    expect(models).toEqual([{ id: 'kimi-k2', name: 'Kimi K2' }]);
+  });
+
+  it('propagates HTTP failures instead of returning a fallback list', async () => {
+    const cache = new Map<string, RemoteModelListEntry>();
+    installFetch(async () => ({ ok: false, status: 502 }));
+
+    await expect(
+      fetchRemoteModelList({ url: 'https://api.example.com/v1/models', cache })
+    ).rejects.toThrow('Endpoint returned HTTP 502');
+    expect(cache.size).toBe(0);
+  });
+
+  it('propagates network failures', async () => {
+    installFetch(async () => {
+      throw new Error('connection refused');
+    });
+
+    await expect(
+      fetchRemoteModelList({ url: 'https://api.example.com/v1/models' })
+    ).rejects.toThrow('connection refused');
+  });
+
+  it('converts aborts into timeout errors', async () => {
+    installFetch(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        })
+    );
+
+    await expect(
+      fetchRemoteModelList({ url: 'https://api.example.com/v1/models', timeoutMs: 50 })
+    ).rejects.toThrow('Request timed out');
+  });
+
+  it('serves a fresh cache entry without refetching', async () => {
+    let callCount = 0;
+    installFetch(async () => {
+      callCount++;
+      return okResponse({ data: [{ id: `m${callCount}`, object: 'model' }] });
+    });
+    const cache = new Map<string, RemoteModelListEntry>();
+
+    const first = await fetchRemoteModelList({ url: 'https://api.example.com/v1/models', cache });
+    const second = await fetchRemoteModelList({ url: 'https://api.example.com/v1/models', cache });
+
+    expect(callCount).toBe(1);
+    expect(second).toEqual(first);
+    expect(second).toEqual([{ id: 'm1' }]);
+  });
+
+  it('bypasses the cache when force is true and persists the refreshed entry', async () => {
+    let callCount = 0;
+    installFetch(async () => {
+      callCount++;
+      return okResponse({ data: [{ id: `m${callCount}`, object: 'model' }] });
+    });
+    const cache = new Map<string, RemoteModelListEntry>();
+    const params = { url: 'https://api.example.com/v1/models', cache };
+
+    await fetchRemoteModelList(params);
+    const forced = await fetchRemoteModelList({ ...params, force: true });
+    expect(callCount).toBe(2);
+    expect(forced).toEqual([{ id: 'm2' }]);
+
+    const afterForce = await fetchRemoteModelList(params);
+    expect(callCount).toBe(2);
+    expect(afterForce).toEqual([{ id: 'm2' }]);
+  });
+
+  it('refetches when the cached entry is older than the TTL', async () => {
+    let callCount = 0;
+    installFetch(async () => {
+      callCount++;
+      return okResponse({ data: [{ id: `m${callCount}`, object: 'model' }] });
+    });
+    const cache = new Map<string, RemoteModelListEntry>();
+    const params = { url: 'https://api.example.com/v1/models', cache, cacheTtlMs: 30_000 };
+
+    await fetchRemoteModelList(params);
+    const key = cache.keys().next().value as string;
+    const entry = cache.get(key) as RemoteModelListEntry;
+    cache.set(key, { ...entry, fetchedAt: Date.now() - 60_000 });
+
+    const refreshed = await fetchRemoteModelList(params);
+    expect(callCount).toBe(2);
+    expect(refreshed).toEqual([{ id: 'm2' }]);
+  });
+
+  it('separates cache entries by URL and headers', async () => {
+    let callCount = 0;
+    installFetch(async () => {
+      callCount++;
+      return okResponse({ data: [{ id: `m${callCount}`, object: 'model' }] });
+    });
+    const cache = new Map<string, RemoteModelListEntry>();
+
+    const first = await fetchRemoteModelList({
+      url: 'https://api.example.com/v1/models',
+      headers: { Authorization: 'Bearer key-a' },
+      cache,
+    });
+    const second = await fetchRemoteModelList({
+      url: 'https://api.example.com/v1/models',
+      headers: { Authorization: 'Bearer key-b' },
+      cache,
+    });
+
+    expect(callCount).toBe(2);
+    expect(first).toEqual([{ id: 'm1' }]);
+    expect(second).toEqual([{ id: 'm2' }]);
+
+    const firstAgain = await fetchRemoteModelList({
+      url: 'https://api.example.com/v1/models',
+      headers: { Authorization: 'Bearer key-a' },
+      cache,
+    });
+    expect(callCount).toBe(2);
+    expect(firstAgain).toEqual([{ id: 'm1' }]);
+  });
+
+  it('fetches on every call when no cache is provided', async () => {
+    let callCount = 0;
+    installFetch(async () => {
+      callCount++;
+      return okResponse({ data: [{ id: `m${callCount}`, object: 'model' }] });
+    });
+
+    await fetchRemoteModelList({ url: 'https://api.example.com/v1/models' });
+    await fetchRemoteModelList({ url: 'https://api.example.com/v1/models' });
+
+    expect(callCount).toBe(2);
   });
 });
