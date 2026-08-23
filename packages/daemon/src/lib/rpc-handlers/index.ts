@@ -448,6 +448,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     longHorizonAgentRepo,
     outcomeNotificationRepo,
     evolutionScopeService,
+    reactiveDb: deps.reactiveDb,
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
