@@ -3,6 +3,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
+import { selectStrandedDeliveries } from './turn-outcome-classification';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
   stateManager: { setIdle(): Promise<void> },
@@ -215,20 +216,11 @@ export async function reconcileStrandedDeliveries(args: {
 }): Promise<number> {
   if (!isMessageDeliveryV2Enabled()) return 0;
   return withSessionLock(args.sessionId, async () => {
-    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
-    const enqueued = args.db.getUserMessageIdsByStatus(args.sessionId, 'enqueued');
-    const stranded: string[] = [];
-    for (const msg of enqueued) {
-      const uuid = msg.uuid;
-      if (
-        typeof uuid === 'string' &&
-        uuid.length > 0 &&
-        !active.has(uuid) &&
-        !(args.isInFlight?.(uuid) ?? false)
-      ) {
-        stranded.push(uuid);
-      }
-    }
+    const stranded = selectStrandedDeliveries(
+      args.db.getUserMessageIdsByStatus(args.sessionId, 'enqueued'),
+      args.jobQueue.activeDeliveryMessageUuids(args.sessionId),
+      args.isInFlight
+    );
     for (const uuid of stranded) {
       const role = deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
       if (role === 'turn' && args.stateManager) {
