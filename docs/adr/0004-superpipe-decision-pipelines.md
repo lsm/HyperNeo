@@ -1223,13 +1223,16 @@ invalid payload throws inside the flush transaction, so the pending row is
 retained for retry; syntactically invalid JSON returns before the old-row
 delete). The ten `markDelivery*`/`reopenDelivery*` wrappers select their
 target row through `deliveryTransitionRule`'s window — `send_status IN
-(acceptedFrom)` in the SELECT only — and then flip it through the shared
-`updateMessageStatus`, whose UPDATE matches by id alone with no status
-predicate: the select-to-update window between the two is theoretical only
-while the connection stays synchronous and single-threaded (the survey's B4
-note), and closing it with an expected-status guard is B4's plan/interpret
-work, untouched here. The dbId-keyed `deferEnqueuedUserMessage` is the one
-path that guards its own UPDATE (`AND send_status = ?`) instead of going
+(acceptedFrom)` in the SELECT — and then flip it through the shared
+`updateMessageStatus`, which chain B's B4 (landed beside this chain's merge)
+has since rebuilt as plan/interpret with a mixed guarded/unguarded shape:
+wrapper rows still pending when the plan is built are *planned*, and both
+their status UPDATE and their turn/seq side-effect statements carry the
+expected-status guard, while rows that left the pending window in between
+fall to the unplanned branch, which still updates by id alone — the
+select-to-update window is closed for the planned arm and remains, in
+theory, only in that fall-through. The dbId-keyed `deferEnqueuedUserMessage`
+keeps its own guarded UPDATE (`AND send_status = ?`) rather than going
 through the shared effect — its distinct lookup, return shape, and
 conditional-update semantics preserved.
 
@@ -1264,13 +1267,16 @@ pilot 4's pins.
 
 Boundary caveats, recorded for the same reason as pilot 3's:
 
-1. **The expensive facts are lazy thunks.** `isSuperseded` and
-   `isSearchableUserMessageStatus` enter the core as thunks, forced inside the
-   gates — pilot 3's lazy-thunk pattern — so a row skipped by an earlier gate
-   never pays the replacement-table or send-status read. The suite pins the
-   consultation contract directly: superseded first, user-status last, the
-   user-status fact never consulted when an earlier gate skips and never for
-   non-user rows.
+1. **The expensive facts are thunks — one eager in practice, one lazy.**
+   `isSuperseded` and `isSearchableUserMessageStatus` enter the core as
+   thunks (pilot 3's lazy-thunk pattern), but only the trailing one is
+   actually skipped by earlier gates: supersession is the FIRST gate, so its
+   replacement-table read is forced for every JSON-valid row that reaches
+   the core — including rows later rejected for type, eligibility, or empty
+   body — while the user-status thunk sits last and is the one an earlier
+   skip avoids. The suite pins both positions directly: superseded consulted
+   first, user-status last, the user-status fact never consulted when an
+   earlier gate skips and never for non-user rows.
 2. **The gates are wiring, not surface.** The six `applyXGate` functions are
    production-internal — composed intra-module into the run that
    `decideMessageSearchAdmission` executes — and directly test-consumed by
@@ -1291,14 +1297,16 @@ Boundary caveats, recorded for the same reason as pilot 3's:
 **The closing sweep found no dead inline copies.** The ten wrappers'
 hardcoded status windows and the old five-gate FTS cascade are gone from both
 files; knip (files/dependencies/exports), oxlint, and `tsc --noEmit` are
-clean. Live near-duplicates deliberately kept: `updateMessageStatus`'s
-pending-selection window `('deferred', 'enqueued', 'submitted')` — set-equal
-to `fail`'s acceptedFrom but a distinct predicate (rows still pending
-delivery, keyed on target ∈ {consumed, failed}, driving turn-promotion side
-effects) and B4's scope, not a delivery-action window;
-`deletePendingUserMessage`'s `('deferred', 'enqueued')` pending set — the same
-B-chain mutator territory; and the searchable-user-status SQL family of
-caveat 3. Every core export is production-consumed or pinned by the C suites:
+clean. Live near-duplicates deliberately kept: the pending-selection window —
+set-equal to `fail`'s acceptedFrom but a distinct predicate (rows still
+pending delivery, keyed on target ∈ {consumed, failed}, driving
+turn-promotion side effects) — was still inline when this chain closed, and
+chain B's B4 has since lifted it into the named `PENDING_ROW_FROM_STATUSES`
+in `sdk-message-status-plan.ts`, keeping it a separate concept rather than
+folding it onto the delivery routing table; `deletePendingUserMessage`'s
+inline `('deferred', 'enqueued')` pending set remains unconverted B-chain
+mutator territory; and the searchable-user-status SQL family of caveat 3.
+Every core export is production-consumed or pinned by the C suites:
 the five vocabulary constants by `session-repository.ts`'s rebuild (the TTL
 also by the parity suite), `decideMessageSearchAdmission` by
 `upsertMessageSearchRow` and both suites, `isMessageSearchIndexEligible` and
