@@ -118,30 +118,17 @@ import { WorkflowHookStateRepository } from '../../../storage/repositories/workf
 import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-agent';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
 import { Logger } from '../../logger';
+import { extractReplyToSessionId } from '../agent-message-envelope';
+import { derivePendingQueueTargetNames, selectDrainablePendingRows } from './pending-drain-gates';
 import {
-  formatAgentMessage,
-  extractReplyToSessionId,
-  REPLY_PROTOCOL,
-  type AgentMessageLevel,
-} from '../agent-message-envelope';
+  formatPendingRowForNodeAgent,
+  formatPendingRowForSpaceAgent,
+  isHumanPendingSource,
+} from './pending-envelope';
 
 const log = new Logger('task-agent-manager');
-const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
 
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
-const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = `\n\n─── Reply ───\n${REPLY_PROTOCOL}\nTo reply, use: `;
-const LEGACY_AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
-
-function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
-  if (sourceAgentName === 'task-agent') return 'task-agent';
-  if (sourceAgentName === 'space-agent') return 'space-agent';
-  if (sourceAgentName === 'space-member') return 'session-agent';
-  return 'node-agent';
-}
-
-function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
-  return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
-}
 
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
@@ -189,33 +176,6 @@ function formatWorkflowNodeSessionTitle(task: SpaceTask, agentName?: string): st
   const agentDisplayName = agentName ? agentName[0].toUpperCase() + agentName.slice(1) : '';
   const agentLabel = agentDisplayName ? ` — ${agentDisplayName}` : '';
   return `Task #${task.taskNumber}: ${task.title}${agentLabel}`;
-}
-
-export function hasAgentMessageEnvelopeForTest(
-  message: string,
-  sourceAgentName: string,
-  toLevel: AgentMessageLevel
-): boolean {
-  const match = message.match(AGENT_MESSAGE_ENVELOPE_HEADER);
-  if (!match) return false;
-
-  const fromLevel = pendingSourceLevel(sourceAgentName);
-  const expectedSenders = expectedEnvelopeSenderNames(sourceAgentName);
-  const headerSender = match[1];
-  if (
-    !expectedSenders.some(
-      (expectedSender) =>
-        headerSender === expectedSender || headerSender.startsWith(`${expectedSender} (task #`)
-    )
-  ) {
-    return false;
-  }
-
-  if (fromLevel === 'node-agent' && toLevel === 'node-agent') return true;
-  return (
-    message.includes(AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK) ||
-    message.includes(LEGACY_AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK)
-  );
 }
 
 export interface TaskAgentManagerConfig {
@@ -1302,26 +1262,16 @@ export class TaskAgentManager {
       ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
       : null;
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
-    const executionless = !execution;
-    const queueTargetNames = [
-      targetAgentName,
-      ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
-    ];
-    const seenIds = new Set<string>();
-    const pending = queueTargetNames
-      .flatMap((targetName) =>
-        drainWorkflowNodeId != null
-          ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
-          : repo.listPendingForTarget(workflowRunId, targetName)
-      )
-      .filter((row) => row.targetKind === 'node_agent')
-      .filter((row) => (executionless ? row.workflowNodeId == null : true))
-      .filter((row) => {
-        if (seenIds.has(row.id)) return false;
-        seenIds.add(row.id);
-        return true;
-      })
-      .sort((a, b) => a.createdAt - b.createdAt);
+    const pending = selectDrainablePendingRows(
+      derivePendingQueueTargetNames(targetAgentName, workflowNodeName).map((targetName) => ({
+        targetName,
+        rows:
+          drainWorkflowNodeId != null
+            ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
+            : repo.listPendingForTarget(workflowRunId, targetName),
+      })),
+      { executionPresent: !!execution, targetKind: 'node_agent' }
+    );
     if (pending.length === 0) return;
 
     log.info(
@@ -1329,19 +1279,8 @@ export class TaskAgentManager {
     );
 
     for (const row of pending) {
-      const isSyntheticMessage = row.sourceAgentName !== 'human';
-      const message = isSyntheticMessage
-        ? hasAgentMessageEnvelopeForTest(row.message, row.sourceAgentName, 'node-agent')
-          ? row.message
-          : formatAgentMessage({
-              fromLevel: pendingSourceLevel(row.sourceAgentName),
-              fromAgentName: row.sourceAgentName,
-              toLevel: 'node-agent',
-              body: row.message,
-              taskId: row.taskId,
-              nodeId: targetAgentName,
-            })
-        : `[Message from human]: ${row.message}`;
+      const isSyntheticMessage = !isHumanPendingSource(row.sourceAgentName);
+      const message = formatPendingRowForNodeAgent(row, targetAgentName);
       try {
         await this.injectSubSessionMessage(
           sessionId,
@@ -1412,19 +1351,7 @@ export class TaskAgentManager {
     );
 
     for (const row of pending) {
-      const message = hasAgentMessageEnvelopeForTest(
-        row.message,
-        row.sourceAgentName,
-        'space-agent'
-      )
-        ? row.message
-        : formatAgentMessage({
-            fromLevel: pendingSourceLevel(row.sourceAgentName),
-            fromAgentName: row.sourceAgentName,
-            toLevel: 'space-agent',
-            body: row.message,
-            taskId: row.taskId,
-          });
+      const message = formatPendingRowForSpaceAgent(row);
       try {
         const registry = this.config.replyRoutingRegistry;
         const replyTo =
