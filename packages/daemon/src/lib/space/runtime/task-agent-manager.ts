@@ -3708,6 +3708,7 @@ export class TaskAgentManager {
       this.subSessions.get(parentTask.id)!.set(sessionId, agentSession);
       this.agentSessionIndex.set(sessionId, agentSession);
       this.config.sessionManager.registerSession(agentSession);
+      this.reattachSlotContextReset(agentSession);
       this.registerCompletionCallback(sessionId, async () => {
         await this.handleSubSessionComplete(parentTask.id, execution.workflowNodeId, sessionId);
       });
