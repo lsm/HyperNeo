@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { FallbackModelEntry } from '@hyperneo/shared';
-import { BACKOFF_LADDER_MS, RESET_BUFFER_MS } from '../../../../src/lib/agent/fallback-recovery';
+import {
+  BACKOFF_LADDER_MS,
+  MAX_RESET_HORIZON_MS,
+  RESET_BUFFER_MS,
+} from '../../../../src/lib/agent/fallback-recovery';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   RateLimitWatchdog,
@@ -1098,6 +1102,28 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().retryCount).toBe(1);
       watchdog.clearPendingCooldown();
     });
+
+    it('a new user turn re-arms the fallback chain (tried entries cleared)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      const { deps, switchAndRetry, setModel } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+        switchSucceeds: false,
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      await flush();
+      await flush();
+      expect(switchAndRetry).toHaveBeenCalledTimes(1);
+      expect(switchAndRetry.mock.calls[0][1]).toEqual(A);
+
+      setModel('anthropic', 'sonnet');
+      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'hey' });
+      await flush();
+      expect(switchAndRetry).toHaveBeenCalledTimes(2);
+      expect(switchAndRetry.mock.calls[1][1]).toEqual(A);
+      watchdog.cancel();
+    });
   });
 
   describe('cancel / retryNow / reset / destroy', () => {
@@ -1467,14 +1493,39 @@ describe('RateLimitWatchdog', () => {
     it('a hinted reset beyond the 7-day horizon is ignored; the ladder arms but the hinted kind labels the pause', async () => {
       const { deps, notifyPause } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const before = Date.now();
       const result = await watchdog.scheduleRetry(
         '429',
         { uuid: 'm1', content: 'x' },
-        { resetAtMs: Date.now() + 8 * 24 * 60 * 60 * 1000, kind: 'usage_limit' }
+        { resetAtMs: Date.now() + MAX_RESET_HORIZON_MS + 60 * 1000, kind: 'usage_limit' }
       );
       expect(result).toBe(true);
       expect(watchdog.getState().retryCount).toBe(1);
-      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'usage_limit' });
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({
+        kind: 'usage_limit',
+        reason: 'backoff-ladder',
+      });
+      const write = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls[0][0];
+      expect(write.retryAt - before).toBeGreaterThan(8 * 60 * 1000);
+      expect(write.retryAt - before).toBeLessThan(12 * 60 * 1000);
+      watchdog.cancel();
+    });
+
+    it('a hinted reset just inside the 7-day horizon still free-waits', async () => {
+      const resetAt = Date.now() + MAX_RESET_HORIZON_MS - 60 * 1000;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: resetAt, kind: 'usage_limit' }
+      );
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(0);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({
+        kind: 'usage_limit',
+        reason: 'parsed-reset',
+      });
       watchdog.cancel();
     });
 
@@ -1531,7 +1582,7 @@ describe('RateLimitWatchdog', () => {
 
     it('ignores an LLM-refined reset beyond the 7-day horizon and keeps the ladder cooldown', async () => {
       const classify = mock(async () => ({
-        resetAtMs: Date.now() + 8 * 24 * 60 * 60 * 1000,
+        resetAtMs: Date.now() + MAX_RESET_HORIZON_MS + 60 * 1000,
         kind: 'usage_limit' as const,
         notALimit: false,
       }));
