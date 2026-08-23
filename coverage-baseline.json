@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "overallPercent": 84.59,
+  "overallPercent": 84.6,
   "packages": {
     "daemon": {
-      "covered": 45033,
-      "total": 52696,
-      "percent": 85.46
+      "covered": 45048,
+      "total": 52704,
+      "percent": 85.47
     },
     "shared": {
       "covered": 1488,
@@ -13,11 +13,11 @@
       "percent": 86.81
     },
     "web": {
-      "covered": 17160,
+      "covered": 17161,
       "total": 20870,
-      "percent": 82.22
+      "percent": 82.23
     }
   },
-  "sourceCommit": "ce8fe2bf339fc1a262f86909debff8894b488fc4",
-  "generatedAt": "2026-08-23T19:45:34.979Z"
+  "sourceCommit": "e389272c0f183cc31f3e3737b7fd8ce26f7acf69",
+  "generatedAt": "2026-08-23T20:47:45.824Z"
 }
