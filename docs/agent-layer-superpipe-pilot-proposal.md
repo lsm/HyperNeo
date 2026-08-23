@@ -1528,7 +1528,7 @@ refresh can publish after teardown (:794).
 ## Recommendation
 
 **Task-sizing update (2026-08-23, §8):** every PR below is decomposed into
-sub-PRs at a ≤200-line review budget — 16 tracked PRs → **53 PR-sized tasks**
+sub-PRs at a ≤200-line review budget — 16 tracked PRs → **54 PR-sized tasks**
 (PR 0 → 0a–0g, chains per §8). Gates moved since the survey: **#2661 merged**
 (Chain B apply PRs unblocked), **#2543 still open** (Chain A held), and the
 watchdog owner's stream is active (#2772 pins, #2779 open extraction) so B5d
@@ -1612,9 +1612,9 @@ chain PRs: B1–B6, C1–C4, A1–A5; 17 counting the `output-limiter-hook.ts`
 policy-core addition, which stays a single small task in that series).
 Question answered: is each PR the smallest unit that fits a focused review?
 Verdict: **only 4 were already at budget (B4, B6, C4, A5); the other 12
-decompose into 49 slices — 53 PR-sized tasks in all** — PR 0 → 7, B1 → 4,
-B2 → 2, B3 → 3, B5 → 12, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
-A4 → 2, plus the 4 unsplit parents (54 tasks counting the separate
+decompose into 50 slices — 54 PR-sized tasks in all** — PR 0 → 7, B1 → 4,
+B2 → 2, B3 → 4, B5 → 12, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
+A4 → 2, plus the 4 unsplit parents (55 tasks counting the separate
 output-limiter addition).
 
 Budget rule per sub-PR: production Δ ≲100 lines (hard cap ~150 only for
@@ -1676,7 +1676,7 @@ post-acquisition revalidation passes (including the ACP setup-window
 revalidation that closes the stale-spawn-never-closed gap); 0d–0g are
 independent leaves.
 
-### 8.2 Chain B → twenty-three sub-PRs
+### 8.2 Chain B → twenty-four sub-PRs
 
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
@@ -1689,6 +1689,7 @@ independent leaves.
 | B3a | apply startup arms (:969, :1013) — arms become interpreters | ~45 | ~40 |
 | B3b | apply provider/transient arms (:1069–1230), incl. the unmatched-AbortError `aborted_noop(clear_queue)` route — clears the queue and skips the entire terminal path via the `!isAbortError` gate (:1158–1291 region), a distinct classifier route that neither the startup nor provider arms cover | ~80 | ~55 |
 | B3c | finalizer post-await generation/identity guards (:1315–1360) — closes B1d's pinned window in production | ~40 | ~60 |
+| B3d | apply the terminal & handoff routes the classifier emits beyond the retry arms — `api_validation`, the scheduled/declined/thrown rate-limit handoff (the B1c suppression contract's production side), `terminal(category, message_hint)`, and the cleanup/superseded routes — one interpreter branch per route with each route's post-effect ownership handling left as the B5 fence seam | ~70 | ~60 |
 | B4 | teardown-liturgy dedup: one parameterized helper, four call sites (unsplit) | ~90 | ~40 |
 | B5a | attempt-token primitive: invalidated before retry recursion (:1150); PreToolUse hook binds to it (:518 region) | ~70 | ~90 |
 | B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267), plus finalizer revalidation after the idle await before clearing shared fields and owner-binding the detached `processExitSnapshot.then(...)` continuation that can publish `query.trigger` for the successor | ~70 | ~90 |
