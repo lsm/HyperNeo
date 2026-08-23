@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
+import {
+  createLiveQueryLifecycleState,
+  type LiveQueryLifecycleEffect,
+  type LiveQueryLifecycleEvent,
+  type LiveQueryLifecycleState,
+  transitionLiveQueryLifecycle,
+} from '../lib/live-query-lifecycle';
 import type {
   LiveQueryDeltaEvent,
   LiveQueryErrorEvent,
@@ -163,6 +170,10 @@ const INITIAL_PAGINATION_STATE: PaginationState = {
   hiddenTopLevelCount: 0,
 };
 
+const RETRY_DELAYS_MS: [number, number] = [500, 1500];
+
+type LifecycleStorePayload = LiveQuerySnapshotEvent | LiveQueryDeltaEvent | null;
+
 let _subscriptionCounter = 0;
 
 export function generateGroupMessagesSubId(groupId: string): string {
@@ -183,7 +194,7 @@ export function useGroupMessages(
 
   const { request, onEvent, isConnected } = useMessageHub();
 
-  const [{ allMessages, hiddenOlderCount, hiddenTopLevelCount }, dispatch] = useReducer(
+  const [{ allMessages, hiddenOlderCount, hiddenTopLevelCount }, dispatchPagination] = useReducer(
     paginationReducer,
     INITIAL_PAGINATION_STATE
   );
@@ -193,7 +204,7 @@ export function useGroupMessages(
 
   useEffect(() => {
     if (!groupId || !isConnected) {
-      dispatch({ type: 'reset' });
+      dispatchPagination({ type: 'reset' });
       setLoadedForGroupId(null);
       activeSubIdRef.current = null;
       return;
@@ -201,77 +212,118 @@ export function useGroupMessages(
 
     const subscriptionId = generateGroupMessagesSubId(groupId);
     activeSubIdRef.current = subscriptionId;
-    dispatch({ type: 'reset' });
+    dispatchPagination({ type: 'reset' });
     setLoadedForGroupId(null);
 
-    const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      dispatch({
-        type: 'snapshot',
-        rows: event.rows as SessionGroupMessage[],
-        pageSize: pageSizeRef.current,
-      });
-      setLoadedForGroupId(groupId);
-    });
+    const initial = createLiveQueryLifecycleState({ snapshotRetryEnabled: false });
+    let lifecycle: LiveQueryLifecycleState = initial.state;
+    const retryTimers = new Set<ReturnType<typeof setTimeout>>();
 
-    const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      dispatch({
-        type: 'delta',
-        removed: event.removed as SessionGroupMessage[] | undefined,
-        updated: event.updated as SessionGroupMessage[] | undefined,
-        added: event.added as SessionGroupMessage[] | undefined,
-      });
-    });
+    const dispatch = (event: LiveQueryLifecycleEvent): LiveQueryLifecycleEffect[] => {
+      const result = transitionLiveQueryLifecycle(lifecycle, event);
+      lifecycle = result.state;
+      return result.effects;
+    };
 
-    const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      if (event.phase === 'delta') {
+    const requestSubscribe = (generation: number, attempt: number): void => {
+      Promise.resolve(
         request('liveQuery.subscribe', {
           queryName: 'sessionGroupMessages.byGroup',
           params: [groupId],
           subscriptionId,
-        }).catch(() => setLoadedForGroupId(groupId));
-        return;
-      }
-      setLoadedForGroupId(groupId);
-    });
-
-    const MAX_RETRIES = 2;
-    const RETRY_DELAYS_MS: [number, number] = [500, 1500];
-
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const subscribeWithRetry = (attempt: number): void => {
-      request('liveQuery.subscribe', {
-        queryName: 'sessionGroupMessages.byGroup',
-        params: [groupId],
-        subscriptionId,
-      }).catch(() => {
-        if (activeSubIdRef.current !== subscriptionId) return;
-        if (attempt < MAX_RETRIES) {
-          retryTimer = setTimeout(() => {
-            retryTimer = null;
-            if (activeSubIdRef.current === subscriptionId) {
-              subscribeWithRetry(attempt + 1);
-            }
-          }, RETRY_DELAYS_MS[attempt]);
-        } else {
-          if (activeSubIdRef.current === subscriptionId) {
-            setLoadedForGroupId(groupId);
+        })
+      )
+        .then(() => {
+          executeEffects(dispatch({ type: 'subscribed', generation }));
+        })
+        .catch(() => {
+          if (activeSubIdRef.current !== subscriptionId) return;
+          if (attempt >= RETRY_DELAYS_MS.length) {
+            executeEffects(dispatch({ type: 'snapshot-failed', generation }));
+            return;
           }
-        }
-      });
+          const timer = setTimeout(() => {
+            retryTimers.delete(timer);
+            if (activeSubIdRef.current !== subscriptionId) return;
+            requestSubscribe(generation, attempt + 1);
+          }, RETRY_DELAYS_MS[attempt]);
+          retryTimers.add(timer);
+        });
     };
 
-    subscribeWithRetry(0);
+    const executeEffects = (
+      effects: LiveQueryLifecycleEffect[],
+      payload: LifecycleStorePayload = null
+    ): void => {
+      for (const effect of effects) {
+        if (effect.kind === 're-snapshot') {
+          requestSubscribe(effect.generation, 0);
+          continue;
+        }
+        if (effect.kind === 'schedule-cleanup') {
+          for (const timer of retryTimers) clearTimeout(timer);
+          retryTimers.clear();
+          continue;
+        }
+        if (effect.kind !== 'emit-to-store') continue;
+        if (effect.emission.type === 'snapshot') {
+          const snapshot = payload as LiveQuerySnapshotEvent | null;
+          dispatchPagination({
+            type: 'snapshot',
+            rows: (snapshot?.rows as SessionGroupMessage[]) ?? [],
+            pageSize: pageSizeRef.current,
+          });
+          setLoadedForGroupId(groupId);
+          continue;
+        }
+        if (effect.emission.type === 'delta') {
+          const delta = payload as LiveQueryDeltaEvent | null;
+          if (delta) {
+            dispatchPagination({
+              type: 'delta',
+              removed: delta.removed as SessionGroupMessage[] | undefined,
+              updated: delta.updated as SessionGroupMessage[] | undefined,
+              added: delta.added as SessionGroupMessage[] | undefined,
+            });
+          }
+          continue;
+        }
+        setLoadedForGroupId(groupId);
+      }
+    };
+
+    executeEffects(initial.effects);
+
+    const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      executeEffects(
+        dispatch({ type: 'snapshot-arrived', generation: lifecycle.generation }),
+        event
+      );
+    });
+
+    const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      executeEffects(dispatch({ type: 'delta-arrived', generation: lifecycle.generation }), event);
+    });
+
+    const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (event.phase === 'delta') {
+        executeEffects(dispatch({ type: 'transport-error', generation: lifecycle.generation }));
+        return;
+      }
+      executeEffects(
+        dispatch({
+          type: 'snapshot-failed',
+          generation: lifecycle.generation,
+          message: event.message,
+        })
+      );
+    });
 
     return () => {
-      if (retryTimer !== null) {
-        clearTimeout(retryTimer);
-        retryTimer = null;
-      }
-
+      executeEffects(dispatch({ type: 'unsubscribe' }));
       unsubSnapshot();
       unsubDelta();
       unsubError();
@@ -288,7 +340,7 @@ export function useGroupMessages(
   );
 
   const loadEarlier = useCallback(() => {
-    dispatch({ type: 'loadEarlier', pageSize: pageSizeRef.current });
+    dispatchPagination({ type: 'loadEarlier', pageSize: pageSizeRef.current });
   }, []);
 
   const isLoading = groupId !== null && isConnected && loadedForGroupId !== groupId;
