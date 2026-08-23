@@ -460,10 +460,18 @@ describe('live-query-lifecycle', () => {
       const initial = createLiveQueryLifecycleState({ snapshotRetryEnabled: false });
       let state = initial.state;
       for (let i = 0; i < 10; i += 1) {
-        const generation = state.generation;
-        const resolved = transitionLiveQueryLifecycle(state, {
+        const dropped = transitionLiveQueryLifecycle(state, {
+          type: 'transport-error',
+          generation: state.generation,
+        });
+        expect(dropped.state.status).toBe('subscribing');
+        expect(dropped.state.snapshotRetries).toBe(0);
+        expect(dropped.effects).toEqual([
+          { kind: 're-snapshot', generation: state.generation + 1 },
+        ]);
+        const resolved = transitionLiveQueryLifecycle(dropped.state, {
           type: 'subscribed',
-          generation,
+          generation: dropped.state.generation,
         });
         expect(resolved.state.status).toBe('awaiting-snapshot');
         expect(resolved.state.snapshotRetries).toBe(0);
@@ -471,6 +479,7 @@ describe('live-query-lifecycle', () => {
         state = resolved.state;
       }
       expect(state.status).toBe('awaiting-snapshot');
+      expect(state.snapshotRetries).toBe(0);
     });
   });
 
