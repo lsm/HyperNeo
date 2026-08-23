@@ -24,6 +24,12 @@ and reconcile as point decisions — with the closing PRs fixing the two live
 incident bugs the decision-table pins surfaced; see "Pilot 4" below for the two
 design lessons it added to the record.
 
+Validated further by pilot 6 / chain S (2026-08-23): the verified-stop ladder
+(`stopSessionVerified`) applied as a `stagedRun` interpreter over extracted
+gates — the combinator's first composed-then-swapped production flow. See
+"Pilot 6" below for the boundary caveats, the compensation deferral, and the
+closing sweep.
+
 Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
 seam and the lazy-activation path as staged interpreters over extracted
 admission/routing cores — and the first production consumer of
@@ -802,6 +808,152 @@ table.
 
 Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
 
+## Pilot 6 — chain S: verified-stop staged interpreter (2026-08-23)
+
+Chain S took `stagedRun` to production on the smallest staged flow first, as a
+deliberate choice: `TaskAgentManager`'s verified-stop ladder (interrupt →
+verify → retry → escalate → report), ~90 inline lines driving one session,
+with the S1 parity harness already pinning its behavior — including the
+process-exit settle race and the `cancellingSessions` interplay. Six PRs:
+S1 the parity pin (#2709), S2 the `staged-run.ts` combinator plus contract
+suite (#2717, shared with chain P), S3 the `stop-verification-gates.ts` pure
+core (#2729), S4 the composed `verified-stop-flow.ts` running beside the
+inline ladder (#2763), S5 the swap — ladder deleted, `stopSessionVerified`
+now a 17-line interpreter plus a 34-line deps builder (#2787) — and this
+closing sweep. One merge-order fact, so "deliberately first" is not read as
+merge order: chain P's spawn flow (#2761) landed hours before S4, so
+verified-stop was the second merged production consumer of the combinator.
+
+The interpreter: `stopSessionsVerified` keeps the `Promise.all` fan-out (the
+pipeline is per-session, never the loop) and the `cancellingSessions` guard;
+`stopSessionVerified` itself claims nothing — the flow's first snapshot stage
+claims the session out of the manager's index, so a missing session is a
+structural branch with its own unregister effect and halt, never an input to
+the gates. The interrupt effect binds `stopSessionPreserveDb` (strict); the
+ladder position is structural — each decide site calls `decideStopVerification`
+with the counters pinned (`interruptAttemptsSoFar` 1, then 2;
+`escalationDone` false, then true; `sessionPresent: true` always). Callers
+(`parkStoppedWorkflowTask`, `stopActiveWork`) consume `VerifiedSessionStop[]`
+unchanged and still warn on unconfirmed sessions.
+
+Boundary caveats, recorded for the same reason as pilot 3's:
+
+1. **The composed flow shadows most of the gate's decision table.** With the
+   counters pinned per site, the arms encoding other ladder positions are
+   unreachable in production: `sessionPresent: false` (the missing case is
+   decided structurally before any gate), `retry_interrupt` at
+   `interruptAttemptsSoFar ≥ 2`, `escalate_terminate` below 2 attempts
+   (1 < `VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS` always retries), `report_leak`
+   before escalation, and both mid-flow decide stages' bare `{ decision }`
+   fallthroughs. Those arms live in the gate suite — the gate remains the
+   complete decision table, the flow the ladder; the same dual phenomenon
+   pilot 3 recorded, with the same defense (the gate suite pins the table,
+   the flow suites pin which cells production occupies).
+2. **The gather short-circuit duplicates the gate's first two arms.**
+   `gatherSessionLiveness` pre-checks `isStopDownProcessingStatus` and
+   `isInterruptInProgress` to skip the process-exit settle await and the pid
+   reads, returning synthesized `interruptInProgress: false, livePids: []`.
+   The synthesis is coherent only because `inspectSessionLiveness` checks
+   status, then interrupt, then pids — a cheap-path guard written with
+   knowledge of the gate's precedence (pilot 3's lazy-thunk caveat in another
+   shape: the read is skipped, not deferred).
+3. **`notes` rides a closure, not declared state.** The flow's `notes` array
+   is captured from the enclosing invocation by effect and halt bodies; it is
+   not a declared state key, so the declared read/write-set discipline does
+   not see it. Append-only within a sequential run and re-created per
+   invocation, so there is no staleness hazard — but it is an escape hatch
+   from "an undeclared read is not expressible", recorded rather than closed.
+4. **The type seam is deliberately loose at the payloads.** State keys are
+   typed (`StageView` is a `Pick` of the state interface), but branch payloads
+   ride the `when` key as `unknown` and `decision` is `unknown`, so the flow
+   casts at read sites (`view.session!`, `view.retryInterrupt as { reason:
+   string }`, `view.decision as StopVerificationDecision`). The declared-key
+   discipline is enforced by the composition-time contract and its suite, not
+   by these payload types; tightening them is combinator work, not flow work.
+5. **`superseded` is structurally unreachable here.** Every effect declares
+   `writes: []` — no CAS primitives exist to lose — so the shell's superseded
+   branch is defensive, and if it ever fired it would surface through the
+   fan-out's catch as `stopped: false, detail: 'verified stop crashed: …'`,
+   the same channel as a genuine crash. `superseded` becomes real only with
+   the run-tick phases and their Phase 0 CAS machinery.
+
+**Compensation: none registered, and the durable arm stays deferred.** Every
+effect is idempotent or escalating — a repeated interrupt is harmless,
+unregister is idempotent, terminate is the escalation itself — so the flow
+registers no compensations at all. What a daemon crash mid-flow actually
+leaves (corrected after review of this sweep): the unregister/detach effects
+are in-memory-only — cache removal and pid preservation, no DB rows — so the
+persistent residue is a possibly-live orphaned SDK process (the interrupt or
+escalation that never ran) and, for the park caller, stale `in_progress`
+node-execution rows, because `parkInFlightExecutionsForTask` runs after the
+verified stop and never ran. Nothing re-runs the ladder for that residue:
+`rehydrate()` iterates `listActive()`, which excludes `stopped`;
+`parkStoppedWorkflowTask` throws on the invalid `stopped → stopped`
+transition before reaching `stopSessionsVerified`; and the space-shutdown
+caller finds no in-memory sessions, so its verified stop runs with an empty
+list. The residue is reconciled forward, not by unwinding: a later space stop
+runs `parkInFlightExecutionsForSpace`, a DB-level sweep that resets stale
+execution rows regardless of in-memory state, and a task resume
+(`stopped → in_progress` is a valid transition) re-admits the run to the
+tick; orphaned processes have no startup sweep and end by their own exit or
+manual kill. That is the actual reason the durable arm stays deferred: no
+consumer exists for a compensation record — nothing at startup looks for
+incomplete unwinds, the in-memory targets of the inverse operations are gone
+with the process, and the durable harms are repaired by forward DB sweeps
+rather than inverse effects. `DEFERRED_DURABLE_COMPENSATION_ARMS` in the S2
+contract suite pins the deferral; a flow whose effects carry durable inverse
+obligations would reopen it.
+
+**The closing sweep found no dead inline copies.** The S5 swap deleted the
+whole ladder — the inline loop, `gatherStopVerificationSnapshot`,
+`readLivePidsAfterSettle`, and the S4-era `stopSessionVerifiedViaFlow` twin —
+and no reference to any of them remains. knip (files/dependencies/exports),
+oxlint, and `tsc --noEmit` are clean. Every core export is
+production-consumed or pinned directly by the gate suites (Decision item 6):
+`decideStopVerification`, `isStopDownProcessingStatus`,
+`assembleVerifiedStopResult`, and the `SessionLivenessSnapshot` /
+`StopVerificationDecision` types are consumed by `verified-stop-flow.ts`;
+`inspectSessionLiveness`, `VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS`, and the
+remaining snapshot/assembly types are pinned by
+`stop-verification-gates.test.ts` alone — the flow pins the attempt bound
+and ladder position as literals and reaches the liveness inspection only
+through `decideStopVerification`, which wraps the inspector (caveats 1–2);
+`runVerifiedStopFlow` /
+`VerifiedStopFlowDeps` by `task-agent-manager.ts` and both flow suites; the
+combinator's `stagedRun` / `StagedRunOutcome` by both production flows
+(`verified-stop-flow.ts`, chain P's `spawn-flow.ts`);
+`DEFERRED_DURABLE_COMPENSATION_ARMS` by the S2 contract suite. Live
+near-duplicates deliberately kept: `stopSessionPreserveDb` itself — the
+unverified one-shot interrupt+cleanup still called directly by
+`respawnRateLimitedExecution`, `cancelBySessionId`, `restartStuckSubSession`,
+`shutdownTask`, and `cleanup`, none of which verify liveness afterward (the
+verified flow binds it as an effect dep rather than converting its callers);
+the gather guards of caveat 2; `post-approval-router.ts`'s
+`SessionLivenessProbe` — a boolean session-presence check, a different
+concept from the processing-state/pid liveness ladder and never a gates
+consumer despite the name; `SessionManager.preserveRootPids` — the pid
+bookkeeping under `unregisterSession` (its host
+`interruptInMemorySession`, interrupt and cleanup without a verification
+ladder, is production-unreferenced — its only callers are its own unit
+tests, so it is recorded here after review as pre-existing dead machinery
+outside chain S's conversion, a removal candidate for a code-change PR
+rather than something this docs-only sweep deletes); and the `app.ts`
+process-watchdog callback, which folds `getTrackedAgentRootPidsSplit`
+from both managers into `cleanupSuspiciousProcesses` — the split
+determines the daemon-owned descendant set and therefore which
+long-running owned processes (`bun test` past 15 minutes, `make dev`
+past 24 hours) are SIGTERMed with their process groups. That last one is
+an operational decision surface, not status reporting (corrected after
+review): a third consumer of the same pid split whose ownership question
+differs from the ladder's liveness question, and any later consolidation
+must respect both.
+
+**Costs:** production +315 across the chain — gates +92, flow +268,
+`task-agent-manager.ts` net −45 (S3 +62/−44, S4 +54, S5 +1/−118) — on top of
+the shared combinator landed at S2 (+738). Tests net +1,861 (S1 +654/−7
+including the settle-window upper bound, gates suite +367, two flow suites
++419 each, S5 +25/−16) on top of the shared 1,975-line S2 contract suite.
+
 ## Pilot 7 — spawn/activation seam + the Phase 0 consumption record (Chain P, 2026-08-23)
 
 Pilot 7 (sub-pilot 7, "Chain P") converted the workflow-node spawn seam:
@@ -1019,6 +1171,11 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
   `space-tool-pipeline` — see "Pilot 5" above, which also records the group
   follow-ups (session tools, agent CRUD, forge/goals, messaging, the RPC task
   cascade) as mini-pilot candidates.
+- **Done (chain S / pilot 6):** the verified-stop ladder as a `stagedRun`
+  interpreter over `stop-verification-gates.ts`, composed in
+  `verified-stop-flow.ts` and applied in `stopSessionVerified` — see "Pilot 6"
+  above for the boundary caveats, the compensation deferral, and the closing
+  sweep. The stop flow is done; later chains do not revisit it.
 - **Done (pilot 7, Chain P):** the spawn/activation seam staged over the
   Phase 0 primitives — see "Pilot 7" above, which records the Phase 0
   consumption ledger, the superseded-outcome pins, and the Pilot 3
@@ -1046,12 +1203,17 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
   interpreter plus its contract suite (composition-time stage-contract
   validation, declared-key views, interpreter-stamped `superseded`, reverse
   compensation unwind, microtask-profile pins; branching rides superpipe's
-  native `!dep`/`?dep`). No production consumer yet; Chain S PR 4
-  (`stopSessionVerified`) is the first. Everything below in the staged rollout
-  composes **on this landed module** — it is never re-landed or duplicated.
+  native `!dep`/`?dep`). Production consumers have since landed: chain S's
+  verified-stop flow (PRs 4–5, see "Pilot 6") and chain P's spawn flow. Every
+  later phase below composes **on this landed module** — it is never re-landed
+  or duplicated.
 - **Staged rollout of `stagedRun`** (from #2670; the pilot-3 "future mini-pilots"
-  sub-flows become these phases; all phases build on the landed
-  `staged-run.ts`):
+  sub-flows become these phases). Every phase composes on the landed
+  `staged-run.ts` from S2 (#2717) as a direct import: the run-tick phases —
+  `repairQueuedWorkflowNodeHandoffs` (phase 1), the four
+  `handle*Executions` recovery handlers (phases 2–5), and the top-level tick
+  composition (phase 6) — depend on that module and must never re-land or
+  duplicate it:
 
   | Phase | Scope | Notes |
   | --- | --- | --- |
@@ -1116,5 +1278,10 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
   `packages/daemon/src/lib/space/runtime/staged-run.ts`, contract suite in
   `packages/daemon/tests/unit/5-space/runtime/staged-run.test.ts`. The run-tick
   phases below and every later pilot depend on this module — never re-land it.
+- Pilot 6 (chain S) files:
+  `packages/daemon/src/lib/space/runtime/{stop-verification-gates,verified-stop-flow}.ts`;
+  interpreter in `task-agent-manager.ts` (`stopSessionsVerified` /
+  `stopSessionVerified` and the deps builder). Pilot 6 PRs: #2709, #2717,
+  #2729, #2763, #2787, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

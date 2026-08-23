@@ -20,6 +20,7 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { runMigration206 } from './m206-restamp-reviewer-depth-tiers';
+import { runMigration207 } from './m207-restamp-reviewer-review-modes';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 export function runMigrations(db: BunDatabase, createBackup: () => void): void {
@@ -452,6 +453,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(205), () => runMigration205(db));
 
   run(migrationMarkerKey(206), () => runMigration206(db));
+
+  run(migrationMarkerKey(207), () => runMigration207(db));
 }
 
 function migrationMarkerKey(version: number): string {
