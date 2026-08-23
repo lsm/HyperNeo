@@ -11,6 +11,7 @@ import type {
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
+  deliverMessage,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   waitForDeliveryConsumption,
@@ -41,6 +42,21 @@ function setDeliveryResponseObserver(
   (
     agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null }
   ).deliveryResponseObserver = observer;
+}
+
+function shadowReplaySeams(session: AgentSession): {
+  ensureQueryStarted: ReturnType<typeof mock>;
+  enqueueWithId: ReturnType<typeof mock>;
+} {
+  const ensureQueryStarted = mock(async () => {});
+  const enqueueWithId = mock(async () => {});
+  const seams = session as unknown as {
+    ensureQueryStarted: () => Promise<void>;
+    messageQueue: { enqueueWithId: (uuid: string, content: unknown) => Promise<void> };
+  };
+  seams.ensureQueryStarted = ensureQueryStarted;
+  seams.messageQueue.enqueueWithId = enqueueWithId;
+  return { ensureQueryStarted, enqueueWithId };
 }
 
 describe('AgentSession', () => {
@@ -5252,6 +5268,343 @@ describe('AgentSession', () => {
         status: 'failed',
       });
       unsubscribe();
+    });
+  });
+
+  describe('startup pending-message replay (scheduleInitialPendingMessageReplay)', () => {
+    let db: Database;
+    let agentSession: AgentSession | null;
+    let previousDeliveryV2: string | undefined;
+
+    async function flushStartupReplay(): Promise<void> {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    async function prepareStartupSession(
+      sessionId: string,
+      options?: {
+        queryMode?: 'immediate' | 'manual';
+        persistedStatus?: string;
+        autoReplayPendingMessages?: boolean;
+      }
+    ): Promise<() => AgentSession> {
+      const session = createTestSession(sessionId);
+      if (options?.queryMode) session.config.queryMode = options.queryMode;
+      db.createSession(session);
+      if (options?.persistedStatus) {
+        db.updateSession(sessionId, {
+          processingState: JSON.stringify({ status: options.persistedStatus }),
+        });
+      }
+      const restored = db.getSession(sessionId) ?? session;
+      const bus = await createTestInternalEventBus();
+      const runtimeOptions =
+        options?.autoReplayPendingMessages === undefined
+          ? {}
+          : { autoReplayPendingMessages: options.autoReplayPendingMessages };
+      return () => {
+        agentSession = new AgentSession(
+          restored,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          runtimeOptions
+        );
+        return agentSession;
+      };
+    }
+
+    beforeEach(() => {
+      previousDeliveryV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+      agentSession = null;
+    });
+
+    afterEach(async () => {
+      await agentSession?.cleanup();
+      db?.close();
+      if (previousDeliveryV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousDeliveryV2;
+    });
+
+    it('replays persisted enqueued messages through the startup microtask', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-startup-replay-happy';
+      const uuid = 'msg-startup-replay-happy';
+      const construct = await prepareStartupSession(sessionId);
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'recover me' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      const session = construct();
+      const seams = shadowReplaySeams(session);
+
+      await flushStartupReplay();
+
+      expect(seams.ensureQueryStarted).toHaveBeenCalledTimes(1);
+      expect(seams.enqueueWithId).toHaveBeenCalledWith(uuid, 'recover me');
+    });
+
+    it('does not schedule replay when the restored status is waiting_for_input', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-startup-replay-waiting';
+      const uuid = 'msg-startup-replay-waiting';
+      const construct = await prepareStartupSession(sessionId, {
+        persistedStatus: 'waiting_for_input',
+      });
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        { type: 'user', uuid, message: { role: 'user', content: 'hold' } } as unknown as SDKMessage,
+        'enqueued'
+      );
+      const session = construct();
+      const seams = shadowReplaySeams(session);
+
+      await flushStartupReplay();
+
+      expect(seams.ensureQueryStarted).not.toHaveBeenCalled();
+      expect(seams.enqueueWithId).not.toHaveBeenCalled();
+      expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, uuid)?.sendStatus).toBe(
+        'enqueued'
+      );
+    });
+
+    it('does not schedule replay when queryMode is manual', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-startup-replay-manual';
+      const construct = await prepareStartupSession(sessionId, { queryMode: 'manual' });
+      const session = construct();
+      const seams = shadowReplaySeams(session);
+
+      await flushStartupReplay();
+
+      expect(seams.ensureQueryStarted).not.toHaveBeenCalled();
+      expect(seams.enqueueWithId).not.toHaveBeenCalled();
+    });
+
+    it('returns early without flushing deferred messages when the enqueued replay fails', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-startup-replay-failed';
+      const enqueuedUuid = 'msg-startup-replay-failed-enqueued';
+      const deferredUuid = 'msg-startup-replay-failed-deferred';
+      const repo = db.getSDKMessageRepo();
+      const construct = await prepareStartupSession(sessionId);
+      repo.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: enqueuedUuid,
+          message: { role: 'user', content: 'current turn' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      repo.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: deferredUuid,
+          message: { role: 'user', content: 'next turn' },
+        } as unknown as SDKMessage,
+        'deferred'
+      );
+      const session = construct();
+      const seams = shadowReplaySeams(session);
+      const realByStatus = db.getUserMessagesByStatus.bind(db);
+      (db as unknown as Record<string, unknown>).getUserMessagesByStatus = mock(
+        (targetSessionId: string, status: string) => {
+          if (status === 'enqueued') throw new Error('disk unavailable');
+          return realByStatus(targetSessionId, status);
+        }
+      );
+
+      await flushStartupReplay();
+
+      expect(seams.ensureQueryStarted).not.toHaveBeenCalled();
+      expect(seams.enqueueWithId).not.toHaveBeenCalled();
+      expect(repo.getDeliveryContent(sessionId, deferredUuid)?.sendStatus).toBe('deferred');
+    });
+
+    it('schedules a post-settlement flush when an active delivery job holds the turn open', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-startup-replay-postsettlement';
+      const ownedUuid = 'msg-startup-replay-owned';
+      const deferredUuid = 'msg-startup-replay-postsettlement-deferred';
+      const repo = db.getSDKMessageRepo();
+      const construct = await prepareStartupSession(sessionId);
+      repo.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: ownedUuid,
+          message: { role: 'user', content: 'owned by delivery job' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      repo.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: deferredUuid,
+          message: { role: 'user', content: 'next turn' },
+        } as unknown as SDKMessage,
+        'deferred'
+      );
+      const session = construct();
+      const seams = shadowReplaySeams(session);
+      deliverMessage(db.getJobQueueRepo(), sessionId, ownedUuid, { origin: 'recovery' });
+      expect(db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size).toBe(1);
+
+      await flushStartupReplay();
+
+      expect(repo.getDeliveryContent(sessionId, deferredUuid)?.sendStatus).toBe('deferred');
+      expect(seams.enqueueWithId).not.toHaveBeenCalledWith(deferredUuid, 'next turn');
+
+      db.getJobQueueRepo().cancelDelivery(sessionId, ownedUuid);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      expect(repo.getDeliveryContent(sessionId, deferredUuid)?.sendStatus).toBe('enqueued');
+      expect(seams.enqueueWithId).toHaveBeenCalledWith(deferredUuid, 'next turn');
+    });
+  });
+
+  describe('reconcilerProvisioned lifecycle', () => {
+    let db: Database;
+    let agentSession: AgentSession | null;
+    let previousDeliveryV2: string | undefined;
+
+    function readProvisioned(session: AgentSession): boolean {
+      return (session as unknown as { reconcilerProvisioned: boolean }).reconcilerProvisioned;
+    }
+
+    beforeEach(() => {
+      previousDeliveryV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+      agentSession = null;
+    });
+
+    afterEach(async () => {
+      await agentSession?.cleanup();
+      db?.close();
+      if (previousDeliveryV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousDeliveryV2;
+    });
+
+    it('stays unprovisioned and skips startup replay when autoReplayPendingMessages is false', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-reconciler-optout';
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      const bus = await createTestInternalEventBus();
+      agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key'),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoReplayPendingMessages: false }
+      );
+      const seams = shadowReplaySeams(agentSession);
+
+      expect(readProvisioned(agentSession)).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(seams.ensureQueryStarted).not.toHaveBeenCalled();
+      expect(seams.enqueueWithId).not.toHaveBeenCalled();
+    });
+
+    it('default startup provisions the reconciler and replays pending messages exactly once', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-reconciler-default';
+      const uuid = 'msg-reconciler-default';
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'recover me' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      const bus = await createTestInternalEventBus();
+      agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key')
+      );
+      expect(readProvisioned(agentSession)).toBe(true);
+      const seams = shadowReplaySeams(agentSession);
+      const scheduleAgain = (
+        agentSession as unknown as { scheduleInitialPendingMessageReplay: () => void }
+      ).scheduleInitialPendingMessageReplay;
+      scheduleAgain.call(agentSession);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(seams.ensureQueryStarted).toHaveBeenCalledTimes(1);
+      expect(seams.enqueueWithId).toHaveBeenCalledTimes(1);
+    });
+
+    it('replayAllPendingMessages provisions the reconciler and bypasses mode/status guards', async () => {
+      db = await createTestDb();
+      const sessionId = 'sess-reconciler-replay-all';
+      const uuid = 'msg-reconciler-replay-all';
+      const session = createTestSession(sessionId);
+      session.config.queryMode = 'manual';
+      db.createSession(session);
+      db.updateSession(sessionId, {
+        processingState: JSON.stringify({ status: 'waiting_for_input' }),
+      });
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'explicit flush' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      const bus = await createTestInternalEventBus();
+      agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key'),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoReplayPendingMessages: false }
+      );
+      expect(readProvisioned(agentSession)).toBe(false);
+      const seams = shadowReplaySeams(agentSession);
+
+      await agentSession.replayAllPendingMessages();
+
+      expect(readProvisioned(agentSession)).toBe(true);
+      expect(seams.ensureQueryStarted).toHaveBeenCalledTimes(1);
+      expect(seams.enqueueWithId).toHaveBeenCalledWith(uuid, 'explicit flush');
     });
   });
 

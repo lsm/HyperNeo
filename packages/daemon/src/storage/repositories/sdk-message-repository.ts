@@ -57,6 +57,11 @@ import {
   planBadgeRecompute,
   type BadgeUpdateInstruction,
 } from './sdk-message-badge';
+import {
+  applyMessageStatusPlan,
+  PENDING_ROW_FROM_STATUSES,
+  planMessageStatusApplication,
+} from './sdk-message-status-plan';
 
 export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 export {
@@ -95,6 +100,8 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   'thinking_tokens',
   'model_refusal_fallback',
 ]);
+
+type TimestampComparison = '>' | '>=';
 
 export class SDKMessageRepository {
   private logger = new Logger('Database');
@@ -915,7 +922,9 @@ export class SDKMessageRepository {
   }
 
   runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void {
-    this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    if (!this.reactiveDb?.willEmitTableChange?.('sdk_messages')) {
+      this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    }
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
   }
 
@@ -1052,10 +1061,10 @@ export class SDKMessageRepository {
               `SELECT id, task_id, is_renderable FROM sdk_messages
                 WHERE id IN (${placeholders})
                   AND message_type = 'user'
-                  AND send_status IN ('deferred', 'enqueued', 'submitted')
+                  AND send_status IN (${PENDING_ROW_FROM_STATUSES.map(() => '?').join(', ')})
                 ORDER BY rowid ASC`
             )
-            .all(...messageIds) as Array<{
+            .all(...messageIds, ...PENDING_ROW_FROM_STATUSES) as Array<{
             id: string;
             task_id: string | null;
             is_renderable: number;
@@ -1068,51 +1077,19 @@ export class SDKMessageRepository {
           )
           .all(...messageIds) as Array<{ sid: string }>)
       : [];
-    const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
+    const plan = planMessageStatusApplication(
+      pending.map((row) => ({
+        rowId: row.id,
+        taskId: row.task_id,
+        isRenderable: row.is_renderable === 1,
+      })),
+      newStatus,
+      options
     );
     const changedSessions: string[] = [];
     const badgeUpdate = planBadgeRecompute();
     const statusTransaction = this.db.transaction(() => {
-      stmt.run(newStatus, ...messageIds);
-
-      if (pending.length > 0) {
-        const now = new Date().toISOString();
-        const maxStmt = this.db.prepare(
-          'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?'
-        );
-        const sharedBases = options?.sharedTurn ? new Map<string, number>() : null;
-        if (sharedBases) {
-          for (const row of pending) {
-            if (row.task_id && row.is_renderable === 1 && !sharedBases.has(row.task_id)) {
-              sharedBases.set(
-                row.task_id,
-                (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0
-              );
-            }
-          }
-        }
-        const updStmt = this.db.prepare(
-          'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
-        );
-        const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
-        const consumedSeqStmt = this.db.prepare(
-          'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
-        );
-        for (const row of pending) {
-          if (row.task_id && row.is_renderable === 1) {
-            const turn = sharedBases
-              ? (sharedBases.get(row.task_id) ?? 0) + 1
-              : ((maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0) + 1;
-            updStmt.run(turn, now, row.id);
-          } else {
-            timeStmt.run(now, row.id);
-          }
-          if (newStatus === 'consumed') {
-            consumedSeqStmt.run(options?.consumedSeq ?? this.nextConsumedSeq(), now, row.id);
-          }
-        }
-      }
+      applyMessageStatusPlan(this.db, plan, messageIds, () => this.nextConsumedSeq());
 
       for (const { sid } of affectedSessions) {
         if (this.applyBadgeUpdate(sid, badgeUpdate)) changedSessions.push(sid);
@@ -1219,12 +1196,20 @@ export class SDKMessageRepository {
     return result.count;
   }
 
-  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
-    const isoTimestamp = new Date(afterTimestamp).toISOString();
+  private deleteMessagesFromTimestamp(
+    sessionId: string,
+    timestamp: number,
+    comparison: TimestampComparison
+  ): number {
+    const isoTimestamp = new Date(timestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
+      .prepare(
+        `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+      )
       .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
-    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
+    const stmt = this.db.prepare(
+      `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+    );
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
@@ -1239,26 +1224,12 @@ export class SDKMessageRepository {
     return deleted;
   }
 
+  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+    return this.deleteMessagesFromTimestamp(sessionId, afterTimestamp, '>');
+  }
+
   deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
-    const isoTimestamp = new Date(atTimestamp).toISOString();
-    const rows = this.db
-      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
-    const stmt = this.db.prepare(
-      `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
-    );
-    let deleted = 0;
-    let badgeChanged = false;
-    this.db.transaction(() => {
-      deleted = stmt.run(sessionId, isoTimestamp).changes;
-      badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
-      for (const { sdk_uuid } of rows) {
-        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
-      }
-    })();
-    if (badgeChanged) this.notifySessionsChanged(sessionId);
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
-    return deleted;
+    return this.deleteMessagesFromTimestamp(sessionId, atTimestamp, '>=');
   }
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {

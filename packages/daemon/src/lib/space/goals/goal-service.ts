@@ -63,7 +63,7 @@ export interface ClaimOutcomeNotificationParams {
   actorAgentId: string | null;
   humanAdmissionAllowed: boolean;
   mutatesGoalState: boolean;
-  dispositionStatus: 'acknowledged' | 'rejected';
+  dispositionStatus: 'acknowledged' | 'rejected' | 'superseded';
   isResubmission: boolean;
   observedGoalRevision?: number | null;
   apply?: (goal: SpaceGoal) => SpaceGoal;
@@ -602,6 +602,29 @@ export class SpaceGoalService {
         ) ?? notification;
       return { status: 'claimed', notification: terminalized, goal: appliedGoal };
     });
+  }
+
+  /** @public */
+  listClaimableOutcomeNotifications(params: {
+    spaceId: string;
+    callerAgentId: string | null;
+    humanAdmissionAllowed: boolean;
+    limit?: number;
+  }): SpaceGoalOutcomeNotification[] {
+    const notificationRepo = this.deps.outcomeNotificationRepo;
+    if (!notificationRepo) return [];
+    const goals = this.deps.goalRepo.list({ spaceId: params.spaceId, includeArchived: true });
+    const claimable: SpaceGoalOutcomeNotification[] = [];
+    for (const goal of goals) {
+      const authorizedAgentIds = this.resolveClaimAuthorizedAgentIds(goal);
+      const isAuthorized =
+        params.callerAgentId === null
+          ? params.humanAdmissionAllowed
+          : authorizedAgentIds.includes(params.callerAgentId);
+      if (!isAuthorized) continue;
+      claimable.push(...notificationRepo.listPendingByGoal(goal.id));
+    }
+    return claimable.slice(0, params.limit ?? 100);
   }
 
   private resolveClaimAuthorizedAgentIds(goal: SpaceGoal): string[] {

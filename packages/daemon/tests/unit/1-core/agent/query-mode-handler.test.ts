@@ -521,6 +521,90 @@ describe('QueryModeHandler', () => {
     });
   });
 
+  describe('replayPendingMessagesForAutomaticTurnEnd', () => {
+    function waitingForInputStateManager() {
+      return {
+        getState: () => ({ status: 'waiting_for_input' }),
+        setQueuedIfIdle: async () => false,
+      };
+    }
+
+    it('skips replay entirely when queryMode is manual', async () => {
+      mockSession.config.queryMode = 'manual';
+      handler = createHandler();
+
+      await handler.replayPendingMessagesForAutomaticTurnEnd();
+
+      expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips replay when the session is waiting for user input', async () => {
+      handler = new QueryModeHandler({
+        ...createContext(),
+        stateManager: waitingForInputStateManager(),
+      });
+
+      await handler.replayPendingMessagesForAutomaticTurnEnd();
+
+      expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+    });
+
+    it('replays with enqueued-first ordering when guards pass', async () => {
+      const queuedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-enqueued-1',
+          uuid: 'uuid-enqueued-1',
+          type: 'user',
+          message: { role: 'user', content: 'Current turn (enqueued)' },
+        } as unknown as SDKMessage,
+      ];
+      const savedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-deferred-1',
+          uuid: 'uuid-deferred-1',
+          type: 'user',
+          message: { role: 'user', content: 'Next turn (deferred)' },
+        } as unknown as SDKMessage,
+      ];
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        status === 'enqueued' ? byStatusResult(queuedMessages) : byStatusResult(savedMessages)
+      );
+      handler = createHandler();
+
+      await handler.replayPendingMessagesForAutomaticTurnEnd();
+
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
+      expect(enqueueWithIdSpy.mock.calls[0]).toEqual([
+        'uuid-enqueued-1',
+        'Current turn (enqueued)',
+      ]);
+      expect(enqueueWithIdSpy.mock.calls[1]).toEqual(['uuid-deferred-1', 'Next turn (deferred)']);
+    });
+
+    it('proceeds when no state manager is available', async () => {
+      const queuedMessages: SDKMessage[] = [
+        {
+          dbId: 'db-1',
+          uuid: 'uuid-1',
+          type: 'user',
+          message: { role: 'user', content: 'Pending' },
+        } as unknown as SDKMessage,
+      ];
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        status === 'enqueued' ? byStatusResult(queuedMessages) : byStatusResult([])
+      );
+      handler = createHandler();
+
+      await handler.replayPendingMessagesForAutomaticTurnEnd();
+
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Pending');
+    });
+  });
+
   describe('turn-end flush context reset (resetContextPerTurn slots)', () => {
     function deferredBatch(count: number): SDKMessage[] {
       return Array.from({ length: count }, (_, i) => ({

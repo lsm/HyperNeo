@@ -24,6 +24,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
   let task: SpaceTask;
   let notification: SpaceGoalOutcomeNotification;
   let resolution: GoalOwnerResolutionDecision;
+  let resolutions: Record<string, GoalOwnerResolutionDecision>;
   let coordinatorAgent: { id: string; handle: string; status: string } | null;
 
   function claimParams(
@@ -55,10 +56,11 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
+    resolutions = {};
     coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'active' };
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
-      getPrimaryGoalOwner: mock(() => resolution),
+      getPrimaryGoalOwner: mock((goalId: string) => resolutions[goalId] ?? resolution),
       getCoordinator: mock(() => coordinatorAgent),
       getById: mock((id: string) =>
         coordinatorAgent && id === coordinatorAgent.id ? coordinatorAgent : null
@@ -270,5 +272,74 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     );
 
     expect(result).toEqual({ status: 'not_found' });
+  });
+
+  describe('listClaimableOutcomeNotifications', () => {
+    it('discovers the pending notification for the resolved owner', () => {
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.id)).toEqual([notification.id]);
+    });
+
+    it('excludes goals the caller does not own', () => {
+      const otherGoal = service.createGoal({ spaceId: goal.spaceId, title: 'Other' });
+      resolutions[otherGoal.id] = {
+        action: 'resolved',
+        owner: { agentId: 'agent-2', relationship: 'owner', createdAt: Date.now() },
+        conflicts: [],
+      };
+      const otherTask = taskRepo.createTask({
+        spaceId: goal.spaceId,
+        title: 'Other task',
+        goalId: otherGoal.id,
+      });
+      notificationRepo.create({
+        spaceId: goal.spaceId,
+        goalId: otherGoal.id,
+        taskId: otherTask.id,
+        terminalGeneration: 1,
+        goalRevision: otherGoal.revision,
+        payload: {
+          summary: '',
+          taskStatus: 'done',
+          taskTitle: 'Other task',
+          goalTitle: 'Other',
+        },
+      });
+
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.goalId)).toEqual([goal.id]);
+    });
+
+    it('returns nothing for an unauthorized caller', () => {
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'agent-2',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications).toEqual([]);
+    });
+
+    it('discovers notifications the active coordinator can claim as fallback', () => {
+      resolution = { action: 'coordinator_fallback', coordinatorAgentId: 'coordinator-1' };
+
+      const notifications = service.listClaimableOutcomeNotifications({
+        spaceId: goal.spaceId,
+        callerAgentId: 'coordinator-1',
+        humanAdmissionAllowed: false,
+      });
+
+      expect(notifications.map((n) => n.id)).toEqual([notification.id]);
+    });
   });
 });

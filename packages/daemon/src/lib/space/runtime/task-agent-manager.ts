@@ -22,9 +22,6 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session';
 import {
-  awaitDeliveryConsumption,
-  deliverAndMarkQueued,
-  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery';
@@ -125,6 +122,13 @@ import {
   formatPendingRowForSpaceAgent,
   isHumanPendingSource,
 } from './pending-envelope';
+import type { InjectionDeliveryRowDeps } from './injection-delivery-steps';
+import {
+  deliverInjectedMessage,
+  flipDeliveryRowToDeferred,
+  reopenFailedDeliveryRow,
+  settleDeliveryRowStatus,
+} from './injection-delivery-steps';
 
 const log = new Logger('task-agent-manager');
 
@@ -3368,26 +3372,26 @@ export class TaskAgentManager {
       hasUnconsumedDeliveredWork: this.hasUnconsumedDeliveredWork(sessionId, messageId),
     });
 
+    const deliveryRows = this.injectDeliveryRowDeps();
+
     if (outcome.decision.action === 'noop') {
       return messageId;
     }
     if (outcome.decision.action === 'defer') {
       if (outcome.reopenFailedDelivery) {
-        const reopenedDbId = this.config.db
-          .getSDKMessageRepo()
-          .reopenDeliveryByUuid(sessionId, messageId);
-        if (reopenedDbId) {
-          await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
-        }
+        await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
-      const dbId = existing
-        ? messageId
-        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
-      await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
-      return dbId;
+      return settleDeliveryRowStatus(deliveryRows, {
+        sessionId,
+        message: sdkUserMessage,
+        messageId,
+        rowExists: !!existing,
+        status: 'deferred',
+        origin,
+      });
     }
     if (
       outcome.decision.action === 'clear_before_deliver' &&
@@ -3407,12 +3411,7 @@ export class TaskAgentManager {
     }
 
     if (outcome.reopenFailedDelivery) {
-      const reopenedDbId = this.config.db
-        .getSDKMessageRepo()
-        .reopenDeliveryByUuid(sessionId, messageId);
-      if (reopenedDbId) {
-        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
-      }
+      await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
     }
 
     if (!isBusy) {
@@ -3456,68 +3455,48 @@ export class TaskAgentManager {
         (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
       ) {
         if (existing) {
-          const flippedDbId = this.config.db
-            .getSDKMessageRepo()
-            .markDeliveryDeferredByUuid(sessionId, messageId);
-          if (flippedDbId) {
-            await this.publishMessageStatusChanged(sessionId, flippedDbId, 'deferred');
-            return flippedDbId;
-          }
-          return messageId;
+          const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
+          return flippedDbId ?? messageId;
         }
-        const deferredDbId = this.config.db.saveUserMessage(
+        return settleDeliveryRowStatus(deliveryRows, {
           sessionId,
-          sdkUserMessage,
-          'deferred',
-          origin
-        );
-        await this.publishMessageStatusChanged(sessionId, deferredDbId, 'deferred');
-        return deferredDbId;
+          message: sdkUserMessage,
+          messageId,
+          rowExists: false,
+          status: 'deferred',
+          origin,
+        });
       }
     }
 
-    if (v2Enabled) {
-      const dbId = existing
-        ? messageId
-        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-      const sdkMessageRepo = this.config.db.getSDKMessageRepo();
-      await awaitDeliveryConsumption({
+    return deliverInjectedMessage(
+      { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
+      {
+        session,
         sessionId,
-        messageUuid: messageId,
-        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-        deliver: () =>
-          deliverAndMarkQueued({
-            jobQueue: this.config.db.getJobQueueRepo(),
-            stateManager: session.stateManager,
-            sessionId,
-            messageUuid: messageId,
-            origin: 'space_inject',
-            onEnqueueFailure: () => {
-              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
-              if (failedDbId) {
-                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-              }
-            },
-          }),
-        ...(!existing
-          ? {
-              terminalizeOnTimeout: () => {
-                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
-                if (failedDbId) {
-                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-                }
-              },
-            }
-          : {}),
-      });
-      return dbId;
-    }
-    await session.ensureQueryStarted();
-    const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-    await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-    await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
-    return dbId;
+        messageId,
+        sdkUserMessage,
+        enqueuePayload: hasImages ? sdkContent : message,
+        deliveryV2Enabled: v2Enabled,
+        rowExists: !!existing,
+        origin,
+      }
+    );
+  }
+
+  private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {
+    return {
+      publishStatusChanged: (sessionId, dbId, status) =>
+        this.publishMessageStatusChanged(sessionId, dbId, status),
+      saveUserMessage: (sessionId, message, sendStatus, origin) =>
+        this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
+      reopenDeliveryByUuid: (sessionId, uuid) =>
+        this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
+      markDeliveryDeferredByUuid: (sessionId, uuid) =>
+        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, uuid),
+      markDeliveryFailedByUuid: (sessionId, uuid) =>
+        this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, uuid),
+    };
   }
 
   private async publishMessageStatusChanged(
@@ -3708,6 +3687,7 @@ export class TaskAgentManager {
       this.subSessions.get(parentTask.id)!.set(sessionId, agentSession);
       this.agentSessionIndex.set(sessionId, agentSession);
       this.config.sessionManager.registerSession(agentSession);
+      this.reattachSlotContextReset(agentSession);
       this.registerCompletionCallback(sessionId, async () => {
         await this.handleSubSessionComplete(parentTask.id, execution.workflowNodeId, sessionId);
       });
