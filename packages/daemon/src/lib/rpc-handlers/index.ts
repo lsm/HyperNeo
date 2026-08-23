@@ -660,7 +660,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     evolutionEpisodeService,
     artifactProfile,
     outcomeNotificationRepo,
-    enableGoalOutcomeWake: false,
+    enableGoalOutcomeWake: true,
   });
   deliverOutcomeWake = (notification) => {
     void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {

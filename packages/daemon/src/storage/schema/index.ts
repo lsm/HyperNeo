@@ -831,8 +831,7 @@ function createSpaceAgentInboxTables(db: BunDatabase): void {
 			delivered_session_id TEXT,
 			expires_at INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (target_agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
   db.exec(

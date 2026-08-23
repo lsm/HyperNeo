@@ -54,6 +54,16 @@ export class SpaceGoalOutcomeNotificationRepository {
     return row ? rowToNotification(row) : null;
   }
 
+  listPending(): SpaceGoalOutcomeNotification[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_goal_outcome_notifications
+				 WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1000`
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map(rowToNotification);
+  }
+
   listPendingByGoal(goalId: string): SpaceGoalOutcomeNotification[] {
     const rows = this.db
       .prepare(

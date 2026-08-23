@@ -22,6 +22,7 @@ import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { runMigration206 } from './m206-restamp-reviewer-depth-tiers';
 import { runMigration207 } from './m207-restamp-reviewer-review-modes';
 import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields';
+import { runMigration209 } from './m209-drop-inbox-agent-fk';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 export function runMigrations(db: BunDatabase, createBackup: () => void): void {
@@ -458,6 +459,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(207), () => runMigration207(db));
 
   run(migrationMarkerKey(208), () => runMigration208(db));
+  run(migrationMarkerKey(209), () => runMigration209(db));
 }
 
 function migrationMarkerKey(version: number): string {

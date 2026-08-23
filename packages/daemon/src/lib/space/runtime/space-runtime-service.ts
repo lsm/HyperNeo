@@ -1116,6 +1116,7 @@ export class SpaceRuntimeService {
     this.provisioningPromise = (async () => {
       await this.provisionExistingSpaces();
       await this.recoverLongTermAgentInbox();
+      await this.recoverPendingOutcomeNotifications();
       await this.recoverStalledWorkflowRuns();
     })().catch((err) => {
       log.error('Failed to provision existing spaces during startup:', err);
@@ -1186,6 +1187,24 @@ export class SpaceRuntimeService {
       }
     } catch (err) {
       log.error('SpaceRuntimeService: recoverLongTermAgentInbox failed:', err);
+    }
+  }
+
+  private async recoverPendingOutcomeNotifications(): Promise<void> {
+    const repo = this.config.outcomeNotificationRepo;
+    if (!repo || !this.config.enableGoalOutcomeWake) return;
+    try {
+      for (const notification of repo.listPending()) {
+        try {
+          await this.deliverGoalOutcomeWake(notification);
+        } catch (err) {
+          log.warn(
+            `Outcome wake recovery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    } catch (err) {
+      log.error('SpaceRuntimeService: recoverPendingOutcomeNotifications failed:', err);
     }
   }
 
