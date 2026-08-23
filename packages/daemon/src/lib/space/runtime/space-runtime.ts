@@ -3582,13 +3582,23 @@ export class SpaceRuntime {
       params.status !== undefined &&
       isTerminal(previous.status) &&
       !isTerminal(params.status);
-    let updated = reopensFromTerminal
-      ? this.config.db.transaction(() => {
+    let updated: SpaceTask | null;
+    if (reopensFromTerminal) {
+      this.config.reactiveDb?.beginTransaction();
+      try {
+        updated = this.config.db.transaction(() => {
           const result = this.config.taskRepo.updateTask(taskId, params);
           this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
           return result;
-        })()
-      : this.config.taskRepo.updateTask(taskId, params);
+        })();
+        this.config.reactiveDb?.commitTransaction();
+      } catch (err) {
+        this.config.reactiveDb?.abortTransaction();
+        throw err;
+      }
+    } else {
+      updated = this.config.taskRepo.updateTask(taskId, params);
+    }
     if (updated) {
       let emitUpdated = true;
 
