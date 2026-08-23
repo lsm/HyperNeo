@@ -477,6 +477,13 @@ describe('coder-only workflow template', () => {
       're-run the gate cycle under the CURRENT source'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'in MEANING — `internal-fallback` recorded for a run whose instructions selected `internal`'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the review ran at the wrong depth');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'for a `both`-source run confirm BOTH gate artifacts'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
@@ -524,7 +531,17 @@ describe('coder-only workflow template', () => {
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'treat the note as stale and re-send the gated PR handoff under the current source'
     );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'review-source or review-depth instruction is newer than that note'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('depth: "<light|standard|deep|auto>"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'A review-DEPTH switch stales the gate the same way'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'WAIT for your confirmation that the note is `verified` before its terminal action'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       'a source switch itself triggers that next handoff'
     );
