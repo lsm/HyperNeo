@@ -85,6 +85,34 @@ export class SessionRepository {
     return rows.map((r) => this.rowToSession(r));
   }
 
+  clearAcpSessionIds(): void {
+    this.db
+      .prepare(
+        `UPDATE sessions
+         SET acp_session_id = NULL,
+             metadata = CASE
+               WHEN json_valid(metadata) THEN json_remove(metadata, '$.acpContextUsageEstimate')
+               ELSE metadata
+             END
+         WHERE acp_session_id IS NOT NULL
+           AND json_valid(config)
+           AND json_extract(config, '$.provider') = 'acp'`
+      )
+      .run();
+  }
+
+  listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, acp_session_id FROM sessions
+         WHERE acp_session_id IS NOT NULL
+           AND json_valid(config)
+           AND json_extract(config, '$.provider') = 'acp'`
+      )
+      .all() as Array<{ id: string; acp_session_id: string }>;
+    return rows.map((row) => ({ sessionId: row.id, acpSessionId: row.acp_session_id }));
+  }
+
   updateSession(id: string, updates: Partial<Session>): void {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];

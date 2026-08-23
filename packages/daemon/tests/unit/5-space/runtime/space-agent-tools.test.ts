@@ -663,6 +663,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     });
     const responses: unknown[] = [];
     const handlers = makeHandlers(ctx, {
+      getSpaceAutonomyLevel: async () => 4,
       getRuntimeSession: () =>
         ({
           handleQuestionResponse: async (_toolUseId: string, draftResponses: unknown[]) => {
@@ -1001,6 +1002,39 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
 
     expect(parsed.success).toBe(true);
     expect(loaded).toBe(false);
+  });
+
+  test('send_session_message self-answer requires autonomy', async () => {
+    seedSession('caller-session', ctx.spaceId, {
+      status: 'waiting_for_input',
+      pendingQuestion: {
+        toolUseId: 'q1',
+        questions: [{ options: [{ label: 'Allow once' }] }],
+      },
+    });
+    const responses: unknown[] = [];
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'caller-session',
+      getSpaceAutonomyLevel: async () => 3,
+      getRuntimeSession: () =>
+        ({
+          handleQuestionResponse: async (...args: unknown[]) => {
+            responses.push(args);
+          },
+        }) as never,
+    });
+
+    const parsed = parseResult(
+      await handlers.send_session_message({
+        session_id: 'caller-session',
+        message: 'Allow once',
+        answer_question: true,
+      })
+    );
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toContain('space autonomy level 3 < required level 4');
+    expect(responses).toEqual([]);
   });
 
   test('send_session_message cross-session requires autonomy', async () => {

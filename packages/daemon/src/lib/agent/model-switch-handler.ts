@@ -20,9 +20,12 @@ import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLifecycleManager } from './query-lifecycle-manager';
 import { AcpQueryAdapter } from '../acp/acp-query-adapter';
+import { disposeAcpSessions } from '../acp/acp-model-fetcher';
+import { AcpProvider } from '../providers/acp-provider';
 import type { QueryLike } from './query-like';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
+const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
 
 function preserveK3OneMSuffix(requestedModel: string, resolvedModel: string): string {
   if (
@@ -49,6 +52,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
+  readonly disposeAcpSessions?: typeof disposeAcpSessions;
 }
 
 export interface ModelSwitchResult {
@@ -98,6 +102,35 @@ export class ModelSwitchHandler {
     );
   }
 
+  private async disposePreviousAcpSession(
+    previousAcpSessionId: string,
+    stashedCommand: string | undefined
+  ): Promise<void> {
+    const acpProvider = getProviderRegistry().get('acp');
+    const currentCommand =
+      acpProvider instanceof AcpProvider
+        ? acpProvider.getAcpCommand()
+        : process.env.HYPERNEO_ACP_COMMAND;
+    const previousCommand = stashedCommand ?? currentCommand;
+    if (!previousCommand) return;
+    const dispose = this.ctx.disposeAcpSessions ?? disposeAcpSessions;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ACP_SWITCH_DISPOSE_TIMEOUT_MS);
+    timer.unref();
+    try {
+      await dispose(previousCommand, [previousAcpSessionId], undefined, controller.signal).catch(
+        (error) => {
+          this.ctx.logger.warn(
+            `Failed to dispose previous ACP session ${previousAcpSessionId}:`,
+            error
+          );
+        }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
     const {
       session,
@@ -118,6 +151,7 @@ export class ModelSwitchHandler {
     const previousAcpSessionId = session.acpSessionId;
     const previousSdkSessionId = session.sdkSessionId;
     const previousSdkOriginPath = session.sdkOriginPath;
+    const previousMetadata = session.metadata;
 
     try {
       if (!previousProvider) {
@@ -179,6 +213,11 @@ export class ModelSwitchHandler {
         session.config.provider = nextProvider;
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpContextUsageEstimate: undefined,
+            acpSessionCommand: undefined,
+          };
         }
         if (clearSdkSessionState) {
           session.sdkSessionId = undefined;
@@ -189,7 +228,7 @@ export class ModelSwitchHandler {
             model: resolvedModel,
             provider: nextProvider,
           } as SessionConfig,
-          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearAcpSessionId ? { acpSessionId: undefined, metadata: session.metadata } : {}),
           ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
@@ -202,11 +241,23 @@ export class ModelSwitchHandler {
         });
 
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
+
+        if (clearAcpSessionId && previousAcpSessionId) {
+          await this.disposePreviousAcpSession(
+            previousAcpSessionId,
+            previousMetadata?.acpSessionCommand
+          );
+        }
       } else {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpContextUsageEstimate: undefined,
+            acpSessionCommand: undefined,
+          };
         }
         if (clearSdkSessionState) {
           session.sdkSessionId = undefined;
@@ -217,7 +268,7 @@ export class ModelSwitchHandler {
             model: resolvedModel,
             provider: nextProvider,
           } as SessionConfig,
-          ...(clearAcpSessionId ? { acpSessionId: undefined } : {}),
+          ...(clearAcpSessionId ? { acpSessionId: undefined, metadata: session.metadata } : {}),
           ...(clearSdkSessionState ? { sdkSessionId: undefined, sdkOriginPath: undefined } : {}),
         });
 
@@ -235,6 +286,12 @@ export class ModelSwitchHandler {
           await this.ctx.queryObject.setModel(resolvedModel);
         } else {
           await lifecycleManager.restart();
+          if (clearAcpSessionId && previousAcpSessionId) {
+            await this.disposePreviousAcpSession(
+              previousAcpSessionId,
+              previousMetadata?.acpSessionCommand
+            );
+          }
         }
       }
 
@@ -264,6 +321,7 @@ export class ModelSwitchHandler {
       session.acpSessionId = previousAcpSessionId;
       session.sdkSessionId = previousSdkSessionId;
       session.sdkOriginPath = previousSdkOriginPath;
+      session.metadata = previousMetadata;
       db.updateSession(session.id, {
         config: {
           model: previousModel,
@@ -272,6 +330,7 @@ export class ModelSwitchHandler {
         acpSessionId: previousAcpSessionId,
         sdkSessionId: previousSdkSessionId,
         sdkOriginPath: previousSdkOriginPath,
+        metadata: previousMetadata,
       });
       contextTracker.setModel(previousModel);
       await internalEventBus.publish('session.updated', {

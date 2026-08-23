@@ -550,6 +550,68 @@ export class SessionManager {
     this.sessionCache.remove(sessionId);
   }
 
+  listCachedProviderSessionIds(providerId: string): string[] {
+    return Array.from(this.sessionCache.entries())
+      .filter(([, agentSession]) => agentSession.getSessionData().config.provider === providerId)
+      .map(([sessionId]) => sessionId);
+  }
+
+  async interruptCachedProviderSessions(providerId: string): Promise<void> {
+    const sessionIds = this.listCachedProviderSessionIds(providerId);
+    await Promise.all(sessionIds.map((sessionId) => this.interruptInMemorySession(sessionId)));
+  }
+
+  async interruptProviderSessions(providerId: string): Promise<void> {
+    const sessions = this.db
+      .listSessions({ includeArchived: true, includeSpaceSessions: true })
+      .filter((session) => session.config.provider === providerId);
+    const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+    const sessionIds = new Set(sessionsById.keys());
+    for (const [sessionId, agentSession] of this.sessionCache.entries()) {
+      const session = agentSession.getSessionData();
+      if (session.config.provider === providerId) {
+        sessionIds.add(sessionId);
+        if (!sessionsById.has(sessionId)) sessionsById.set(sessionId, session);
+      }
+    }
+    await Promise.all(
+      Array.from(sessionIds, async (sessionId) => {
+        const session = sessionsById.get(sessionId);
+        await this.interruptProviderSession(sessionId, session);
+      })
+    );
+  }
+
+  async interruptProviderSessionsById(sessionIds: string[]): Promise<void> {
+    const sessionIdSet = new Set(sessionIds);
+    const sessionsById = new Map(
+      this.db
+        .listSessions({ includeArchived: true, includeSpaceSessions: true })
+        .filter((session) => sessionIdSet.has(session.id))
+        .map((session) => [session.id, session])
+    );
+    await Promise.all(
+      sessionIds.map((sessionId) =>
+        this.interruptProviderSession(sessionId, sessionsById.get(sessionId))
+      )
+    );
+  }
+
+  private async interruptProviderSession(sessionId: string, session?: Session): Promise<void> {
+    this.db.updateSession(sessionId, {
+      acpSessionId: undefined,
+      ...(session?.metadata?.acpContextUsageEstimate !== undefined
+        ? {
+            metadata: {
+              ...session.metadata,
+              acpContextUsageEstimate: undefined,
+            },
+          }
+        : {}),
+    });
+    await this.interruptInMemorySession(sessionId);
+  }
+
   getActiveSessions(): number {
     return this.sessionCache.getActiveCount();
   }
