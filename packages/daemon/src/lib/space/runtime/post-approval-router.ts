@@ -176,7 +176,7 @@ export class PostApprovalRouter {
         log.warn(
           `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
         );
-        this.deps.taskRepo.updateTask(task.id, updates);
+        throw err;
       }
       if (!terminalHandled) {
         try {

@@ -402,7 +402,7 @@ export class SpaceGoalService {
     });
     if (decision.action === 'none') return null;
     if (decision.action === 'supersede_notify') {
-      this.deps.outcomeNotificationRepo.supersedeForTask(task.id);
+      this.deps.outcomeNotificationRepo.supersedeForTaskOlderThan(task.id, terminalGeneration);
     }
     return this.deps.outcomeNotificationRepo.create({
       spaceId: goal.spaceId,

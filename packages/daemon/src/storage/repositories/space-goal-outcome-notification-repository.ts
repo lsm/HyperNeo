@@ -75,6 +75,17 @@ export class SpaceGoalOutcomeNotificationRepository {
     return result.changes;
   }
 
+  supersedeForTaskOlderThan(taskId: string, terminalGeneration: number): number {
+    const result = this.db
+      .prepare(
+        `UPDATE space_goal_outcome_notifications
+					 SET status = 'superseded', updated_at = ?
+					 WHERE task_id = ? AND status = 'pending' AND terminal_generation < ?`
+      )
+      .run(Date.now(), taskId, terminalGeneration);
+    return result.changes;
+  }
+
   updateStatus(
     id: string,
     status: SpaceGoalOutcomeNotificationStatus
