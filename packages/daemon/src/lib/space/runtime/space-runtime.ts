@@ -216,7 +216,7 @@ export interface SpaceRuntimeConfig {
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
   goalService?: Pick<
     import('../goals/goal-service').SpaceGoalService,
-    'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask'
+    'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
@@ -4566,6 +4566,13 @@ export class SpaceRuntime {
   onSpaceResumed(spaceId: string): void {
     const store = this.config.externalEventStore;
     this.pausedSpaceIds.delete(spaceId);
+    try {
+      this.config.goalService?.retryQueuedRunsForSpace(spaceId);
+    } catch (err) {
+      log.warn(
+        `Goal queued-run retry threw for space ${spaceId} on resume: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     if (!store) return;
 
     const reactiveRuns = this.config.workflowRunRepo
