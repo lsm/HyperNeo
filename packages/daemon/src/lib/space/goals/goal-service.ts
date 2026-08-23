@@ -10,6 +10,8 @@ import type {
   SpaceGoalListParams,
   SpaceGoalOutcomeNotification,
   SpaceTask,
+  SpaceTaskStatus,
+  InternalUpdateSpaceTaskParams,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
@@ -295,14 +297,25 @@ export class SpaceGoalService {
   }
 
   handleTaskTerminal(
-    taskId: string
+    taskId: string,
+    transition?: { fromStatus?: SpaceTaskStatus | null; updates?: InternalUpdateSpaceTaskParams }
   ): { goal: SpaceGoal; nextTask: SpaceTask | null; terminalGeneration: number } | null {
-    const task = this.deps.taskRepo.getTask(taskId);
-    if (!task?.goalId) return null;
-    if (!isTerminalTaskStatus(task.status)) return null;
-    const goal = this.deps.goalRepo.getById(task.goalId);
-    if (!goal || goal.spaceId !== task.spaceId) return null;
+    const existing = this.deps.taskRepo.getTask(taskId);
+    if (!existing?.goalId) return null;
+    const goal = this.deps.goalRepo.getById(existing.goalId);
+    if (!goal || goal.spaceId !== existing.spaceId) return null;
     const result = this.runAtomic(() => {
+      const task =
+        transition?.updates && Object.keys(transition.updates).length > 0
+          ? (this.deps.taskRepo.updateTask(taskId, transition.updates) as SpaceTask)
+          : existing;
+      if (!isTerminalTaskStatus(task.status)) {
+        return {
+          goal,
+          nextTask: null as SpaceTask | null,
+          terminalGeneration: task.terminalGeneration,
+        };
+      }
       this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
       const fresh = this.requireGoal(goal.id);
       this.recordGoalEvent(fresh, 'task_terminal', goal, fresh, {
@@ -312,12 +325,17 @@ export class SpaceGoalService {
       });
       if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
       const terminalGeneration = task.terminalGeneration;
-      this.recordOutcomeNotification(task, fresh, terminalGeneration);
-      if (!fresh.autoTriggerNext || !fresh.pendingNextRun || fresh.status !== 'active') {
-        return { goal: fresh, nextTask: null as SpaceTask | null, terminalGeneration };
+      let nextTask: SpaceTask | null = null;
+      let postBookkeeping: SpaceGoal = fresh;
+      if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
+        const created = this.createImmediateTask(fresh.id, { source: 'system' });
+        postBookkeeping = created.goal;
+        nextTask = created.task;
       }
-      const created = this.createImmediateTask(fresh.id, { source: 'system' });
-      return { goal: created.goal, nextTask: created.task, terminalGeneration };
+      this.recordOutcomeNotification(task, postBookkeeping, terminalGeneration, {
+        fromStatus: transition?.fromStatus ?? null,
+      });
+      return { goal: postBookkeeping, nextTask, terminalGeneration };
     });
     if (result.goal && this.deps.outcomeNotificationRepo) {
       const pending = this.deps.outcomeNotificationRepo.listPendingByGoal(result.goal.id);
@@ -335,7 +353,8 @@ export class SpaceGoalService {
   private recordOutcomeNotification(
     task: SpaceTask,
     goal: SpaceGoal,
-    terminalGeneration: number
+    terminalGeneration: number,
+    transition: { fromStatus?: SpaceTaskStatus | null }
   ): void {
     if (!this.deps.outcomeNotificationRepo) return;
     const hasStartGeneration = task.startedAt !== null;
@@ -343,7 +362,7 @@ export class SpaceGoalService {
       .listPendingByGoal(goal.id)
       .filter((n) => n.taskId === task.id);
     const decision = decideReportableTerminal({
-      fromStatus: null,
+      fromStatus: transition.fromStatus ?? null,
       toStatus: task.status,
       hasStartGeneration,
       hasPriorTerminalGeneration: priorPending.length > 0,
@@ -361,8 +380,8 @@ export class SpaceGoalService {
       payload: {
         summary: (task.reportedSummary ?? task.result ?? '').slice(0, 400),
         taskStatus: task.status,
-        taskTitle: task.title,
-        goalTitle: goal.title,
+        taskTitle: task.title.slice(0, 200),
+        goalTitle: goal.title.slice(0, 200),
       },
     });
   }

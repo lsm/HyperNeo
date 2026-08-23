@@ -162,19 +162,21 @@ export class PostApprovalRouter {
         postApprovalBlockedReason: null,
         postApprovalSourceNodeId: null,
       };
-      this.deps.taskRepo.updateTask(task.id, updates);
+      try {
+        this.deps.goalService?.handleTaskTerminal(task.id, {
+          fromStatus: task.status,
+          updates,
+        });
+      } catch (err) {
+        log.warn(
+          `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
       try {
         this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
       } catch (err) {
         log.warn(
           `Forge evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-      try {
-        this.deps.goalService?.handleTaskTerminal(task.id);
-      } catch (err) {
-        log.warn(
-          `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
         );
       }
       log.info(
