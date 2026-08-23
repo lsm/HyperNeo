@@ -48,7 +48,7 @@ export class DatabaseCore {
 
     this.db.exec('PRAGMA journal_mode = WAL');
 
-    this.db.exec('PRAGMA busy_timeout = 5000');
+    this.db.exec('PRAGMA busy_timeout = 15000');
 
     this.db.exec('PRAGMA synchronous = NORMAL');
 
@@ -220,11 +220,11 @@ export class DatabaseCore {
   private tryCheckpointCopy(backupPath: string): boolean {
     let checkpointed = false;
     try {
-      const result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
-        | { busy?: number }
+      const result = this.db.prepare('PRAGMA wal_checkpoint(PASSIVE)').get() as
+        | { busy?: number; log?: number; checkpointed?: number }
         | null
         | undefined;
-      checkpointed = result?.busy === 0;
+      checkpointed = result?.busy === 0 && (result?.checkpointed ?? 0) >= (result?.log ?? 0);
     } catch {
       checkpointed = false;
     }
