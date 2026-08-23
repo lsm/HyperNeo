@@ -49,6 +49,7 @@ function makeInjectInput(overrides: Partial<InjectDeliveryInput> = {}): InjectDe
     hasPriorContext: true,
     slotResetsContext: true,
     hasActiveDeliveryJob: false,
+    hasUnconsumedDeliveredWork: false,
     ...overrides,
   };
 }
@@ -58,7 +59,13 @@ function makeInjectCtx(overrides: Partial<InjectDeliveryInput> = {}): InjectDeli
 }
 
 function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
-  return { uuid: 'uuid-1', isUserMessage: true, flattenedText: 'hello', ...overrides };
+  return {
+    uuid: 'uuid-1',
+    isUserMessage: true,
+    isTaskInput: true,
+    flattenedText: 'hello',
+    ...overrides,
+  };
 }
 
 function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlushInput {
@@ -71,6 +78,8 @@ function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlus
     pendingInMemoryUuids: new Set<string>(),
     activeTurnInJobQueue: false,
     slotResetsContext: true,
+    hasPriorContext: true,
+    pendingTaskInput: false,
     ...overrides,
   };
 }
@@ -118,6 +127,11 @@ describe('message inject delivery decision pipeline', () => {
       'an active delivery job delivers without clear',
       { hasActiveDeliveryJob: true },
       { action: 'deliver_without_clear', reason: 'delivery_job_active' },
+    ],
+    [
+      'unconsumed delivered work delivers without clear (#1085)',
+      { hasUnconsumedDeliveredWork: true },
+      { action: 'deliver_without_clear', reason: 'unconsumed_work_pending' },
     ],
     [
       'a fresh task input on a reset slot clears before delivery',
@@ -249,6 +263,7 @@ describe('message inject delivery decision pipeline', () => {
           hasPriorContext: input.hasPriorContext,
           slotResetsContext: input.slotResetsContext,
           hasActiveDeliveryJob: input.hasActiveDeliveryJob,
+          hasUnconsumedDeliveredWork: input.hasUnconsumedDeliveredWork,
         });
         const coreExpected =
           input.existingSendStatus === 'consumed'
@@ -266,6 +281,7 @@ describe('message inject delivery decision pipeline', () => {
         { inputKind: 'steer' },
         { isBusy: true },
         { hasActiveDeliveryJob: true },
+        { hasUnconsumedDeliveredWork: true },
       ] as Partial<InjectDeliveryInput>[]) {
         const input = makeInjectInput(overrides);
         expect(applyInjectContextResetGate(makeInjectCtx(overrides)).decision).toEqual(
@@ -275,6 +291,7 @@ describe('message inject delivery decision pipeline', () => {
             hasPriorContext: input.hasPriorContext,
             slotResetsContext: input.slotResetsContext,
             hasActiveDeliveryJob: input.hasActiveDeliveryJob,
+            hasUnconsumedDeliveredWork: input.hasUnconsumedDeliveredWork,
           })
         );
       }
@@ -298,13 +315,19 @@ describe('message turn-end flush decision pipeline', () => {
       { action: 'noop' },
     ],
     [
-      'two batchable messages batch without a context clear',
-      {},
+      'two batchable messages on a non-reset slot batch without a context clear',
+      { slotResetsContext: false },
       { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+    ],
+    [
+      'a batch of deliverables on a reset slot plans exactly one clear ahead of the batch (#1085)',
+      {},
+      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'clear_then_flush' } },
     ],
     [
       'owned and non-user messages are skipped alongside per-message delivery',
       {
+        slotResetsContext: false,
         messages: [
           makeFlushMessage({ uuid: 'job-owned' }),
           makeFlushMessage({ uuid: 'assistant', isUserMessage: false, flattenedText: null }),
@@ -325,7 +348,10 @@ describe('message turn-end flush decision pipeline', () => {
     ],
     [
       'a single deliverable message is delivered per message',
-      { messages: [makeFlushMessage({ uuid: 'solo' })] },
+      {
+        slotResetsContext: false,
+        messages: [makeFlushMessage({ uuid: 'solo' })],
+      },
       {
         action: 'each',
         deliver: ['solo'],
@@ -335,7 +361,7 @@ describe('message turn-end flush decision pipeline', () => {
     ],
     [
       'an active turn in the job queue forces per-message delivery',
-      { activeTurnInJobQueue: true },
+      { slotResetsContext: false, activeTurnInJobQueue: true },
       {
         action: 'each',
         deliver: ['a', 'b'],
@@ -346,6 +372,7 @@ describe('message turn-end flush decision pipeline', () => {
     [
       'a slash command forces per-message delivery',
       {
+        slotResetsContext: false,
         messages: [
           makeFlushMessage({ uuid: 'slash', flattenedText: '/compact' }),
           makeFlushMessage({ uuid: 'plain', flattenedText: 'hello' }),
@@ -356,6 +383,78 @@ describe('message turn-end flush decision pipeline', () => {
         deliver: ['slash', 'plain'],
         skip: [],
         contextReset: { action: 'flush_without_clear' },
+      },
+    ],
+    [
+      'a slash-command flush on a reset slot still plans one clear ahead of per-message delivery',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'slash', flattenedText: '/compact' }),
+          makeFlushMessage({ uuid: 'plain', flattenedText: 'hello' }),
+        ],
+      },
+      {
+        action: 'each',
+        deliver: ['slash', 'plain'],
+        skip: [],
+        contextReset: { action: 'clear_then_flush' },
+      },
+    ],
+    [
+      'human-only deliverables on a reset slot flush without a clear',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
+          makeFlushMessage({ uuid: 'human-2', isTaskInput: false, flattenedText: 'follow-up' }),
+        ],
+      },
+      {
+        action: 'batch',
+        uuids: ['human-1', 'human-2'],
+        contextReset: { action: 'flush_without_clear' },
+      },
+    ],
+    [
+      'a mixed human and task batch plans one clear ahead of the batch',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
+          makeFlushMessage({ uuid: 'task-1', flattenedText: 'handoff' }),
+        ],
+      },
+      {
+        action: 'batch',
+        uuids: ['human-1', 'task-1'],
+        contextReset: { action: 'clear_then_flush' },
+      },
+    ],
+    [
+      'a session without prior context flushes without a clear on the first turn',
+      { hasPriorContext: false },
+      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+    ],
+    [
+      'an active delivery job suppresses the flush clear and defers the reset',
+      { activeInJobQueue: new Set(['uuid-active']) },
+      {
+        action: 'batch',
+        uuids: ['a', 'b'],
+        contextReset: { action: 'flush_without_clear', reason: 'active_delivery_job' },
+      },
+    ],
+    [
+      'a pending task input behind a human-only backlog plans one clear ahead of the batch',
+      {
+        messages: [
+          makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
+          makeFlushMessage({ uuid: 'human-2', isTaskInput: false, flattenedText: 'follow-up' }),
+        ],
+        pendingTaskInput: true,
+      },
+      {
+        action: 'batch',
+        uuids: ['human-1', 'human-2'],
+        contextReset: { action: 'clear_then_flush' },
       },
     ],
   ];
@@ -408,7 +507,12 @@ describe('message turn-end flush decision pipeline', () => {
       const ownershipCtx = applyFlushOwnershipGate(makeFlushCtx({}));
       const ctx = applyFlushContextResetGate(ownershipCtx);
       expect(ctx.contextReset).toEqual(
-        planTurnEndFlushContextReset({ slotResetsContext: true, deliverableCount: 2 })
+        planTurnEndFlushContextReset({
+          slotResetsContext: true,
+          hasPriorContext: true,
+          hasActiveDeliveryJob: false,
+          taskDeliverableCount: 2,
+        })
       );
       expect(ctx.decision).toBeNull();
     });
@@ -421,7 +525,7 @@ describe('message turn-end flush decision pipeline', () => {
       ).toEqual({
         action: 'batch',
         uuids: ['a', 'b'],
-        contextReset: { action: 'flush_without_clear' },
+        contextReset: { action: 'clear_then_flush' },
       });
       expect(
         applyFlushFinalGate(
@@ -433,7 +537,7 @@ describe('message turn-end flush decision pipeline', () => {
         action: 'each',
         deliver: ['a', 'b'],
         skip: [],
-        contextReset: { action: 'flush_without_clear' },
+        contextReset: { action: 'clear_then_flush' },
       });
     });
   });
@@ -448,12 +552,12 @@ describe('message turn-end flush decision pipeline', () => {
           pendingInMemoryUuids: input.pendingInMemoryUuids,
           activeTurnInJobQueue: input.activeTurnInJobQueue,
         });
-        const deliverableCount =
-          core.action === 'batch'
-            ? core.uuids.length
-            : core.action === 'each'
-              ? core.deliver.length
-              : 0;
+        const deliverables =
+          core.action === 'batch' ? core.uuids : core.action === 'each' ? core.deliver : [];
+        const deliverableSet = new Set(deliverables);
+        const taskDeliverableCount = input.messages.filter(
+          (message) => deliverableSet.has(message.uuid) && message.isTaskInput
+        ).length;
         const expected =
           core.action === 'noop'
             ? ({ action: 'noop' } as TurnEndFlushPlan)
@@ -461,7 +565,9 @@ describe('message turn-end flush decision pipeline', () => {
                 ...core,
                 contextReset: planTurnEndFlushContextReset({
                   slotResetsContext: input.slotResetsContext,
-                  deliverableCount,
+                  hasPriorContext: input.hasPriorContext,
+                  hasActiveDeliveryJob: input.activeInJobQueue.size > 0,
+                  taskDeliverableCount: taskDeliverableCount + (input.pendingTaskInput ? 1 : 0),
                 }),
               };
         expect(decideTurnEndFlush(input)).toEqual(expected);

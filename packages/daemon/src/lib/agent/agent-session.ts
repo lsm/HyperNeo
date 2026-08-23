@@ -123,6 +123,7 @@ import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner';
 import { resolveModelAlias } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
+import { getProviderService } from '../provider-service';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -136,6 +137,7 @@ import {
 import { resolveFallbackChain } from './fallback-recovery';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import type { LimitRetryHint } from './limit-error-classifier';
+import { LimitErrorLlmClassifier } from './limit-error-llm-classifier';
 import {
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
@@ -154,6 +156,7 @@ import {
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
+  withSessionResetCoordination,
 } from './message-delivery';
 import {
   classifyTurnCompletion,
@@ -273,6 +276,8 @@ export class AgentSession
   onMissingSpaceChatMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
+
+  slotResetsContext?: () => boolean;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository').McpEnablementRepository {
     return this.db.mcpEnablement;
@@ -415,6 +420,11 @@ export class AgentSession
           sessionId: this.session.id,
         });
       },
+      classifyUnknownLimit: (rawText: string) =>
+        new LimitErrorLlmClassifier(this.session.id, {
+          providerService: getProviderService(),
+          excludeProvider: (this.session.config.provider as string | undefined) ?? 'anthropic',
+        }).classifyWithTimeout(rawText),
     });
     this.rateLimitWatchdog.setRetryCallback(
       async (lastUserMessage, switchTo, episodeGeneration) => {
@@ -677,6 +687,18 @@ export class AgentSession
     const restoredState = this.stateManager.getState();
     if (restoredState.status === 'waiting_for_input') return;
     await this.queryModeHandler.replayPendingMessagesForImmediateMode();
+  }
+
+  async replayAllPendingMessages(): Promise<void> {
+    this.reconcilerProvisioned = true;
+    await this.queryModeHandler.replayPendingMessagesForImmediateMode();
+  }
+
+  async sendEnqueuedMessagesOnTurnEnd(options?: {
+    pendingTaskInput?: boolean;
+    skipResetCoordination?: boolean;
+  }): Promise<{ replayedWork: boolean; clearedContext: boolean; replayFailed: boolean }> {
+    return this.queryModeHandler.sendEnqueuedMessagesOnTurnEnd(options);
   }
 
   async ensureQueryStarted(): Promise<void> {
@@ -1269,6 +1291,9 @@ export class AgentSession
   async handleQueryTrigger(options?: {
     deliverIndividually?: boolean;
     excludeMessageUuid?: string;
+    skipContextReset?: boolean;
+    skipResetCoordination?: boolean;
+    pendingTaskInput?: boolean;
   }): Promise<{ success: boolean; messageCount: number; error?: string }> {
     return this.queryModeHandler.handleQueryTrigger(options);
   }
@@ -2093,21 +2118,23 @@ export class AgentSession
       return 0;
     }
 
-    const reEnqueued = await withSessionLock(this.session.id, async () => {
-      const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
-      const stranded = selectStrandedDeliveries(
-        this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
-        active,
-        (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
-      );
-      for (const uuid of stranded) {
-        const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
-        if (role === 'turn') {
-          await this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
+    const reEnqueued = await withSessionResetCoordination(this.session.id, async () =>
+      withSessionLock(this.session.id, async () => {
+        const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
+        const stranded = selectStrandedDeliveries(
+          this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
+          active,
+          (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
+        );
+        for (const uuid of stranded) {
+          const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+          if (role === 'turn') {
+            await this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
+          }
         }
-      }
-      return stranded.length;
-    });
+        return stranded.length;
+      })
+    );
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {

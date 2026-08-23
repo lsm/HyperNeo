@@ -28,6 +28,7 @@ export interface InjectDeliveryCtx {
   hasPriorContext: boolean;
   slotResetsContext: boolean;
   hasActiveDeliveryJob: boolean;
+  hasUnconsumedDeliveredWork: boolean;
   reopenFailedDelivery: boolean;
   decision: InjectDeliveryDecision | null;
 }
@@ -66,6 +67,7 @@ export function applyInjectContextResetGate(ctx: InjectDeliveryCtx): InjectDeliv
       hasPriorContext: ctx.hasPriorContext,
       slotResetsContext: ctx.slotResetsContext,
       hasActiveDeliveryJob: ctx.hasActiveDeliveryJob,
+      hasUnconsumedDeliveredWork: ctx.hasUnconsumedDeliveredWork,
     })
   );
 }
@@ -106,6 +108,8 @@ export interface TurnEndFlushCtx {
   pendingInMemoryUuids: ReadonlySet<string>;
   activeTurnInJobQueue: boolean;
   slotResetsContext: boolean;
+  hasPriorContext: boolean;
+  pendingTaskInput: boolean;
   flushPlan: FlushDeliveryPlan | null;
   contextReset: TurnEndFlushContextResetPlan | null;
   decision: TurnEndFlushPlan | null;
@@ -131,17 +135,23 @@ export function applyFlushOwnershipGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
 
 export function applyFlushContextResetGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
   const flushPlan: FlushDeliveryPlan = ctx.flushPlan ?? { action: 'noop' };
-  const deliverableCount =
+  const deliverables =
     flushPlan.action === 'batch'
-      ? flushPlan.uuids.length
+      ? flushPlan.uuids
       : flushPlan.action === 'each'
-        ? flushPlan.deliver.length
-        : 0;
+        ? flushPlan.deliver
+        : [];
+  const deliverableSet = new Set(deliverables);
+  const taskDeliverableCount =
+    ctx.messages.filter((message) => deliverableSet.has(message.uuid) && message.isTaskInput)
+      .length + (ctx.pendingTaskInput ? 1 : 0);
   return {
     ...ctx,
     contextReset: planTurnEndFlushContextReset({
       slotResetsContext: ctx.slotResetsContext,
-      deliverableCount,
+      hasPriorContext: ctx.hasPriorContext,
+      hasActiveDeliveryJob: ctx.activeInJobQueue.size > 0,
+      taskDeliverableCount,
     }),
   };
 }

@@ -63,8 +63,8 @@ export class ProviderRegistry {
 
     const results = await Promise.all(
       providers.map(async (provider) => {
-        const available = await provider.isAvailable();
-        const models = await provider.getModels();
+        const available = await Promise.resolve(provider.isAvailable()).catch(() => false);
+        const models = await Promise.resolve(provider.getModels()).catch(() => []);
 
         return {
           id: provider.id,

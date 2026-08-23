@@ -26,6 +26,7 @@ import {
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
 import { validateImageSizes } from '../../session/message-persistence';
@@ -322,8 +323,6 @@ export class TaskAgentManager {
   private agentSessionIndex = new Map<string, AgentSession>();
 
   private cancellingSessions = new Set<string>();
-
-  private readonly sessionInjectLocks = new Map<string, Promise<void>>();
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
@@ -1181,6 +1180,8 @@ export class TaskAgentManager {
       subSession.mergeRuntimeMcpServers(subSessionInit.mcpServers);
     }
 
+    this.reattachSlotContextReset(subSession);
+
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
     }
@@ -1481,6 +1482,23 @@ export class TaskAgentManager {
       }
     }
 
+    const resolveSessionTarget = async (): Promise<AgentSession | null> => {
+      const indexed = this.agentSessionIndex.get(subSessionId);
+      if (indexed) return indexed;
+
+      for (const [, nodeMap] of this.subSessions) {
+        const session = nodeMap.get(subSessionId);
+        if (session) return session;
+      }
+
+      return await this.rehydrateSubSession(subSessionId);
+    };
+
+    const target = await resolveSessionTarget();
+    if (!target) {
+      throw new Error(`Sub-session not found: ${subSessionId}`);
+    }
+
     return this.withSessionInjectLock(subSessionId, async () => {
       const lockedExecution = this.resolveNodeExecutionForSubSession(subSessionId);
       if (lockedExecution) {
@@ -1495,50 +1513,25 @@ export class TaskAgentManager {
         }
       }
 
-      const indexed = this.agentSessionIndex.get(subSessionId);
-      if (indexed) {
-        return await this.injectMessageIntoSession(
-          indexed,
-          message,
-          deliveryMode,
-          origin,
-          isSyntheticMessage,
-          images,
-          inputKind,
-          messageId
-        );
+      const currentTarget =
+        this.agentSessionIndex.get(subSessionId) ??
+        Array.from(this.subSessions.values())
+          .map((nodeMap) => nodeMap.get(subSessionId))
+          .find((session) => session !== undefined);
+      if (!currentTarget) {
+        throw new Error(`Sub-session not found: ${subSessionId}`);
       }
 
-      for (const [, nodeMap] of this.subSessions) {
-        const session = nodeMap.get(subSessionId);
-        if (session) {
-          return await this.injectMessageIntoSession(
-            session,
-            message,
-            deliveryMode,
-            origin,
-            isSyntheticMessage,
-            images,
-            inputKind,
-            messageId
-          );
-        }
-      }
-
-      const rehydrated = await this.rehydrateSubSession(subSessionId);
-      if (rehydrated) {
-        return await this.injectMessageIntoSession(
-          rehydrated,
-          message,
-          deliveryMode,
-          origin,
-          isSyntheticMessage,
-          images,
-          inputKind,
-          messageId
-        );
-      }
-      throw new Error(`Sub-session not found: ${subSessionId}`);
+      return await this.injectMessageIntoSession(
+        currentTarget,
+        message,
+        deliveryMode,
+        origin,
+        isSyntheticMessage,
+        images,
+        inputKind,
+        messageId
+      );
     });
   }
 
@@ -1556,23 +1549,8 @@ export class TaskAgentManager {
     return null;
   }
 
-  private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = prev.then(() => held);
-    this.sessionInjectLocks.set(sessionId, tail);
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.sessionInjectLocks.get(sessionId) === tail) {
-        this.sessionInjectLocks.delete(sessionId);
-      }
-    }
+  private withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    return withSessionResetCoordination(sessionId, fn);
   }
 
   private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -1981,6 +1959,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
       await this.mcpSelfHeal(target, missing);
     };
+    this.reattachSlotContextReset(agentSession);
 
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
@@ -2925,6 +2904,11 @@ export class TaskAgentManager {
     return slot?.resetContextPerTurn === true;
   }
 
+  reattachSlotContextReset(agentSession: AgentSession): void {
+    const sessionId = agentSession.session.id;
+    agentSession.slotResetsContext = () => this.slotResetsContextForSession(sessionId);
+  }
+
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution
@@ -3218,6 +3202,7 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (target: AgentSession, missing: string[]) => {
       await this.mcpSelfHeal(target, missing);
     };
+    this.reattachSlotContextReset(agentSession);
 
     const pendingToolContinuations =
       this.config.toolContinuationRepo?.listPendingInboxForSession(subSessionId) ?? [];
@@ -3380,6 +3365,31 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
   }
 
+  private hasUnconsumedDeliveredWork(sessionId: string, excludeMessageId?: string): boolean {
+    return (['enqueued', 'deferred'] as const).some((status) =>
+      this.config.db
+        .getUserMessageIdsByStatus(sessionId, status)
+        .some(
+          (row) =>
+            typeof row.uuid === 'string' && row.uuid.length > 0 && row.uuid !== excludeMessageId
+        )
+    );
+  }
+
+  private clearStillBlocked(session: AgentSession): boolean {
+    const state = session.getProcessingState();
+    if (
+      state.status === 'processing' ||
+      state.status === 'queued' ||
+      state.status === 'waiting_for_input' ||
+      state.status === 'interrupted' ||
+      state.status === 'rate_limit_cooldown'
+    ) {
+      return true;
+    }
+    return this.hasActiveDeliveryJob(session.session.id);
+  }
+
   private async injectMessageIntoSession(
     session: AgentSession,
     message: string,
@@ -3418,12 +3428,13 @@ export class TaskAgentManager {
         ]
       : [{ type: 'text' as const, text: message }];
 
-    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean; inputKind: MessageInputKind } = {
       type: 'user' as const,
       uuid: messageId as UUID,
       session_id: sessionId,
       parent_tool_use_id: null,
       isSynthetic: isSyntheticMessage,
+      inputKind,
       message: {
         role: 'user' as const,
         content: sdkContent,
@@ -3448,6 +3459,7 @@ export class TaskAgentManager {
       hasPriorContext: !!session.session.sdkSessionId,
       slotResetsContext: this.slotResetsContextForSession(sessionId),
       hasActiveDeliveryJob: this.hasActiveDeliveryJob(sessionId),
+      hasUnconsumedDeliveredWork: this.hasUnconsumedDeliveredWork(sessionId, messageId),
     });
 
     if (outcome.decision.action === 'noop') {
@@ -3498,15 +3510,63 @@ export class TaskAgentManager {
     }
 
     if (!isBusy) {
+      const clearSuppressedByPendingWork =
+        outcome.decision.action === 'deliver_without_clear' &&
+        outcome.decision.reason === 'unconsumed_work_pending';
+      let clearedUpstream = false;
+      let backlogReplayFailed = false;
+      const sendEnqueued = (
+        session as AgentSession & {
+          sendEnqueuedMessagesOnTurnEnd?: (options?: {
+            pendingTaskInput?: boolean;
+            skipResetCoordination?: boolean;
+          }) => Promise<{ replayedWork: boolean; clearedContext: boolean; replayFailed: boolean }>;
+        }
+      ).sendEnqueuedMessagesOnTurnEnd;
+      if (clearSuppressedByPendingWork && typeof sendEnqueued === 'function') {
+        const replayed = await sendEnqueued.call(session, {
+          pendingTaskInput: true,
+          skipResetCoordination: true,
+        });
+        clearedUpstream = replayed.clearedContext;
+        backlogReplayFailed = replayed.replayFailed;
+      }
       const replay = await session.handleQueryTrigger({
         deliverIndividually: true,
         excludeMessageUuid: messageId,
+        skipResetCoordination: true,
+        skipContextReset: clearedUpstream,
+        pendingTaskInput: clearSuppressedByPendingWork && !clearedUpstream,
       });
       if (!replay.success) {
         log.warn(
           `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
             `${replay.error ?? 'unknown error'} — delivering current message only`
         );
+      }
+      if (
+        clearSuppressedByPendingWork &&
+        !clearedUpstream &&
+        (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
+      ) {
+        if (existing) {
+          const flippedDbId = this.config.db
+            .getSDKMessageRepo()
+            .markDeliveryDeferredByUuid(sessionId, messageId);
+          if (flippedDbId) {
+            await this.publishMessageStatusChanged(sessionId, flippedDbId, 'deferred');
+            return flippedDbId;
+          }
+          return messageId;
+        }
+        const deferredDbId = this.config.db.saveUserMessage(
+          sessionId,
+          sdkUserMessage,
+          'deferred',
+          origin
+        );
+        await this.publishMessageStatusChanged(sessionId, deferredDbId, 'deferred');
+        return deferredDbId;
       }
     }
 

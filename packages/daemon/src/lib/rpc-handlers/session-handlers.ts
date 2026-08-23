@@ -24,7 +24,11 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry } from '../providers/registry.js';
-import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
+import {
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
+} from '../agent/message-delivery';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
@@ -991,9 +995,9 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const result = await agentSession.handleQueryTrigger();
+    await agentSession.replayAllPendingMessages();
 
-    return result;
+    return { success: true };
   });
 
   messageHub.onRequest('session.messages.countByStatus', async (data) => {
@@ -1145,6 +1149,7 @@ export function setupSessionHandlers(
     if (!replayContent) {
       return { promoted: false };
     }
+    const messageUuid = message.uuid;
 
     db.updateMessageStatus([message.dbId], 'enqueued');
     await internalEventBus.publish('messages.statusChanged', {
@@ -1154,15 +1159,19 @@ export function setupSessionHandlers(
     });
 
     if (isMessageDeliveryV2Enabled()) {
-      await deliverAndMarkQueued({
-        jobQueue: db.getJobQueueRepo(),
-        stateManager: agentSession.stateManager,
-        sessionId: targetSessionId,
-        messageUuid: message.uuid,
-        origin: 'chat',
-      });
+      await withSessionResetCoordination(targetSessionId, async () =>
+        deliverAndMarkQueued({
+          jobQueue: db.getJobQueueRepo(),
+          stateManager: agentSession.stateManager,
+          sessionId: targetSessionId,
+          messageUuid,
+          origin: 'chat',
+        })
+      );
     } else {
-      await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+      await withSessionResetCoordination(targetSessionId, async () => {
+        await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
+      });
     }
 
     return {
@@ -1203,6 +1212,7 @@ export function setupSessionHandlers(
     if (!reopenedId) {
       return { retried: false };
     }
+    const messageUuid = message.uuid;
 
     const rollbackToFailed = async () => {
       const rolledBack = db
@@ -1225,17 +1235,21 @@ export function setupSessionHandlers(
       });
 
       if (isMessageDeliveryV2Enabled()) {
-        await deliverAndMarkQueued({
-          jobQueue: db.getJobQueueRepo(),
-          stateManager: agentSession.stateManager,
-          sessionId: targetSessionId,
-          messageUuid: message.uuid,
-          origin: 'chat',
-        });
+        await withSessionResetCoordination(targetSessionId, async () =>
+          deliverAndMarkQueued({
+            jobQueue: db.getJobQueueRepo(),
+            stateManager: agentSession.stateManager,
+            sessionId: targetSessionId,
+            messageUuid,
+            origin: 'chat',
+          })
+        );
       } else {
         const replayContent = toReplayContent(message.message.content);
         if (replayContent) {
-          await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+          await withSessionResetCoordination(targetSessionId, async () => {
+            await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
+          });
         }
       }
     } catch (err) {
