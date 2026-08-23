@@ -335,6 +335,30 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   the second implementation.
 - **PR C5 (cleanup + ADR note).**
 
+**C4 outcome (2026-08-23):** the rebuild's WHERE policy now interpolates the
+vocabulary exported from `message-search-admission.ts` (searchable types,
+room prefixes/types, terminal task statuses, retention TTL) and takes one
+injected clock — `updateSession`'s optional third parameter — from which
+both retention cutoffs are bound as millisecond parameters (ms-exact and
+NULL-keeping, matching `isOlderThanMessageSearchTtl`), replacing SQLite's
+`'now'`. Parity is pinned by
+`tests/unit/4-space-storage/storage/session-search-rebuild-parity.test.ts`,
+which drives the real rebuild and asserts the indexed set equals
+`decideMessageSearchAdmission` over identical rows, including TTL-boundary,
+sub-second-in-second, and terminal-task-null-timestamp rows (the last two
+were real divergences: second-truncated SQL kept rows the core rejected, and
+the old `COALESCE(..., 0)` task cutoff rejected null-timestamp terminal
+tasks the core keeps; the rebuild also indexed empty-body rows the core's
+body gate skips, admitted room-prefixed ids typed as Space sessions, and
+dropped self-supersession edges — all now aligned). The residual duplication
+is deliberate: the rebuild stays a set-based `INSERT ... SELECT` (one DELETE
+plus one INSERT per session flip) rather than a per-row JS loop over the
+shared predicates; its supersession match keeps the codebase-wide
+`COALESCE(sdk_uuid, id)` fallback; and its body assembly stays SQL
+`GROUP_CONCAT`, where non-string text/thinking scalars (and non-ASCII
+whitespace-only bodies) can still diverge from `extractVisibleSearchText`
+for malformed-content rows.
+
 ## 5. Hot-path rule assessment
 
 ADR benchmark: `decisionRun` 1,999–2,557 ns/op vs 75–194 ns/op if-cascade; GO
