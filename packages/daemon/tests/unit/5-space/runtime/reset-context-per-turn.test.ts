@@ -1064,6 +1064,31 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     expect(session.enqueueMock).toHaveBeenCalled();
   });
 
+  it('delivers the deferred backlog before the current message on the not-busy path (#2656)', async () => {
+    const { manager, session } = makeManager({ slotResets: false });
+    const order: string[] = [];
+    session.replayMock.mockImplementation(async () => {
+      order.push('replay');
+      return { success: true, messageCount: 1 };
+    });
+    session.enqueueMock.mockImplementation(async () => {
+      order.push('enqueue');
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'current message', true);
+
+    expect(order).toEqual(['replay', 'enqueue']);
+  });
+
   it('does not replay the deferred backlog when the session is busy', async () => {
     const { manager, session } = makeManager({ slotResets: false });
     const live = {
@@ -1347,5 +1372,62 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       messageIds: ['db-id'],
       status: 'failed',
     });
+  });
+
+  it('a defer branch over an existing deferred row re-marks nothing and reuses the existing message id', async () => {
+    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'deferred' } });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'processing' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    const dbId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'queue for next turn',
+      false,
+      undefined,
+      'defer'
+    );
+
+    expect(session.markDeliveryDeferredByUuid).not.toHaveBeenCalled();
+    expect(session.reopenDeliveryByUuid).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: SESSION_ID,
+      messageIds: [dbId],
+      status: 'deferred',
+    });
+  });
+
+  it('a rejecting status publish is swallowed on the defer branch (fire-and-forget)', async () => {
+    const { manager, session } = makeManager({});
+    session.publishStatusChanged.mockRejectedValue(new Error('bus down'));
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'processing' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    const dbId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'queue for next turn',
+      false,
+      undefined,
+      'defer'
+    );
+
+    expect(dbId).toBe('db-id');
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
+    expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 });
