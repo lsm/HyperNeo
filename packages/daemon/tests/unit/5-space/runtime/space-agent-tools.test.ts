@@ -7,6 +7,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
+import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
@@ -2443,6 +2444,162 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     const parsed = JSON.parse(out.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('Goal not found');
+  });
+});
+
+describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
+  let ctx: TestCtx;
+  let notifRepo: SpaceGoalOutcomeNotificationRepository;
+  let goalService: SpaceGoalService;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+    notifRepo = new SpaceGoalOutcomeNotificationRepository(ctx.db);
+    goalService = new SpaceGoalService({
+      goalRepo: ctx.goalRepo,
+      goalEventRepo: new SpaceGoalEventRepository(ctx.db),
+      taskRepo: ctx.taskRepo,
+      spaceRepo: new SpaceRepository(ctx.db),
+      scheduleService: ctx.scheduleService,
+      db: ctx.db,
+      longHorizonAgentRepo: ctx.longHorizonAgentRepo,
+      outcomeNotificationRepo: notifRepo,
+    });
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  async function makeReviewerGoal() {
+    const agent = ctx.longHorizonAgentRepo.create({
+      id: 'lh-reviewer',
+      spaceId: ctx.spaceId,
+      handle: '@reviewer',
+      displayName: 'Reviewer',
+    });
+    const goal = goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Review goal',
+      primaryOwnerAgentId: agent.id,
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Task',
+      goalId: goal.id,
+    });
+    const notification = notifRepo.create({
+      spaceId: ctx.spaceId,
+      goalId: goal.id,
+      taskId: task.id,
+      terminalGeneration: 1,
+      goalRevision: goal.revision,
+      payload: {
+        summary: '',
+        taskStatus: 'done',
+        taskTitle: 'Task',
+        goalTitle: 'Review goal',
+      },
+    });
+    return { agent, goal, task, notification };
+  }
+
+  test('discovers owned pending notifications and acknowledges with idempotent retry', async () => {
+    const { agent, goal, task, notification } = await makeReviewerGoal();
+    const handlers = makeHandlers(ctx, { goalService, myAgentId: agent.id });
+
+    const discovery = JSON.parse(
+      (await handlers.review_goal_outcome({ goal_id: goal.id, task_id: task.id })).content[0].text
+    );
+    expect(discovery.success).toBe(true);
+    expect(discovery.discovery).toBe(true);
+    expect(discovery.notifications.map((n: { id: string }) => n.id)).toEqual([notification.id]);
+
+    const ack = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          notification_id: notification.id,
+          disposition: 'acknowledge',
+        })
+      ).content[0].text
+    );
+    expect(ack.success).toBe(true);
+    expect(ack.status).toBe('claimed');
+    expect(notifRepo.getById(notification.id)?.status).toBe('acknowledged');
+
+    const retry = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          notification_id: notification.id,
+          disposition: 'acknowledge',
+        })
+      ).content[0].text
+    );
+    expect(retry.status).toBe('already_applied');
+  });
+
+  test('rejects an outcome without mutating goal state', async () => {
+    const { agent, goal, task, notification } = await makeReviewerGoal();
+    const handlers = makeHandlers(ctx, { goalService, myAgentId: agent.id });
+
+    const out = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          notification_id: notification.id,
+          disposition: 'reject',
+        })
+      ).content[0].text
+    );
+    expect(out.success).toBe(true);
+    expect(out.status).toBe('claimed');
+    expect(notifRepo.getById(notification.id)?.status).toBe('rejected');
+  });
+
+  test('denies a disposition by a non-owner caller', async () => {
+    const { goal, task, notification } = await makeReviewerGoal();
+    const otherAgent = ctx.longHorizonAgentRepo.create({
+      id: 'lh-other',
+      spaceId: ctx.spaceId,
+      handle: '@other',
+      displayName: 'Other',
+    });
+    const handlers = makeHandlers(ctx, { goalService, myAgentId: otherAgent.id });
+
+    const out = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          notification_id: notification.id,
+          disposition: 'acknowledge',
+        })
+      ).content[0].text
+    );
+    expect(out.success).toBe(false);
+    expect(out.reason).toBe('unauthorized');
+    expect(notifRepo.getById(notification.id)?.status).toBe('pending');
+  });
+
+  test('requires a disposition when a notification is provided', async () => {
+    const { agent, goal, task, notification } = await makeReviewerGoal();
+    const handlers = makeHandlers(ctx, { goalService, myAgentId: agent.id });
+
+    const out = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          notification_id: notification.id,
+        })
+      ).content[0].text
+    );
+    expect(out.success).toBe(false);
+    expect(out.error).toContain('disposition');
   });
 });
 
