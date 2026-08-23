@@ -228,6 +228,27 @@ describe('getAcpCommandIdentityDigest', () => {
       getAcpCommandIdentityDigest('curl https://example.test -u alice:othersafe')
     );
   });
+
+  test('follows the command launched by env wrappers', () => {
+    expect(getAcpCommandIdentityDigest("env MODE=prod bash -c 'curl --token topsecret'")).toBe(
+      getAcpCommandIdentityDigest("env MODE=prod bash -c 'curl --token othersafe'")
+    );
+  });
+
+  test('redacts credentials behind clustered curl flags', () => {
+    expect(getAcpCommandIdentityDigest(`curl -sH 'Authorization: Bearer topsecret' /a`)).toBe(
+      getAcpCommandIdentityDigest(`curl -sH 'Authorization: Bearer othersafe' /a`)
+    );
+    expect(getAcpCommandIdentityDigest(`curl -sU alice:topsecret /a`)).toBe(
+      getAcpCommandIdentityDigest(`curl -sU alice:othersafe /a`)
+    );
+  });
+
+  test('redacts userinfo inside option values', () => {
+    expect(getAcpCommandIdentityDigest('curl --url=https://alice:topsecret@h/a')).toBe(
+      getAcpCommandIdentityDigest('curl --url=https://alice:othersafe@h/a')
+    );
+  });
 });
 
 describe('redactCommandSecrets', () => {
@@ -300,30 +321,12 @@ describe('redactCommandSecrets', () => {
     );
   });
 
-  test('follows the command launched by env wrappers', () => {
-    expect(getAcpCommandIdentityDigest("env MODE=prod bash -c 'curl --token topsecret'")).toBe(
-      getAcpCommandIdentityDigest("env MODE=prod bash -c 'curl --token othersafe'")
-    );
-  });
-
   test('redacts credentials behind clustered and attached curl flags', () => {
-    expect(getAcpCommandIdentityDigest(`curl -sH 'Authorization: Bearer topsecret' /a`)).toBe(
-      getAcpCommandIdentityDigest(`curl -sH 'Authorization: Bearer othersafe' /a`)
-    );
-    expect(getAcpCommandIdentityDigest(`curl -sU alice:topsecret /a`)).toBe(
-      getAcpCommandIdentityDigest(`curl -sU alice:othersafe /a`)
-    );
     expect(redactCommandSecrets('curl', ['-sH', 'Authorization: Bearer topsecret', '/a'])).toEqual([
       '-sH',
       '[redacted]',
       '/a',
     ]);
-  });
-
-  test('redacts userinfo inside option values', () => {
-    expect(getAcpCommandIdentityDigest('curl --url=https://alice:topsecret@h/a')).toBe(
-      getAcpCommandIdentityDigest('curl --url=https://alice:othersafe@h/a')
-    );
   });
 
   test('treats tokens after -- as positional data', () => {
