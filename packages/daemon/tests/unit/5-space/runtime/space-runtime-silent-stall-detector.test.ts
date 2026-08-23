@@ -12,6 +12,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -182,7 +183,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
     return nodeExecutionRepo.getById(target.id)!;
   }
 
-  function saveTerminalResultMessage(sessionId: string) {
+  function saveTerminalResultMessage(sessionId: string, at: Date = new Date()) {
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
 			 VALUES (?, ?, 'result', 'success', ?, ?, 'consumed', 'sdk', 1, 1)`
@@ -198,8 +199,43 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         result: '',
         usage: { input_tokens: 0, output_tokens: 0 },
       }),
-      new Date().toISOString()
+      at.toISOString()
     );
+  }
+
+  function saveNonTerminalAssistantMessage(sessionId: string, at: Date) {
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
+			 VALUES (?, ?, 'assistant', ?, ?, 'consumed', 'sdk', 1, 0)`
+    ).run(
+      `${sessionId}-assistant-${Date.now()}-${Math.random()}`,
+      sessionId,
+      JSON.stringify({
+        type: 'assistant',
+        session_id: sessionId,
+        uuid: `${sessionId}-assistant-uuid-${Date.now()}-${Math.random()}`,
+        parent_tool_use_id: null,
+        message: {
+          id: `${sessionId}-assistant-message`,
+          type: 'message',
+          role: 'assistant',
+          model: 'claude-test',
+          content: [{ type: 'thinking', thinking: 'still working' }],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      }),
+      at.toISOString()
+    );
+  }
+
+  function threeHoursAgo(): Date {
+    return new Date(Date.now() - 3 * 60 * 60 * 1000);
+  }
+
+  function ninetyMinutesAgo(): Date {
+    return new Date(Date.now() - 90 * 60 * 1000);
   }
 
   async function runTick(rt: SpaceRuntime, runId: string, workflow: SpaceWorkflow): Promise<void> {
@@ -264,7 +300,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'silent-stall-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('silent-stall-session');
+      saveTerminalResultMessage('silent-stall-session', threeHoursAgo());
 
       const rt = makeRuntime();
       await runTick(rt, runId, workflow);
@@ -301,19 +337,53 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       const { runId, taskId } = seedRun(workflow, 'Default Threshold Run');
       seedExec(runId, STEP_A, 'Coding', 'idle', {
         agentSessionId: 'default-threshold-session',
-        lastActivityAt: Date.now() - 90 * 60 * 1000,
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('default-threshold-session');
+      saveTerminalResultMessage('default-threshold-session', ninetyMinutesAgo());
 
       const rt = makeRuntime({ silentStallAttentionThresholdMs: undefined });
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(0);
 
-      nodeExecutionRepo.update(nodeExecutionRepo.listByNode(runId, STEP_A)[0].id, {
-        lastActivityAt: Date.now() - 150 * 60 * 1000,
-      });
+      db.prepare('DELETE FROM sdk_messages WHERE session_id = ?').run('default-threshold-session');
+      saveTerminalResultMessage(
+        'default-threshold-session',
+        new Date(Date.now() - 150 * 60 * 1000)
+      );
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(1);
+    });
+
+    test('stays quiet when the terminal message is fresh even though recorded activity is old', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Fresh Terminal Message Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'fresh-terminal-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('fresh-terminal-session');
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
+    });
+
+    test('stays quiet when an idle session ends on a non-terminal message', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Non Terminal Message Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'non-terminal-message-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveNonTerminalAssistantMessage('non-terminal-message-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
     });
   });
 
@@ -327,7 +397,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'cooldown-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('cooldown-session');
+      saveTerminalResultMessage('cooldown-session', threeHoursAgo());
 
       const rt = makeRuntime();
       await runTick(rt, runId, workflow);
@@ -347,8 +417,11 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       'review',
       'approved',
       'done',
+      'blocked',
       'cancelled',
       'archived',
+      'rate_limited',
+      'usage_limited',
       'stopped',
     ] as SpaceTaskStatus[])('stays quiet for %s tasks', (status: SpaceTaskStatus) => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -359,7 +432,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: `gate-${status}-session`,
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage(`gate-${status}-session`);
+      saveTerminalResultMessage(`gate-${status}-session`, threeHoursAgo());
       taskRepo.updateTask(taskId, { status });
 
       const rt = makeRuntime();
@@ -376,7 +449,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'reported-status-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('reported-status-session');
+      saveTerminalResultMessage('reported-status-session', threeHoursAgo());
       taskRepo.updateTask(taskId, { reportedStatus: 'done' } as any);
 
       const rt = makeRuntime();
@@ -394,13 +467,40 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'mixed-status-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('mixed-status-session');
+      saveTerminalResultMessage('mixed-status-session', threeHoursAgo());
       seedExec(runId, STEP_B, 'Review', 'in_progress', {
         agentSessionId: 'active-review-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
 
       const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
+    });
+
+    test('stays quiet while a queued node-agent handoff is pending for the run', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+        { id: STEP_B, name: 'Review', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Queued Handoff Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: 'queued-handoff-session',
+        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+      saveTerminalResultMessage('queued-handoff-session', threeHoursAgo());
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: runId,
+        spaceId: SPACE_ID,
+        taskId,
+        sourceAgentName: 'Coding',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review',
+        message: 'review request',
+      });
+
+      const rt = makeRuntime({ pendingMessageRepo: pendingRepo });
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(0);
     });
@@ -414,7 +514,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'active-tool-use-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('active-tool-use-session');
+      saveTerminalResultMessage('active-tool-use-session', threeHoursAgo());
       const recoveryRepo = new ToolContinuationRecoveryRepository(db);
       recoveryRepo.ensureSchema();
       recoveryRepo.recordToolUse({
@@ -438,7 +538,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'pending-inbox-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('pending-inbox-session');
+      saveTerminalResultMessage('pending-inbox-session', threeHoursAgo());
       const recoveryRepo = new ToolContinuationRecoveryRepository(db);
       recoveryRepo.ensureSchema();
       const now = Date.now();
@@ -474,7 +574,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: 'paused-space-session',
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
-      saveTerminalResultMessage('paused-space-session');
+      saveTerminalResultMessage('paused-space-session', threeHoursAgo());
 
       const rt = makeRuntime();
       (rt as any).detectSilentStallForAttention(runId, taskRepo.getTask(taskId)!, {

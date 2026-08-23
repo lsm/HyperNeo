@@ -7376,12 +7376,21 @@ export class SpaceRuntime {
       canonicalTask.status === 'review' ||
       canonicalTask.status === 'approved' ||
       canonicalTask.status === 'done' ||
+      canonicalTask.status === 'blocked' ||
       canonicalTask.status === 'cancelled' ||
       canonicalTask.status === 'archived' ||
+      canonicalTask.status === 'rate_limited' ||
+      canonicalTask.status === 'usage_limited' ||
       canonicalTask.status === 'stopped'
     ) {
       return;
     }
+
+    const hasQueuedNodeHandoff =
+      this.config.pendingMessageRepo
+        ?.listPendingForRun(runId)
+        .some((row) => row.targetKind === 'node_agent') ?? false;
+    if (hasQueuedNodeHandoff) return;
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     if (executions.length === 0) return;
@@ -7397,9 +7406,22 @@ export class SpaceRuntime {
     }
 
     const now = Date.now();
-    const lastActivityAt = Math.max(
-      ...executions.map((execution) => execution.lastActivityAt ?? execution.startedAt ?? now)
-    );
+    const silenceSignals: number[] = [];
+    for (const execution of executions) {
+      if (typeof execution.lastActivityAt === 'number') {
+        silenceSignals.push(execution.lastActivityAt);
+      }
+      const sessionId = execution.agentSessionId;
+      if (!sessionId) {
+        if (typeof execution.startedAt === 'number') silenceSignals.push(execution.startedAt);
+        continue;
+      }
+      const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
+      if (lastMessage) silenceSignals.push(lastMessage.timestamp);
+      if (!classifyLastMessageForIdleAgent(lastMessage).terminal) return;
+    }
+    if (silenceSignals.length === 0) return;
+    const lastActivityAt = Math.max(...silenceSignals);
     const thresholdMs =
       this.config.silentStallAttentionThresholdMs ?? DEFAULT_SILENT_STALL_ATTENTION_THRESHOLD_MS;
     if (now - lastActivityAt <= thresholdMs) return;
@@ -7420,8 +7442,8 @@ export class SpaceRuntime {
       .join(' ');
     log.warn(
       `Run ${runId} task ${canonicalTask.id} (${canonicalTask.status}) has every node execution idle for ` +
-        `${idleMinutes}m while the task never reached a terminal status, even though the session's last message ` +
-        `looks terminal; needs attention: lastActivityAt=${new Date(lastActivityAt).toISOString()} ` +
+        `${idleMinutes}m while the task never reached a terminal status, even though each idle session's last ` +
+        `message looks terminal; needs attention: lastActivityAt=${new Date(lastActivityAt).toISOString()} ` +
         `executions=${executionSummary}`
     );
   }
