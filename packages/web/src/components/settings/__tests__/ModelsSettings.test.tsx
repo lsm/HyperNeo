@@ -127,6 +127,11 @@ describe('ModelsSettings — load failure surfacing', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledTimes(1);
     });
+    await waitFor(() => {
+      expect(
+        (screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement).disabled
+      ).toBe(false);
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
     await screen.findByRole('alert');
