@@ -231,6 +231,13 @@ export class ProviderService {
     };
   }
 
+  async getCheapTierModel(providerId: string): Promise<string | null> {
+    const registry = await this.getReadyRegistry();
+    const provider = registry.get(providerId);
+    if (!provider) return null;
+    return provider.getTitleGenerationModel?.() ?? provider.getModelForTier?.('haiku') ?? null;
+  }
+
   async getTitleGenerationModel(providerId: string, sessionModelId: string): Promise<string> {
     const { sdkModelId } = await this.getTitleGenerationModels(providerId, sessionModelId);
     return sdkModelId;

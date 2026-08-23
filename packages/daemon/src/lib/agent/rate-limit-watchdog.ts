@@ -9,7 +9,8 @@ import {
   MAX_RESET_HORIZON_MS,
   selectNextFallback,
 } from './fallback-recovery';
-import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
+import { cooldownFromReset, normalizeEpochMs, type LimitRetryHint } from './limit-error-classifier';
+import type { LlmLimitAssessment } from './limit-error-llm-classifier';
 import type { ProcessingStateManager } from './processing-state-manager';
 
 export interface RateLimitWatchdogConfig {
@@ -57,6 +58,7 @@ export interface RateLimitWatchdogDeps {
   resolveModelId?(provider: string, model: string): Promise<string>;
   notifyPause?(payload: RateLimitPausePayload): void;
   notifyResume?(): void;
+  classifyUnknownLimit?(rawText: string): Promise<LlmLimitAssessment | null>;
 }
 
 export type RateLimitRetryCallback = (
@@ -71,6 +73,7 @@ export class RateLimitWatchdog {
   private deps: RateLimitWatchdogDeps;
   private retryCount = 0;
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentRetryAt: number | null = null;
   private lastUserMessage: { uuid: string; content: string | MessageContent[] } | null = null;
   private lastErrorMessage = '';
   private retryCallback: RateLimitRetryCallback | null = null;
@@ -238,15 +241,91 @@ export class RateLimitWatchdog {
       return true;
     }
 
-    await this.scheduleCooldown(errorMessage, decision, entryGeneration);
+    const armed = await this.scheduleCooldown(errorMessage, decision, entryGeneration);
+
+    if (
+      armed &&
+      decision.reason === 'backoff-ladder' &&
+      this.deps.classifyUnknownLimit &&
+      entryGeneration === this.generation
+    ) {
+      this.fireLlmRefinement(errorMessage, entryGeneration, !decision.freeWait);
+    }
     return true;
+  }
+
+  private fireLlmRefinement(
+    errorMessage: string,
+    entryGeneration: number,
+    chargedLadder: boolean
+  ): void {
+    const classify = this.deps.classifyUnknownLimit;
+    if (!classify) return;
+    const timerAtFire = this.cooldownTimer;
+    void classify(errorMessage)
+      .then(async (result) => {
+        if (entryGeneration !== this.generation || this.cooldownTimer !== timerAtFire) return;
+        if (!result || result.notALimit) return;
+        const resetMs =
+          typeof result.resetAtMs === 'number' && Number.isFinite(result.resetAtMs)
+            ? normalizeEpochMs(result.resetAtMs)
+            : null;
+        const now = Date.now();
+        if (resetMs === null || resetMs <= now || resetMs > now + MAX_RESET_HORIZON_MS) return;
+        this.logger.info(
+          `LLM limit refinement: retry at ${new Date(resetMs).toISOString()} ` +
+            `(was backoff ladder) for error: ${errorMessage}`
+        );
+        const previousHint = this.lastHint;
+        const previousLimitKind = this.limitKind;
+        if (result.kind) {
+          this.lastHint = { ...this.lastHint, kind: result.kind };
+        }
+        const refinedHint = this.lastHint;
+        const rollbackHintAndKind = () => {
+          if (this.lastHint === refinedHint) {
+            this.lastHint = previousHint;
+          }
+          if (this.limitKind === result.kind) {
+            this.limitKind = previousLimitKind;
+          }
+        };
+        const refund = chargedLadder && this.retryCount > 0;
+        try {
+          const armed = await this.scheduleCooldown(
+            errorMessage,
+            cooldownFromReset(resetMs, now),
+            entryGeneration,
+            refund ? this.retryCount - 1 : this.retryCount
+          );
+          if (!armed) {
+            rollbackHintAndKind();
+          } else if (refund) {
+            this.retryCount--;
+          }
+        } catch (err) {
+          this.logger.warn('LLM refinement cooldown scheduling threw; reconciling state:', err);
+          rollbackHintAndKind();
+          if (this.cooldownTimer === timerAtFire && this.currentRetryAt !== null) {
+            await this.stateManager
+              .setRateLimitCooldown({
+                retryCount: this.retryCount,
+                maxRetries: this.config.maxAutoRetries,
+                retryAt: this.currentRetryAt,
+              })
+              .catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
   }
 
   private async scheduleCooldown(
     errorMessage: string,
     decision: CooldownDecision,
-    episodeGeneration: number
-  ): Promise<void> {
+    episodeGeneration: number,
+    displayRetryCount?: number
+  ): Promise<boolean> {
     const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
@@ -256,17 +335,20 @@ export class RateLimitWatchdog {
         `Error: ${errorMessage}`
     );
 
+    const timerAtEntry = this.cooldownTimer;
     await this.stateManager.setRateLimitCooldown({
-      retryCount: this.retryCount,
+      retryCount: displayRetryCount ?? this.retryCount,
       maxRetries: this.config.maxAutoRetries,
       retryAt,
     });
 
-    if (episodeGeneration !== this.generation) {
+    if (episodeGeneration !== this.generation || this.cooldownTimer !== timerAtEntry) {
       this.logger.info(
-        'Episode superseded during cooldown state write; not publishing pause or arming.'
+        'Cooldown state write completed but a newer action owns the cooldown; ' +
+          'not publishing pause or arming.'
       );
-      return;
+      await this.restoreCooldownStateForCurrentOwner(decision.retryAtMs, episodeGeneration);
+      return false;
     }
 
     this.notifyPause({
@@ -275,13 +357,16 @@ export class RateLimitWatchdog {
       reason: decision.reason,
     });
 
+    this.cancelCooldownTimer();
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
       this.logger.info(
         `Cooldown elapsed; firing retry (step ${this.retryCount}/${this.config.maxAutoRetries}).`
       );
       void this.fireCooldownRetry(errorMessage);
     }, decision.delayMs);
+    this.currentRetryAt = decision.retryAtMs;
 
     if (
       this.cooldownTimer &&
@@ -290,6 +375,7 @@ export class RateLimitWatchdog {
     ) {
       this.cooldownTimer.unref();
     }
+    return true;
   }
 
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
@@ -354,8 +440,10 @@ export class RateLimitWatchdog {
     }
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
       void this.fireCooldownRetry(errorMessage);
     }, STARTUP_RETRY_DELAY_MS);
+    this.currentRetryAt = Date.now() + STARTUP_RETRY_DELAY_MS;
     if (
       this.cooldownTimer &&
       typeof this.cooldownTimer === 'object' &&
@@ -498,7 +586,30 @@ export class RateLimitWatchdog {
     if (this.cooldownTimer !== null) {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
       this.logger.info('Cancelled pending rate limit cooldown.');
+    }
+  }
+
+  private async restoreCooldownStateForCurrentOwner(
+    staleRetryAtMs: number,
+    episodeGeneration: number
+  ): Promise<void> {
+    if (this.cooldownTimer !== null && this.currentRetryAt !== null) {
+      if (this.currentRetryAt === staleRetryAtMs) return;
+      await this.stateManager.setRateLimitCooldown({
+        retryCount: this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt: this.currentRetryAt,
+      });
+      return;
+    }
+    if (episodeGeneration === this.generation) {
+      await this.stateManager.setRateLimitCooldown({
+        retryCount: this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt: Date.now(),
+      });
     }
   }
 
@@ -513,6 +624,7 @@ export class RateLimitWatchdog {
     if (this.cooldownTimer !== null) {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
+      this.currentRetryAt = null;
     }
     if (this.startupExhausted) {
       this.startupExhausted = false;
