@@ -4,6 +4,13 @@ import type {
   TaskMilestoneRow,
 } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import {
+  createLiveQueryLifecycleState,
+  type LiveQueryLifecycleEffect,
+  type LiveQueryLifecycleEvent,
+  type LiveQueryLifecycleState,
+  transitionLiveQueryLifecycle,
+} from '../lib/live-query-lifecycle';
 import { useMessageHub } from './useMessageHub';
 
 interface UseTaskMilestonesOptions {
@@ -47,6 +54,8 @@ function applyDelta(
   return sortRows(Array.from(next.values()));
 }
 
+type LifecycleStorePayload = LiveQuerySnapshotEvent | LiveQueryDeltaEvent | null;
+
 export function useTaskMilestones({ taskId }: UseTaskMilestonesOptions): UseTaskMilestonesResult {
   const { request, onEvent, getHub, isConnected } = useMessageHub();
   const [rows, setRows] = useState<TaskMilestoneRow[]>([]);
@@ -66,43 +75,77 @@ export function useTaskMilestones({ taskId }: UseTaskMilestonesOptions): UseTask
     setRows([]);
     setLoadedForTaskId(null);
 
+    const initial = createLiveQueryLifecycleState({ snapshotRetryEnabled: false });
+    let lifecycle: LiveQueryLifecycleState = initial.state;
+
+    const dispatch = (event: LiveQueryLifecycleEvent): LiveQueryLifecycleEffect[] => {
+      const result = transitionLiveQueryLifecycle(lifecycle, event);
+      lifecycle = result.state;
+      return result.effects;
+    };
+
+    const executeEffects = (
+      effects: LiveQueryLifecycleEffect[],
+      payload: LifecycleStorePayload = null
+    ): void => {
+      for (const effect of effects) {
+        if (effect.kind === 're-snapshot') {
+          const hub = getHub();
+          if (!hub) continue;
+          hub
+            .request('liveQuery.subscribe', {
+              queryName: 'taskMilestones.byTask',
+              params: [taskId],
+              subscriptionId,
+            })
+            .then(() => {
+              executeEffects(dispatch({ type: 'subscribed', generation: effect.generation }));
+            })
+            .catch(() => {
+              executeEffects(dispatch({ type: 'snapshot-failed', generation: effect.generation }));
+            });
+          continue;
+        }
+        if (effect.kind !== 'emit-to-store') continue;
+        if (effect.emission.type === 'snapshot') {
+          const snapshot = payload as LiveQuerySnapshotEvent | null;
+          setRows(sortRows((snapshot?.rows as TaskMilestoneRow[]) ?? []));
+          setLoadedForTaskId(taskId);
+          continue;
+        }
+        if (effect.emission.type === 'delta') {
+          const delta = payload as LiveQueryDeltaEvent | null;
+          if (delta) setRows((prev) => applyDelta(prev, delta));
+          continue;
+        }
+        setLoadedForTaskId(taskId);
+      }
+    };
+
+    executeEffects(initial.effects);
+
     const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      setRows(sortRows((event.rows as TaskMilestoneRow[]) ?? []));
-      setLoadedForTaskId(taskId);
+      if (event.subscriptionId !== subscriptionId) return;
+      executeEffects(
+        dispatch({ type: 'snapshot-arrived', generation: lifecycle.generation }),
+        event
+      );
     });
 
     const unsubDelta = onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
-      if (event.subscriptionId !== activeSubIdRef.current) return;
-      setRows((prev) => applyDelta(prev, event));
+      if (event.subscriptionId !== subscriptionId) return;
+      executeEffects(dispatch({ type: 'delta-arrived', generation: lifecycle.generation }), event);
     });
-
-    const subscribe = () => {
-      const hub = getHub();
-      if (!hub) return;
-      hub
-        .request('liveQuery.subscribe', {
-          queryName: 'taskMilestones.byTask',
-          params: [taskId],
-          subscriptionId,
-        })
-        .catch(() => {
-          if (activeSubIdRef.current === subscriptionId) {
-            setLoadedForTaskId(taskId);
-          }
-        });
-    };
 
     const unsubReconnect = getHub()?.onConnection((state) => {
       if (state !== 'connected') return;
       if (activeSubIdRef.current !== subscriptionId) return;
       setLoadedForTaskId(null);
-      subscribe();
+      executeEffects(dispatch({ type: 'transport-error', generation: lifecycle.generation }));
     });
 
-    subscribe();
-
     return () => {
+      executeEffects(dispatch({ type: 'unsubscribe' }));
       unsubSnapshot();
       unsubDelta();
       unsubReconnect?.();
