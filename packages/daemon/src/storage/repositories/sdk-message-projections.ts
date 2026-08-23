@@ -95,3 +95,87 @@ export function inflatePersistedMessage(row: {
     timestamp: new Date(row.timestamp).getTime(),
   } as SDKMessage & { dbId: string; timestamp: number };
 }
+
+export function extractVisibleText(msg: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const message = msg.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+  if (Array.isArray(content)) {
+    for (const block of content as Array<Record<string, unknown>>) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        parts.push(block.text);
+      }
+    }
+  } else if (typeof content === 'string') {
+    parts.push(content);
+  }
+  if (msg.type === 'result' && typeof msg.result === 'string') {
+    parts.push(msg.result);
+  }
+  return parts.join('\n\n').trim();
+}
+
+export function extractToolCallNames(msg: Record<string, unknown>): string[] {
+  const names: string[] = [];
+  const message = msg.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+  if (Array.isArray(content)) {
+    for (const block of content as Array<Record<string, unknown>>) {
+      if (block.type === 'tool_use' && typeof block.name === 'string') {
+        names.push(block.name);
+      }
+    }
+  }
+  return names;
+}
+
+export function extractFirstTextBlockContent(message: SDKMessage): string {
+  const content = (
+    message as { message?: { content?: string | Array<{ type: string; text?: string }> } }
+  ).message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const textBlock = content.find(
+      (block): block is { type: 'text'; text: string } => block.type === 'text'
+    );
+    return textBlock?.text || '';
+  }
+  return '';
+}
+
+export interface RenderableTextMessageRow {
+  id: string;
+  message_type: string;
+  sdk_message: string;
+  timestamp: string;
+}
+
+export interface RenderableTextMessage {
+  id: string;
+  type: string;
+  text: string;
+  timestamp: number;
+}
+
+export function projectRenderableTextRow(
+  row: RenderableTextMessageRow
+): RenderableTextMessage | null {
+  const message = parseSdkMessageRow(row.sdk_message, 'skip');
+  if (!message) return null;
+  const text = extractVisibleText(message as unknown as Record<string, unknown>);
+  if (text.length === 0) return null;
+  return {
+    id: row.id,
+    type: row.message_type,
+    text,
+    timestamp: new Date(row.timestamp).getTime(),
+  };
+}
+
+export const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
+
+const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
+
+export function resolveRenderableTextScanBudget(limit: number): number {
+  return Math.max(limit, RENDERABLE_TEXT_MESSAGE_MAX_SCAN);
+}

@@ -12,12 +12,20 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 import {
+  RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
+  extractFirstTextBlockContent,
+  extractToolCallNames,
+  extractVisibleText,
   inflatePersistedMessage,
   projectBackgroundTaskMessageRow,
+  projectRenderableTextRow,
   projectSubagentMessageRow,
   projectTopLevelMessageRow,
+  resolveRenderableTextScanBudget,
   type BackgroundTaskMessageRow,
   type PaginationMessageRow,
+  type RenderableTextMessage,
+  type RenderableTextMessageRow,
   type SubagentMessageRow,
 } from './sdk-message-projections';
 import {
@@ -47,8 +55,6 @@ export {
 } from './sdk-message-admission';
 export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 
-const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
-const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
   AND json_valid(sdk_message)
@@ -490,11 +496,8 @@ export class SDKMessageRepository {
     );
   }
 
-  getRenderableTextMessages(
-    sessionId: string,
-    limit = 20
-  ): Array<{ id: string; type: string; text: string; timestamp: number }> {
-    const messages: Array<{ id: string; type: string; text: string; timestamp: number }> = [];
+  getRenderableTextMessages(sessionId: string, limit = 20): Array<RenderableTextMessage> {
+    const messages: Array<RenderableTextMessage> = [];
     const stmt = this.db.prepare(
       `SELECT id, message_type, sdk_message, timestamp FROM sdk_messages
 			 WHERE session_id = ?
@@ -511,34 +514,17 @@ export class SDKMessageRepository {
 			 ORDER BY timestamp DESC, rowid DESC
 			 LIMIT ? OFFSET ?`
     );
-    const maxScan = Math.max(limit, RENDERABLE_TEXT_MESSAGE_MAX_SCAN);
+    const maxScan = resolveRenderableTextScanBudget(limit);
     let scanned = 0;
 
     while (messages.length < limit && scanned < maxScan) {
       const batchSize = Math.min(RENDERABLE_TEXT_MESSAGE_BATCH_SIZE, maxScan - scanned);
-      const rows = stmt.all(sessionId, batchSize, scanned) as Array<{
-        id: string;
-        message_type: string;
-        sdk_message: string;
-        timestamp: string;
-      }>;
+      const rows = stmt.all(sessionId, batchSize, scanned) as Array<RenderableTextMessageRow>;
       if (rows.length === 0) break;
 
       for (const row of rows) {
-        let message: SDKMessage;
-        try {
-          message = JSON.parse(row.sdk_message) as SDKMessage;
-        } catch {
-          continue;
-        }
-        const text = this.extractVisibleText(message as unknown as Record<string, unknown>);
-        if (text.length === 0) continue;
-        messages.push({
-          id: row.id,
-          type: row.message_type,
-          text,
-          timestamp: new Date(row.timestamp).getTime(),
-        });
+        const projected = projectRenderableTextRow(row);
+        if (projected) messages.push(projected);
         if (messages.length >= limit) break;
       }
       scanned += rows.length;
@@ -1300,26 +1286,10 @@ export class SDKMessageRepository {
       const message = JSON.parse(row.sdk_message) as SDKMessage;
       const timestamp = new Date(row.timestamp).getTime();
 
-      let content = '';
-      const userMessage = message as {
-        message?: { content?: string | Array<{ type: string; text?: string }> };
-        uuid?: string;
-      };
-      if (userMessage.message?.content) {
-        if (typeof userMessage.message.content === 'string') {
-          content = userMessage.message.content;
-        } else if (Array.isArray(userMessage.message.content)) {
-          const textBlock = userMessage.message.content.find(
-            (block): block is { type: 'text'; text: string } => block.type === 'text'
-          );
-          content = textBlock?.text || '';
-        }
-      }
-
       return {
-        uuid: userMessage.uuid || '',
+        uuid: (message as { uuid?: string }).uuid || '',
         timestamp,
-        content,
+        content: extractFirstTextBlockContent(message),
       };
     });
   }
@@ -1690,23 +1660,7 @@ export class SDKMessageRepository {
     const message = JSON.parse(row.sdk_message) as SDKMessage;
     const timestamp = new Date(row.timestamp).getTime();
 
-    let content = '';
-    const userMessage = message as {
-      message?: { content?: string | Array<{ type: string; text?: string }> };
-      uuid?: string;
-    };
-    if (userMessage.message?.content) {
-      if (typeof userMessage.message.content === 'string') {
-        content = userMessage.message.content;
-      } else if (Array.isArray(userMessage.message.content)) {
-        const textBlock = userMessage.message.content.find(
-          (block): block is { type: 'text'; text: string } => block.type === 'text'
-        );
-        content = textBlock?.text || '';
-      }
-    }
-
-    return { uuid, timestamp, content };
+    return { uuid, timestamp, content: extractFirstTextBlockContent(message) };
   }
 
   getAssistantMessagesSince(
@@ -1742,46 +1696,13 @@ export class SDKMessageRepository {
     return rows.map((row) => {
       const msg = JSON.parse(row.sdk_message) as Record<string, unknown>;
       const text = this.extractAssistantText(msg);
-      const toolCallNames = this.extractToolCallNames(msg);
+      const toolCallNames = extractToolCallNames(msg);
       return { id: row.id, text, toolCallNames };
     });
   }
 
   private extractAssistantText(msg: Record<string, unknown>): string {
-    return this.extractVisibleText(msg);
-  }
-
-  private extractVisibleText(msg: Record<string, unknown>): string {
-    const parts: string[] = [];
-    const message = msg.message as Record<string, unknown> | undefined;
-    const content = message?.content;
-    if (Array.isArray(content)) {
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (block.type === 'text' && typeof block.text === 'string') {
-          parts.push(block.text);
-        }
-      }
-    } else if (typeof content === 'string') {
-      parts.push(content);
-    }
-    if (msg.type === 'result' && typeof msg.result === 'string') {
-      parts.push(msg.result);
-    }
-    return parts.join('\n\n').trim();
-  }
-
-  private extractToolCallNames(msg: Record<string, unknown>): string[] {
-    const names: string[] = [];
-    const message = msg.message as Record<string, unknown> | undefined;
-    const content = message?.content;
-    if (Array.isArray(content)) {
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (block.type === 'tool_use' && typeof block.name === 'string') {
-          names.push(block.name);
-        }
-      }
-    }
-    return names;
+    return extractVisibleText(msg);
   }
 
   countMessagesAfter(sessionId: string, afterTimestamp: number): number {
