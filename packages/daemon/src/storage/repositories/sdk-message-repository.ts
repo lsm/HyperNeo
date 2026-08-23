@@ -1,16 +1,38 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID } from '@hyperneo/shared';
 import type {
+  ChatMessage,
+  HyperNeoActionMessage,
   MessageContent,
   MessageDeliveryStatus,
   MessageOrigin,
-  HyperNeoActionMessage,
-  ChatMessage,
 } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
+import {
+  buildFtsQuery,
+  extractVisibleSearchText,
+  isBroadMessageSearchQuery,
+  type MessageSearchParams,
+  type MessageSearchResponse,
+  type MessageSearchResult,
+} from '../message-search';
+import type { ReactiveDatabase } from '../reactive-database';
+import type { Database as BunDatabase } from '../sqlite-compat';
+import type { SQLiteValue } from '../types';
+import {
+  type DeliveryTransitionAction,
+  deliveryTransitionRule,
+  routeDeliveryTransition,
+} from './delivery-status-routing';
+import { decideMessageSearchAdmission } from './message-search-admission';
+import {
+  decideMessageAdmission,
+  extractReplacementEdges,
+  normalizeMessageAdmissionInput,
+  type SDKMessageReplacementEdge,
+  type SendStatus,
+} from './sdk-message-admission';
 import {
   RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
   extractFirstTextBlockContent,
@@ -29,36 +51,19 @@ import {
   type SubagentMessageRow,
 } from './sdk-message-projections';
 import {
-  buildFtsQuery,
-  extractVisibleSearchText,
-  isBroadMessageSearchQuery,
-  type MessageSearchParams,
-  type MessageSearchResponse,
-  type MessageSearchResult,
-} from '../message-search';
-import type { SQLiteValue } from '../types';
-import {
-  decideMessageAdmission,
-  extractReplacementEdges,
-  normalizeMessageAdmissionInput,
-  type SDKMessageReplacementEdge,
-  type SendStatus,
-} from './sdk-message-admission';
-import { decideMessageSearchAdmission } from './message-search-admission';
-import {
   planAdmissionBadgeUpdate,
   planBadgeRecompute,
   type BadgeUpdateInstruction,
 } from './sdk-message-badge';
 
+export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 export {
   computeIsRenderable,
   computeIsTerminal,
   extractParentToolUseId,
-  extractSdkUuid,
   extractReplacementEdges,
+  extractSdkUuid,
 } from './sdk-message-admission';
-export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 
 const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
@@ -1222,19 +1227,23 @@ export class SDKMessageRepository {
   ): { dbId: string; uuid: string } | null {
     const row = this.db
       .prepare(
-        `SELECT id, sdk_message FROM sdk_messages
+        `SELECT id, sdk_message, send_status FROM sdk_messages
           WHERE session_id = ? AND id = ? AND message_type = 'user'
-            AND send_status = 'enqueued' LIMIT 1`
+          LIMIT 1`
       )
-      .get(sessionId, messageId) as { id: string; sdk_message: string } | undefined;
+      .get(sessionId, messageId) as
+      | { id: string; sdk_message: string; send_status: string | null }
+      | undefined;
     if (!row) return null;
+    const routing = routeDeliveryTransition(row.send_status, 'defer');
+    if (!routing.accepted) return null;
     const changed = this.db
       .prepare(
-        `UPDATE sdk_messages SET send_status = 'deferred'
+        `UPDATE sdk_messages SET send_status = ?
           WHERE session_id = ? AND id = ? AND message_type = 'user'
-            AND send_status = 'enqueued'`
+            AND send_status = ?`
       )
-      .run(sessionId, messageId).changes;
+      .run(routing.targetStatus, sessionId, messageId, row.send_status).changes;
     if (changed === 0) return null;
     const message = JSON.parse(row.sdk_message) as { uuid?: string };
     return { dbId: row.id, uuid: message.uuid ?? '' };
@@ -1497,46 +1506,35 @@ export class SDKMessageRepository {
       .run(sessionId, messageUuid);
   }
 
-  markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null {
+  private markDeliveryTransitionByUuid(
+    sessionId: string,
+    uuid: string,
+    action: DeliveryTransitionAction
+  ): string | null {
+    const { acceptedFrom, target } = deliveryTransitionRule(action);
     const row = this.db
       .prepare(
         `SELECT id FROM sdk_messages
            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'deferred', 'submitted')
+             AND send_status IN (${acceptedFrom.map(() => '?').join(', ')})
            ORDER BY timestamp ASC LIMIT 1`
       )
-      .get(sessionId, uuid) as { id: string } | undefined;
+      .get(sessionId, uuid, ...acceptedFrom) as { id: string } | undefined;
     if (!row) return null;
-    this.updateMessageStatus([row.id], 'failed');
+    this.updateMessageStatus([row.id], target);
     return row.id;
+  }
+
+  markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null {
+    return this.markDeliveryTransitionByUuid(sessionId, uuid, 'fail');
   }
 
   markDeliveryFailedByUuidInclusive(sessionId: string, uuid: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'submitted', 'consumed')
-           ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string } | undefined;
-    if (!row) return null;
-    this.updateMessageStatus([row.id], 'failed');
-    return row.id;
+    return this.markDeliveryTransitionByUuid(sessionId, uuid, 'fail_inclusive');
   }
 
   markDeliveryConsumedByUuid(sessionId: string, uuid: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'submitted')
-           ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string } | undefined;
-    if (!row) return null;
-    this.updateMessageStatus([row.id], 'consumed');
-    return row.id;
+    return this.markDeliveryTransitionByUuid(sessionId, uuid, 'consume');
   }
 
   markDeliveryConsumedAtTurnEnd(
@@ -1563,6 +1561,7 @@ export class SDKMessageRepository {
         )
         .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
       if (!result) return { ids: [], uuids: [] };
+      const { acceptedFrom, target } = deliveryTransitionRule('consume');
       const ids: string[] = [];
       const consumedUuids: string[] = [];
       for (const [index, uuid] of [...new Set(uuids)].entries()) {
@@ -1570,17 +1569,17 @@ export class SDKMessageRepository {
           .prepare(
             `SELECT id FROM sdk_messages
                WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-                 AND send_status IN ('enqueued', 'submitted')
+                 AND send_status IN (${acceptedFrom.map(() => '?').join(', ')})
                ORDER BY timestamp ASC LIMIT 1`
           )
-          .get(sessionId, uuid) as { id: string } | undefined;
+          .get(sessionId, uuid, ...acceptedFrom) as { id: string } | undefined;
         if (index === 0 && !row) return { ids: [], uuids: [] };
         if (row) {
           ids.push(row.id);
           consumedUuids.push(uuid);
         }
       }
-      this.updateMessageStatus(ids, 'consumed', {
+      this.updateMessageStatus(ids, target, {
         sharedTurn: true,
         consumedSeq: result.consumed_seq,
       });
@@ -1590,37 +1589,39 @@ export class SDKMessageRepository {
 
   markDeliveryConsumedByUuids(sessionId: string, uuids: string[]): string[] {
     return this.db.transaction(() => {
+      const { acceptedFrom, target } = deliveryTransitionRule('consume');
       const ids: string[] = [];
       for (const uuid of new Set(uuids)) {
         const row = this.db
           .prepare(
             `SELECT id FROM sdk_messages
                WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-                 AND send_status IN ('enqueued', 'submitted')
+                 AND send_status IN (${acceptedFrom.map(() => '?').join(', ')})
                ORDER BY timestamp ASC LIMIT 1`
           )
-          .get(sessionId, uuid) as { id: string } | undefined;
+          .get(sessionId, uuid, ...acceptedFrom) as { id: string } | undefined;
         if (row) ids.push(row.id);
       }
-      this.updateMessageStatus(ids, 'consumed', { sharedTurn: true });
+      this.updateMessageStatus(ids, target, { sharedTurn: true });
       return ids;
     })();
   }
 
   markDeliverySubmittedByUuids(sessionId: string, uuids: string[]): string[] {
     return this.db.transaction(() => {
+      const { acceptedFrom, target } = deliveryTransitionRule('submit');
       const ids: string[] = [];
       for (const uuid of new Set(uuids)) {
         const row = this.db
           .prepare(
             `SELECT id FROM sdk_messages
                WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-                 AND send_status = 'enqueued'
+                 AND send_status IN (${acceptedFrom.map(() => '?').join(', ')})
                ORDER BY timestamp ASC LIMIT 1`
           )
-          .get(sessionId, uuid) as { id: string } | undefined;
+          .get(sessionId, uuid, ...acceptedFrom) as { id: string } | undefined;
         if (!row) continue;
-        this.updateMessageStatus([row.id], 'submitted');
+        this.updateMessageStatus([row.id], target);
         ids.push(row.id);
       }
       return ids;
@@ -1628,45 +1629,15 @@ export class SDKMessageRepository {
   }
 
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status = 'failed'
-           ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string } | undefined;
-    if (!row) return null;
-    this.updateMessageStatus([row.id], 'enqueued');
-    return row.id;
+    return this.markDeliveryTransitionByUuid(sessionId, uuid, 'reopen');
   }
 
   markDeliveryRetryableByUuid(sessionId: string, uuid: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status = 'consumed'
-           ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string } | undefined;
-    if (!row) return null;
-    this.updateMessageStatus([row.id], 'enqueued');
-    return row.id;
+    return this.markDeliveryTransitionByUuid(sessionId, uuid, 'retry');
   }
 
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT id FROM sdk_messages
-           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status = 'enqueued'
-           ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string } | undefined;
-    if (!row) return null;
-    this.updateMessageStatus([row.id], 'deferred');
-    return row.id;
+    return this.markDeliveryTransitionByUuid(sessionId, uuid, 'defer');
   }
 
   private parseUserMessageRow(
