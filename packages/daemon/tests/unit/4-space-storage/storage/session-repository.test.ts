@@ -727,11 +727,49 @@ describe('SessionRepository', () => {
 
       repository.clearAcpSessionIds();
 
-      expect(repository.getSession('acp-session')).toMatchObject({
-        acpSessionId: undefined,
-        metadata: { preserved: true },
-      });
+      const cleared = repository.getSession('acp-session');
+      expect(cleared?.acpSessionId).toBeUndefined();
+      expect(cleared?.metadata?.acpContextUsageEstimate).toBeUndefined();
+      expect((cleared?.metadata as Record<string, unknown> | undefined)?.preserved).toBe(true);
       expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
+    });
+
+    it('persists updateSession acpSessionId undefined as NULL', () => {
+      repository.createSession(
+        createDefaultSession({
+          id: 'acp-clear',
+          config: { ...createDefaultSession().config, provider: 'acp' },
+          acpSessionId: 'remote-acp-session',
+        })
+      );
+
+      repository.updateSession('acp-clear', { acpSessionId: undefined });
+
+      const row = db
+        .prepare(`SELECT acp_session_id FROM sessions WHERE id = 'acp-clear'`)
+        .get() as { acp_session_id: string | null };
+      expect(row.acp_session_id).toBeNull();
+      expect(repository.getSession('acp-clear')?.acpSessionId).toBeUndefined();
+    });
+
+    it('deletes undefined metadata keys when persisting updateSession metadata', () => {
+      repository.createSession(
+        createDefaultSession({
+          id: 'acp-meta-clear',
+          metadata: { ...createDefaultSession().metadata, acpContextUsageEstimate: 12000 },
+        })
+      );
+
+      repository.updateSession('acp-meta-clear', {
+        metadata: { acpContextUsageEstimate: undefined },
+      });
+
+      const row = db.prepare(`SELECT metadata FROM sessions WHERE id = 'acp-meta-clear'`).get() as {
+        metadata: string;
+      };
+      const persisted = JSON.parse(row.metadata) as Record<string, unknown>;
+      expect('acpContextUsageEstimate' in persisted).toBe(false);
+      expect(persisted.messageCount).toBe(0);
     });
 
     it('clears ACP session ids even when another row has malformed metadata', () => {

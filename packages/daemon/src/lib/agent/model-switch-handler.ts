@@ -119,7 +119,12 @@ export class ModelSwitchHandler {
     timer.unref();
     try {
       await dispose(previousCommand, [previousAcpSessionId], undefined, controller.signal).catch(
-        () => {}
+        (error) => {
+          this.ctx.logger.warn(
+            `Failed to dispose previous ACP session ${previousAcpSessionId}:`,
+            error
+          );
+        }
       );
     } finally {
       clearTimeout(timer);

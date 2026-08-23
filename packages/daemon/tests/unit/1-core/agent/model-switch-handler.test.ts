@@ -539,6 +539,37 @@ describe('ModelSwitchHandler', () => {
         );
         expect(mockSession.metadata?.acpSessionCommand).toBeUndefined();
       });
+
+      it('keeps the committed switch when disposing the remote ACP session fails', async () => {
+        const acpProvider = getProviderRegistry().get('acp') as AcpProvider;
+        acpProvider.setAcpCommand('devin acp');
+        const disposeAcpSessionsSpy = mock(async () => {
+          throw new Error('Dispose failed');
+        });
+
+        mockSession.config.model = 'acp-default';
+        mockSession.config.provider = 'acp';
+        mockSession.acpSessionId = 'remote-acp-session';
+        mockSession.metadata = {
+          ...mockSession.metadata,
+          acpContextUsageEstimate: 12000,
+        };
+
+        handler = createHandler({ disposeAcpSessions: disposeAcpSessionsSpy });
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(restartSpy).toHaveBeenCalled();
+        expect(disposeAcpSessionsSpy).toHaveBeenCalledTimes(1);
+        expect(mockSession.acpSessionId).toBeUndefined();
+        expect(mockSession.metadata.acpContextUsageEstimate).toBeUndefined();
+        expect(updateSessionSpy.mock.calls.at(-1)?.[1]).toEqual(
+          expect.objectContaining({
+            acpSessionId: undefined,
+            metadata: expect.objectContaining({ acpContextUsageEstimate: undefined }),
+          })
+        );
+      });
     });
 
     describe('when transport not ready', () => {
