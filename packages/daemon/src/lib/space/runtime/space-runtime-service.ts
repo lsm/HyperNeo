@@ -1824,6 +1824,7 @@ export class SpaceRuntimeService {
       targetStatus,
       options
     );
+    this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
     return recovered.task;
   }
 
