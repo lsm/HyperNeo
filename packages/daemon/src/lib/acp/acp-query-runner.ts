@@ -1291,9 +1291,8 @@ export class AcpQueryRunner {
           ...model,
           contextWindow: provider.getContextWindow(),
         }));
-      if (updateProviderModelsInCache('acp', providerModels)) {
-        this.ctx.internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
-      }
+      updateProviderModelsInCache('acp', providerModels);
+      this.ctx.internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     }
   }
 

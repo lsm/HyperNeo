@@ -263,6 +263,38 @@ describe('Model Service', () => {
       expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
       expect(models.some((m) => m.id === 'slow-splice-model')).toBe(false);
     });
+
+    it('keeps a stale entry stale so the next read re-triggers a background refresh', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'fresh-model',
+          name: 'Fresh Model',
+          family: 'test',
+          provider: 'fresh-provider',
+          contextWindow: 100000,
+          description: 'Fresh model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'fresh-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels }, Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(getModels).toHaveBeenCalled();
+      expect(getAvailableModels('global').some((m) => m.id === 'fresh-model')).toBe(true);
+    });
   });
 
   describe('getAvailableModels', () => {

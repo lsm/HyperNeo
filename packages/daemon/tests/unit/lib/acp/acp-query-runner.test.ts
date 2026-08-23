@@ -915,7 +915,7 @@ describe('AcpQueryRunner', () => {
       expect(publishAsync).toHaveBeenCalledWith('providers.changed', { sessionId: 'global' });
     });
 
-    test('does not publish providers.changed when the global cache is not initialized', async () => {
+    test('publishes the repair trigger without creating a partial entry when the global cache is not initialized', async () => {
       const provider = new AcpProvider({}, async () => {});
       provider.setAcpCommand('mock-acp --stdio');
       getProviderRegistry().register(provider);
@@ -927,7 +927,7 @@ describe('AcpQueryRunner', () => {
 
       expect(getModelsCache().has('global')).toBe(false);
       const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
-      expect(publishAsync).not.toHaveBeenCalledWith('providers.changed', {
+      expect(publishAsync).toHaveBeenCalledWith('providers.changed', {
         sessionId: 'global',
       });
     });

@@ -371,7 +371,6 @@ export function updateProviderModelsInCache(
     ...cachedModels.filter((model) => model.provider !== providerId),
     ...models,
   ]);
-  cacheTimestamps.set(cacheKey, Date.now());
   if (hadInFlight || cacheGeneration.has(cacheKey)) {
     cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
   }
