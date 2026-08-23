@@ -40,7 +40,7 @@ Work through the review dimensions below on every non-trivial change — none ar
 - `standard` (default) — own #1 (Goal & ask) yourself — never delegate the premise or the verdict — and dispatch dedicated Task general-purpose sub-agents, one per #2 Correctness & resilience, #3 Impact & compatibility, #4 Security, #5 Tests & performance, #6 Craft & architecture.
 - `deep` — large or risky diff (migrations, auth, protocol, cross-package contracts): the `standard` dispatch PLUS a second independent sub-agent pass on the highest-risk dimension.
 - `auto` — triage to `light` / `standard` / `deep` per the policy guidance below.
-- Delta rounds (3+) run one tier lighter than whole-PR rounds unless the prior round filed P0/P1 findings or the delta touches a risky surface.
+- Delta rounds (3+) under `auto` triage run one tier lighter than whole-PR rounds unless the prior round filed P0/P1 findings or the delta touches a risky surface. This optimization never overrides an explicit depth: a task-selected `standard` stays `standard` on every round and a task-selected `deep` keeps its independent second pass — the explicit policy governs review effort, so only `auto` triage may lighten a delta round.
 
 Sub-agents inform; they do not decide.
 

@@ -416,6 +416,12 @@ describe('coder-only workflow template', () => {
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('BOTH conditions must hold');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('reaction-only signaling must not read as');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'ONLY when the reaction is itself a review-verdict signal'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'never joins the gate set, and its reaction can neither pass the gate nor hold it open'
+    );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('with NOTHING reported is a clean verdict');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('logins that are REVIEW bots');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('are NOT review bots');

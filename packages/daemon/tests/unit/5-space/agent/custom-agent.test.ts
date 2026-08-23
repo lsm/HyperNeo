@@ -833,7 +833,10 @@ describe('createCustomAgentInit', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'a second independent sub-agent pass on the highest-risk dimension'
     );
-    expect(REVIEWER_SYSTEM_CONTRACT).toContain('Delta rounds (3+) run one tier lighter');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'Delta rounds (3+) under `auto` triage run one tier lighter'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('never overrides an explicit depth');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('the latest explicit instruction wins');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(REVIEW_POLICY_GUIDANCE);
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
