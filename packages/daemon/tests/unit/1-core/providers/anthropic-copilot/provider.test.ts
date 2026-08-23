@@ -1018,6 +1018,38 @@ describe('logout()', () => {
     );
     await expect(p.logout()).resolves.toBeUndefined();
   });
+
+  it('does not refuse logout from cached provenance when discovery cached no token', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: undefined,
+      expiresAt: Date.now() + 60_000,
+      source: 'hosts',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('does not refuse logout from cached provenance when the cached token is an unusable classic PAT', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    (p as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'ghp_cli_classic',
+      expiresAt: Date.now() + 60_000,
+      source: 'gh-cli',
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
 });
 
 describe('startOAuthFlow()', () => {

@@ -435,7 +435,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   private freshCachedExternalSource(): string | undefined {
     if (!this.tokenCache || Date.now() >= this.tokenCache.expiresAt) return undefined;
-    return this.tokenCache.source ? EXTERNAL_SOURCE_LABELS[this.tokenCache.source] : undefined;
+    const { token, source } = this.tokenCache;
+    if (!token || token.startsWith('ghp_') || !source) return undefined;
+    return EXTERNAL_SOURCE_LABELS[source];
   }
 
   private async findExternalCredentialSource(): Promise<string | undefined> {
