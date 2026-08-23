@@ -1254,6 +1254,7 @@ describe('Model Service', () => {
       available?: boolean;
       models?: ModelInfo[];
       error?: Error;
+      rejectDelayMs?: number;
     }
 
     async function registerProvider(id: string, behavior: MockProviderBehavior): Promise<void> {
@@ -1262,6 +1263,9 @@ describe('Model Service', () => {
       getProviderRegistry().register({
         id,
         getModels: async () => {
+          if (behavior.rejectDelayMs) {
+            await new Promise((resolve) => setTimeout(resolve, behavior.rejectDelayMs));
+          }
           if (behavior.error) throw behavior.error;
           return behavior.models ?? [];
         },
@@ -1372,6 +1376,37 @@ describe('Model Service', () => {
 
       expect(changes).toHaveLength(2);
       expect(changes[1]).toEqual({ providerId: 'glm', record: null });
+    });
+
+    it('does not apply failure writes from a superseded refresh generation', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+      });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const supersededRefresh = refreshModels();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      clearModelsCache();
+      await supersededRefresh;
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('drops failure records for providers no longer in the registry', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      expect(getProviderFailure('glm')).toBeDefined();
+
+      resetProviderRegistry();
+      await registerProvider('kimi', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
     });
   });
 });

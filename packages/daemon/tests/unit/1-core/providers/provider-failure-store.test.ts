@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import {
   classifyProviderFailure,
   classifyProviderFailureMessage,
@@ -6,10 +6,13 @@ import {
   getAllProviderFailures,
   getProviderFailure,
   recordProviderFailure,
+  removeProviderFailure,
   resetProviderFailureStore,
   subscribeProviderFailureChanges,
   type ProviderFailureChange,
 } from '../../../../src/lib/providers/provider-failure-store';
+
+const T0 = new Date('2026-01-01T00:00:00Z').getTime();
 
 describe('provider failure classification', () => {
   it('classifies probe 401/403 rejections as credential', () => {
@@ -55,9 +58,6 @@ describe('provider failure classification', () => {
     expect(classifyProviderFailureMessage('ACP agent process error: spawn foo ENOENT')).toBe(
       'credential'
     );
-    expect(classifyProviderFailureMessage('Initialize failed: unsupported client')).toBe(
-      'credential'
-    );
     expect(
       classifyProviderFailureMessage(
         'Unsupported ACP protocol version: agent returned 2, client requested 1'
@@ -65,11 +65,12 @@ describe('provider failure classification', () => {
     ).toBe('credential');
   });
 
-  it('classifies ACP timeouts and crashes as transient', () => {
+  it('classifies ACP timeouts, crashes, and agent-side initialize errors as transient', () => {
     expect(classifyProviderFailureMessage('Request timed out after 10000ms: initialize')).toBe(
       'transient'
     );
     expect(classifyProviderFailureMessage('ACP agent process exited')).toBe('transient');
+    expect(classifyProviderFailureMessage('Initialize failed: agent overloaded')).toBe('transient');
   });
 
   it('defaults unclassified errors to transient', () => {
@@ -91,6 +92,10 @@ describe('provider failure classification', () => {
 describe('provider failure store', () => {
   beforeEach(() => {
     resetProviderFailureStore();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('records a failure with timestamps and reports it', () => {
@@ -117,11 +122,14 @@ describe('provider failure store', () => {
   });
 
   it('resets the first-recorded timestamp when the failure kind changes', () => {
+    jest.setSystemTime(T0);
     const transient = recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    jest.setSystemTime(T0 + 10_000);
     const credential = recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
 
+    expect(transient.firstRecordedAt).toBe(T0);
     expect(credential.errorKind).toBe('credential');
-    expect(credential.firstRecordedAt).toBeGreaterThan(transient.firstRecordedAt);
+    expect(credential.firstRecordedAt).toBe(T0 + 10_000);
     expect(getProviderFailure('glm')?.errorKind).toBe('credential');
   });
 
@@ -158,6 +166,18 @@ describe('provider failure store', () => {
 
     expect(changes).toHaveLength(2);
     expect(changes[1]).toEqual({ providerId: 'glm', record: null });
+    expect(getProviderFailure('glm')).toBeUndefined();
+  });
+
+  it('removes a failure record silently without notifying listeners', () => {
+    const changes: ProviderFailureChange[] = [];
+    subscribeProviderFailureChanges((change) => changes.push(change));
+
+    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+    expect(removeProviderFailure('glm')).toBe(true);
+    expect(removeProviderFailure('glm')).toBe(false);
+
+    expect(changes).toHaveLength(1);
     expect(getProviderFailure('glm')).toBeUndefined();
   });
 

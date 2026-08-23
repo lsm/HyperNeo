@@ -21,7 +21,6 @@ const CREDENTIAL_MESSAGE_PATTERNS: readonly RegExp[] = [
   /invalid acp command/i,
   /acp_command not set/i,
   /acp agent process error/i,
-  /initialize failed/i,
   /unsupported acp protocol version/i,
 ];
 
@@ -50,7 +49,14 @@ function notifyFailureChange(change: ProviderFailureChange): void {
 }
 
 export function recordProviderFailure(providerId: string, error: unknown): ProviderFailureRecord {
-  const { errorKind, message } = classifyProviderFailure(error);
+  return recordClassifiedProviderFailure(providerId, classifyProviderFailure(error));
+}
+
+export function recordClassifiedProviderFailure(
+  providerId: string,
+  failure: { errorKind: ProviderFailureErrorKind; message: string }
+): ProviderFailureRecord {
+  const { errorKind, message } = failure;
   const now = Date.now();
   const existing = providerFailures.get(providerId);
 
@@ -79,6 +85,10 @@ export function clearProviderFailure(providerId: string): boolean {
   providerFailures.delete(providerId);
   notifyFailureChange({ providerId, record: null });
   return true;
+}
+
+export function removeProviderFailure(providerId: string): boolean {
+  return providerFailures.delete(providerId);
 }
 
 /** @public */

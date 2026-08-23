@@ -4,10 +4,12 @@ import { initializeProviders, waitForOptionalProviderRegistration } from './prov
 import { getProviderRegistry } from './providers/registry.js';
 import {
   clearProviderFailure,
-  type ProviderFailureRecord,
-  recordProviderFailure,
+  classifyProviderFailure,
+  getAllProviderFailures,
+  recordClassifiedProviderFailure,
+  removeProviderFailure,
 } from './providers/provider-failure-store.js';
-import type { Provider } from '@hyperneo/shared/provider';
+import type { Provider, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
@@ -152,9 +154,13 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 
   const refreshPromise = (async () => {
     try {
-      const { models } = await loadModelsFromProviders();
-      if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
-        const mergedModels = mergeWithFallbackModels(models);
+      const result = await loadModelsFromProviders();
+      const isCurrentGeneration = (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart;
+      if (isCurrentGeneration) {
+        applyProviderLoadOutcome(result);
+      }
+      if (result.models.length > 0 && isCurrentGeneration) {
+        const mergedModels = mergeWithFallbackModels(result.models);
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
       }
@@ -175,9 +181,16 @@ function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boole
   return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
 }
 
+interface ProviderLoadFailure {
+  readonly providerId: string;
+  readonly errorKind: ProviderFailureErrorKind;
+  readonly message: string;
+}
+
 interface ModelsLoadResult {
   models: ModelInfo[];
-  failures: ProviderFailureRecord[];
+  succeededProviderIds: string[];
+  failures: ProviderLoadFailure[];
 }
 
 async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
@@ -199,19 +212,34 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   );
 
   const allModels: ModelInfo[] = [];
-  const failures: ProviderFailureRecord[] = [];
+  const succeededProviderIds: string[] = [];
+  const failures: ProviderLoadFailure[] = [];
   results.forEach((result, index) => {
     const provider = providers[index];
     if (result.status === 'fulfilled') {
-      clearProviderFailure(provider.id);
-      /* v8 ignore next 2 */
+      succeededProviderIds.push(provider.id);
       allModels.push(...result.value);
     } else {
-      failures.push(recordProviderFailure(provider.id, result.reason));
+      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.reason) });
     }
   });
 
-  return { models: allModels, failures };
+  return { models: allModels, succeededProviderIds, failures };
+}
+
+function applyProviderLoadOutcome(result: ModelsLoadResult): void {
+  const registry = getProviderRegistry();
+  for (const failure of getAllProviderFailures()) {
+    if (!registry.has(failure.providerId)) {
+      removeProviderFailure(failure.providerId);
+    }
+  }
+  for (const providerId of result.succeededProviderIds) {
+    clearProviderFailure(providerId);
+  }
+  for (const failure of result.failures) {
+    recordClassifiedProviderFailure(failure.providerId, failure);
+  }
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -245,7 +273,9 @@ export async function initializeModels(): Promise<void> {
   await waitForOptionalProviderRegistration();
 
   try {
-    const { models } = await loadModelsFromProviders();
+    const result = await loadModelsFromProviders();
+    applyProviderLoadOutcome(result);
+    const { models } = result;
     if (models.length > 0) {
       const mergedModels = mergeWithFallbackModels(models);
       modelsCache.set(cacheKey, mergedModels);
@@ -328,10 +358,12 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       if (signal?.aborted) {
         return;
       }
-      const { models } = await loadModelsFromProviders();
+      const result = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
+      applyProviderLoadOutcome(result);
+      const { models } = result;
       if (models.length > 0) {
         const mergedModels = mergeWithFallbackModels(models);
         if (previousModels && previousModels.length > mergedModels.length) {
