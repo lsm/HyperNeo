@@ -487,7 +487,19 @@ export class SpaceRuntimeService {
     if (!row.idempotencyKey?.startsWith('goal-outcome:')) return false;
     const notificationId = row.idempotencyKey.slice('goal-outcome:'.length);
     const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
-    return notification == null || notification.status !== 'pending';
+    if (notification == null || notification.status !== 'pending') return true;
+    const goal = this.config.goalService?.getGoal(notification.goalId);
+    if (!goal || goal.spaceId !== notification.spaceId) return true;
+    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    let targetAgentId: string | null = null;
+    if (resolution?.action === 'resolved') {
+      targetAgentId = resolution.owner.agentId;
+    } else if (resolution?.action === 'coordinator_fallback') {
+      targetAgentId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
+      targetAgentId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+    }
+    return targetAgentId == null || row.targetAgentId !== targetAgentId;
   }
 
   private async injectLongTermAgentMessage(
