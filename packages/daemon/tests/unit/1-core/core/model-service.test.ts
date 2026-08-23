@@ -19,7 +19,7 @@ import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
-import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/provider';
+import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/models';
 
 describe('Model Service', () => {
   const mockModels: ModelInfo[] = [
@@ -482,6 +482,28 @@ describe('Model Service', () => {
       expect(await getModelInfo('gpt-5.5', 'global', 'anthropic')).toBeNull();
     });
 
+    it('overlays Codex context-window preferences on Copilot static hits', async () => {
+      clearModelsCache();
+
+      for (const id of ['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']) {
+        const model = await getModelInfo(id, 'global', 'anthropic-copilot');
+        expect(model?.contextWindow).toBe(272000);
+        expect(model?.preferContextWindowMetadata).toBe(true);
+      }
+    });
+
+    it('returns non-Codex Copilot static metadata without the overlay', async () => {
+      clearModelsCache();
+
+      const claude = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+      expect(claude?.contextWindow).toBe(200000);
+      expect(claude?.preferContextWindowMetadata).toBeUndefined();
+
+      const gemini = await getModelInfo('gemini-3.1-pro-preview', 'global', 'anthropic-copilot');
+      expect(gemini?.contextWindow).toBe(128000);
+      expect(gemini?.preferContextWindowMetadata).toBeUndefined();
+    });
+
     it('gates Minimax static validation on provider availability', async () => {
       clearModelsCache();
 
@@ -506,7 +528,7 @@ describe('Model Service', () => {
       expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(false);
       expect(
         await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot', 'session-key')
-      ).toBe(true);
+      ).toBe(false);
       expect(
         await isValidModel('unknown-copilot-model', 'global', 'anthropic-copilot', 'session-key')
       ).toBe(false);
@@ -520,6 +542,26 @@ describe('Model Service', () => {
         isAvailable: async () => false,
       } as ProviderLike);
       expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(false);
+    });
+
+    it('validates Copilot static metadata when the provider is available', async () => {
+      clearModelsCache();
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-copilot',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(true);
+      expect(await isValidModel('copilot-anthropic-opus', 'global', 'anthropic-copilot')).toBe(
+        true
+      );
+      expect(await isValidModel('unknown-copilot-model', 'global', 'anthropic-copilot')).toBe(
+        false
+      );
     });
   });
 
