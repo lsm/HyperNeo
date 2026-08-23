@@ -266,13 +266,15 @@ export class SpaceTaskManager {
       this.onTaskReopened?.(taskId);
     }
 
-    if (newStatus === 'done' && !task.goalId) {
-      try {
-        this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
-      } catch (err) {
-        log.warn(
-          `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
-        );
+    if (newStatus === 'done') {
+      if (!task.goalId) {
+        try {
+          this.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
+        } catch (err) {
+          log.warn(
+            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       try {
         const unblocked = await this.unblockDependentTasks(taskId);
