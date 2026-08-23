@@ -7,6 +7,7 @@ import type {
   MessageSearchResponse,
 } from '../../../../src/storage/message-search';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('SDKMessageRepository', () => {
@@ -381,6 +382,32 @@ describe('SDKMessageRepository', () => {
 
       expect(session1Messages.length).toBe(1);
       expect(session2Messages.length).toBe(1);
+    });
+
+    it('returns false when the insert itself fails', () => {
+      db.exec('DROP TABLE sdk_messages');
+
+      expect(repository.saveSDKMessage('session-1', createUserMessage('never persisted'))).toBe(
+        false
+      );
+    });
+
+    it('returns true for a committed row when post-commit notifications fail', () => {
+      const failingReactiveDb = {
+        resolveTaskIdForSession: () => null,
+        notifyChange: () => {
+          throw new Error('reactive notify failed');
+        },
+      } as unknown as ReactiveDatabase;
+      const repo = new SDKMessageRepository(db as any, failingReactiveDb);
+
+      const result = repo.saveSDKMessage('session-1', createUserMessage('committed'));
+
+      expect(result).toBe(true);
+      const row = db
+        .prepare(`SELECT COUNT(*) AS count FROM sdk_messages WHERE session_id = ?`)
+        .get('session-1') as { count: number };
+      expect(row.count).toBe(1);
     });
   });
 
