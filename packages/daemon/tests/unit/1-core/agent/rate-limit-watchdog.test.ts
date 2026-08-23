@@ -1426,4 +1426,222 @@ describe('RateLimitWatchdog', () => {
       expect(() => watchdog.retryNow()).not.toThrow();
     });
   });
+
+  describe('decision table pins', () => {
+    it('billing-terminal outranks a usable hinted reset: surfaces without any cooldown', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        "403 You've reached your usage limit for this billing cycle",
+        { uuid: 'm1', content: 'x' },
+        {
+          billingTerminal: true,
+          kind: 'usage_limit',
+          resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        }
+      );
+      expect(result).toBe(false);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('billing-terminal surfaces after a non-empty chain is exhausted (all entries unavailable)', async () => {
+      const A: FallbackModelEntry = { provider: 'minimax', model: 'abab6.5' };
+      const { deps, notifyPause, switchAndRetry } = createMockDeps({
+        chain: [A],
+        available: () => false,
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        '402 insufficient credits',
+        { uuid: 'm1', content: 'x' },
+        { billingTerminal: true, kind: 'usage_limit' }
+      );
+      expect(result).toBe(false);
+      expect(switchAndRetry).not.toHaveBeenCalled();
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+    });
+
+    it('a hinted reset beyond the 7-day horizon is ignored; the ladder arms but the hinted kind labels the pause', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() + 8 * 24 * 60 * 60 * 1000, kind: 'usage_limit' }
+      );
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(1);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'usage_limit' });
+      watchdog.cancel();
+    });
+
+    it('ladder pause kind falls back to message classification when the hint carries no kind', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const result = await watchdog.scheduleRetry(
+        'quota exceeded for today',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() - 1000 }
+      );
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(1);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'usage_limit' });
+      watchdog.cancel();
+    });
+
+    it('the ladder delay steps with the episode retry count (10min step, then 30min step)', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 5 });
+      const msg = { uuid: 'm1', content: 'x' };
+      const beforeFirst = Date.now();
+      await watchdog.scheduleRetry('429', msg);
+      const beforeSecond = Date.now();
+      await watchdog.scheduleRetry('429', msg);
+      const writes = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(writes[0][0].retryAt - beforeFirst).toBeGreaterThan(8 * 60 * 1000);
+      expect(writes[0][0].retryAt - beforeFirst).toBeLessThan(12 * 60 * 1000);
+      expect(writes[1][0].retryAt - beforeSecond).toBeGreaterThan(24 * 60 * 1000);
+      expect(writes[1][0].retryAt - beforeSecond).toBeLessThan(36 * 60 * 1000);
+      watchdog.cancel();
+    });
+
+    it('ignores an LLM-refined reset in the past and keeps the ladder cooldown', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() - 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+
+      expect(
+        (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
+      ).toHaveLength(1);
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      watchdog.cancel();
+    });
+
+    it('ignores an LLM-refined reset beyond the 7-day horizon and keeps the ladder cooldown', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 8 * 24 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+
+      expect(
+        (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls
+      ).toHaveLength(1);
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      watchdog.cancel();
+    });
+
+    it('normalizes an epoch-seconds LLM reset and re-arms at reset plus buffer', async () => {
+      const resetSec = Math.floor((Date.now() + 2 * 60 * 60 * 1000) / 1000);
+      const classify = mock(async () => ({
+        resetAtMs: resetSec,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+
+      const calls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(calls[1][0].retryAt).toBe(resetSec * 1000 + RESET_BUFFER_MS);
+      watchdog.cancel();
+    });
+
+    it('a kind-only LLM assessment (no reset) neither re-arms nor relabels the pause', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: null,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      await flush();
+
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'rate_limit' });
+      expect(watchdog.getState().limitKind).toBe('rate_limit');
+      watchdog.cancel();
+    });
+
+    it('skips LLM refinement when a usable hinted reset scheduled the cooldown', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 3 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry(
+        'throttled by waf',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() + 2 * 60 * 60 * 1000, kind: 'usage_limit' }
+      );
+      await flush();
+      await flush();
+
+      expect(classify).not.toHaveBeenCalled();
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      watchdog.cancel();
+    });
+
+    it('isManualRecoveryPause is true after startup retries are exhausted', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const retryCallback = mock(async () => false);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+      expect(watchdog.isManualRecoveryPause()).toBe(false);
+
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
+      for (let i = 0; i < 4; i++) {
+        watchdog.retryNow();
+        await flush();
+      }
+
+      expect(watchdog.isManualRecoveryPause()).toBe(true);
+      expect(watchdog.isRecoveryPending()).toBe(true);
+    });
+
+    it('reset clears the paused limit kind alongside the episode', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry(
+        '429',
+        { uuid: 'm1', content: 'x' },
+        { resetAtMs: Date.now() + 60 * 60 * 1000, kind: 'usage_limit' }
+      );
+      expect(watchdog.getState().limitKind).toBe('usage_limit');
+      watchdog.reset();
+      expect(watchdog.getState().limitKind).toBeNull();
+      expect(watchdog.getState().retryCount).toBe(0);
+    });
+  });
 });
