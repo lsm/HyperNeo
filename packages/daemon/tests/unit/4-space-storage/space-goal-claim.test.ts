@@ -375,7 +375,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       expect(updated.metrics.converted).toBe(2);
     });
 
-    it('preserves recurring-goal progress when not part of the update', () => {
+    it('does not update recurring-goal progress through outcome review', () => {
       const recurring = service.createGoal({
         spaceId: goal.spaceId,
         title: 'Recurring',
@@ -386,9 +386,22 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       const updated = service.applyOutcomeGoalUpdate({
         goalId: recurring.id,
         summary: 'Reviewed',
+        progress: 80,
       });
 
       expect(updated.progress).toBe(10);
+      expect(updated.summary).toBe('Reviewed');
+    });
+
+    it('rejects a numeric observation colliding with a non-numeric metric', () => {
+      service.applyOutcomeGoalUpdate({ goalId: goal.id, metrics: { health: 'green' } });
+
+      expect(() =>
+        service.applyOutcomeGoalUpdate({
+          goalId: goal.id,
+          observations: [{ key: 'health', value: 1 }],
+        })
+      ).toThrow(/non-numeric metric "health"/);
     });
 
     it('records a goal event referencing the reviewed task', () => {

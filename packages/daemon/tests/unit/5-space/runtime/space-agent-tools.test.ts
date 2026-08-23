@@ -2676,6 +2676,27 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
     expect(out.success).toBe(false);
     expect(out.error).toContain('acknowledge');
   });
+
+  test('rejects goal-state updates without a notification identity', async () => {
+    const { agent, goal, task } = await makeReviewerGoal();
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: agent.id,
+    });
+
+    const out = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          goal_id: goal.id,
+          task_id: task.id,
+          summary: 'Reviewed',
+        })
+      ).content[0].text
+    );
+    expect(out.success).toBe(false);
+    expect(out.error).toContain('notification_id');
+  });
 });
 
 describe('createSpaceAgentToolHandlers — Forge tools', () => {

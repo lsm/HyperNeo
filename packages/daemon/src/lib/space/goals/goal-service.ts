@@ -89,6 +89,7 @@ export interface ApplyOutcomeGoalUpdateParams {
   metrics?: Record<string, string | number | boolean | null>;
   observations?: Array<{ key: string; value: number }>;
   sourceTaskId?: string;
+  sourceSessionId?: string | null;
 }
 
 export interface SpaceGoalServiceDeps {
@@ -645,13 +646,22 @@ export class SpaceGoalService {
     const updates: UpdateSpaceGoalParams = {};
     if (params.summary !== undefined) updates.summary = params.summary;
     if (params.nextSteps !== undefined) updates.nextSteps = params.nextSteps;
-    if (params.progress !== undefined) updates.progress = params.progress;
+    if (params.progress !== undefined && goal.type !== 'recurring') {
+      updates.progress = params.progress;
+    }
     if (metrics !== null) updates.metrics = metrics;
+    this.syncLinkedScheduleIfNeeded(
+      goal,
+      { summary: params.summary, nextSteps: params.nextSteps },
+      goal.status,
+      updates
+    );
     const updated = this.deps.goalRepo.update(goal.id, updates);
     if (!updated) return goal;
     this.recordGoalEvent(updated, 'updated', goal, updated, {
-      source: 'system',
+      source: 'space_agent_tool',
       sourceTaskId: params.sourceTaskId ?? null,
+      sourceSessionId: params.sourceSessionId ?? null,
       note: 'Goal outcome reviewed',
     });
     return updated;
@@ -670,8 +680,15 @@ export class SpaceGoalService {
     if (observations) {
       for (const observation of observations) {
         const existing = merged[observation.key];
-        merged[observation.key] =
-          typeof existing === 'number' ? existing + observation.value : observation.value;
+        if (existing === undefined || existing === null) {
+          merged[observation.key] = observation.value;
+        } else if (typeof existing === 'number') {
+          merged[observation.key] = existing + observation.value;
+        } else {
+          throw new Error(
+            `Cannot apply a numeric observation to non-numeric metric "${observation.key}"`
+          );
+        }
       }
     }
     return merged;

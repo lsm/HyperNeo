@@ -3037,6 +3037,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.observations !== undefined ||
           args.progress !== undefined;
         if (!args.notification_id) {
+          if (hasGoalUpdate) {
+            return jsonResult({
+              success: false,
+              error:
+                'goal-state updates require notification_id; call without update fields to discover pending notifications',
+            });
+          }
           const notifications = goalService.listClaimableOutcomeNotifications({
             spaceId,
             callerAgentId,
@@ -3092,6 +3099,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                   observations: args.observations,
                   progress: args.progress,
                   sourceTaskId: args.task_id,
+                  sourceSessionId: mySessionId ?? null,
                 })
             : undefined,
         });
@@ -5191,7 +5199,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     tools.push(
       tool(
         'review_goal_outcome',
-        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id, and a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without mutating goal state.',
+        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id and either a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without goal mutation, or goal-state updates (summary, next_steps, metrics, observations, progress) to acknowledge the outcome while persisting your review to the goal.',
         {
           goal_id: z
             .string()
