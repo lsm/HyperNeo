@@ -398,4 +398,52 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
     expect(badgeOf('s-comp')).toBe(0);
     expect(events).toEqual([]);
   });
+
+  test('proxied saveUserMessage notifies sdk_messages exactly once per save', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    reactiveDb.db.saveUserMessage('s-comp', userMessage('hello', 'u-px'), 'consumed');
+
+    const sdkEvents = events.filter((event) => event.tables.includes('sdk_messages'));
+    expect(sdkEvents).toHaveLength(1);
+    expect(sdkEvents[0].scope).toEqual({ sessionId: 's-comp', taskId: 'task-comp' });
+    expect(reactiveDb.getTableVersion('sdk_messages')).toBe(1);
+    expect(events.filter((event) => event.tables.includes('sessions'))).toHaveLength(1);
+  });
+
+  test('proxied saveUserMessage without badge emits only the sdk_messages change', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    reactiveDb.db.saveUserMessage('s-comp', userMessage('queued', 'u-pxd'), 'deferred');
+
+    expect(events.map((event) => event.tables)).toEqual([['sdk_messages']]);
+    expect(reactiveDb.getTableVersion('sdk_messages')).toBe(1);
+  });
+
+  test('a failing proxied save does not suppress later explicit notifies', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    const countingPrepare = bunDb.prepare.bind(bunDb);
+    let failOnce = true;
+    bunDb.prepare = ((sql: string, ...rest: unknown[]) => {
+      if (failOnce && /INSERT INTO sdk_messages/.test(sql)) {
+        failOnce = false;
+        throw new Error('simulated insert failure');
+      }
+      return countingPrepare(sql, ...rest);
+    }) as typeof bunDb.prepare;
+
+    expect(() =>
+      reactiveDb.db.saveUserMessage('s-comp', userMessage('doomed', 'u-pxf'), 'consumed')
+    ).toThrow('simulated insert failure');
+
+    bunDb.prepare = countingPrepare;
+    repo.saveUserMessage('s-comp', userMessage('recovered', 'u-pxr'), 'consumed');
+
+    expect(events.map((event) => event.tables)).toEqual([['sdk_messages'], ['sessions']]);
+    expect(messageCount()).toBe(1);
+  });
 });
