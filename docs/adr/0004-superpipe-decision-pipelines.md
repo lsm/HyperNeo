@@ -1236,10 +1236,17 @@ NULL-keeping to match `isOlderThanMessageSearchTtl`, replacing SQLite's
 `'now'` — while the *shape* stays set-based, and that residual duplication is
 deliberate: the rebuild remains one DELETE plus one `INSERT … SELECT` per
 session flip rather than a per-row JS loop over the shared predicates; its
-supersession match keeps the codebase-wide `COALESCE(sdk_uuid, id)` fallback;
-and its body assembly stays SQL `GROUP_CONCAT`, where non-string
-text/thinking scalars (and non-ASCII whitespace-only bodies) can still diverge
-from `extractVisibleSearchText` for malformed-content rows. Writing the parity
+supersession match keeps the codebase-wide `COALESCE(sdk_uuid, id)` fallback,
+which is stricter than the repo path for one row shape — a searchable row
+with neither a payload UUID nor a `sdk_uuid` column value whose replacement
+edge targets its database id is rejected by the rebuild's match while
+`isMessageSuperseded` returns false on the absent payload UUID; edges carry
+payload UUIDs (`retracted_message_uuids`), never db ids, so that shape cannot
+arise in practice (dead defensive symmetry, pilot 3's rebind-guard precedent)
+and the parity matrix deliberately contains no such row; and its body
+assembly stays SQL `GROUP_CONCAT`, where non-string text/thinking scalars
+(and non-ASCII whitespace-only bodies) can still diverge from
+`extractVisibleSearchText` for malformed-content rows. Writing the parity
 matrix (`session-search-rebuild-parity.test.ts`) surfaced five real
 divergences, all fixed: second-truncated SQL kept rows the core rejected
 (sub-second-in-second), the `COALESCE(…, 0)` task cutoff rejected
@@ -1258,13 +1265,13 @@ Boundary caveats, recorded for the same reason as pilot 3's:
    user-status fact never consulted when an earlier gate skips and never for
    non-user rows.
 2. **The gates are wiring, not surface.** The six `applyXGate` functions are
-   consumed only intra-module, composed into the run that
-   `decideMessageSearchAdmission` executes; knip's `ignoreExportsUsedInFile`
-   admits them. The suite pins the decision table through the composed run's
-   precedence ("superseded wins over every later gate") *and* the per-gate
-   pass-through identity of Decision item 6(b) — the identity pin is the one
-   part the composed run cannot prove: a gate returning a spread copy instead
-   of the same ctx reference still composes, so only the per-gate
+   production-internal — composed intra-module into the run that
+   `decideMessageSearchAdmission` executes — and directly test-consumed by
+   the identity pins. The suite pins the decision table through the composed
+   run's precedence ("superseded wins over every later gate") *and* the
+   per-gate pass-through identity of Decision item 6(b) — the identity pin is
+   the one part the composed run cannot prove: a gate returning a spread copy
+   instead of the same ctx reference still composes, so only the per-gate
    `gate(ctx) === ctx` assertion catches it.
 3. **The fact suppliers stay repo-private.** `isMessageSuperseded` and
    `isSearchableUserMessageStatus` remain private methods — the reads the core
@@ -1289,8 +1296,9 @@ the five vocabulary constants by `session-repository.ts`'s rebuild (the TTL
 also by the parity suite), `decideMessageSearchAdmission` by
 `upsertMessageSearchRow` and both suites, `isMessageSearchIndexEligible` and
 `isOlderThanMessageSearchTtl` by the admission suite (the former also
-intra-module as the eligibility gate), the six gates intra-module by the
-composed run, `routeDeliveryTransition` by `deferEnqueuedUserMessage` and the
+intra-module as the eligibility gate), the six gates both — composed into
+the production run and pinned by the identity describe —
+`routeDeliveryTransition` by `deferEnqueuedUserMessage` and the
 routing suite, `deliveryTransitionRule` by the four wrapper call sites and the
 suite, `DeliveryTransitionAction` by the wrapper signatures, and the remaining
 types intra-module.
@@ -1301,9 +1309,10 @@ the chain's close, 1,898 after dev's interleaved extractions — chain A PR 4
 and the rewind-operator dedup — landed beside it; chains A and B account for
 the rest of the shrink from the survey's 2,199-line base),
 `session-repository.ts` +38 for the vocabulary interpolation and
-parameterized cutoffs. Tests +1,579:
+parameterized cutoffs. Tests +1,644:
 C1's pins +585 net (window matrix, turn-end batch semantics, flush boundary),
-the admission suite +212, the routing suite +98, the parity matrix +684 —
+the admission suite +277 (212 across C2 plus this closing sweep's 65 identity
+pins), the routing suite +98, the parity matrix +684 —
 again the value is testability, and here the parity matrix paid for itself by
 surfacing the five rebuild divergences on identical rows.
 
