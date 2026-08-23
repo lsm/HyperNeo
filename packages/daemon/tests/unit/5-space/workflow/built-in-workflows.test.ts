@@ -379,7 +379,11 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies');
     expect(CODER_ONLY_PROMPT).toContain('internal-fallback');
     expect(CODER_ONLY_PROMPT).toContain('six internal review dimensions');
-    expect(CODER_ONLY_PROMPT).toContain('without sub-agent fan-out');
+    expect(CODER_ONLY_PROMPT).toContain('fresh-eyes general-purpose sub-agent pass');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'second independent sub-agent pass on the highest-risk dimension'
+    );
+    expect(CODER_ONLY_PROMPT).toContain('gate_set: [], source: "internal-fallback"');
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
     expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
@@ -396,6 +400,7 @@ describe('coder-only workflow template', () => {
     expect(REVIEW_POLICY_GUIDANCE).toContain('**Review depth**');
     expect(REVIEW_POLICY_GUIDANCE).toContain('The most recent explicit instruction wins');
     expect(REVIEW_POLICY_GUIDANCE).toContain('message delivered to your session');
+    expect(REVIEW_POLICY_GUIDANCE).toContain('are security surfaces');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('DISCOVER the bots actually available');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Verdicts are language, so read them');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Silence is NOT a pass');
@@ -423,6 +428,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('always send the gated PR handoff');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('verifies the external gate and is the backup');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      "the Reviewer's backup role covers exactly this failure"
+    );
     expect(CODER_OWNED_MERGE_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(CODING_WORKFLOW.nodes[0]!.agents[0]!.customPrompt!.value).toBe(CODER_OWNED_MERGE_PROMPT);
     expect(RESEARCH_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);

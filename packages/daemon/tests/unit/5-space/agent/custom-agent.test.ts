@@ -818,6 +818,7 @@ describe('createCustomAgentInit', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('BOTH gates must pass');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('does NOT apply in `both` mode');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('NEVER advance your round');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('your own pass at the review depth in effect');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('No-implementer workflows');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain("outside the Reviewer's permitted commands");
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('treat it as a pointer, not proof');
