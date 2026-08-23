@@ -192,6 +192,19 @@ describe('AcpTransport', () => {
     await expect(promise).rejects.toThrow('ACP agent process exited');
   });
 
+  test('observes spawn errors when process-tree ownership fails', () => {
+    const processTreeOwner = vi.fn((proc: MockChildProcess) => {
+      expect(proc.listenerCount('error')).toBeGreaterThan(0);
+      throw new Error('missing process id');
+    });
+
+    expect(() => new AcpTransport({ command: 'missing', processTreeOwner })).toThrow(
+      'missing process id'
+    );
+    expect(lastMockProcess?.killed).toBe(true);
+    expect(() => lastMockProcess?.emit('error', new Error('spawn ENOENT'))).not.toThrow();
+  });
+
   test('rejects pending requests on process error', async () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
@@ -282,7 +295,7 @@ describe('AcpTransport', () => {
   });
 
   test('close sends SIGTERM then SIGKILL after timeout', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new AcpTransport({ command: 'acp-agent', processGroupProbe: () => true });
     const proc = lastMockProcess!;
 
     const closePromise = transport.close();
@@ -294,14 +307,139 @@ describe('AcpTransport', () => {
     expect(proc.killed).toBe(true);
   });
 
-  test('close resolves immediately if process already exited', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+  test('retains tree ownership after the leader exits', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => true,
+    });
     const proc = lastMockProcess!;
 
     proc.emit('exit', 0, null);
 
     await expect(transport.close()).resolves.toBeUndefined();
+    expect(processTreeOwner).toHaveBeenCalledWith(proc);
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
   });
+
+  test('does not escalate SIGKILL after the process group is gone', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => false,
+      closeSIGKILLTimeoutMs: 50,
+    });
+    const proc = lastMockProcess!;
+
+    proc.emit('exit', 0, null);
+    await transport.close();
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('signals and escalates against the leader when the group is gone but it lives', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => false,
+      closeSIGKILLTimeoutMs: 50,
+    });
+
+    await transport.close();
+
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (terminate.mock.calls.some(([signal]) => signal === 'SIGKILL')) {
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error('SIGKILL escalation did not run'));
+          return;
+        }
+        setTimeout(check, 10);
+      };
+      check();
+    });
+  }, 10000);
+
+  test('cancels leader escalation when the leader exits after the group is gone', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => false,
+      closeSIGKILLTimeoutMs: 50,
+    });
+    const proc = lastMockProcess!;
+
+    await transport.close();
+    proc.emit('exit', 0, null);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
+
+  test('escalates SIGKILL while the process group remains', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => true,
+      closeSIGKILLTimeoutMs: 50,
+    });
+
+    transport.close();
+
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (terminate.mock.calls.some(([signal]) => signal === 'SIGKILL')) {
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error('SIGKILL escalation did not run'));
+          return;
+        }
+        setTimeout(check, 10);
+      };
+      check();
+    });
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+  }, 10000);
+
+  test('skips SIGKILL when the group exits during the escalation delay', async () => {
+    const terminate = vi.fn();
+    const processTreeOwner = vi.fn(() => ({ terminate }));
+    let groupExists = true;
+    const transport = new AcpTransport({
+      command: 'acp-agent',
+      processTreeOwner,
+      processGroupProbe: () => groupExists,
+      closeSIGKILLTimeoutMs: 50,
+    });
+
+    transport.close();
+    groupExists = false;
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(terminate).not.toHaveBeenCalledWith('SIGKILL');
+  }, 1000);
 
   test('onExit callback fires when process exits', () => {
     const exits: Array<{ code: number | null; signal: string | null }> = [];
@@ -504,7 +642,7 @@ describe('AcpTransport', () => {
   });
 
   test('close falls back to direct kill when group kill fails', async () => {
-    const transport = new AcpTransport({ command: 'acp-agent' });
+    const transport = new AcpTransport({ command: 'acp-agent', processGroupProbe: () => true });
     const proc = lastMockProcess!;
     proc.pid = 12345;
 
