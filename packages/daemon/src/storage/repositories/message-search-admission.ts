@@ -1,10 +1,20 @@
 import { decisionRun } from '../../lib/space/runtime/decision-pipeline';
 
-const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const ROOM_SESSION_PREFIXES = ['room:chat:', 'planner:', 'coder:', 'leader:', 'general:'];
-const ROOM_SESSION_TYPES = new Set(['room_chat', 'planner', 'coder', 'leader', 'general']);
-const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed']);
-const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
+export const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const ROOM_SESSION_PREFIXES = [
+  'room:chat:',
+  'planner:',
+  'coder:',
+  'leader:',
+  'general:',
+] as const;
+export const ROOM_SESSION_TYPES = ['room_chat', 'planner', 'coder', 'leader', 'general'] as const;
+export const TERMINAL_SPACE_TASK_STATUSES = ['done', 'cancelled', 'completed'] as const;
+export const SEARCHABLE_MESSAGE_TYPES = ['system', 'user', 'assistant'] as const;
+
+const ROOM_SESSION_TYPE_SET = new Set<string>(ROOM_SESSION_TYPES);
+const TERMINAL_SPACE_TASK_STATUS_SET = new Set<string>(TERMINAL_SPACE_TASK_STATUSES);
+const SEARCHABLE_MESSAGE_TYPE_SET = new Set<string>(SEARCHABLE_MESSAGE_TYPES);
 
 export function isOlderThanMessageSearchTtl(
   value: string | number | null | undefined,
@@ -43,7 +53,7 @@ export function isMessageSearchIndexEligible(
     return false;
   }
 
-  if (row.session_type && ROOM_SESSION_TYPES.has(row.session_type)) return false;
+  if (row.session_type && ROOM_SESSION_TYPE_SET.has(row.session_type)) return false;
   if (row.session_room_id) return false;
 
   const isSpaceSession =
@@ -57,7 +67,7 @@ export function isMessageSearchIndexEligible(
   if (row.task_status === 'archived') return false;
   if (
     row.task_status &&
-    TERMINAL_SPACE_TASK_STATUSES.has(row.task_status) &&
+    TERMINAL_SPACE_TASK_STATUS_SET.has(row.task_status) &&
     isOlderThanMessageSearchTtl(row.task_completed_at ?? row.task_updated_at, now)
   ) {
     return false;
@@ -109,7 +119,7 @@ export function applySupersededGate(ctx: MessageSearchAdmissionCtx): MessageSear
 }
 
 export function applySearchableTypeGate(ctx: MessageSearchAdmissionCtx): MessageSearchAdmissionCtx {
-  return SEARCHABLE_MESSAGE_TYPES.has(ctx.messageType)
+  return SEARCHABLE_MESSAGE_TYPE_SET.has(ctx.messageType)
     ? ctx
     : decided(ctx, { action: 'skip', reason: 'non_searchable_type' });
 }

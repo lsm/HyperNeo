@@ -1,6 +1,17 @@
+import type { Session, SessionContext, SessionType } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat';
-import type { Session, SessionType, SessionContext } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
+import {
+  MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
+  ROOM_SESSION_PREFIXES,
+  ROOM_SESSION_TYPES,
+  SEARCHABLE_MESSAGE_TYPES,
+  TERMINAL_SPACE_TASK_STATUSES,
+} from './message-search-admission';
+
+function toSqlStringList(values: readonly string[]): string {
+  return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');
+}
 
 export class SessionRepository {
   constructor(private db: BunDatabase) {}
@@ -91,9 +102,9 @@ export class SessionRepository {
         `UPDATE sessions
          SET acp_session_id = NULL,
              metadata = CASE
-               WHEN json_valid(metadata) THEN json_remove(metadata, '$.acpContextUsageEstimate')
-               ELSE metadata
-             END
+           WHEN json_valid(metadata) THEN json_remove(metadata, '$.acpContextUsageEstimate')
+           ELSE metadata
+         END
          WHERE acp_session_id IS NOT NULL
            AND json_valid(config)
            AND json_extract(config, '$.provider') = 'acp'`
@@ -113,7 +124,7 @@ export class SessionRepository {
     return rows.map((row) => ({ sessionId: row.id, acpSessionId: row.acp_session_id }));
   }
 
-  updateSession(id: string, updates: Partial<Session>): void {
+  updateSession(id: string, updates: Partial<Session>, now: number = Date.now()): void {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -232,7 +243,7 @@ export class SessionRepository {
       if (updates.status === 'archived') {
         this.deleteMessageSearchRows(id);
       } else if (shouldRebuildSearchRows) {
-        this.rebuildMessageSearchRows(id);
+        this.rebuildMessageSearchRows(id, now);
       }
       if (updates.title !== undefined) {
         this.updateMessageSearchSessionTitle(id, updates.title);
@@ -256,71 +267,98 @@ export class SessionRepository {
       .run(sessionId);
   }
 
-  private rebuildMessageSearchRows(sessionId: string): void {
+  private rebuildMessageSearchRows(sessionId: string, now: number): void {
     if (!this.tableExists('message_search_content') || !this.tableExists('sdk_messages')) return;
     const hasSpaceTasks = this.tableExists('space_tasks');
+    const retentionCutoffMs = now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS;
     const spaceTaskColumns = hasSpaceTasks
       ? 'st.space_id, st.task_number'
       : 'NULL AS space_id, NULL AS task_number';
     const spaceTaskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '';
+    const roomPrefixGuards = ROOM_SESSION_PREFIXES.map(
+      (prefix) => `sm.session_id NOT LIKE '${prefix.replace(/'/g, "''")}%'`
+    ).join(' AND ');
     const spaceTaskPolicy = hasSpaceTasks
       ? `AND COALESCE(st.status, '') != 'archived'
 				  AND NOT (
-					COALESCE(st.status, '') IN ('done', 'cancelled', 'completed')
-					AND COALESCE(st.completed_at, st.updated_at, 0) < unixepoch('now', '-30 days') * 1000
+					COALESCE(st.status, '') IN (${toSqlStringList(TERMINAL_SPACE_TASK_STATUSES)})
+					AND COALESCE(COALESCE(st.completed_at, st.updated_at) < ?, 0)
 				  )`
       : '';
     this.deleteMessageSearchRows(sessionId);
+    const params: SQLiteValue[] = [sessionId, retentionCutoffMs];
+    if (hasSpaceTasks) params.push(retentionCutoffMs);
     this.db
       .prepare(
         `INSERT INTO message_search_content (
 					kind, source_id, message_id, session_id, task_id, space_id, task_number,
 					message_type, title, body, timestamp
 				)
-				SELECT
-					'message', sm.id,
-					COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id), sm.session_id,
-					sm.task_id, ${spaceTaskColumns}, sm.message_type, s.title,
-					CASE
-						WHEN json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
-							SELECT GROUP_CONCAT(
-								COALESCE(json_extract(value, '$.text'), json_extract(value, '$.thinking')),
-								char(10)
+				SELECT 'message', id, message_id, session_id, task_id, space_id, task_number,
+					message_type, title, body, timestamp
+				FROM (
+					SELECT
+						sm.id,
+						COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id) AS message_id,
+						sm.session_id,
+						sm.task_id,
+						${spaceTaskColumns},
+						sm.message_type,
+						s.title,
+						CASE
+							WHEN json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
+								SELECT GROUP_CONCAT(
+									COALESCE(json_extract(value, '$.text'), json_extract(value, '$.thinking')),
+									char(10)
+								)
+								FROM json_each(sm.sdk_message, '$.message.content')
+								WHERE json_extract(value, '$.type') IN ('text', 'thinking')
 							)
-							FROM json_each(sm.sdk_message, '$.message.content')
-							WHERE json_extract(value, '$.type') IN ('text', 'thinking')
-						)
-						WHEN json_type(sm.sdk_message, '$.message.content') = 'text' THEN
-							json_extract(sm.sdk_message, '$.message.content')
-						ELSE NULL
-					END,
-					CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
-						+ CAST(substr(strftime('%f', sm.timestamp), 4, 3) AS INTEGER)
-				FROM sdk_messages sm
-				JOIN sessions s ON s.id = sm.session_id
-				${spaceTaskJoin}
-				WHERE sm.session_id = ?
-				  AND json_valid(sm.sdk_message)
-				  AND sm.message_type IN ('system', 'user', 'assistant')
-				  AND NOT EXISTS (
-						SELECT 1
-						FROM sdk_message_replacements replacement
-						WHERE replacement.session_id = sm.session_id
-						  AND replacement.target_uuid = COALESCE(sm.sdk_uuid, sm.id)
+							WHEN json_type(sm.sdk_message, '$.message.content') = 'text' THEN
+								json_extract(sm.sdk_message, '$.message.content')
+							ELSE NULL
+						END AS body,
+						CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
+							+ CAST(substr(strftime('%f', sm.timestamp), 4, 3) AS INTEGER) AS timestamp
+					FROM sdk_messages sm
+					JOIN sessions s ON s.id = sm.session_id
+					${spaceTaskJoin}
+					WHERE sm.session_id = ?
+					  AND json_valid(sm.sdk_message)
+					  AND sm.message_type IN (${toSqlStringList(SEARCHABLE_MESSAGE_TYPES)})
+					  AND NOT EXISTS (
+							SELECT 1
+							FROM sdk_message_replacements replacement
+							WHERE replacement.session_id = sm.session_id
+							  AND replacement.target_uuid = COALESCE(sm.sdk_uuid, sm.id)
+							  AND replacement.source_message_id != sm.id
+						  )
+						  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+					  AND COALESCE(s.status, '') != 'archived'
+					  AND NOT (
+							COALESCE(s.status, '') = 'ended'
+							AND COALESCE(
+								CAST(strftime('%s', s.last_active_at) AS INTEGER) * 1000
+									+ CAST(substr(strftime('%f', s.last_active_at), 4, 3) AS INTEGER) < ?,
+								0
+							)
+						  )
+					  AND COALESCE(s.type, 'worker') NOT IN (${toSqlStringList(ROOM_SESSION_TYPES)})
+					  AND COALESCE(s.room_id, '') = ''
+					  AND ${roomPrefixGuards}
+					  AND (
+						(sm.session_id NOT LIKE '%:%' AND COALESCE(s.type, 'worker') = 'worker')
+						OR sm.session_id LIKE 'space:%'
+						OR s.type IN ('space_chat', 'space_task_agent')
 					  )
-					  AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
-				  AND COALESCE(s.status, '') != 'archived'
-				  AND NOT (COALESCE(s.status, '') = 'ended' AND strftime('%s', s.last_active_at) < strftime('%s', 'now', '-30 days'))
-				  AND COALESCE(s.type, 'worker') NOT IN ('room_chat', 'planner', 'coder', 'leader', 'general')
-				  AND COALESCE(s.room_id, '') = ''
-				  AND (
-					(sm.session_id NOT LIKE '%:%' AND COALESCE(s.type, 'worker') = 'worker')
-					OR sm.session_id LIKE 'space:%'
-					OR s.type IN ('space_chat', 'space_task_agent')
-				  )
-				  ${spaceTaskPolicy}`
+					  ${spaceTaskPolicy}
+				) projected
+				WHERE TRIM(
+					COALESCE(projected.body, ''),
+					' ' || char(9) || char(10) || char(11) || char(12) || char(13)
+				) != ''`
       )
-      .run(sessionId);
+      .run(...params);
   }
 
   deleteSession(id: string): void {
