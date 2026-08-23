@@ -1190,10 +1190,11 @@ export class SpaceRuntimeService {
     }
   }
 
-  recoverPendingOutcomeNotificationsForSpace(spaceId: string): void {
+  async recoverPendingOutcomeNotificationsForSpace(spaceId: string): Promise<void> {
     const repo = this.config.outcomeNotificationRepo;
     if (!repo || !this.config.enableGoalOutcomeWake) return;
     try {
+      if (!(await this.isSpaceWakeable(spaceId))) return;
       for (const notification of repo.listPendingBySpace(spaceId)) {
         void this.deliverGoalOutcomeWake(notification).catch((err) => {
           log.warn(
@@ -1215,6 +1216,7 @@ export class SpaceRuntimeService {
     try {
       for (const notification of repo.listPending()) {
         try {
+          if (!(await this.isSpaceWakeable(notification.spaceId))) continue;
           await this.deliverGoalOutcomeWake(notification);
         } catch (err) {
           log.warn(
@@ -1225,6 +1227,11 @@ export class SpaceRuntimeService {
     } catch (err) {
       log.error('SpaceRuntimeService: recoverPendingOutcomeNotifications failed:', err);
     }
+  }
+
+  private async isSpaceWakeable(spaceId: string): Promise<boolean> {
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    return space != null && space.status === 'active' && !space.paused && !space.stopped;
   }
 
   async ready(): Promise<void> {
