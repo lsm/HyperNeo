@@ -17,6 +17,11 @@ export interface PollCursor {
   pullsSeedInProgress?: boolean;
   seenReactionIds?: Record<string, boolean>;
   reactionEtags?: Record<number, string>;
+  mergeConflictStates?: Record<number, boolean>;
+  mergeConflictSequences?: Record<number, number>;
+  mergeConflictEtags?: Record<number, string>;
+  seenReviewIds?: Record<string, boolean>;
+  reviewEtags?: Record<number, string>;
   endpointLastSeenAt?: Record<string, number>;
   endpointPendingLastSeenAt?: Record<string, number>;
   lastPollError?: string | null;

@@ -5,7 +5,9 @@ import {
   normalizeGitHubCheckSuite,
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
+  normalizeGitHubMergeConflict,
   normalizeGitHubPollingRow,
+  normalizeGitHubReview,
   normalizeGitHubStatus,
   normalizeGitHubWebhook,
   toExternalEvent,
@@ -628,7 +630,7 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(webhookEvent.commentId).toBe('');
       expect(webhookEvent.nodeId).toBe('');
       expect(webhookEvent.eventType).toBe('check_suite');
-      expect(webhookEvent.action).toBe('completed');
+      expect(webhookEvent.action).toBe('failed');
       expect(webhookEvent.payload).toMatchObject({
         suiteId: 123456,
         conclusion: 'failure',
@@ -637,6 +639,140 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
 
       const event = toExternalEvent('space-1', webhookEvent);
       expect(event.topic).toBe('github/acme/widgets/pull_request/7.suite_failed');
+    });
+
+    test('cancelled check suites land on suite_cancelled and skipped suites are dropped', () => {
+      const cancelled = normalizeGitHubCheckSuite({
+        repo: watched,
+        checkSuite: {
+          id: 123457,
+          status: 'completed',
+          conclusion: 'cancelled',
+          head_sha: 'abc123',
+          app: { name: 'GitHub Actions' },
+          updated_at: '2026-01-01T00:00:00Z',
+          pull_requests: [{ number: 7 }],
+        },
+        deliveryId: 'delivery-2',
+        rawPayload: { action: 'completed' },
+        sender: { login: 'github-actions[bot]', type: 'Bot' },
+      })!;
+      expect(cancelled.action).toBe('cancelled');
+      expect(toExternalEvent('space-1', cancelled).topic).toBe(
+        'github/acme/widgets/pull_request/7.suite_cancelled'
+      );
+
+      expect(
+        normalizeGitHubCheckSuite({
+          repo: watched,
+          checkSuite: {
+            id: 123458,
+            status: 'completed',
+            conclusion: 'skipped',
+            head_sha: 'abc123',
+            pull_requests: [{ number: 7 }],
+          },
+          deliveryId: 'delivery-3',
+          rawPayload: { action: 'completed' },
+          sender: { login: 'dev', type: 'User' },
+        })
+      ).toBeNull();
+    });
+  });
+
+  describe('normalizeGitHubMergeConflict', () => {
+    test('conflicting transitions map to pull_request merge_conflict topics', () => {
+      const normalized = normalizeGitHubMergeConflict({
+        repo: watched,
+        pullRequest: makePullRow(),
+        prNumber: 42,
+        conflicting: true,
+        mergeable: false,
+        mergeableState: 'dirty',
+        sequence: 1,
+        deliveryId: 'poll:merge_conflict:42',
+      })!;
+      expect(normalized.eventType).toBe('pull_request');
+      expect(normalized.action).toBe('merge_conflict');
+      expect(normalized.dedupeKey).toBe('acme/widgets:merge_conflict:42:conflict:1');
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe('github/acme/widgets/pull_request/42.merge_conflict');
+      expect(event.payload).toMatchObject({
+        state: 'conflicting',
+        mergeable: false,
+        mergeableState: 'dirty',
+        headSha: HEAD_SHA_INITIAL,
+      });
+    });
+
+    test('resolved transitions map to merge_conflict_resolved', () => {
+      const normalized = normalizeGitHubMergeConflict({
+        repo: watched,
+        pullRequest: makePullRow(),
+        prNumber: 42,
+        conflicting: false,
+        mergeable: true,
+        mergeableState: 'clean',
+        sequence: 2,
+        deliveryId: 'poll:merge_conflict:42',
+      })!;
+      expect(normalized.action).toBe('merge_conflict_resolved');
+      expect(toExternalEvent('space-1', normalized).topic).toBe(
+        'github/acme/widgets/pull_request/42.merge_conflict_resolved'
+      );
+    });
+  });
+
+  describe('normalizeGitHubReview', () => {
+    test('a verdict review maps to review_submitted with reviewer and bot flag', () => {
+      const normalized = normalizeGitHubReview(watched, 7, {
+        id: 555,
+        node_id: 'PRR_kwAAA_review',
+        state: 'CHANGES_REQUESTED',
+        body: 'please fix',
+        submitted_at: '2026-01-01T00:00:00Z',
+        html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-555',
+        user: { login: 'codex[bot]', type: 'Bot' },
+      })!;
+      expect(normalized.eventType).toBe('pull_request_review');
+      expect(normalized.action).toBe('submitted');
+      expect(normalized.dedupeKey).toBe('acme/widgets:review:555:submitted');
+      const event = toExternalEvent('space-1', normalized);
+      expect(event.topic).toBe('github/acme/widgets/pull_request/7.review_submitted');
+      expect(event.payload).toMatchObject({
+        state: 'CHANGES_REQUESTED',
+        reviewer: 'codex[bot]',
+        reviewerType: 'Bot',
+        reviewerBot: true,
+        reviewId: '555',
+      });
+    });
+
+    test('human reviewers are not flagged as bots', () => {
+      const normalized = normalizeGitHubReview(watched, 7, {
+        id: 556,
+        state: 'APPROVED',
+        submitted_at: '2026-01-01T00:00:00Z',
+        user: { login: 'dev', type: 'User' },
+      })!;
+      expect(normalized.payload).toMatchObject({ reviewer: 'dev', reviewerBot: false });
+    });
+
+    test('pending and dismissed reviews yield no verdict event', () => {
+      expect(
+        normalizeGitHubReview(watched, 7, {
+          id: 557,
+          state: 'PENDING',
+          user: { login: 'dev', type: 'User' },
+        })
+      ).toBeNull();
+      expect(
+        normalizeGitHubReview(watched, 7, {
+          id: 558,
+          state: 'DISMISSED',
+          user: { login: 'dev', type: 'User' },
+        })
+      ).toBeNull();
     });
   });
 

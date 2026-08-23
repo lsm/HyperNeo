@@ -1,5 +1,6 @@
 import type { ExternalEvent } from '../types';
 import { Logger } from '../../logger';
+import { checkRunTopicAction } from './github-check-run-fields';
 
 const log = new Logger('github-normalizer');
 
@@ -130,13 +131,8 @@ function prUrl(owner: string, repo: string, number: number): string {
   return `https://github.com/${owner}/${repo}/pull/${number}`;
 }
 
-function isFailedCheckConclusion(conclusion: string): boolean {
-  return (
-    conclusion !== '' &&
-    conclusion !== 'success' &&
-    conclusion !== 'skipped' &&
-    conclusion !== 'neutral'
-  );
+function isBotActor(login: string, type: string): boolean {
+  return type === 'Bot' || login.endsWith('[bot]');
 }
 
 export function normalizeGitHubWebhook(
@@ -247,6 +243,8 @@ export function normalizeGitHubWebhook(
       reviewId,
       reviewNodeId: nodeId,
       state: getString(review.state),
+      reviewer: actor.login,
+      reviewerBot: isBotActor(actor.login, actor.type),
       submittedAt: getString(review.submitted_at),
     };
   } else if (eventType === 'pull_request_review_comment') {
@@ -494,7 +492,8 @@ export function normalizeGitHubCheckRun(params: {
   const status = getString(checkRun.status, params.source === 'webhook' ? 'completed' : '');
   if (status !== 'completed') return null;
   const conclusion = getString(checkRun.conclusion);
-  if (!isFailedCheckConclusion(conclusion)) return null;
+  const topicAction = checkRunTopicAction(conclusion);
+  if (!topicAction) return null;
   const prs = Array.isArray(checkRun.pull_requests) ? checkRun.pull_requests : [];
   const pr = asObject(prs[0]);
   const prNumber = params.prNumber ?? getNumber(pr.number);
@@ -522,7 +521,7 @@ export function normalizeGitHubCheckRun(params: {
       dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
       source: params.source,
       eventType: 'check_run',
-      action: 'completed',
+      action: topicAction,
       repoOwner: repo.owner,
       repoName: repo.repo,
       entityId: String(prNumber),
@@ -531,7 +530,7 @@ export function normalizeGitHubCheckRun(params: {
       actor: actor.login,
       actorType: actor.type,
       body,
-      summary: `PR #${prNumber} check failed by ${actor.login}: ${truncateBody(body)}`,
+      summary: `PR #${prNumber} check ${topicAction} by ${actor.login}: ${truncateBody(body)}`,
       externalUrl: htmlUrl,
       externalId,
       commentId: '',
@@ -546,7 +545,7 @@ export function normalizeGitHubCheckRun(params: {
     dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
     source: params.source,
     eventType: 'check_run',
-    action: 'failed',
+    action: topicAction,
     repoOwner: repo.owner,
     repoName: repo.repo,
     entityId: String(prNumber),
@@ -648,7 +647,8 @@ export function normalizeGitHubCheckSuite(params: {
   const status = getString(checkSuite.status, 'completed');
   if (status !== 'completed') return null;
   const conclusion = getString(checkSuite.conclusion);
-  if (!isFailedCheckConclusion(conclusion)) return null;
+  const topicAction = checkRunTopicAction(conclusion);
+  if (!topicAction || topicAction === 'skipped') return null;
   const prs = Array.isArray(checkSuite.pull_requests) ? checkSuite.pull_requests : [];
   const pr = asObject(prs[0]);
   const prNumber = getNumber(pr.number);
@@ -670,7 +670,7 @@ export function normalizeGitHubCheckSuite(params: {
     dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
     source: 'webhook',
     eventType: 'check_suite',
-    action: 'completed',
+    action: topicAction,
     repoOwner: repo.owner,
     repoName: repo.repo,
     entityId: String(prNumber),
@@ -679,7 +679,7 @@ export function normalizeGitHubCheckSuite(params: {
     actor: sender.login,
     actorType: sender.type,
     body,
-    summary: `PR #${prNumber} check suite failed by ${sender.login}: ${truncateBody(body)}`,
+    summary: `PR #${prNumber} check suite ${topicAction} by ${sender.login}: ${truncateBody(body)}`,
     externalUrl: htmlUrl,
     externalId,
     commentId: '',
@@ -1029,6 +1029,113 @@ export function normalizeGitHubReaction(
   };
 }
 
+export function normalizeGitHubMergeConflict(params: {
+  repo: GitHubPollingRepo;
+  pullRequest: unknown;
+  prNumber: number;
+  conflicting: boolean;
+  mergeable: boolean | null;
+  mergeableState: string;
+  sequence: number;
+  deliveryId: string;
+}): NormalizedGitHubEvent | null {
+  const repo = params.repo;
+  const prNumber = params.prNumber;
+  if (!repo.owner || !repo.repo || !prNumber) return null;
+  const pr = asObject(params.pullRequest);
+  const author = userFrom(pr.user);
+  const occurredAt = Date.now();
+  const action = params.conflicting ? 'merge_conflict' : 'merge_conflict_resolved';
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
+  const externalId = `merge_conflict:${prNumber}:${params.conflicting ? 'conflict' : 'resolved'}:${params.sequence}`;
+  const summary = params.conflicting
+    ? `PR #${prNumber} has merge conflicts with the base branch`
+    : `PR #${prNumber} merge conflicts with the base branch resolved`;
+  return {
+    deliveryId: params.deliveryId,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:${externalId}`,
+    source: 'polling',
+    eventType: 'pull_request',
+    action,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
+    actor: author.login,
+    actorType: author.type,
+    body: '',
+    summary,
+    externalUrl: getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber)),
+    externalId,
+    commentId: '',
+    nodeId: getString(pr.node_id),
+    occurredAt,
+    rawPayload: params.pullRequest,
+    payload: {
+      title: summary,
+      state: params.conflicting ? 'conflicting' : 'clean',
+      mergeable: params.mergeable,
+      mergeableState: params.mergeableState,
+      headSha: getString(asObject(pr.head).sha),
+    },
+  };
+}
+
+const REVIEW_VERDICT_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED']);
+
+export function normalizeGitHubReview(
+  watched: GitHubPollingRepo,
+  prNumber: number,
+  review: unknown
+): NormalizedGitHubEvent | null {
+  const obj = asObject(review);
+  const id = getNumber(obj.id);
+  if (!id || !prNumber) return null;
+  const state = getString(obj.state);
+  if (!REVIEW_VERDICT_STATES.has(state)) return null;
+  const user = userFrom(obj.user);
+  const submittedAt = getString(obj.submitted_at);
+  const body = getString(obj.body);
+  const title = `PR #${prNumber} review ${state}`;
+  const nodeId = getString(obj.node_id);
+  const canonicalOwner = watched.owner.toLowerCase();
+  const canonicalRepo = watched.repo.toLowerCase();
+  return {
+    deliveryId: `poll:review:${id}`,
+    dedupeKey: `${canonicalOwner}/${canonicalRepo}:review:${id}:submitted`,
+    source: 'polling',
+    eventType: 'pull_request_review',
+    action: 'submitted',
+    repoOwner: watched.owner,
+    repoName: watched.repo,
+    entityId: String(prNumber),
+    prNumber,
+    prUrl: prUrl(watched.owner, watched.repo, prNumber),
+    actor: user.login,
+    actorType: user.type,
+    body,
+    summary: `${title} by ${user.login}${body ? `: ${truncateBody(body)}` : ''}`,
+    externalUrl: getString(obj.html_url, prUrl(watched.owner, watched.repo, prNumber)),
+    externalId: `review:${id}:submitted`,
+    commentId: '',
+    nodeId,
+    occurredAt: parseGitHubTimestamp(submittedAt),
+    rawPayload: review,
+    payload: {
+      title,
+      reviewId: String(id),
+      reviewNodeId: nodeId,
+      state,
+      reviewer: user.login,
+      reviewerType: user.type,
+      reviewerBot: isBotActor(user.login, user.type),
+      submittedAt,
+    },
+  };
+}
+
 export interface GitHubTopicParts {
   resource: string;
   entityId: string;
@@ -1052,11 +1159,11 @@ export function mapEventType(
     case 'reaction':
       return { resource: 'pull_request', entityId, action: `reaction_${action}` };
     case 'check_run':
-      return { resource: 'pull_request', entityId, action: 'check_failed' };
+      return { resource: 'pull_request', entityId, action: `check_${action}` };
     case 'status':
       return { resource: 'pull_request', entityId, action: `status_${action}` };
     case 'check_suite':
-      return { resource: 'pull_request', entityId, action: 'suite_failed' };
+      return { resource: 'pull_request', entityId, action: `suite_${action}` };
     case 'pull_request':
       return {
         resource: 'pull_request',

@@ -18,7 +18,7 @@ import {
   checkRunIdFrom,
   checkRunNameFrom,
   checkRunOccurredAt,
-  isNonFailureConclusion,
+  checkRunTopicAction,
 } from './github-check-run-fields';
 import {
   gitHubRepoPath,
@@ -39,8 +39,10 @@ import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
+  normalizeGitHubMergeConflict,
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
+  normalizeGitHubReview,
   normalizeGitHubStatus,
   normalizeGitHubWebhook,
   repoFromPayload,
@@ -184,6 +186,7 @@ const TOPIC_SUFFIX_TO_HEALTH_TYPE: Record<string, GitHubHealthEventTypeKey> = {
   deployment_status_queued: 'deployment',
   deployment_status_pending: 'deployment',
   suite_failed: 'check_suite',
+  suite_cancelled: 'check_suite',
   merge_group_checks_requested: 'merge_group',
   merge_group_destroyed: 'merge_group',
   enqueued: 'merge_group',
@@ -2259,6 +2262,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const pullsSeedInProgress = cursor.pullsSeedInProgress ?? false;
     const seenReactionIds = cursor.seenReactionIds ?? {};
     const reactionEtags = cursor.reactionEtags ?? {};
+    const mergeConflictStates = cursor.mergeConflictStates ?? {};
+    const mergeConflictSequences = cursor.mergeConflictSequences ?? {};
+    const mergeConflictEtags = cursor.mergeConflictEtags ?? {};
+    const seenReviewIds = cursor.seenReviewIds ?? {};
+    const reviewEtags = cursor.reviewEtags ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     let nextPullsSeedInProgress = pullsSeedInProgress;
@@ -2668,10 +2676,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
               const appKey = checkRunAppKeyFrom(row);
               const supersessionKey = `${checkName}:${appKey}`;
               const conclusion = checkRunConclusionFrom(row);
+              const topicAction = checkRunTopicAction(conclusion);
               if (supersededCheckKeys.has(supersessionKey)) continue;
-              if (isNonFailureConclusion(conclusion)) {
+              if (topicAction === null) {
                 supersededCheckKeys.add(supersessionKey);
                 continue;
+              }
+              if (topicAction !== 'failed') {
+                supersededCheckKeys.add(supersessionKey);
               }
               const checkRunPrNumbers = pullRequestNumbersFromCheckRun(
                 row,
@@ -2751,6 +2763,213 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         const maxHeadWatermark = Math.max(0, ...Object.values(checkRunHeadLastSeenAt));
         if (maxHeadWatermark > 0) endpointLastSeenAt[checkRunEndpointKey] = maxHeadWatermark;
         delete endpointPendingLastSeenAt[checkRunEndpointKey];
+      }
+    }
+
+    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+      if (partialScan) break;
+      if (!canPollReactions(latestRateLimit?.remaining)) {
+        partialScan = true;
+        break;
+      }
+      const mergeHeaders = gitHubPollingHeaders(token);
+      if (mergeConflictEtags[prNumber])
+        mergeHeaders['If-None-Match'] = mergeConflictEtags[prNumber];
+      let mergeResponse: Response;
+      try {
+        mergeResponse = await fetchImpl(`${base}/pulls/${prNumber}`, {
+          headers: mergeHeaders,
+          signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+        });
+      } catch (err) {
+        if (!pollErrorMessage) {
+          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        partialScan = true;
+        continue;
+      }
+      const mergeRateLimit = parseRateLimitHeaders(mergeResponse);
+      latestRateLimit = mergeRateLimitInfo(latestRateLimit, mergeRateLimit);
+      if (mergeResponse.status === 304) continue;
+      if (mergeRateLimit.limited) {
+        if (
+          mergeResponse.status === 429 &&
+          mergeRateLimit.remaining > 0 &&
+          !mergeRateLimit.retryAfter
+        ) {
+          this.applyRateLimit({
+            remaining: mergeRateLimit.remaining,
+            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+            limited: true,
+            retryAfter: true,
+          });
+        } else {
+          this.applyRateLimit(mergeRateLimit);
+        }
+        partialScan = true;
+        break;
+      }
+      if (!mergeResponse.ok) {
+        const errorText = await mergeResponse.text();
+        if (
+          (mergeResponse.status === 403 || mergeResponse.status === 429) &&
+          isRateLimitError(errorText)
+        ) {
+          const secondaryDelayMs = mergeRateLimit.retryAfter
+            ? mergeRateLimit.resetAt - Date.now()
+            : RATE_LIMIT_MIN_BACKOFF_MS;
+          this.applyRateLimit({
+            remaining: mergeRateLimit.remaining,
+            resetAt: Date.now() + secondaryDelayMs,
+            limited: true,
+            retryAfter: true,
+          });
+          partialScan = true;
+          break;
+        }
+        if (!pollErrorMessage) {
+          pollErrorMessage =
+            errorText.trim().slice(0, 160) || `pull request detail HTTP ${mergeResponse.status}`;
+        }
+        partialScan = true;
+        continue;
+      }
+      const mergeEtag = mergeResponse.headers.get('ETag');
+      if (mergeEtag) mergeConflictEtags[prNumber] = mergeEtag;
+      const pullDetail = asPollingObject(await mergeResponse.json());
+      if (pullDetail.state !== 'open') {
+        delete mergeConflictStates[prNumber];
+        continue;
+      }
+      const mergeable = typeof pullDetail.mergeable === 'boolean' ? pullDetail.mergeable : null;
+      const mergeableState =
+        typeof pullDetail.mergeable_state === 'string' ? pullDetail.mergeable_state : '';
+      if (mergeable === null && mergeableState !== 'dirty') continue;
+      const conflicting = mergeable === false || mergeableState === 'dirty';
+      const previousConflict = mergeConflictStates[prNumber];
+      mergeConflictStates[prNumber] = conflicting;
+      if (conflicting === previousConflict) continue;
+      const sequence = (mergeConflictSequences[prNumber] ?? 0) + 1;
+      mergeConflictSequences[prNumber] = sequence;
+      const mergeConflictEvent = normalizeGitHubMergeConflict({
+        repo: watched,
+        pullRequest: pullDetail,
+        prNumber,
+        conflicting,
+        mergeable,
+        mergeableState,
+        sequence,
+        deliveryId: `poll:merge_conflict:${prNumber}`,
+      });
+      if (mergeConflictEvent) {
+        await this.publishEvent(watched.spaceId, mergeConflictEvent, this.context);
+        count++;
+      }
+      if (
+        Number.isFinite(mergeRateLimit.remaining) &&
+        mergeRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+      ) {
+        this.applyRateLimit(mergeRateLimit);
+        partialScan = true;
+        break;
+      }
+    }
+
+    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+      if (partialScan) break;
+      if (!canPollReactions(latestRateLimit?.remaining)) {
+        partialScan = true;
+        break;
+      }
+      const reviewQuery = new URLSearchParams({ per_page: '100' });
+      const reviewHeaders = gitHubPollingHeaders(token);
+      if (reviewEtags[prNumber]) reviewHeaders['If-None-Match'] = reviewEtags[prNumber];
+      let reviewResponse: Response;
+      try {
+        reviewResponse = await fetchImpl(
+          `${base}/pulls/${prNumber}/reviews?${reviewQuery.toString()}`,
+          {
+            headers: reviewHeaders,
+            signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+          }
+        );
+      } catch (err) {
+        if (!pollErrorMessage) {
+          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+        }
+        partialScan = true;
+        continue;
+      }
+      const reviewRateLimit = parseRateLimitHeaders(reviewResponse);
+      latestRateLimit = mergeRateLimitInfo(latestRateLimit, reviewRateLimit);
+      if (reviewResponse.status === 304) continue;
+      if (reviewRateLimit.limited) {
+        if (
+          reviewResponse.status === 429 &&
+          reviewRateLimit.remaining > 0 &&
+          !reviewRateLimit.retryAfter
+        ) {
+          this.applyRateLimit({
+            remaining: reviewRateLimit.remaining,
+            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+            limited: true,
+            retryAfter: true,
+          });
+        } else {
+          this.applyRateLimit(reviewRateLimit);
+        }
+        partialScan = true;
+        break;
+      }
+      if (!reviewResponse.ok) {
+        const errorText = await reviewResponse.text();
+        if (
+          (reviewResponse.status === 403 || reviewResponse.status === 429) &&
+          isRateLimitError(errorText)
+        ) {
+          const secondaryDelayMs = reviewRateLimit.retryAfter
+            ? reviewRateLimit.resetAt - Date.now()
+            : RATE_LIMIT_MIN_BACKOFF_MS;
+          this.applyRateLimit({
+            remaining: reviewRateLimit.remaining,
+            resetAt: Date.now() + secondaryDelayMs,
+            limited: true,
+            retryAfter: true,
+          });
+          partialScan = true;
+          break;
+        }
+        if (!pollErrorMessage) {
+          pollErrorMessage =
+            errorText.trim().slice(0, 160) || `reviews HTTP ${reviewResponse.status}`;
+        }
+        partialScan = true;
+        continue;
+      }
+      const reviewEtag = reviewResponse.headers.get('ETag');
+      if (reviewEtag) reviewEtags[prNumber] = reviewEtag;
+      const reviews = await reviewResponse.json();
+      if (!Array.isArray(reviews)) continue;
+      for (const review of reviews) {
+        const reviewId = reviewRowIdFrom(review);
+        if (!reviewId || seenReviewIds[reviewId]) continue;
+        const event = normalizeGitHubReview(watched, prNumber, review);
+        if (!event) continue;
+        if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+          seenReviewIds[reviewId] = true;
+          continue;
+        }
+        await this.publishEvent(watched.spaceId, event, this.context);
+        seenReviewIds[reviewId] = true;
+        count++;
+      }
+      if (
+        Number.isFinite(reviewRateLimit.remaining) &&
+        reviewRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+      ) {
+        this.applyRateLimit(reviewRateLimit);
+        partialScan = true;
+        break;
       }
     }
 
@@ -2859,6 +3078,18 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
     }
+    for (const key of Object.keys(mergeConflictStates)) {
+      if (!trackedPrSet.has(Number(key))) delete mergeConflictStates[Number(key)];
+    }
+    for (const key of Object.keys(mergeConflictSequences)) {
+      if (!trackedPrSet.has(Number(key))) delete mergeConflictSequences[Number(key)];
+    }
+    for (const key of Object.keys(mergeConflictEtags)) {
+      if (!trackedPrSet.has(Number(key))) delete mergeConflictEtags[Number(key)];
+    }
+    for (const key of Object.keys(reviewEtags)) {
+      if (!trackedPrSet.has(Number(key))) delete reviewEtags[Number(key)];
+    }
     const trackedHeadSet = new Set(pullRequestNumbersByHeadRef.keys());
     for (const key of Object.keys(checkRunHeadLastSeenAt)) {
       if (!trackedHeadSet.has(key)) delete checkRunHeadLastSeenAt[key];
@@ -2916,6 +3147,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       pullsSeedInProgress: nextPullsSeedInProgress,
       seenReactionIds,
       reactionEtags,
+      mergeConflictStates,
+      mergeConflictSequences,
+      mergeConflictEtags,
+      seenReviewIds,
+      reviewEtags,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
       lastPollError: committedLastPollError,
@@ -3072,6 +3308,15 @@ function clearCheckRunEtagsForHead(checkRunEtags: Record<string, string>, headRe
   for (const key of Object.keys(checkRunEtags)) {
     if (key.startsWith(prefix)) delete checkRunEtags[key];
   }
+}
+
+function asPollingObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function reviewRowIdFrom(review: unknown): string {
+  const id = asPollingObject(review).id;
+  return typeof id === 'number' ? String(id) : '';
 }
 
 function pullRequestNumbersFromCheckRun(
