@@ -804,10 +804,12 @@ Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
 
 ## Pilot 7 — spawn/activation seam + the Phase 0 consumption record (Chain P, 2026-08-23)
 
-Pilot 7 (sub-pilot 7, "Chain P") converted the workflow-node spawn seam —
-`TaskAgentManager.spawnWorkflowNodeAgentForExecution` and the
-`activateTargetSessionsForMessage` lazy-activation path — into staged
-interpreters over extracted cores, and made them the first production
+Pilot 7 (sub-pilot 7, "Chain P") converted the workflow-node spawn seam:
+`TaskAgentManager.spawnWorkflowNodeAgentForExecution` became a staged
+interpreter over extracted cores, and the `activateTargetSessionsForMessage`
+lazy-activation path gained a pure routing core it interprets inline around
+its shell effects (no `stagedRun` — see the boundary caveats). The chain
+made the seam the first production
 consumer of `casExecutionStatus` (#2678) and the spawn reservation (#2680)
 — `casStatus` (#2677) and transition-table enforcement had already gained
 theirs in the recovery paths just before the chain (#2684, #2682). The
@@ -835,8 +837,12 @@ Extracted:
 - `spawn-flow.ts` — the `stagedRun` composition: snapshot → decide
   (branch routing via `?dep` guards on the decision member, no per-action
   dispatcher) → reserve/spawn → bind → attach/register → kickoff → flush →
-  halt, with the catch-path session cancel + reservation release as the
-  registered reverse-unwind compensation.
+  halt, with reservation release as the registered reverse-unwind
+  compensation, joined by the spawned-session cancel once session creation
+  has resolved — if `createSubSession` throws after registering the
+  session but before returning (e.g. a `startStreamingQuery` rejection),
+  the attempt box never records the id and the compensation releases the
+  reservations without cancelling the partially created session.
 - `activation-routing.ts` — `decideActivationRouting` (reuse_existing /
   reset_pending_and_continue / reject_undeclared / spawn_with_timeout /
   return_empty) plus the `selectWorkflowNodeForAgent` target-node selector.
@@ -869,8 +875,11 @@ handler's blocked write through it), as does transition-table enforcement
 with no status precondition, whose readback mismatch was misflagged as
 corruption; a dead-session activation reset as an unconditional
 status-only write. The AFTER pins (#2770) record the superseded outcomes —
-a losing CAS means a concurrent legitimate writer won, and the call skips
-instead of clobbering or misflagging. Concretely: a parked (`stopped`)
+a losing CAS means the guarded precondition no longer matched (the row
+moved concurrently, the observed status was not bindable, or the identity
+guard found an unexpected existing binding), not proof of which writer won,
+and the call skips instead of clobbering or misflagging. Concretely: a
+parked (`stopped`)
 task on the fresh-spawn arm is admitted by the gates (the passes pin) and
 stopped by the reservation — no spawn, no execution write; the `reuse_live`
 arm deliberately precedes every task-status gate (the archived-task-rebind
@@ -900,8 +909,13 @@ identity guard (a foreign binding cannot be overwritten), and the
 handoff with the same three outcome classes (resolved/failed/timeout):
 waiters settle at the winning bind, re-check the DB before rejecting on
 peer failure, remove themselves on timeout, and are settled by
-`cleanupAll`. A new real-repo suite (`task-agent-manager-spawn-cas.test.ts`)
-pins the mid-spawn-loop park and cancel races end to end.
+`cleanupAll`. A new real-repository suite (`task-agent-manager-spawn-cas.test.ts`)
+drives `spawnWorkflowNodeAgentForExecution` directly against real task and
+execution repositories — session creation and attachment stubbed — to pin
+the mid-spawn-loop park and cancel races at the flow level; the tick-loop
+suite covers the loop half with a superseded-throwing spawn stub. No single
+test runs the real tick loop over the real reservation and interpreter; the
+two halves are pinned separately.
 
 **Pilot 3 race note — closed at the TaskAgentManager seam.** The Pilot 3
 caveat's spawn-seam portion — a park landing while the spawn loop awaits
@@ -920,12 +934,16 @@ the four recovery handlers, the spawn-failure `blockRun*` calls) stay
 exactly as recorded in Pilot 3 and belong to the later staged-rollout
 phases; this chain touched none of them.
 
-**Boundary caveats.** First, the reservation window spans admission → bind
-only: released at the confirmed bind, the attach, kickoff, and
-pending-message-flush stages run unreserved, so a park landing after the
-release still finds a bound session that receives its kickoff — the race
-is narrowed to "no longer spawns onto a parked task / no longer
-resurrects the task row", not "an in-flight post-bind spawn aborts".
+**Boundary caveats.** First, nothing aborts an in-flight spawn: the bind
+re-checks the execution's guarded status and binding, never the task row,
+so an execution that already holds the reservation when the park lands
+still spawns and binds onto the parked task — the real-repository suite
+pins exactly this (the first gated spawn resolves and goes `in_progress`
+after the task is stopped; only the remainder is rejected). Released at
+the confirmed bind, attach/kickoff/flush run unreserved. The guarantees
+are therefore scoped to *subsequent* executions — they no longer spawn —
+plus the trailing promotion CAS-loss; no in-flight execution or post-bind
+stage is aborted.
 Second, the flow never transfers a session: the `reuse_live` arm only
 rebinds an execution whose own indexed live session exists
 (`freshSessionOnly`), and cross-execution session reuse survives only in
