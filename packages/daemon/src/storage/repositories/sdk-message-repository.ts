@@ -96,6 +96,8 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   'model_refusal_fallback',
 ]);
 
+type TimestampComparison = '>' | '>=';
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -1219,12 +1221,20 @@ export class SDKMessageRepository {
     return result.count;
   }
 
-  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
-    const isoTimestamp = new Date(afterTimestamp).toISOString();
+  private deleteMessagesFromTimestamp(
+    sessionId: string,
+    timestamp: number,
+    comparison: TimestampComparison
+  ): number {
+    const isoTimestamp = new Date(timestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
+      .prepare(
+        `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+      )
       .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
-    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
+    const stmt = this.db.prepare(
+      `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+    );
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
@@ -1239,26 +1249,12 @@ export class SDKMessageRepository {
     return deleted;
   }
 
+  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+    return this.deleteMessagesFromTimestamp(sessionId, afterTimestamp, '>');
+  }
+
   deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
-    const isoTimestamp = new Date(atTimestamp).toISOString();
-    const rows = this.db
-      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
-    const stmt = this.db.prepare(
-      `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
-    );
-    let deleted = 0;
-    let badgeChanged = false;
-    this.db.transaction(() => {
-      deleted = stmt.run(sessionId, isoTimestamp).changes;
-      badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
-      for (const { sdk_uuid } of rows) {
-        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
-      }
-    })();
-    if (badgeChanged) this.notifySessionsChanged(sessionId);
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
-    return deleted;
+    return this.deleteMessagesFromTimestamp(sessionId, atTimestamp, '>=');
   }
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
