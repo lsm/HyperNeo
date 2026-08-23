@@ -52,6 +52,7 @@ export function useFetchModels(editor: EditorState | null) {
         type: editor.type,
         apiKey: editor.apiKey.trim() || undefined,
         headers,
+        force: true,
       });
       if (reqId !== activeRequestRef.current) return;
       setFetchedModels(models);

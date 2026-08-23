@@ -433,6 +433,7 @@ export async function listCustomEndpointModels(data: {
   type?: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  force?: boolean;
 }): Promise<{
   models: Array<{ id: string; name?: string }>;
   fromCache: boolean;

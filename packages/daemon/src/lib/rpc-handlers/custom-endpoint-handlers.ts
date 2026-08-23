@@ -284,6 +284,7 @@ export function registerCustomEndpointHandlers(
       type?: string;
       apiKey?: string;
       headers?: Record<string, string>;
+      force?: boolean;
     }) => {
       if (!data?.baseUrl || typeof data.baseUrl !== 'string')
         throw new Error('baseUrl is required');
@@ -298,9 +299,11 @@ export function registerCustomEndpointHandlers(
       }
 
       const key = cacheKey(data);
-      const cached = modelListCache.get(key);
-      if (cached && Date.now() - cached.fetchedAt < MODEL_LIST_CACHE_TTL_MS) {
-        return { models: cached.models, fromCache: true };
+      if (!data.force) {
+        const cached = modelListCache.get(key);
+        if (cached && Date.now() - cached.fetchedAt < MODEL_LIST_CACHE_TTL_MS) {
+          return { models: cached.models, fromCache: true };
+        }
       }
 
       const azureModel = extractAzureDeploymentModel(data.baseUrl);
