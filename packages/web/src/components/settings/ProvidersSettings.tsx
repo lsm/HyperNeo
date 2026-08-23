@@ -45,6 +45,24 @@ function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
   }
 }
 
+function mergeProviderConfig(
+  configJson: string | undefined,
+  patch: Record<string, unknown>
+): string {
+  let base: Record<string, unknown> = {};
+  if (configJson) {
+    try {
+      const parsed: unknown = JSON.parse(configJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      base = {};
+    }
+  }
+  return JSON.stringify({ ...base, ...patch });
+}
+
 function readAcpCommand(provider: EnrichedProvider): string {
   if (!provider.configJson) return '';
   try {
@@ -254,7 +272,7 @@ export function ProvidersSettings() {
     setPendingId(provider.id);
     try {
       await updateProvider(provider.id, {
-        configJson: JSON.stringify({ region }),
+        configJson: mergeProviderConfig(provider.configJson, { region }),
       });
       lastSyncedKimiRegions.current = {
         ...lastSyncedKimiRegions.current,

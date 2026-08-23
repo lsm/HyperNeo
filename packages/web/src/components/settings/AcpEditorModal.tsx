@@ -58,6 +58,8 @@ export function AcpEditorModal({
         acpCommandsEquivalent(fetchedCommand, currentCommand)
       ? models
       : [];
+  const persistEmptySelection =
+    persistedModels !== undefined && persistedModels.length === 0 && !commandChanged;
 
   const existingModelIds = new Set((persistedModels ?? []).map((m) => m.id));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
@@ -113,7 +115,7 @@ export function AcpEditorModal({
       await updateProvider(providerId, {
         configJson: JSON.stringify({
           ...(trimmedCommand ? { command: trimmedCommand } : {}),
-          models: persistedModels,
+          ...(persistedModels?.length || persistEmptySelection ? { models: persistedModels } : {}),
         }),
       });
       toast.success(`${providerName} updated`);
@@ -208,7 +210,9 @@ export function AcpEditorModal({
 
           {!persistedModels?.length ? (
             <p class="text-xs text-gray-500 italic">
-              No models selected — fetch and add models, or leave empty to use ACP Default.
+              {persistEmptySelection
+                ? 'No models selected — saving will hide all models for this command.'
+                : 'No models selected — fetch and add models, or leave empty to use ACP Default.'}
             </p>
           ) : (
             <div class="space-y-1.5">

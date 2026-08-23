@@ -59,6 +59,11 @@ export interface ProviderOAuthFlowData {
   message: string;
 }
 
+export interface CuratedModel {
+  id: string;
+  name?: string;
+}
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -106,6 +111,8 @@ export interface Provider {
   shutdown?(): Promise<void>;
 
   clearModelCache?(): void;
+
+  setCuratedModels?(models: CuratedModel[] | undefined): void;
 
   getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
 }

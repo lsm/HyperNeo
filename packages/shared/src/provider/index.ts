@@ -10,6 +10,7 @@ export type {
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
+  CuratedModel,
 } from './types.js';
 
 export type {

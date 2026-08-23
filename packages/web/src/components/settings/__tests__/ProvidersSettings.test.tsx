@@ -640,6 +640,37 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(regionSelect().value).toBe('china'));
   });
 
+  it('preserves stored config fields when saving a kimi region change', async () => {
+    const kimi = createMockProvider('k1', 'kimi', {
+      displayName: 'Kimi',
+      configJson: JSON.stringify({
+        region: 'china',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [kimi] });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: kimi });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledTimes(1);
+      const [calledId, params] = mockUpdateProvider.mock.calls[0];
+      expect(calledId).toBe('k1');
+      expect(JSON.parse(params.configJson)).toEqual({
+        region: 'global',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      });
+    });
+  });
+
   it('ignores an out-of-order reload that started before a kimi save', async () => {
     type ProviderList = { providers: (ProviderRecord & { available: boolean })[] };
     const listFor = (region: string): ProviderList => ({
