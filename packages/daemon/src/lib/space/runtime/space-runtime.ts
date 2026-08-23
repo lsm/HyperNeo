@@ -6507,18 +6507,17 @@ export class SpaceRuntime {
         return;
       }
       if (canonicalTask.status === 'open') {
-        const trailingTask = this.config.taskRepo.getTask(canonicalTask.id);
-        if (trailingTask?.status === 'open') {
+        const outcome = this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress');
+        if (outcome === 'won') {
           const nowTs = Date.now();
           await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-            status: 'in_progress',
             startedAt: canonicalTask.startedAt ?? nowTs,
             completedAt: null,
             pendingCheckpointType: null,
           });
         } else {
           log.info(
-            `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently to ${trailingTask?.status ?? 'missing'} during the spawn pass`
+            `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently during the spawn pass`
           );
         }
       }
