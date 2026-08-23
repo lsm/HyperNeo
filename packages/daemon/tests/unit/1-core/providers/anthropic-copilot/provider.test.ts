@@ -874,6 +874,12 @@ describe('logout()', () => {
       p as unknown as Record<string, unknown>,
       'loadStoredGitHubToken' as never
     ).mockResolvedValue('gho_stored_tok' as never);
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
     expect(await p.isAvailable()).toBe(true);
     expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeDefined();
     await p.logout();
@@ -898,9 +904,43 @@ describe('logout()', () => {
   });
 
   it('is safe to call twice (idempotent)', async () => {
-    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
     await p.logout();
     await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('rejects logout with an actionable error while COPILOT_GITHUB_TOKEN manages credentials', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+    await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
+  });
+
+  it('rejects logout with an actionable error while GH_TOKEN manages credentials', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
+    await expect(p.logout()).rejects.toThrow('GH_TOKEN');
+  });
+
+  it('rejects logout with an actionable error while a gh CLI token manages credentials', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      'gho_cli_tok' as never
+    );
+    await expect(p.logout()).rejects.toThrow('gh CLI');
+  });
+
+  it('performs no credential cleanup when logout is refused', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    await expect(p.logout()).rejects.toThrow();
+    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBe(
+      'gho_stored_tok'
+    );
+    expect((p as unknown as Record<string, unknown>)['tokenCache']).not.toBeNull();
   });
 });
 

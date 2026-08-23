@@ -398,6 +398,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async logout(): Promise<void> {
+    const externalSource = await this.findExternalCredentialSource();
+    if (externalSource) {
+      throw new Error(
+        `GitHub Copilot credentials are managed by ${externalSource}. ` +
+          'Remove that source to log out.'
+      );
+    }
+
     this.storedCredentialToken = null;
     this.tokenCache = null;
 
@@ -412,6 +420,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       }
     } catch {}
+  }
+
+  private async findExternalCredentialSource(): Promise<string | undefined> {
+    if (this.env.COPILOT_GITHUB_TOKEN) return 'the COPILOT_GITHUB_TOKEN environment variable';
+    if (this.env.GH_TOKEN) return 'the GH_TOKEN environment variable';
+    if (await this.tryGhCliToken()) return 'the gh CLI (gh auth logout)';
+    if (await this.tryGhHostsToken()) return 'the gh CLI hosts.yml oauth_token';
+    return undefined;
   }
 
   async shutdown(): Promise<void> {
