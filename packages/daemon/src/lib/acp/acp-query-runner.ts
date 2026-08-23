@@ -458,7 +458,11 @@ export class AcpQueryRunner {
       const { command, args } = parseAcpCommand(acpCommand);
       const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
       const storedIdentity = session.metadata?.acpCommandIdentity;
-      if (session.acpSessionId && storedIdentity !== undefined && storedIdentity !== commandIdentity) {
+      if (
+        session.acpSessionId &&
+        storedIdentity !== undefined &&
+        storedIdentity !== commandIdentity
+      ) {
         session.acpSessionId = undefined;
         session.metadata = {
           ...session.metadata,
