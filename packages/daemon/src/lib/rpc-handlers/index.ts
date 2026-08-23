@@ -681,6 +681,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
     spaceRuntimeService.recoverLongTermAgentInboxForSpace(spaceId);
+    spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
   });
 
   setupSpaceAgentHandlers(
