@@ -1727,7 +1727,7 @@ not only B5e's owner-scoped idle (§5).
 | C2a | `turn-end-routing.ts` pure core (flag machine + finish/replay gates) | ~90 | ~60 |
 | C2b | `usage-accounting.ts` pure core | ~70 | ~60 |
 | C2c | `ack-selection.ts` pure core — the plain sendStatus × ownership × yielded/claimed × pending × active-equality selector C1b pins and C3b applies (no additive slice previously created it) | ~40 | ~50 |
-| C3a | apply turn-end routing at :886–891 and :1158–1273; the handler's exceptional exit (rejected `sdk.message` publication or later awaited effect while cleanup skips the idle drain) cancels the handler-owned terminal fence from the rejection/finally path — `terminalIdleInFlight` must not survive a failed turn-end (B5f's cancellation seam consumed here) | ~65 | ~50 |
+| C3a | apply turn-end routing at :886–891 and :1158–1273; the extraction **preserves B5i's exceptional-exit fence cancellation** — the rejection/finally cleanup that keeps `terminalIdleInFlight` from surviving a failed turn-end is pinned as a characterization row so the rewiring cannot drop it (B5i owns the mechanism) | ~60 | ~50 |
 | C3b | apply ack selection at :392–440/:639, applying **C2c's** selector with per-row ownership revalidation in the turn-end fallback-ack loop immediately before every acknowledgement (the loop is snapshot-then-await-consume, so a later row can gain a durable owner mid-loop — Phase 0 guarded transition) | ~55 | ~50 |
 | C3c | apply usage accounting at :1071–1150 | ~40 | ~30 |
 | C4 | cleanup + ADR note | ~10 | doc ~35 |
