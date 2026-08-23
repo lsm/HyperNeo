@@ -372,11 +372,15 @@ export class SpaceGoalService {
       let postBookkeeping: SpaceGoal = fresh;
       if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
         try {
-          const created = this.createImmediateTaskInternal(
-            fresh.id,
-            { source: 'system' },
-            { emitTaskCreated: false }
-          );
+          const createInSavepoint = () =>
+            this.createImmediateTaskInternal(
+              fresh.id,
+              { source: 'system' },
+              { emitTaskCreated: false }
+            );
+          const created = this.deps.db
+            ? this.deps.db.transaction(createInSavepoint)()
+            : createInSavepoint();
           postBookkeeping = created.goal;
           nextTask = created.task;
         } catch (err) {
