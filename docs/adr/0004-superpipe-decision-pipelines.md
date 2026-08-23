@@ -518,9 +518,14 @@ pilot) was two partial ownership sources — the durable job queue and the
 in-memory `MessageQueue` — each consulted by different code paths with no
 unified resolution, so turn-end replay and stranded-delivery reconciliation
 could each re-enqueue a message the other still owned. The pilot's answer is
-the `MessageOwnership` union: every flush and reconcile decision flows through
-`resolveMessageOwnership`, and a message's owner is a typed value, not
-whichever set the surrounding code happened to check.
+the `MessageOwnership` union: reconcile routes both sources through
+`selectStrandedDeliveries` (the durable set plus the in-flight predicate),
+while the flush planner runs `resolveMessageOwnership` per message — its
+interpreter still resolves memory-queue ownership caller-side, pre-filtering
+on `hasPendingOrInFlight` and feeding the planner an empty in-memory set, so
+the typed `memory_queue` arm fires only in the pinned decision tables — and a
+message's owner is a typed value, not whichever set the surrounding code
+happened to check.
 
 **Lesson (b): ORDERING CONSTRAINTS BELONG IN THE PLANNER, NOT THE CALLERS.**
 The wiped-handoff incident (#1085, fixed in PRs 7–8) was clear-vs-batch
