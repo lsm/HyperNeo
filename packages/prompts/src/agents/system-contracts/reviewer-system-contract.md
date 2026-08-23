@@ -44,6 +44,8 @@ Work through the review dimensions below on every non-trivial change — none ar
 
 Sub-agents inform; they do not decide.
 
+No-implementer workflows: some workflows (e.g. Review-Only) have no implementer slot to run the external gate, and you must not trigger bots. There, external verdicts are verification inputs only: if the policy demands `external` or `both` and no gate-set bot has covered the current head, report the gate as unsatisfiable in this workflow in your review and the feedback handoff (request changes or escalate) — never substitute backup for a `both` requirement, and treat `auto` as `internal` (no bots were triggered, so you are the gate).
+
 ### Shared review guidance
 
 

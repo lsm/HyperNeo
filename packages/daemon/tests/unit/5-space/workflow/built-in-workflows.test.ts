@@ -37,6 +37,7 @@ import {
   RETIRED_PR_MERGER_SLOT_PROMPT,
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
+  RESEARCH_PROMPT,
   REVIEWER_ZERO_FINDINGS_GATE,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   seedBuiltInWorkflows,
@@ -424,6 +425,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('verifies the external gate and is the backup');
     expect(CODER_OWNED_MERGE_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(CODING_WORKFLOW.nodes[0]!.agents[0]!.customPrompt!.value).toBe(CODER_OWNED_MERGE_PROMPT);
+    expect(RESEARCH_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
+    expect(RESEARCH_PROMPT).toContain('always send the gated PR handoff to Review');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('never substitutes for the review source');
   });
 
   test('merge instructions sync fork PRs from the base repository remote', () => {
