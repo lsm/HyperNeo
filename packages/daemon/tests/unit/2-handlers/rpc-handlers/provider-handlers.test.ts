@@ -188,6 +188,44 @@ describe('Provider RPC handlers', () => {
       expect(result.providers.length).toBe(1);
       expect(result.providers[0].providerId).toBe('anthropic');
     });
+
+    it('marks a throwing provider unavailable instead of failing the whole listing', async () => {
+      const healthy = repo.createProvider({
+        providerId: 'probe-ok',
+        displayName: 'Probe OK',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const broken = repo.createProvider({
+        providerId: 'probe-broken',
+        displayName: 'Probe Broken',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      getProviderRegistry().register({
+        id: 'probe-ok',
+        displayName: 'Probe OK',
+        isAvailable: mock(async () => true),
+      } as Provider);
+      getProviderRegistry().register({
+        id: 'probe-broken',
+        displayName: 'Probe Broken',
+        isAvailable: mock(async () => {
+          throw new Error('probe exploded');
+        }),
+      } as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.list')!({}, {})) as {
+        providers: Array<ProviderRecord & { available: boolean }>;
+      };
+
+      expect(result.providers).toHaveLength(2);
+      const ok = result.providers.find((p) => p.id === healthy.id);
+      const failed = result.providers.find((p) => p.id === broken.id);
+      expect(ok?.available).toBe(true);
+      expect(failed?.available).toBe(false);
+    });
   });
 
   describe('providers.fetchAcpModels', () => {
