@@ -2848,7 +2848,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const conflicting = mergeable === false || mergeableState === 'dirty';
       const previousConflict = mergeConflictStates[prNumber];
       mergeConflictStates[prNumber] = conflicting;
-      if (conflicting === previousConflict) continue;
+      if (conflicting === (previousConflict ?? false)) continue;
       const sequence = (mergeConflictSequences[prNumber] ?? 0) + 1;
       mergeConflictSequences[prNumber] = sequence;
       const mergeConflictEvent = normalizeGitHubMergeConflict({

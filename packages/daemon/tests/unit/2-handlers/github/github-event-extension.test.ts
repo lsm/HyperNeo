@@ -9621,6 +9621,43 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  test('first observation of a clean pull request emits no merge_conflict_resolved', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse([createPullRequestRow(7)]);
+      if (path.endsWith('/pulls/7'))
+        return pollingResponse({
+          ...createPullRequestRow(7),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.some((item) => item.topic.includes('merge_conflict'))).toBe(false);
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('polling emits one review_submitted per review verdict alongside per-comment events', async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
