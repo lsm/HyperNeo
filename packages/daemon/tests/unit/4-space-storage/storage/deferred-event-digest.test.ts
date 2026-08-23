@@ -149,6 +149,36 @@ describe('parseDeferredExternalEventText', () => {
     expect(parsed.events[0]?.eventId).toBe('evt-1');
   });
 
+  it('parses the space-runtime rate-limit digest text as foldable events', () => {
+    const annotated =
+      '2 events received for topics: github/o/r/pull_request/7.check_failed ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      'Event IDs: rl-1 (github/o/r/pull_request/7.check_failed), ' +
+      'rl-2 (github/o/r/pull_request/7.check_failed). ' +
+      'Use get_external_event(eventId) for full details.';
+    const entry = parseDeferredExternalEventText(annotated);
+    expect(entry?.kind).toBe('fold');
+    if (entry?.kind !== 'fold') return;
+    expect(entry.events).toHaveLength(2);
+    expect(entry.events[0]).toMatchObject({
+      eventId: 'rl-1',
+      topic: 'github/o/r/pull_request/7.check_failed',
+    });
+    expect(entry.events[1]).toMatchObject({ eventId: 'rl-2' });
+
+    const legacy =
+      '1 events received for topics: github/o/r/pull_request/7.check_failed ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      'Event IDs: rl-legacy. Use get_external_event(eventId) for full details.';
+    const legacyEntry = parseDeferredExternalEventText(legacy);
+    expect(legacyEntry?.kind).toBe('fold');
+    if (legacyEntry?.kind !== 'fold') return;
+    expect(legacyEntry.events[0]).toMatchObject({
+      eventId: 'rl-legacy',
+      topic: 'github/o/r/pull_request/7.check_failed',
+    });
+  });
+
   it('returns null for non-external-event text', () => {
     expect(parseDeferredExternalEventText('a human follow-up')).toBeNull();
     expect(parseDeferredExternalEventText('{"type":"chat","topic":"x"}')).toBeNull();
@@ -262,11 +292,11 @@ describe('buildExternalEventDigestMessage', () => {
     const digest = buildExternalEventDigestMessage(essences);
     const lines = digest.split('\n');
 
-    expect(lines).toHaveLength(7);
+    expect(lines).toHaveLength(11);
     expect(lines[0]).toBe('External events while you were working (30 events, PR #2828):');
     expect(lines[1]).toBe(
       '- CI check "Build Binary (linux-x64)": 11 runs (canceled ×6, failure ×5), ' +
-        `latest 16:34 UTC — most cancelled by your own pushes — ${PR_URL}#check-11`
+        `latest 16:34 UTC (most cancelled, likely superseded by newer pushes) — ${PR_URL}#check-11`
     );
     expect(lines[2]).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
@@ -276,13 +306,67 @@ describe('buildExternalEventDigestMessage', () => {
       `- Review comment on packages/web/src/app.tsx:L12: ×1, ` +
         `latest by codex[bot] at 16:25 UTC — "standalone review" — ${PR_URL}#rc-4`
     );
-    expect(lines[4]).toBe(
-      `- PR comments: ×5, latest by marcliu at 15:34 UTC — "latest pr comment" — ${PR_URL}#pc-5`
-    );
-    expect(lines[5]).toBe(
+    for (let i = 0; i < 5; i++) {
+      const body = i === 4 ? 'latest pr comment' : `pr comment ${i + 1}`;
+      expect(lines[4 + i]).toBe(
+        `- PR comment: ×1, latest by marcliu at 15:${30 + i} UTC — "${body}" — ` +
+          `${PR_URL}#pc-${i + 1}`
+      );
+    }
+    expect(lines[9]).toBe(
       `- PR #2828 state: open (latest poll 16:35 UTC, ×8 polls folded) — ${PR_URL}#st-8`
     );
-    expect(lines[6]).toBe('- Reactions on PR #2828: ×2, latest 🚀 by marcliu at 15:10 UTC');
+    expect(lines[10]).toBe(
+      `- Reactions on PR #2828: ×2, latest 🚀 by marcliu at 15:10 UTC — ${PR_URL}#re-2`
+    );
+  });
+
+  it('renders date-inclusive timestamps when the backlog spans multiple UTC days', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'd-1',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        checkName: 'lint',
+        conclusion: 'failure',
+        occurredAt: Date.UTC(2026, 7, 22, 16, 34),
+      },
+      {
+        eventId: 'd-2',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        checkName: 'lint',
+        conclusion: 'failure',
+        occurredAt: Date.UTC(2026, 7, 23, 16, 34),
+      },
+    ]);
+    expect(digest).toContain('latest 08-23 16:34 UTC');
+  });
+
+  it('bounds envelope size and carries dropped events through to the digest totals', () => {
+    const events = Array.from({ length: 205 }, (_, i) => ({
+      eventId: `env-${i}`,
+      topic: 'github/o/r/pull_request/7.check_failed',
+      checkName: 'lint',
+      conclusion: 'failure',
+      occurredAt: at(15) + i * 1000,
+    }));
+    const envelope = buildDeferredEventDigestEnvelopeText(events);
+    const parsed = parseDeferredExternalEventText(envelope);
+    expect(parsed?.kind).toBe('fold');
+    if (parsed?.kind !== 'fold') return;
+    expect(parsed.events).toHaveLength(200);
+    expect(parsed.events[0]).toMatchObject({ eventId: 'env-5' });
+    expect(parsed.droppedCount).toBe(5);
+
+    const partition = partitionDeferredExternalEventRows([row('db-env', 'u-env', envelope)]);
+    expect(partition.digestEvents).toHaveLength(200);
+    expect(partition.droppedCount).toBe(5);
+    const digest = buildExternalEventDigestMessage(partition.digestEvents, {
+      droppedEventCount: partition.droppedCount,
+    });
+    expect(digest.split('\n')[0]).toBe('External events while you were working (205 events):');
+    expect(digest).toContain(
+      '5 older events were folded out of earlier overflow envelopes and are superseded.'
+    );
   });
 
   it('keeps only the newest state across superseded polls', () => {

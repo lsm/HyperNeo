@@ -3045,7 +3045,7 @@ export class SpaceRuntime {
     const occurredAtValues = items.map((item) => item.event.occurredAt);
     const oldest = new Date(Math.min(...occurredAtValues)).toISOString();
     const newest = new Date(Math.max(...occurredAtValues)).toISOString();
-    const eventIds = items.map((item) => item.event.eventId).join(', ');
+    const eventIds = items.map((item) => `${item.event.eventId} (${item.event.topic})`).join(', ');
     return (
       `${items.length} events received for topics: ${topics.join(', ')} ` +
       `(oldest: ${oldest}, newest: ${newest}). ` +
