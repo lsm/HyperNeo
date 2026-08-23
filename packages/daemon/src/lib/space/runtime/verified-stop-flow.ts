@@ -4,6 +4,7 @@ import {
   assembleVerifiedStopResult,
   decideStopVerification,
   isStopDownProcessingStatus,
+  type SessionLivenessSnapshot,
   type StopVerificationDecision,
 } from './stop-verification-gates';
 import { stagedRun, type StagedRunOutcome } from './staged-run';
@@ -29,12 +30,6 @@ interface VerifiedStopFlowState {
   livePids: readonly number[];
 }
 
-interface SessionLivenessGather {
-  processingStatus: AgentProcessingState['status'];
-  interruptInProgress: boolean;
-  livePids: readonly number[];
-}
-
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -42,7 +37,7 @@ function describeError(err: unknown): string {
 async function gatherSessionLiveness(
   deps: VerifiedStopFlowDeps,
   session: AgentSession
-): Promise<SessionLivenessGather> {
+): Promise<SessionLivenessSnapshot> {
   const processingStatus = deps.readProcessingStatus(session);
   if (!isStopDownProcessingStatus(processingStatus)) {
     return { processingStatus, interruptInProgress: false, livePids: [] };

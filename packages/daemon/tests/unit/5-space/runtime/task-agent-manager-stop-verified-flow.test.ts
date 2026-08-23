@@ -33,6 +33,7 @@ interface FakeSessionOptions {
   processingStateError?: unknown;
   cleanupError?: unknown;
   terminateError?: unknown;
+  processExitedPromise?: Promise<void> | null;
 }
 
 function makeFakeSession(options: FakeSessionOptions = {}): FakeSessionController {
@@ -58,6 +59,7 @@ function makeFakeSession(options: FakeSessionOptions = {}): FakeSessionControlle
   };
   let interruptCalls = 0;
   controller.session = {
+    processExitedPromise: options.processExitedPromise ?? null,
     handleInterrupt: async (interruptOptions?: FakeInterruptOptions) => {
       calls.interruptOptions.push(interruptOptions);
       if (options.interruptGate) await options.interruptGate;
@@ -140,6 +142,10 @@ function internalsOf(manager: TaskAgentManager) {
     sessionListeners: Map<string, () => void>;
     completionCallbacks: Map<string, unknown>;
   };
+}
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
@@ -354,6 +360,37 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     releaseInterrupt();
     await promise;
     expect(internals.subSessions.get('task-1')?.has('sess-1')).toBe(false);
+  });
+
+  test('waits for the tracked process exit before checking live pids', async () => {
+    const manager = makeManager(makeSessionManager());
+    let releaseExit: () => void = () => {};
+    const exitGate = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    const fake = makeFakeSession({
+      statusSequence: ['processing', 'idle'],
+      livePids: [4242],
+      processExitedPromise: exitGate,
+    });
+    registerSession(manager, 'task-1', 'sess-1', fake.session);
+
+    let settled = false;
+    const promise = manager.stopSessionVerifiedViaFlow('sess-1').then((result) => {
+      settled = true;
+      return result;
+    });
+    await tick();
+    expect(settled).toBe(false);
+    expect(fake.calls.interrupts).toBe(1);
+    expect(fake.calls.terminations).toBe(0);
+
+    fake.clearPids();
+    releaseExit();
+    const result = await promise;
+    expect(settled).toBe(true);
+    expect(result).toEqual({ sessionId: 'sess-1', stopped: true });
+    expect(fake.calls.terminations).toBe(0);
   });
 
   test('propagates a verification crash and still clears the cancelling guard', async () => {
