@@ -258,11 +258,11 @@ describe('spawn flow — proceed_fresh path', () => {
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
       `release-task:${TASK_ID}`,
-      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
       'kickoff-message',
       `inject:${SPAWNED_SESSION_ID}`,
+      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
     expect(h.cancels).toEqual([]);
     expect(h.releases).toEqual([]);
@@ -283,9 +283,9 @@ describe('spawn flow — proceed_fresh path', () => {
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
       `release-task:${TASK_ID}`,
-      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
+      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
   });
 

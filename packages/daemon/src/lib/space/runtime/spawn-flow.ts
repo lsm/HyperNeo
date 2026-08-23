@@ -297,19 +297,6 @@ export function runSpawnExecutionFlow(
         },
       }),
       s.effect({
-        name: 'flush-pending-messages',
-        when: 'proceedFresh',
-        reads: ['workflowRun', 'execution', 'spawnedSessionId'],
-        writes: [],
-        run: (view) => {
-          deps.flushPendingMessagesForTarget(
-            view.workflowRun.id,
-            view.execution.agentName,
-            view.spawnedSessionId
-          );
-        },
-      }),
-      s.effect({
         name: 'attach-node-agent',
         when: 'proceedFresh',
         reads: ['task', 'space', 'workflowRun', 'execution', 'spawnedSessionId', 'workspacePath'],
@@ -360,6 +347,19 @@ export function runSpawnExecutionFlow(
             workspacePath: view.workspacePath,
           });
           await deps.injectKickoffMessage(view.spawnedSessionId, message);
+        },
+      }),
+      s.effect({
+        name: 'flush-pending-messages',
+        when: 'proceedFresh',
+        reads: ['workflowRun', 'execution', 'spawnedSessionId'],
+        writes: [],
+        run: (view) => {
+          deps.flushPendingMessagesForTarget(
+            view.workflowRun.id,
+            view.execution.agentName,
+            view.spawnedSessionId
+          );
         },
       }),
       s.halt({
