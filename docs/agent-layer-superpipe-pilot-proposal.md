@@ -1622,11 +1622,11 @@ types-dominated additive cores), prose/ADR Δ ≲150, test Δ ≲350 — table r
 are mechanical, so a pins PR that would exceed ~350 test lines splits by
 dimension family, never by truncating rows. **Flagged assumption: tests are
 counted separately from production code.** If tests must also fit inside the
-200-line total, the pins PRs split another 2–3× by dimension family, and the
-larger additive-core/enrollment slices whose prod+test exceeds ~200 (0a, 0b,
-0c, B2a, B5a, B5e, A2a, A2b, A4b) split their full table suites into
-companion pins PRs that immediately follow; the apply/cleanup slices already
-fit as-is.
+200-line total, the pins PRs split another 2–3× by dimension family, and any
+additive-core/enrollment slice whose prod+test estimate exceeds ~200 splits
+its full table suite into a companion pins PR that immediately follows —
+under the current table estimates that is 0a (~230), 0b (~285), and 0c
+(~220) only; every other core/apply/cleanup slice already fits as-is.
 
 Sub-PR IDs are letter suffixes on the reviewed parent (B5a = first slice of
 B5), so §5's reviewed scope carries over unchanged. **Namespace task titles
