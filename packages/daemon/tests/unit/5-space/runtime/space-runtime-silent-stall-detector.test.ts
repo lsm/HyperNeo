@@ -163,7 +163,11 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
     nodeId: string,
     agentName: string,
     status: NodeExecutionStatus,
-    opts: { agentSessionId?: string | null; lastActivityAt?: number | null } = {}
+    opts: {
+      agentSessionId?: string | null;
+      lastActivityAt?: number | null;
+      startedAt?: number | null;
+    } = {}
   ) {
     const existing = nodeExecutionRepo.listByNode(runId, nodeId)[0];
     const target =
@@ -179,6 +183,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       status,
       agentSessionId: opts.agentSessionId ?? null,
       lastActivityAt: opts.lastActivityAt ?? null,
+      ...(opts.startedAt !== undefined ? { startedAt: opts.startedAt } : {}),
     });
     return nodeExecutionRepo.getById(target.id)!;
   }
@@ -380,6 +385,54 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
       });
       saveNonTerminalAssistantMessage('non-terminal-message-session', threeHoursAgo());
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
+    });
+
+    test('fires from startedAt when a sessionless idle execution has been idle past the threshold', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Sessionless Old StartedAt Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: null,
+        lastActivityAt: null,
+        startedAt: Date.now() - 3 * 60 * 60 * 1000,
+      });
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(1);
+    });
+
+    test('stays quiet when a sessionless idle execution started recently', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Sessionless Recent StartedAt Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: null,
+        lastActivityAt: null,
+        startedAt: Date.now() - 30_000,
+      });
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
+    });
+
+    test('stays quiet when a sessionless idle execution has no startedAt and no other signals', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Sessionless No StartedAt Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: null,
+        lastActivityAt: null,
+        startedAt: null,
+      });
 
       const rt = makeRuntime();
       runDetector(rt, runId, taskId);
