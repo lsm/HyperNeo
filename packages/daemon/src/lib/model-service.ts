@@ -7,6 +7,8 @@ import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
 import { DeepSeekProvider } from './providers/deepseek-provider.js';
+import { MinimaxProvider } from './providers/minimax-provider.js';
+import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -68,6 +70,8 @@ const STATIC_MODEL_METADATA: ModelInfo[] = [
   ...GlmProvider.MODELS,
   ...KimiProvider.MODELS,
   ...DeepSeekProvider.MODELS,
+  ...MinimaxProvider.MODELS,
+  ...COPILOT_ANTHROPIC_MODELS,
 ];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
 const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
@@ -433,7 +437,10 @@ export async function getModelInfo(
   }
 
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
-  return findInModels(staticProviderModels, idOrAlias) ?? null;
+  const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
+  return providerId === 'anthropic-copilot' && staticModel
+    ? overlayCodexStaticMetadata(staticModel)
+    : staticModel;
 }
 
 export async function getSessionModelInfo(
@@ -470,7 +477,7 @@ export async function isValidModel(
     return false;
   }
 
-  if (sessionApiKey?.trim()) {
+  if (sessionApiKey?.trim() && providerId !== 'anthropic-copilot') {
     return true;
   }
 
