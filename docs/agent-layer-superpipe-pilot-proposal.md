@@ -1681,32 +1681,33 @@ independent leaves.
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
 | B1a | pins: startup-arm decision rows — attempt-zero × processing status × abort-controller × cleaning-up × prompt redeliverability (:969–1013) | 0 | ~300 |
-| B1b | pins: transient/provider rows — attempt × cap exhaustion × provider family (Anthropic SYSTEM vs PROVIDER_UNAVAILABLE) × billing-429 (:1069–1230) | 0 | ~320 |
+| B1b | pins: transient/provider rows — attempt × cap exhaustion × provider family (Anthropic SYSTEM vs PROVIDER_UNAVAILABLE) × billing-429 (:1069–1230), plus the unmatched-AbortError `aborted_noop(clear_queue)` row (queue cleared, no terminal handling, no spurious error display) | 0 | ~340 |
 | B1c | pins: 429-handoff suppression contract (`rateLimitCooldownScheduled` ⇒ no errorManager/setIdle) + per-arm teardown-liturgy inventory | 0 | ~250 |
 | B1d | pins: unfenced-window map — guard placement pinned as-is, not assumed complete | 0 | ~150 |
 | B2a | `query-retry-routing.ts` classifier core + types, unwired | ~110 | ~60 |
 | B2b | decisionRun composition + recoveryState/supersede → arm mapping | ~50 | ~60 |
 | B3a | apply startup arms (:969, :1013) — arms become interpreters | ~45 | ~40 |
-| B3b | apply provider/transient arms (:1069–1230) | ~75 | ~50 |
+| B3b | apply provider/transient arms (:1069–1230), incl. the unmatched-AbortError `aborted_noop(clear_queue)` route — clears the queue and skips the entire terminal path via the `!isAbortError` gate (:1158–1291 region), a distinct classifier route that neither the startup nor provider arms cover | ~80 | ~55 |
 | B3c | finalizer post-await generation/identity guards (:1315–1360) — closes B1d's pinned window in production | ~40 | ~60 |
 | B4 | teardown-liturgy dedup: one parameterized helper, four call sites (unsplit) | ~90 | ~40 |
 | B5a | attempt-token primitive: invalidated before retry recursion (:1150); PreToolUse hook binds to it (:518 region) | ~70 | ~90 |
 | B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267), plus finalizer revalidation after the idle await before clearing shared fields and owner-binding the detached `processExitSnapshot.then(...)` continuation that can publish `query.trigger` for the successor | ~70 | ~90 |
 | B5c | ACP terminal: full lifecycle resnapshot before beginTerminalIdle (:938) + post-effect resnapshot/fence-cancel before setIdle (:953) | ~50 | ~70 |
 | B5d | **all** post-await watchdog-write fencing at the watchdog boundary — `scheduleCooldown` :233–237 pre-generation-check write, `triedKeys`/`chain` :149–176, detached `fireImmediateFallback` finally :346–355 — lands on #2779's pure gates; owner coordination, excluded-module rule holds | ~30 | ~50 |
-| B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143) incl. the post-publication `onIdleCallback` (:157–160 region), releaseIdleWaiters episode filter (:79); replacement-during-publish pin | ~80 | ~100 |
-| B5f | ownership-fenced SDK dispatch **for both runners**: generation/owner token propagated through `handleSDKMessage` into the shared handler context and validated before its fence; `isCleaningUp()` joins dispatch-entry validation (cleanup-without-replacement); ACP's generationless dispatch (:925–929 region) fenced identically; late old-generation result pin | ~70 | ~90 |
+| B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143) incl. the post-publication `onIdleCallback` (:157–160 region), releaseIdleWaiters episode filter (:79); waiter admission carries **all three owner filters — query, rate-limit-episode, and turn/delivery** (a successor delivery on the same live query has a new turn owner but the same query owner; the handler revalidates the turn owner after its awaits); replacement-during-publish + same-query-successor pins | ~90 | ~110 |
+| B5f | ownership-fenced SDK dispatch **for both runners**: generation/owner token propagated through `handleSDKMessage` into the shared handler context and validated before its fence; `isCleaningUp()` joins dispatch-entry validation (cleanup-without-replacement); ACP's generationless dispatch (:925–929 region) fenced identically; **the output iterator's pre-dispatch bookkeeping is fenced at each yield** — the stale iterator clears `ctx.startupTimeoutTimer` and sets `ctx.firstMessageReceived` (query-runner) and ACP additionally records receipt, persists `acpInstructionsSent`, and has its own timer-clear path, all before the dispatch boundary; late old-generation result + stale-iterator-bookkeeping pins | ~75 | ~100 |
 | B5g | ACP adapter + handshake-continuation generation binding: `onAccepted`/`onConfigOptionsUpdate` pre-yield callbacks (acp-query-adapter :53–68), `onMessageEnqueued` (:485) + startup-timer (:487–493) close only the owned query object (:491–520); the stale handshake continuation that overwrites `_lastConsumedUserMessage`, creates/assigns the adapter to the replacement-owned `ctx.queryObject`, and installs a startup timer is revalidated after each await and before those shared writes; the adapter's unconditional finally (:701–704) is generation/claim-fenced so a stopped adapter cannot `markACPDeliveryFailed` the replacement's re-enqueued row; enqueue-during-stale-handshake + adapter-exit-after-replacement pins | ~70 | ~90 |
 | B5h | ACP retry-arm revalidation: entry check (:802–804 region) stale after awaited setIdle/process-exit — revalidate after each retry await and before the re-enqueue/queryObject-close/process-exit-reset/recursion (:839–858); replacement-during-ACP-retry pin | ~50 | ~70 |
 | B5i | whole-catch ownership fencing in both runners: revalidate before the entire catch — QueryRunner `errorManager.handleError` (:838 region) and ACP's own catch (:679–693) with its unscoped drain; `drainDeliveryWaitersOnTerminalSDKMessage` (:804–812) skips or owner-scopes when the emitting generation no longer owns the session; stale-handler-publishes-nothing pin | ~60 | ~80 |
 | B5j | notice-publication fallback: error-display helpers that return false on a failed persist (save ignored, emit-only path) publish a non-persisted `session.error` fallback — the `api_validation` route skips `errorManager` by design, so a gated save failure must not silence the session; returned-false pins for both callers | ~30 | ~40 |
 | B5k | prompt-generator boundary fencing at the message-queue seam: ownership checked before entering `messageQueue.messageGenerator` and immediately after each yield (a stale continuation awaiting `onModelsFetched()` snapshots the *replacement's* generation at :603–606 / message-queue :272–283, claims its prompt, and mutates processing state :610–615); stale claims requeued; late pulls of `createMessageGeneratorWrapper` bound identically; the pre-yield `onMessageYielded` consumption callback (message-queue :316–323) validates the run owner — passed into `MessageQueue` — before marking the durable message consumed/published, or is suppressed until after the wrapper's check; iterators bind to B5a's attempt token | ~80 | ~100 |
-| B5l | permission-callback fencing in both runners: the generationless `createCanUseToolCallback` installs (query-runner :517–519, acp :438) bind to the run generation/attempt token and reject stale requests — ACP permission notifications invoke it out-of-band (:547 → :281–298) and a late request from a stopped process can supersede the replacement's pending question (:164–185) without passing the SDK-message guard; late-callback replacement pin (the PreToolUse-hook half of this binding is B5a's) | ~50 | ~70 |
+| B5l | permission-callback fencing in both runners: the generationless `createCanUseToolCallback` installs (query-runner :517–519, acp :438) bind to the run generation/attempt token and reject stale requests — ACP permission notifications invoke it out-of-band (:547 → :281–298) and a late request from a stopped process can supersede the replacement's pending question (:164–185) without passing the SDK-message guard; **the answer path is fenced end-to-end** — lifecycle/turn ownership is revalidated when the question promise resolves and before the response/cancel mutations and the `question.asked` publication, so a stale ask cannot persist resolved-question history or drive `setProcessing` against the replacement; late-callback replacement + stale-answer pins (the PreToolUse-hook half of this binding is B5a's) | ~60 | ~80 |
 | B6 | cleanup + ADR note | ~15 | doc ~40 |
 
 Order: B1\* → B2\* → B3\* (B3c is region-independent of B3a/b and can lead);
 B4 after B3; **B5a ∥ B5e first (primitives), then B5f (dispatch consumes the
-token), then B5b, B5c, B5g, B5h, B5i, B5k, B5l in parallel; B5d coordinates
+token), then B5b, then B5c (consumes B5b's owned-fence cancellation
+primitive), then B5g, B5h, B5i, B5k, B5l in parallel; B5d coordinates
 with #2779; B5j is an independent leaf**. B5's setup-window revalidation
 (stale ACP spawn after `stop()`'s snapshot) is owned by 0c, not duplicated
 here. Chain C apply PRs follow the **complete B5 series (B5a–B5l)** — C's
@@ -1717,20 +1718,22 @@ not only B5e's owner-scoped idle (§5).
 
 | sub-PR | scope (current anchor) | prod Δ | test Δ |
 |---|---|---|---|
-| C1a | pins: flag-machine truth table — suppress × mode × expectsIdle × lastResultWasSuccess × result kind × top-level-result bit × queryMode × **current session-state event kind/state (idle event calls finishTurn/replay/flag-reset; non-idle only arms the expectation; no-event rows too — or the §5 shell-retention alternative, stated explicitly)**, `next_flags` asserted on every row; manual-mode no-replay gate (:1234) | 0 | ~350 |
+| C1a | pins: flag-machine truth table — suppress × mode × expectsIdle × lastResultWasSuccess × result kind × top-level-result bit × queryMode × **current session-state event kind/state (idle event calls finishTurn/replay/flag-reset; non-idle only arms the expectation; no-event rows too — or the §5 shell-retention alternative, stated explicitly)**, `next_flags` asserted on every row; **thinking-token reset action (`resetThinkingTokenTracking` on top-level results and on session-state idle) is a matrix action or explicitly retained in the shell**; manual-mode no-replay gate (:1234) | 0 | ~350 |
 | C1b | pins: ack-selection table — sendStatus × durable ownership × yielded/claimed × pending-in-memory × active-message equality (:392–440, :639) | 0 | ~250 |
 | C1c | pins: cost-reset table (:1071–1150) + legacy-fragility characterization (terminal-fence + double-setIdle; stale lastResultWasSuccess window) | 0 | ~150 |
 | C2a | `turn-end-routing.ts` pure core (flag machine + finish/replay gates) | ~90 | ~60 |
 | C2b | `usage-accounting.ts` pure core | ~70 | ~60 |
 | C3a | apply turn-end routing at :886–891 and :1158–1273 | ~55 | ~40 |
-| C3b | apply ack selection at :392–440/:639 | ~45 | ~40 |
+| C3b | apply ack selection at :392–440/:639, with per-row ownership revalidation in the turn-end fallback-ack loop immediately before every acknowledgement (the loop is snapshot-then-await-consume, so a later row can gain a durable owner mid-loop — Phase 0 guarded transition) | ~55 | ~50 |
 | C3c | apply usage accounting at :1071–1150 | ~40 | ~30 |
 | C4 | cleanup + ADR note | ~10 | doc ~35 |
 
 Order: C1\* → C2\* → C3\*; C2a ∥ C2b; **C3 apply after the complete B5
 series (B5a–B5l)**, whose dispatch/catch fencing the exceptional-exit
 contract consumes — owner-scoped idle (B5e) alone does not stop a stale
-handler resuming after an awaited publish (§8.2).
+handler resuming after an awaited publish (§8.2); **and C3 remains gated on
+#2543** — the §5 contract sequences Chain C after both #2661 and #2543
+(sdk-message-handler overlap, §3), and only #2661 has merged.
 
 ### 8.4 Chain A → fourteen sub-PRs
 
@@ -1744,7 +1747,7 @@ handler resuming after an awaited publish (§8.2).
 | A2b | handler outcome routing module (post-preflight table) | ~70 | ~60 |
 | A2c | `reconciler-sweep.ts` (stale-submitted selection) | ~40 | ~40 |
 | A2d | `message-queue-timeout-policy.ts` (pending/claimed/yielded × durable timeout decision) | ~45 | ~40 |
-| A3a | wire steer ladder at :1847 + handler outcome interpretation | ~65 | ~40 |
+| A3a | wire steer ladder at :1847 + handler outcome interpretation, plus the steer-continuation hardening: `feedDeliverySteer` rechecks lifecycle and claim ownership after the acknowledgement await in **both** acknowledgement consumers — `MessageQueue.clear()` resolves rather than rejects a cleared entry's acknowledgement, so the resume path can otherwise mark the durable delivery consumed for a successor | ~75 | ~50 |
 | A3b | wire role arbitration at message-delivery.ts:97–139 + outbox | ~50 | ~50 |
 | A3c | wire sweep at :2112 + timeout policy at message-queue.ts:105–128 | ~35 | ~30 |
 | A4a | claim-fenced batch-update primitive (additive; covers the two unfenced batch writes §5 named) | ~60 | ~80 |
