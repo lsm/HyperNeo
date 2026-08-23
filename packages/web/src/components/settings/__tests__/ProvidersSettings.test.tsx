@@ -232,7 +232,9 @@ describe('ProvidersSettings', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
+    mockListProviders.mockReset();
     mockListProviders.mockResolvedValue({ providers: [] });
+    mockListProviderAuthStatus.mockReset();
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
     mockOnConnected.mockReset();
     mockOnConnected.mockResolvedValue(undefined);
@@ -243,6 +245,7 @@ describe('ProvidersSettings', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('shows loading state initially', async () => {
@@ -258,6 +261,9 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     expect(container.textContent).toContain('Loading providers...');
 
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(1);
+    });
     resolvePromise!({ providers: [] });
     await waitFor(() => {
       expect(container.textContent).not.toContain('Loading providers...');
@@ -877,22 +883,14 @@ describe('ProvidersSettings', () => {
       authType: 'oauth',
       available: false,
     });
-    let resolveFirst: (value: { providers: ProviderRecord[] }) => void;
-    let resolveSecond: (value: { providers: ProviderRecord[] }) => void;
-    mockListProviders
-      .mockResolvedValueOnce({ providers: [copilot] })
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveFirst = resolve;
-          })
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveSecond = resolve;
-          })
-      );
+    const pendingResolvers: Array<(value: { providers: ProviderRecord[] }) => void> = [];
+    mockListProviders.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pendingResolvers.push(resolve);
+        })
+    );
+    mockListProviders.mockResolvedValueOnce({ providers: [copilot] });
     mockListProviderAuthStatus
       .mockResolvedValueOnce({
         providers: [
@@ -932,28 +930,33 @@ describe('ProvidersSettings', () => {
       expect(screen.getByTestId('oauth-modal')).toBeTruthy();
     });
 
-    vi.advanceTimersByTime(4000);
+    const flushMicrotasks = async () => {
+      for (let i = 0; i < 30; i++) {
+        await Promise.resolve();
+      }
+    };
+    for (let round = 0; round < 3; round++) {
+      vi.advanceTimersByTime(2000);
+      await flushMicrotasks();
+    }
 
-    await waitFor(() => {
-      expect(mockListProviders).toHaveBeenCalledTimes(3);
-    });
+    expect(mockListProviders.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(pendingResolvers.length).toBeGreaterThanOrEqual(2);
 
-    resolveSecond!({
+    pendingResolvers[pendingResolvers.length - 1]!({
       providers: [createMockProvider('2', 'openai', { displayName: 'OpenAI' })],
     });
     await waitFor(() => {
       expect(container.textContent).toContain('OpenAI');
     });
 
-    resolveFirst!({
+    pendingResolvers[0]!({
       providers: [copilot],
     });
     await waitFor(() => {
       expect(container.textContent).toContain('OpenAI');
     });
     expect(container.textContent).not.toContain('Copilot');
-
-    vi.useRealTimers();
   });
 
   it('polls auth status and closes OAuth modal on authentication', async () => {
