@@ -216,28 +216,85 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
       const status = await p.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
     });
 
-    it('reports not authenticated when COPILOT_GITHUB_TOKEN env var is set but no auth.json token', async () => {
+    it('reports authenticated when COPILOT_GITHUB_TOKEN env var is set (same discovery chain as isAvailable)', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
       spyOn(
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
       const status = await p.getAuthStatus();
-      expect(status.isAuthenticated).toBe(false);
+      expect(status.isAuthenticated).toBe(true);
     });
 
-    it('reports not authenticated when GH_TOKEN env var is set but no auth.json token', async () => {
+    it('reports authenticated when GH_TOKEN env var is set (same discovery chain as isAvailable)', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
       spyOn(
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
       const status = await p.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+    });
+
+    it('reports authenticated when only a gh CLI token is discoverable', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        'gho_cli_tok' as never
+      );
+      const status = await p.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+    });
+
+    it('reports authenticated when only a hosts.yml token is discoverable', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        'gho_hosts_tok' as never
+      );
+      const status = await p.getAuthStatus();
+      expect(status.isAuthenticated).toBe(true);
+    });
+
+    it('agrees with isAvailable for env-token installs (both resolve the same chain)', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      expect(await p.isAvailable()).toBe(true);
+      expect((await p.getAuthStatus()).isAuthenticated).toBe(true);
+    });
+
+    it('rejects classic PATs (ghp_ prefix) from env vars with an actionable error', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_pat' });
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      const status = await p.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
+      expect(status.error).toContain('Classic PATs');
+      expect(status.error).toContain('fine-grained PAT');
     });
 
     it('reports authenticated when auth.json has a stored fine-grained token (gho_ prefix)', async () => {
@@ -283,6 +340,12 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         p as unknown as Record<string, unknown>,
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
       const status = await p.getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
     });
@@ -773,14 +836,10 @@ describe('tryGhHostsToken', () => {
     spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
       'hosts-token-xyz' as never
     );
-    spyOn(
-      p as unknown as Record<string, unknown>,
-      'validateCopilotToken' as never
-    ).mockResolvedValue(true as never);
     expect(await p.isAvailable()).toBe(true);
   });
 
-  it('invalid hosts.yml token (validateCopilotToken=false) does not grant access', async () => {
+  it('hosts.yml token grants availability by presence alone — no subprocess token validation', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     spyOn(
       p as unknown as Record<string, unknown>,
@@ -792,11 +851,19 @@ describe('tryGhHostsToken', () => {
     spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
       'bad-token' as never
     );
+    expect(await p.isAvailable()).toBe(true);
+  });
+
+  it('gh CLI token (keyring-backed installs) grants availability by presence alone', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     spyOn(
       p as unknown as Record<string, unknown>,
-      'validateCopilotToken' as never
-    ).mockResolvedValue(false as never);
-    expect(await p.isAvailable()).toBe(false);
+      'loadStoredGitHubToken' as never
+    ).mockResolvedValue(undefined as never);
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      'gho_cli_tok' as never
+    );
+    expect(await p.isAvailable()).toBe(true);
   });
 });
 

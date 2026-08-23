@@ -330,7 +330,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token = this.storedCredentialToken ?? (await this.loadStoredGitHubToken());
+      const token = await this.resolveGitHubToken();
       if (!token) {
         return {
           isAuthenticated: false,
@@ -469,18 +469,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     if (this.env.GH_TOKEN) return this.env.GH_TOKEN;
 
     const ghCliToken = await this.tryGhCliToken();
-    if (ghCliToken) {
-      const valid = await this.validateCopilotToken(ghCliToken);
-      if (valid) return ghCliToken;
-    }
+    if (ghCliToken) return ghCliToken;
 
-    const hostsToken = await this.tryGhHostsToken();
-    if (hostsToken && hostsToken !== ghCliToken) {
-      const valid = await this.validateCopilotToken(hostsToken);
-      if (valid) return hostsToken;
-    }
-
-    return undefined;
+    return this.tryGhHostsToken();
   }
 
   private async loadStoredGitHubToken(): Promise<string | undefined> {
@@ -513,33 +504,6 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return match?.[1] || undefined;
     } catch {
       return undefined;
-    }
-  }
-
-  private async validateCopilotToken(token: string): Promise<boolean> {
-    const TIMEOUT_MS = 20_000;
-    const client = new CopilotClient({
-      useStdio: true,
-      logLevel: 'error',
-      env: buildCopilotEnv({ ...this.env, COPILOT_GITHUB_TOKEN: token }),
-    });
-    try {
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const models = await Promise.race([
-        client.listModels(),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error('validateCopilotToken timed out')),
-            TIMEOUT_MS
-          );
-        }),
-      ]);
-      clearTimeout(timeoutHandle);
-      return models.length > 0;
-    } catch {
-      return false;
-    } finally {
-      await client.stop().catch(() => {});
     }
   }
 
