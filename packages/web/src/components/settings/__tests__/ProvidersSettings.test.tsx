@@ -637,6 +637,65 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(regionSelect().value).toBe('china'));
   });
 
+  it('ignores an out-of-order reload that started before a kimi save', async () => {
+    type ProviderList = { providers: (ProviderRecord & { available: boolean })[] };
+    const listFor = (region: string): ProviderList => ({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region }),
+        }),
+        createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' }),
+      ],
+    });
+    let listCall = 0;
+    let releaseStaleLoad: (value: ProviderList) => void;
+    const staleLoad = new Promise<ProviderList>((resolve) => {
+      releaseStaleLoad = resolve;
+    });
+    mockListProviders.mockImplementation(() => {
+      listCall += 1;
+      if (listCall === 2) return staleLoad;
+      return Promise.resolve(listFor(listCall === 1 ? 'china' : 'global'));
+    });
+    let releaseSave: () => void;
+    const saveUpdate = new Promise<{ success: boolean }>((resolve) => {
+      releaseSave = () => resolve({ success: true });
+    });
+    mockUpdateProvider.mockImplementation(() => saveUpdate);
+    let releaseTest: () => void;
+    const testProbe = new Promise<{ healthy: boolean }>((resolve) => {
+      releaseTest = () => resolve({ healthy: true });
+    });
+    mockTestProvider.mockImplementation(() => testProbe);
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    const rowHeaders = () =>
+      Array.from(container.querySelectorAll<HTMLDivElement>('div[class*="cursor-pointer"]'));
+    fireEvent.click(rowHeaders()[0]);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+
+    fireEvent.click(screen.getByText('Save'));
+    fireEvent.click(rowHeaders()[1]);
+    await waitFor(() => expect(screen.getByText('Test connection')).toBeTruthy());
+    fireEvent.click(screen.getByText('Test connection'));
+
+    releaseTest!();
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(2));
+    releaseSave!();
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(rowHeaders().length).toBeGreaterThan(0));
+    fireEvent.click(rowHeaders()[0]);
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+
+    releaseStaleLoad!(listFor('china'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+  });
+
   it('updates API key for provider', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),
