@@ -34,7 +34,7 @@ import {
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { parseAcpCommand } from './acp-command';
+import { getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
@@ -352,6 +352,8 @@ function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
 type AcpClientFactory = (options: AcpClientOptions) => AcpClient;
 
 export class AcpQueryRunner {
+  private pendingAcpIdentityMetadata = false;
+
   private _lastConsumedUserMessage: {
     uuid: string;
     content: string | MessageContent[];
@@ -456,6 +458,23 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
+      const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
+      const storedIdentity = session.metadata?.acpCommandIdentity;
+      if (storedIdentity !== commandIdentity) {
+        if (session.acpSessionId && storedIdentity !== undefined) {
+          session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          };
+        }
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+        };
+        this.pendingAcpIdentityMetadata = true;
+      }
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -1045,8 +1064,13 @@ export class AcpQueryRunner {
 
   private persistAcpSessionId(acpSessionId: string | undefined): void {
     const { session, db } = this.ctx;
-    if (session.acpSessionId === acpSessionId) return;
+    if (session.acpSessionId === acpSessionId && !this.pendingAcpIdentityMetadata) return;
     session.acpSessionId = acpSessionId;
+    if (this.pendingAcpIdentityMetadata) {
+      this.pendingAcpIdentityMetadata = false;
+      db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
+      return;
+    }
     db.updateSession(session.id, { acpSessionId });
   }
 

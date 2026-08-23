@@ -11,6 +11,7 @@ import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-option
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import {
   AcpQueryRunner,
   convertMcpServersForAcp,
@@ -841,7 +842,128 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('acp-session-1');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'acp-session-1',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+      }),
     });
+  });
+
+  test('creates a new ACP session when the persisted command identity changes', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('other-acp --stdio'),
+          acpInstructionsSent: true,
+          acpContextUsageEstimate: 12000,
+        },
+      } as Partial<Session>,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        systemPrompt: { type: 'preset', preset: 'none', append: 'Follow current rules.' },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).not.toHaveBeenCalled();
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    expect(client.createSession).toHaveBeenCalledWith('/tmp/acp-session', []);
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      acpSessionId: 'acp-session-1',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        acpContextUsageEstimate: undefined,
+      }),
+    });
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
+    }
+    expect(ctx.session.metadata.acpInstructionsSent).toBe(true);
+    expect(client.sendPrompt.mock.calls[0][0]).toEqual([
+      {
+        type: 'text',
+        text: 'HyperNeo session instructions:\n\nFollow current rules.',
+      },
+      { type: 'text', text: 'hello' },
+    ]);
+  });
+
+  test('preserves an existing session whose command identity matches', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    client.loadSession.mockImplementation(async (sessionId: string) => ({
+      sessionId,
+      configOptions: [],
+    }));
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          messageCount: 2,
+          acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('keeps the old ACP session id when the replacement command fails to start', async () => {
+    const client = createMockClient();
+    client.initialize.mockImplementation(async () => {
+      throw new Error('replacement agent unavailable');
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('other-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
+      expect(call[1]).not.toHaveProperty('metadata');
+    }
+    expect(ctx.session.acpSessionId).toBe(undefined);
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('persists only a digest of the ACP command identity', async () => {
+    process.env.HYPERNEO_ACP_COMMAND = 'devin acp --token topsecret';
+    const { runner, ctx } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const identity = ctx.session.metadata.acpCommandIdentity as string;
+    expect(identity).toBe(getAcpCommandIdentityDigest('devin acp --token topsecret'));
+    expect(identity).not.toContain('topsecret');
   });
 
   test('loads an existing ACP session instead of creating a new one', async () => {
@@ -912,6 +1034,9 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('resumed-acp-session');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'resumed-acp-session',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+      }),
     });
   });
 
