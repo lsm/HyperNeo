@@ -4,7 +4,7 @@ import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delive
 import type { InjectionDeliveryRowDeps } from '../../../../src/lib/space/runtime/injection-delivery-steps';
 import {
   deliverInjectedMessage,
-  failDeliveryRow,
+  failDeliveryRowInBackground,
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
@@ -93,22 +93,42 @@ describe('flipDeliveryRowToDeferred', () => {
   });
 });
 
-describe('failDeliveryRow', () => {
-  it('marks failed and publishes failed when the mark lands', async () => {
+describe('failDeliveryRowInBackground', () => {
+  it('marks failed and fire-and-forget publishes failed when the mark lands', async () => {
     const rows = makeRowDeps({ failedDbId: 'failed-db' });
 
-    await failDeliveryRow(rows.deps, SESSION_ID, MESSAGE_ID);
+    failDeliveryRowInBackground(rows.deps, SESSION_ID, MESSAGE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(rows.markDeliveryFailedByUuid).toHaveBeenCalledWith(SESSION_ID, MESSAGE_ID);
     expect(rows.publishStatusChanged).toHaveBeenCalledWith(SESSION_ID, 'failed-db', 'failed');
   });
 
-  it('publishes nothing when the mark misses', async () => {
+  it('publishes nothing when the mark misses', () => {
     const rows = makeRowDeps({ failedDbId: null });
 
-    await failDeliveryRow(rows.deps, SESSION_ID, MESSAGE_ID);
+    failDeliveryRowInBackground(rows.deps, SESSION_ID, MESSAGE_ID);
 
     expect(rows.publishStatusChanged).not.toHaveBeenCalled();
+  });
+
+  it('propagates a synchronous mark failure to the caller instead of a detached rejection', () => {
+    const rows = makeRowDeps();
+    rows.markDeliveryFailedByUuid.mockImplementation(() => {
+      throw new Error('db locked');
+    });
+
+    expect(() => failDeliveryRowInBackground(rows.deps, SESSION_ID, MESSAGE_ID)).toThrow(
+      'db locked'
+    );
+  });
+
+  it('swallows a rejecting status publish so the fire-and-forget path never rejects', async () => {
+    const rows = makeRowDeps({ failedDbId: 'failed-db' });
+    rows.publishStatusChanged.mockRejectedValue(new Error('bus down'));
+
+    failDeliveryRowInBackground(rows.deps, SESSION_ID, MESSAGE_ID);
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });
 

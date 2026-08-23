@@ -49,14 +49,14 @@ export async function flipDeliveryRowToDeferred(
   return flippedDbId;
 }
 
-export async function failDeliveryRow(
+export function failDeliveryRowInBackground(
   deps: InjectionDeliveryRowDeps,
   sessionId: string,
   messageId: string
-): Promise<void> {
+): void {
   const failedDbId = deps.markDeliveryFailedByUuid(sessionId, messageId);
   if (failedDbId) {
-    await deps.publishStatusChanged(sessionId, failedDbId, 'failed');
+    void deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
   }
 }
 
@@ -132,13 +132,13 @@ export async function deliverInjectedMessage(
           messageUuid: args.messageId,
           origin: 'space_inject',
           onEnqueueFailure: () => {
-            void failDeliveryRow(deps, args.sessionId, args.messageId);
+            failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
           },
         }),
       ...(!args.rowExists
         ? {
             terminalizeOnTimeout: () => {
-              void failDeliveryRow(deps, args.sessionId, args.messageId);
+              failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
             },
           }
         : {}),
