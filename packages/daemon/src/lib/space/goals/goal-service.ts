@@ -70,6 +70,10 @@ export interface SpaceGoalServiceDeps {
   longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'assignGoal'>;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
+  evolutionScopeService?: Pick<
+    import('../evolution-scope-service').EvolutionScopeService,
+    'captureCompletedTaskEvidence'
+  >;
 }
 
 export class SpaceGoalService {
@@ -302,7 +306,12 @@ export class SpaceGoalService {
   handleTaskTerminal(
     taskId: string,
     transition?: { fromStatus?: SpaceTaskStatus | null; updates?: InternalUpdateSpaceTaskParams }
-  ): { goal: SpaceGoal; nextTask: SpaceTask | null; terminalGeneration: number } | null {
+  ): {
+    goal: SpaceGoal;
+    nextTask: SpaceTask | null;
+    terminalGeneration: number;
+    notification: SpaceGoalOutcomeNotification | null;
+  } | null {
     const existing = this.deps.taskRepo.getTask(taskId);
     if (!existing?.goalId) return null;
     const goal = this.deps.goalRepo.getById(existing.goalId);
@@ -317,6 +326,7 @@ export class SpaceGoalService {
           goal,
           nextTask: null as SpaceTask | null,
           terminalGeneration: task.terminalGeneration,
+          notification: null as SpaceGoalOutcomeNotification | null,
         };
       }
       this.deps.goalRepo.clearActiveTaskIfMatches(goal.id, taskId);
@@ -326,13 +336,26 @@ export class SpaceGoalService {
         sourceTaskId: taskId,
         note: `Task reached terminal status: ${task.status}`,
       });
-      if (task.status === 'done') this.deps.goalAutomationService?.onTaskCompleted(taskId);
+      if (task.status === 'done') {
+        try {
+          this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId });
+        } catch (err) {
+          log.warn(
+            `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+        this.deps.goalAutomationService?.onTaskCompleted(taskId);
+      }
       const terminalGeneration = task.terminalGeneration;
       let nextTask: SpaceTask | null = null;
       let postBookkeeping: SpaceGoal = fresh;
       if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
         try {
-          const created = this.createImmediateTask(fresh.id, { source: 'system' });
+          const created = this.createImmediateTaskInternal(
+            fresh.id,
+            { source: 'system' },
+            { emitTaskCreated: false }
+          );
           postBookkeeping = created.goal;
           nextTask = created.task;
         } catch (err) {
@@ -341,17 +364,18 @@ export class SpaceGoalService {
           );
         }
       }
-      this.recordOutcomeNotification(task, postBookkeeping, terminalGeneration, {
-        fromStatus: transition?.fromStatus ?? null,
-      });
-      return { goal: postBookkeeping, nextTask, terminalGeneration };
+      const notification = this.recordOutcomeNotification(
+        task,
+        postBookkeeping,
+        terminalGeneration,
+        {
+          fromStatus: transition?.fromStatus ?? null,
+        }
+      );
+      return { goal: postBookkeeping, nextTask, terminalGeneration, notification };
     });
-    if (result.goal && this.deps.outcomeNotificationRepo) {
-      const pending = this.deps.outcomeNotificationRepo.listPendingByGoal(result.goal.id);
-      for (const notification of pending) {
-        this.deps.onOutcomeNotification?.(notification);
-      }
-    }
+    if (result.nextTask) this.emitTaskCreated(result.nextTask);
+    if (result.notification) this.deps.onOutcomeNotification?.(result.notification);
     return result;
   }
 
@@ -364,8 +388,8 @@ export class SpaceGoalService {
     goal: SpaceGoal,
     terminalGeneration: number,
     transition: { fromStatus?: SpaceTaskStatus | null }
-  ): void {
-    if (!this.deps.outcomeNotificationRepo) return;
+  ): SpaceGoalOutcomeNotification | null {
+    if (!this.deps.outcomeNotificationRepo) return null;
     const hasStartGeneration = task.startedAt !== null;
     const priorPending = this.deps.outcomeNotificationRepo
       .listPendingByGoal(goal.id)
@@ -376,11 +400,11 @@ export class SpaceGoalService {
       hasStartGeneration,
       hasPriorTerminalGeneration: priorPending.length > 0,
     });
-    if (decision.action === 'none') return;
+    if (decision.action === 'none') return null;
     if (decision.action === 'supersede_notify') {
       this.deps.outcomeNotificationRepo.supersedeForTask(task.id);
     }
-    this.deps.outcomeNotificationRepo.create({
+    return this.deps.outcomeNotificationRepo.create({
       spaceId: goal.spaceId,
       goalId: goal.id,
       taskId: task.id,

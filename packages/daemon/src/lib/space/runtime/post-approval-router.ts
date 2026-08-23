@@ -162,11 +162,13 @@ export class PostApprovalRouter {
         postApprovalBlockedReason: null,
         postApprovalSourceNodeId: null,
       };
+      let terminalHandled = false;
       try {
         const handled = this.deps.goalService?.handleTaskTerminal(task.id, {
           fromStatus: task.status,
           updates,
         });
+        terminalHandled = handled != null;
         if (!handled) {
           this.deps.taskRepo.updateTask(task.id, updates);
         }
@@ -176,12 +178,14 @@ export class PostApprovalRouter {
         );
         this.deps.taskRepo.updateTask(task.id, updates);
       }
-      try {
-        this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
-      } catch (err) {
-        log.warn(
-          `Forge evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
-        );
+      if (!terminalHandled) {
+        try {
+          this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
+        } catch (err) {
+          log.warn(
+            `Forge evidence capture threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       log.info(
         `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} routes=0 mode=none autonomyLevel=${context.autonomyLevel ?? 'unknown'}`

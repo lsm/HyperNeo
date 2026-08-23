@@ -253,12 +253,16 @@ export class SpaceTaskManager {
       updates.postApprovalSourceNodeId = null;
     }
 
+    const reopened = isTerminalTaskStatus(task.status) && !isTerminalTaskStatus(newStatus);
+    if (reopened) {
+      updates.startedAt = null;
+    }
     const updated = this.taskRepo.updateTask(taskId, updates);
     if (!updated) {
       throw new Error(`Failed to update task: ${taskId}`);
     }
 
-    if (isTerminalTaskStatus(task.status) && !isTerminalTaskStatus(newStatus)) {
+    if (reopened) {
       this.onTaskReopened?.(taskId);
     }
 

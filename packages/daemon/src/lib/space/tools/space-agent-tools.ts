@@ -2200,13 +2200,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       cancel_workflow_run?: boolean;
     }): Promise<ToolResult> {
       try {
+        const preCancelStatus = taskRepo.getTask(args.task_id)?.status ?? null;
         const cancelled = await taskManager.cancelTaskCascade(args.task_id);
         const task = cancelled[0]!;
         for (const cancelledTask of cancelled) {
           emitTaskUpdated(cancelledTask);
           try {
             config.goalService?.handleTaskTerminal(cancelledTask.id, {
-              fromStatus: cancelledTask.status,
+              fromStatus: cancelledTask.id === args.task_id ? preCancelStatus : 'open',
             });
           } catch (err) {
             log.warn(
