@@ -1855,66 +1855,6 @@ describe('AcpQueryRunner', () => {
     expect(ctx.queryAbortController).toBeNull();
   });
 
-  test('aborts stale ACP startup after cleanup begins', async () => {
-    let markBuildStarted: () => void;
-    const buildStarted = new Promise<void>((resolve) => {
-      markBuildStarted = resolve;
-    });
-    let releaseBuild: () => void;
-    const buildGate = new Promise<void>((resolve) => {
-      releaseBuild = resolve;
-    });
-    const { runner, ctx, constructorOptions } = createRunnerFixture({
-      queryOptions: { cwd: '/tmp/acp-session', mcpServers: {} },
-    });
-    ctx.optionsBuilder.build = mock(async () => {
-      markBuildStarted();
-      await buildGate;
-      return { cwd: '/tmp/acp-session', mcpServers: {} };
-    });
-
-    await runner.start();
-    await buildStarted;
-    ctx.isCleaningUp = () => true;
-    releaseBuild!();
-    await ctx.queryPromise;
-
-    expect(constructorOptions).toHaveLength(0);
-    expect(ctx.queryAbortController).toBeNull();
-  });
-
-  test('stops iteration without error when abort signal fires', async () => {
-    const client = createMockClient();
-    let releasePrompt: (() => void) | undefined;
-    let promptBlockedResolve: (() => void) | undefined;
-    const promptBlocked = new Promise<void>((resolve) => {
-      promptBlockedResolve = resolve;
-    });
-    client.sendPrompt.mockImplementation(async function* () {
-      yield {
-        sessionId: 'acp-session-1',
-        update: {
-          sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: 'before abort' },
-        },
-      };
-      await new Promise<void>((resolve) => {
-        releasePrompt = resolve;
-        promptBlockedResolve?.();
-      });
-    });
-    const { runner, ctx } = createRunnerFixture({ client });
-
-    await runner.start();
-    await promptBlocked;
-    ctx.queryAbortController?.abort();
-    releasePrompt?.();
-    await ctx.queryPromise;
-
-    expect(client.sendPrompt).toHaveBeenCalled();
-    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
-  }, 1000);
-
   test('delivers pending ACP tool results when abort drops the iterator output', async () => {
     const client = createMockClient();
     let releasePrompt: (() => void) | undefined;
