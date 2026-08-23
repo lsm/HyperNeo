@@ -403,7 +403,21 @@ describe('coder-only workflow template', () => {
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'the run-scoped `gh api graphql` lookup is permitted by your contract'
     );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('logins that are REVIEW bots');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('are NOT review bots');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      '`createdAt` is later than that trigger AND the headRefOid has not changed since'
+    );
     expect(CODER_ONLY_PROMPT).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
+    expect(CODER_ONLY_PROMPT).toContain(REVIEW_POLICY_GUIDANCE);
+    expect(CODER_ONLY_PROMPT).toContain('there is no internal Reviewer node');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'the external gate must pass AND the internal fallback review must run'
+    );
+    expect(CODER_ONLY_PROMPT.indexOf('Do this once per PR')).toBe(
+      CODER_ONLY_PROMPT.lastIndexOf('Do this once per PR')
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal fallback review is the gate');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(REVIEW_POLICY_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('always send the gated PR handoff');

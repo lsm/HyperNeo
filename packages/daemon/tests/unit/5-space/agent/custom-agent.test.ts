@@ -815,6 +815,9 @@ describe('createCustomAgentInit', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('Your role by review source');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are THE gate');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are the verifier and the backup');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('BOTH gates must pass');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('does NOT apply in `both` mode');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('NEVER advance your round');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('treat it as a pointer, not proof');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('unresolved bot findings are your findings too');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('you become the gate');
