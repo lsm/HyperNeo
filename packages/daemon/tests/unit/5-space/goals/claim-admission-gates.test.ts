@@ -16,6 +16,7 @@ function input(overrides: Partial<ClaimAdmissionInput> = {}): ClaimAdmissionInpu
     claimedGoalId: 'goal-1',
     claimedTaskId: 'task-1',
     mutatesGoalState: true,
+    isResubmission: false,
     observedGoalRevision: null,
     currentGoalRevision: 1,
     ...overrides,
@@ -113,29 +114,41 @@ describe('decideClaimAdmission', () => {
       ).toEqual({ action: 'deny', reason: 'stale_revision' });
     });
 
+    test('ignores a caller-supplied revision on an initial claim', () => {
+      expect(
+        decideClaimAdmission(
+          input({
+            notificationGoalRevision: 0,
+            currentGoalRevision: 1,
+            observedGoalRevision: 1,
+          })
+        )
+      ).toEqual({ action: 'deny', reason: 'stale_revision' });
+    });
+
     test('denies a stale resubmission with an older observed revision', () => {
-      expect(decideClaimAdmission(input({ observedGoalRevision: 0 }))).toEqual({
-        action: 'deny',
-        reason: 'stale_revision',
-      });
+      expect(
+        decideClaimAdmission(input({ isResubmission: true, observedGoalRevision: 0 }))
+      ).toEqual({ action: 'deny', reason: 'stale_revision' });
     });
 
     test('admits a resubmission whose observed revision still matches', () => {
-      expect(decideClaimAdmission(input({ observedGoalRevision: 1 }))).toEqual({
-        action: 'admit',
-      });
+      expect(
+        decideClaimAdmission(input({ isResubmission: true, observedGoalRevision: 1 }))
+      ).toEqual({ action: 'admit' });
     });
 
     test('denies a resubmission observed against a newer goal snapshot', () => {
-      expect(decideClaimAdmission(input({ observedGoalRevision: 2 }))).toEqual({
-        action: 'deny',
-        reason: 'stale_revision',
-      });
+      expect(
+        decideClaimAdmission(input({ isResubmission: true, observedGoalRevision: 2 }))
+      ).toEqual({ action: 'deny', reason: 'stale_revision' });
     });
 
     test('skips the CAS for terminal-only dispositions that do not mutate goal state', () => {
       expect(
-        decideClaimAdmission(input({ observedGoalRevision: 0, mutatesGoalState: false }))
+        decideClaimAdmission(
+          input({ isResubmission: true, observedGoalRevision: 0, mutatesGoalState: false })
+        )
       ).toEqual({ action: 'admit' });
     });
   });
@@ -143,7 +156,9 @@ describe('decideClaimAdmission', () => {
   describe('first-denial-wins ordering', () => {
     test('unauthorized takes precedence over a stale revision', () => {
       expect(
-        decideClaimAdmission(input({ actorAgentId: 'some-other-agent', observedGoalRevision: 0 }))
+        decideClaimAdmission(
+          input({ actorAgentId: 'some-other-agent', isResubmission: true, observedGoalRevision: 0 })
+        )
       ).toEqual({ action: 'deny', reason: 'unauthorized' });
     });
 
@@ -155,7 +170,9 @@ describe('decideClaimAdmission', () => {
 
     test('identity mismatch takes precedence over a stale revision', () => {
       expect(
-        decideClaimAdmission(input({ claimedGoalId: 'goal-2', observedGoalRevision: 0 }))
+        decideClaimAdmission(
+          input({ claimedGoalId: 'goal-2', isResubmission: true, observedGoalRevision: 0 })
+        )
       ).toEqual({ action: 'deny', reason: 'identity_mismatch' });
     });
   });

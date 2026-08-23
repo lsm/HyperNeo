@@ -22,6 +22,7 @@ export interface ClaimAdmissionCtx {
   claimedGoalId: string;
   claimedTaskId: string;
   mutatesGoalState: boolean;
+  isResubmission: boolean;
   observedGoalRevision: number | null;
   currentGoalRevision: number;
   decision: ClaimAdmissionDecision | null;
@@ -58,7 +59,9 @@ export function applyIdentityBoundGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCt
 
 export function applyRevisionMatchGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
   if (!ctx.mutatesGoalState) return ctx;
-  const baseRevision = ctx.observedGoalRevision ?? ctx.notificationGoalRevision;
+  const baseRevision = ctx.isResubmission
+    ? (ctx.observedGoalRevision ?? ctx.notificationGoalRevision)
+    : ctx.notificationGoalRevision;
   return baseRevision === ctx.currentGoalRevision
     ? ctx
     : decided(ctx, { action: 'deny', reason: 'stale_revision' });
