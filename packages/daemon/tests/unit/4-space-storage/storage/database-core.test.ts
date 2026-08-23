@@ -89,7 +89,7 @@ describe('DatabaseCore', () => {
 
       const db = dbCore.getDb();
       const result = db.prepare('PRAGMA busy_timeout').get() as { timeout: number };
-      expect(result.timeout).toBe(15000);
+      expect(result.timeout).toBe(5000);
     });
 
     it('should enable foreign key constraints', async () => {

@@ -24,7 +24,7 @@ worker.onmessage = (event) => {
   let db: BunDatabase | null = null;
   try {
     db = new BunDatabase(dbPath);
-    db.exec(`PRAGMA busy_timeout = 15000`);
+    db.exec(`PRAGMA busy_timeout = 5000`);
     withBusyRetry(() => {
       db?.exec(
         `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', ${FTS_MERGE_RANK})`
