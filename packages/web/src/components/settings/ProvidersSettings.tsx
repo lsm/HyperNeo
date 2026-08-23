@@ -253,6 +253,10 @@ export function ProvidersSettings() {
       await updateProvider(provider.id, {
         configJson: JSON.stringify({ region }),
       });
+      lastSyncedKimiRegions.current = {
+        ...lastSyncedKimiRegions.current,
+        [provider.id]: region,
+      };
       toast.success(`${provider.displayName} region set to ${KIMI_REGION_LABELS[region]}`);
       await loadProviders();
     } catch (err) {

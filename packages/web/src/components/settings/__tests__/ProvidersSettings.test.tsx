@@ -608,6 +608,35 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('treats a saved kimi region as synchronized when reload returns a newer server value', async () => {
+    const kimiWithRegion = (region: string) =>
+      createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region }),
+      });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: kimiWithRegion('china') });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith(
+        'k1',
+        { configJson: JSON.stringify({ region: 'global' }) },
+        undefined
+      );
+    });
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+  });
+
   it('updates API key for provider', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),
