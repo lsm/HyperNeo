@@ -4471,6 +4471,27 @@ describe('SDKMessageRepository', () => {
       expect(searchAfterFlush({ query: 'refused searchable' }).results).toEqual([]);
     });
 
+    it('removes search rows for retraction arrays outside model refusal fallback messages', () => {
+      createSearchIndex();
+      repository.saveSDKMessage(
+        'session-1',
+        createUserMessage('orphan retraction marker', 'orphan-uuid')
+      );
+
+      expect(searchAfterFlush({ query: 'orphan retraction' }).results).toHaveLength(1);
+      repository.saveSDKMessage('session-1', {
+        type: 'assistant',
+        uuid: 'non-fallback-carrier',
+        retracted_message_uuids: ['orphan-uuid'],
+        message: { role: 'assistant', content: [{ type: 'text', text: 'carrier text' }] },
+      } as unknown as SDKMessage);
+
+      expect(db.prepare(`SELECT COUNT(*) AS count FROM sdk_message_replacements`).get()).toEqual({
+        count: 0,
+      });
+      expect(searchAfterFlush({ query: 'orphan retraction' }).results).toEqual([]);
+    });
+
     it('keeps fallback-retracted messages out during search index rebuild', () => {
       createSearchIndex();
       repository.saveSDKMessage(

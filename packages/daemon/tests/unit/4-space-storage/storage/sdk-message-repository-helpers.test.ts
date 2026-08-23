@@ -3,6 +3,7 @@ import {
   computeIsRenderable,
   computeIsTerminal,
   extractParentToolUseId,
+  extractReplacementEdges,
 } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
@@ -201,6 +202,47 @@ describe('computeIsTerminal', () => {
 
   test('unknown types are not terminal', () => {
     expect(computeIsTerminal(asMsg({ type: 'partial_assistant' }))).toBe(0);
+  });
+});
+
+describe('extractReplacementEdges', () => {
+  test('records superseded edges regardless of subtype', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({ type: 'assistant', uuid: 'replacement-1', supersedes: ['old-a'] })
+      )
+    ).toEqual([{ targetUuid: 'old-a', kind: 'superseded' }]);
+  });
+
+  test('records retracted edges only on model_refusal_fallback messages', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          uuid: 'fallback-notice',
+          retracted_message_uuids: ['old-b'],
+        })
+      )
+    ).toEqual([{ targetUuid: 'old-b', kind: 'retracted' }]);
+  });
+
+  test('ignores retracted_message_uuids without the fallback subtype', () => {
+    expect(
+      extractReplacementEdges(
+        asMsg({
+          type: 'assistant',
+          uuid: 'ordinary-message',
+          retracted_message_uuids: ['must-stay-visible'],
+        })
+      )
+    ).toEqual([]);
+  });
+
+  test('dedupes within a kind and drops empty and non-string values', () => {
+    expect(
+      extractReplacementEdges(asMsg({ type: 'assistant', supersedes: ['dup', 'dup', '', 42] }))
+    ).toEqual([{ targetUuid: 'dup', kind: 'superseded' }]);
   });
 });
 
