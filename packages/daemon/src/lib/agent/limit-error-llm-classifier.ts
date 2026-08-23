@@ -106,6 +106,14 @@ function parseAssessment(payload: Record<string, unknown>): LlmLimitAssessment {
   };
 }
 
+function redactErrorText(rawText: string): string {
+  return rawText
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[credentials]@')
+    .replace(/\b(sk|rk|pk|ghp|gho|xox)[-_][A-Za-z0-9_-]{12,}\b/g, '[key]')
+    .replace(/\bBearer\s+[A-Za-z0-9._+/=-]{12,}/gi, 'Bearer [token]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[jwt]');
+}
+
 function buildPrompt(rawText: string, now: number): string {
   return `You classify LLM provider API errors so a scheduler can decide when to retry.
 
@@ -113,7 +121,7 @@ Current time: ${new Date(now).toISOString()}
 
 Error text:
 """
-${rawText.slice(0, 1500)}
+${redactErrorText(rawText).slice(0, 1500)}
 """
 
 Rules:

@@ -415,6 +415,21 @@ describe('LimitErrorLlmClassifier', () => {
     expect((await queued)?.kind).toBe('rate_limit');
   });
 
+  it('redacts secrets from the prompt before it crosses providers', async () => {
+    const { deps, prompts } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
+    const classifier = new LimitErrorLlmClassifier('s1', deps);
+    await classifier.classify(
+      'quota exceeded for org_123: https://user:secretpass@api.example.com/v1 sk-abc123def456ghi789jkl012 Bearer abcdef1234567890abcdef retry later'
+    );
+    const prompt = prompts[0];
+    expect(prompt).not.toContain('secretpass');
+    expect(prompt).not.toContain('sk-abc123def456ghi789jkl012');
+    expect(prompt).not.toContain('abcdef1234567890abcdef');
+    expect(prompt).toContain('[credentials]@api.example.com');
+    expect(prompt).toContain('[key]');
+    expect(prompt).toContain('Bearer [token]');
+  });
+
   it('skips providers whose model probe returned an empty list', async () => {
     const seenProviders: string[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');

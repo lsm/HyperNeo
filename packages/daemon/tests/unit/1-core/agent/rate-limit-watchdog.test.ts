@@ -659,6 +659,44 @@ describe('RateLimitWatchdog', () => {
       ).toHaveLength(1);
     });
 
+    it('keeps a newer hint supplied while the refinement write was pending', async () => {
+      const classify = mock(async () => ({
+        resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
+        kind: 'usage_limit' as const,
+        notALimit: false,
+      }));
+      const { deps } = createMockDeps({ chain: [] });
+      deps.classifyUnknownLimit = classify;
+      const originalSet = stateManager.setRateLimitCooldown as ReturnType<typeof mock>;
+      let releaseStateWrite: () => void = () => {};
+      const writeGate = new Promise<void>((resolve) => {
+        releaseStateWrite = resolve;
+      });
+      let stateWrites = 0;
+      (stateManager as unknown as { setRateLimitCooldown: unknown }).setRateLimitCooldown = mock(
+        async (payload: unknown) => {
+          stateWrites += 1;
+          if (stateWrites === 2) await writeGate;
+          return originalSet(payload);
+        }
+      );
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry('throttled by waf', { uuid: 'm1', content: 'x' });
+      await flush();
+      const newerHint = {
+        kind: 'usage_limit' as const,
+        resetAtMs: Date.now() + 3 * 60 * 60 * 1000,
+      };
+      (watchdog as unknown as { lastHint: unknown }).lastHint = newerHint;
+      releaseStateWrite();
+      await flush();
+      await flush();
+
+      expect((watchdog as unknown as { lastHint: unknown }).lastHint).toBe(newerHint);
+      watchdog.cancel();
+    });
+
     it('does not clobber a newer cooldown taken during the refinement state write', async () => {
       const classify = mock(async () => ({
         resetAtMs: Date.now() + 2 * 60 * 60 * 1000,
