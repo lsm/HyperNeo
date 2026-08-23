@@ -598,7 +598,10 @@ describe('coder-only workflow template', () => {
       'the same branch name can advance underneath the gate'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'poll BOTH on every wait cycle while the gate is live'
+      'poll all three on every wait cycle while the gate is live'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'a reverted head excursion still passes the trigger-anchored freshness checks'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('even a change that later reverts');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
@@ -649,7 +652,7 @@ describe('coder-only workflow template', () => {
 
   test('gate captures the base before reviewers run and verifies the recorded PR link', () => {
     expect(CODER_ONLY_PROMPT).toContain(
-      'Capture the baseRefName AND baseRefOid (`gh pr view <pr_url> --json baseRefName,baseRefOid`) when you START the external gate'
+      'Capture the baseRefName, baseRefOid, AND headRefOid (`gh pr view <pr_url> --json baseRefName,baseRefOid,headRefOid`) when you START the external gate'
     );
     expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the current base');
     expect(CODER_ONLY_PROMPT).toContain('headRefName,isCrossRepository,headRepository,url');
