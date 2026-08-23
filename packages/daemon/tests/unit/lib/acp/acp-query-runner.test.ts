@@ -930,6 +930,11 @@ describe('AcpQueryRunner', () => {
       expect(publishAsync).toHaveBeenCalledWith('providers.changed', {
         sessionId: 'global',
       });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global').some((m) => m.provider === 'acp')).toBe(true);
     });
   });
 

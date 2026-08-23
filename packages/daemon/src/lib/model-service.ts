@@ -109,6 +109,23 @@ const cacheGeneration = new Map<string, number>();
 
 const refreshedMissingProviders = new Set<string>();
 
+const pendingProviderSlices = new Map<string, ModelInfo[]>();
+
+function pendingSliceKey(cacheKey: string, providerId: string): string {
+  return `${cacheKey}:${providerId}`;
+}
+
+function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
+  let merged = models;
+  for (const [key, slice] of pendingProviderSlices) {
+    if (!key.startsWith(`${cacheKey}:`)) continue;
+    const providerId = key.slice(cacheKey.length + 1);
+    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+    pendingProviderSlices.delete(key);
+  }
+  return merged;
+}
+
 export async function getSupportedModelsFromQuery(
   queryObject: QueryLike | null,
   cacheKey: string = 'global'
@@ -230,7 +247,7 @@ export async function initializeModels(): Promise<void> {
   try {
     const models = await loadModelsFromProviders();
     if (models.length > 0) {
-      const mergedModels = mergeWithFallbackModels(models);
+      const mergedModels = mergePendingProviderSlices(cacheKey, mergeWithFallbackModels(models));
       modelsCache.set(cacheKey, mergedModels);
       cacheTimestamps.set(cacheKey, Date.now());
     } else {
@@ -239,7 +256,7 @@ export async function initializeModels(): Promise<void> {
   } catch {
     const registry = getProviderRegistry();
     const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, filteredFallbacks);
+    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
     cacheTimestamps.set(cacheKey, Date.now());
   }
 }
@@ -259,6 +276,9 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
+    for (const key of pendingProviderSlices.keys()) {
+      if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
+    }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
@@ -268,6 +288,7 @@ export function clearModelsCache(cacheKey?: string): void {
     cacheTimestamps.clear();
     refreshInProgress.clear();
     clearProviderModelCaches();
+    pendingProviderSlices.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
@@ -322,12 +343,12 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
           cacheTimestamps.set(cacheKey, Date.now());
           return;
         }
-        modelsCache.set(cacheKey, mergedModels);
+        modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
         cacheTimestamps.set(cacheKey, Date.now());
       } else if (!previousModels || previousModels.length === 0) {
         const registry = getProviderRegistry();
         const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-        modelsCache.set(cacheKey, filteredFallbacks);
+        modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
         cacheTimestamps.set(cacheKey, Date.now());
       }
     } finally {
@@ -364,7 +385,10 @@ export function updateProviderModelsInCache(
   cacheKey: string = 'global'
 ): boolean {
   const cachedModels = modelsCache.get(cacheKey);
-  if (!cachedModels) return false;
+  if (!cachedModels) {
+    pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+    return false;
+  }
 
   const hadInFlight = refreshInProgress.has(cacheKey);
   modelsCache.set(cacheKey, [
