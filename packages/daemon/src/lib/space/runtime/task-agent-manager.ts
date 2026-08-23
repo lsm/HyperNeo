@@ -99,6 +99,7 @@ import {
   type StopVerificationDecision,
   type StopVerificationSnapshot,
 } from './stop-verification-gates';
+import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
 import { ChannelRouter } from './channel-router';
@@ -2583,6 +2584,59 @@ export class TaskAgentManager {
     } finally {
       this.cancellingSessions.delete(sessionId);
     }
+  }
+
+  async stopSessionVerifiedViaFlow(sessionId: string): Promise<VerifiedSessionStop> {
+    this.cancellingSessions.add(sessionId);
+    try {
+      const outcome = await runVerifiedStopFlow(this.buildVerifiedStopFlowDeps(), sessionId);
+      if (outcome.status === 'error') {
+        throw outcome.error;
+      }
+      if (outcome.status === 'superseded') {
+        throw new Error(
+          `TaskAgentManager.stopSessionVerifiedViaFlow: verified stop for session ${sessionId} superseded at stage ${outcome.stage ?? 'unknown'}`
+        );
+      }
+      return outcome.result as VerifiedSessionStop;
+    } finally {
+      this.cancellingSessions.delete(sessionId);
+    }
+  }
+
+  private buildVerifiedStopFlowDeps(): VerifiedStopFlowDeps {
+    return {
+      claimSession: (sessionId) => {
+        const session =
+          this.agentSessionIndex.get(sessionId) ??
+          this.config.sessionManager?.getCachedSession(sessionId) ??
+          null;
+        this.agentSessionIndex.delete(sessionId);
+        return session;
+      },
+      stopSessionStrict: (sessionId, session) =>
+        this.stopSessionPreserveDb(sessionId, session, { strict: true }),
+      readProcessingStatus: (session) => session.getProcessingState().status,
+      isInterruptInProgress: (session) => session.isInterruptInProgress(),
+      awaitProcessExitSettle: (session) =>
+        this.awaitSessionProcessExit(session, VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS),
+      readLivePids: (session) => session.getTrackedAgentRootPidsSplit().live,
+      terminateTrackedProcesses: (session) =>
+        session.terminateTrackedAgentProcesses({
+          forceDelayMs: VERIFIED_STOP_ESCALATION_FORCE_KILL_MS,
+        }),
+      unregisterSession: async (sessionId) => {
+        await this.config.sessionManager?.unregisterSession?.(sessionId);
+      },
+      detachSessionBookkeeping: (sessionId) => this.detachSessionBookkeeping(sessionId),
+      warn: (message, err) => {
+        if (err === undefined) {
+          log.warn(message);
+          return;
+        }
+        log.warn(message, err);
+      },
+    };
   }
 
   private async gatherStopVerificationSnapshot(
