@@ -1528,7 +1528,7 @@ refresh can publish after teardown (:794).
 ## Recommendation
 
 **Task-sizing update (2026-08-23, §8):** every PR below is decomposed into
-sub-PRs at a ≤200-line review budget — 17 tracked PRs → **45 sub-PRs**
+sub-PRs at a ≤200-line review budget — 16 tracked PRs → **45 PR-sized tasks**
 (PR 0 → 0a–0f, chains per §8). Gates moved since the survey: **#2661 merged**
 (Chain B apply PRs unblocked), **#2543 still open** (Chain A held), and the
 watchdog owner's stream is active (#2772 pins, #2779 open extraction) so B5d
@@ -1600,13 +1600,14 @@ part 2 has landed as #2696).
 
 ## 8. Sub-PR decomposition — ≤200-line review budget (2026-08-23)
 
-Task-size review pass over the 17 tracked PRs above (prerequisite PR 0 + 16
-chain PRs; 18 counting the `output-limiter-hook.ts` policy-core addition,
-which stays a single small task in that series). Question answered: is each
-PR the smallest unit that fits a focused review? Verdict: **only 4 were
-already at budget (B4, B6, C4, A5); the other 13 decompose into 45 sub-PRs**
-— PR 0 → 6, B1 → 4, B2 → 2, B3 → 3, B5 → 5, C1 → 3, C2 → 2, C3 → 3,
-A1 → 4, A2 → 4, A3 → 3, A4 → 2, plus the 4 unsplit.
+Task-size review pass over the 16 tracked PRs above (prerequisite PR 0 + 15
+chain PRs: B1–B6, C1–C4, A1–A5; 17 counting the `output-limiter-hook.ts`
+policy-core addition, which stays a single small task in that series).
+Question answered: is each PR the smallest unit that fits a focused review?
+Verdict: **only 4 were already at budget (B4, B6, C4, A5); the other 12
+decompose into 41 slices — 45 PR-sized tasks in all** — PR 0 → 6, B1 → 4,
+B2 → 2, B3 → 3, B5 → 5, C1 → 3, C2 → 2, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
+A4 → 2, plus the 4 unsplit parents.
 
 Budget rule per sub-PR: production Δ ≲100 lines (hard cap ~150 only for
 types-dominated additive cores), prose/ADR Δ ≲150, test Δ ≲350 — table rows
