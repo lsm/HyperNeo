@@ -1527,6 +1527,13 @@ refresh can publish after teardown (:794).
 
 ## Recommendation
 
+**Task-sizing update (2026-08-23, §8):** every PR below is decomposed into
+sub-PRs at a ≤200-line review budget — 17 tracked PRs → **45 sub-PRs**
+(PR 0 → 0a–0f, chains per §8). Gates moved since the survey: **#2661 merged**
+(Chain B apply PRs unblocked), **#2543 still open** (Chain A held), and the
+watchdog owner's stream is active (#2772 pins, #2779 open extraction) so B5d
+coordinates with it. §8 anchors are current dev (`c7638c276`).
+
 **Prerequisite PR 0 — provider-environment coordinator.** The daemon-wide
 credential isolation this proposal requires (§1(a)) is delivered by no chain
 PR and must not ride along implicitly: one dedicated PR implements the
@@ -1590,3 +1597,139 @@ start once #2543 lands and the facade is free of another chain's in-flight
 edits). Add `output-limiter-hook.ts` to the policy-core pilot series. Hold
 model-switch/rewind/question-handler extractions until ACP 8/10 settles (#2548
 part 2 has landed as #2696).
+
+## 8. Sub-PR decomposition — ≤200-line review budget (2026-08-23)
+
+Task-size review pass over the 17 tracked PRs above (prerequisite PR 0 + 16
+chain PRs; 18 counting the `output-limiter-hook.ts` policy-core addition,
+which stays a single small task in that series). Question answered: is each
+PR the smallest unit that fits a focused review? Verdict: **only 4 were
+already at budget (B4, B6, C4, A5); the other 13 decompose into 45 sub-PRs**
+— PR 0 → 6, B1 → 4, B2 → 2, B3 → 3, B5 → 5, C1 → 3, C2 → 2, C3 → 3,
+A1 → 4, A2 → 4, A3 → 3, A4 → 2, plus the 4 unsplit.
+
+Budget rule per sub-PR: production Δ ≲100 lines (hard cap ~150 only for
+types-dominated additive cores), prose/ADR Δ ≲150, test Δ ≲350 — table rows
+are mechanical, so a pins PR that would exceed ~350 test lines splits by
+dimension family, never by truncating rows. **Flagged assumption: tests are
+counted separately from production code.** If tests must also fit inside the
+200-line total, only the pins PRs change — each splits another 2–3× by
+dimension family — while core/apply/cleanup PRs already fit as-is.
+
+Sub-PR IDs are letter suffixes on the reviewed parent (B5a = first slice of
+B5), so §5's reviewed scope carries over unchanged. **Namespace task titles
+with an `agent-layer` prefix** (e.g. "agent-layer B5a"): dev commit titles now
+carry `chain A/B/C PR n/5` labels from the parallel space/session-layer
+surveys (#2766/#2767/#2771), which collide with bare letter IDs.
+
+### 8.0 Land-state delta since the survey (dev `c7638c276`)
+
+§1–§7 anchors are as-of-survey; §8 anchors are current dev:
+
+- **#2661 merged** (limit-error pipeline; #2664 added the LLM classification
+  tier) → Chain B apply PRs (B3\*) are **unblocked**. The tier introduced
+  `limit-error-llm-classifier.ts`, a new env-merging reader — enrolled in 0d.
+- **#2543 still open** → Chain A remains gated as before.
+- **#2728** (Pilot 4 PR 8) moved the delivery job handler to
+  `job-handlers/message-delivery.handler.ts` (194 ln) — Chain A's
+  `message-delivery.handler.ts` anchors in §5 refer to that file.
+- **Watchdog stream active**: #2772 pins the trip/reset decision table, #2779
+  (open) extracts the trip/reset core as pure gates → B5d's fencing lands on
+  those gates; coordinate with that owner. If #2779 lands first, B5d shrinks
+  to gate interpretation at the call site.
+- Size drift: query-runner.ts 1,645→1,692; agent-session.ts 2,226→2,388;
+  processing-state-manager.ts →387; sdk-message-handler.ts →1,474. Shifted
+  anchors used below — query-runner: runQuery :455, env copy :688, catch
+  :864, arms :969/:1013/:1069–1230, finalizer :1315–1360. ACP: preCleanupAuth
+  :459, acpEnv :530–544, spawn :551, beginTerminalIdle :938, setIdle :953.
+  PSM: releaseIdleWaiters :79, beginTerminalIdle :86, setIdle :143. SMH: ack
+  :392, handleMessageYielded :639, result/limit :886–891, trailing-idle
+  :1158–1273, finishTurn :1234, cost :1071. Agent-session: driveDeliveryTurn
+  :1434, feedDeliverySteer :1847, reconcile :2112.
+
+### 8.1 Prerequisite PR 0 → six sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| 0a | `provider-env-coordinator.ts` additive core: lease token, acquire/release, owner/reader registry — unwired | ~110 | ~120 |
+| 0b | QueryRunner enrollment: lease around :492–525 credential read/apply + :688 immutable copy; full lifecycle resnapshot after every awaited setup op (:462–639 effects) | ~85 | ~200 |
+| 0c | ACP enrollment: :459 pre-apply snapshot, lease through :551 transport spawn, restore+release before handshake; replacement-during-lease pin | ~70 | ~120 |
+| 0d | ProviderService services: restore/release immediately after `mergeProviderEnvVars` at the five readers — session-lifecycle :1085, evolution-episode :774, evolution-conversation-analysis, llm-workflow-selector, limit-error-llm-classifier (new since survey) | ~60 | ~80 |
+| 0e | Ambient readers + Anthropic model loader enrollment (isAvailable/AuthManager/EnvManager/logout) | ~40 | ~40 |
+| 0f | Env-less spawn sanitization: workflow-executor :33/:127 `sh -c` spawns + github security/router partial swaps | ~40 | ~40 |
+
+Order: 0a → (0b ∥ 0c ∥ 0d) → 0e, 0f. 0b/0c carry the Recommendation's
+post-acquisition revalidation passes; 0d–0f are independent leaves.
+
+### 8.2 Chain B → sixteen sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| B1a | pins: startup-arm decision rows — attempt-zero × processing status × abort-controller × cleaning-up × prompt redeliverability (:969–1013) | 0 | ~300 |
+| B1b | pins: transient/provider rows — attempt × cap exhaustion × provider family (Anthropic SYSTEM vs PROVIDER_UNAVAILABLE) × billing-429 (:1069–1230) | 0 | ~320 |
+| B1c | pins: 429-handoff suppression contract (`rateLimitCooldownScheduled` ⇒ no errorManager/setIdle) + per-arm teardown-liturgy inventory | 0 | ~250 |
+| B1d | pins: unfenced-window map — guard placement pinned as-is, not assumed complete | 0 | ~150 |
+| B2a | `query-retry-routing.ts` classifier core + types, unwired | ~110 | ~60 |
+| B2b | decisionRun composition + recoveryState/supersede → arm mapping | ~50 | ~60 |
+| B3a | apply startup arms (:969, :1013) — arms become interpreters | ~45 | ~40 |
+| B3b | apply provider/transient arms (:1069–1230) | ~75 | ~50 |
+| B3c | finalizer post-await generation/identity guards (:1315–1360) — closes B1d's pinned window in production | ~40 | ~60 |
+| B4 | teardown-liturgy dedup: one parameterized helper, four call sites (unsplit) | ~90 | ~40 |
+| B5a | attempt-token primitive: invalidated before retry recursion (:1150); PreToolUse hook binds to it (:518 region) | ~70 | ~90 |
+| B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267) | ~60 | ~80 |
+| B5c | ACP terminal: full lifecycle resnapshot before beginTerminalIdle (:938) + post-effect resnapshot/fence-cancel before setIdle (:953) | ~50 | ~70 |
+| B5d | cooldown-write fencing at the watchdog boundary — lands on #2779's pure gates; owner coordination, excluded-module rule holds | ~30 | ~50 |
+| B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143), releaseIdleWaiters episode filter (:79) | ~80 | ~100 |
+| B6 | cleanup + ADR note | ~15 | doc ~40 |
+
+Order: B1\* → B2\* → B3\* (B3c is region-independent of B3a/b and can lead);
+B4 after B3; **B5a ∥ B5e first, then B5b, B5c, B5d** (the routes consume the
+token and owner-scoped-idle primitives). Chain C apply PRs still follow B5e
+(shared idle-transition contract, §5).
+
+### 8.3 Chain C → nine sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| C1a | pins: flag-machine truth table — suppress × mode × expectsIdle × lastResultWasSuccess × result kind × top-level-result bit × queryMode, `next_flags` asserted on every row; manual-mode no-replay gate (:1234) | 0 | ~350 |
+| C1b | pins: ack-selection table — sendStatus × durable ownership × yielded/claimed × pending-in-memory × active-message equality (:392–440, :639) | 0 | ~250 |
+| C1c | pins: cost-reset table (:1071–1150) + legacy-fragility characterization (terminal-fence + double-setIdle; stale lastResultWasSuccess window) | 0 | ~150 |
+| C2a | `turn-end-routing.ts` pure core (flag machine + finish/replay gates) | ~90 | ~60 |
+| C2b | `usage-accounting.ts` pure core | ~70 | ~60 |
+| C3a | apply turn-end routing at :886–891 and :1158–1273 | ~55 | ~40 |
+| C3b | apply ack selection at :392–440/:639 | ~45 | ~40 |
+| C3c | apply usage accounting at :1071–1150 | ~40 | ~30 |
+| C4 | cleanup + ADR note | ~10 | doc ~35 |
+
+Order: C1\* → C2\* → C3\*; C2a ∥ C2b; C3 apply after B5e (§8.2).
+
+### 8.4 Chain A → fourteen sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| A1a | pins: transcript parity harness — driveDeliveryTurn (:1434) + feedDeliverySteer (:1847), queue admit **and removal** instrumentation (removal-triggered ack resolution) | 0 | ~350 |
+| A1b | pins: role-arbitration call-site characterization — deliverMessage reuse/propagate (message-delivery.ts:97–139) vs outbox in-transaction steer conversion | 0 | ~180 |
+| A1c | pins: steer-ladder decision table — status × queryPromise × provider type × claim-current × delivery validity × queue ownership (:1847 region, claimGuard :1858) | 0 | ~300 |
+| A1d | pins: handler-outcome tables — preflight gates (:34–85), outcome→mutation map (:104–188), park budgets + waiting-for-input asymmetry | 0 | ~280 |
+| A2a | `delivery-turn-routing.ts` — steer ladder + role-arbitration composition over `resolveDeliveryRole` | ~85 | ~60 |
+| A2b | handler outcome routing module (post-preflight table) | ~70 | ~60 |
+| A2c | `reconciler-sweep.ts` (stale-submitted selection) | ~40 | ~40 |
+| A2d | `message-queue-timeout-policy.ts` (pending/claimed/yielded × durable timeout decision) | ~45 | ~40 |
+| A3a | wire steer ladder at :1847 + handler outcome interpretation | ~65 | ~40 |
+| A3b | wire role arbitration at message-delivery.ts:97–139 + outbox | ~50 | ~50 |
+| A3c | wire sweep at :2112 + timeout policy at message-queue.ts:105–128 | ~35 | ~30 |
+| A4a | claim-fenced batch-update primitive (additive; covers the two unfenced batch writes §5 named) | ~60 | ~80 |
+| A4b | stagedRun admission pass for driveDeliveryTurn (rearm loop stays in the shell) | ~90 | ~80 |
+| A5 | cleanup: dead-code removal + ADR pilot note | ~10 | doc ~35 |
+
+Order: A1\* → A2\* (A2c/A2d ∥ A2a/A2b) → A3\* → A4a → A4b → A5. All gated on
+#2543 (§3).
+
+### 8.5 Split discipline for the orchestrator
+
+When a sub-PR still grows past budget mid-implementation, split by the same
+axes used here — pins: by dimension family; cores: by exported module; apply:
+by call-site region; hardening: by fenced invariant — not by arbitrary line
+counts. A sub-PR that cannot fit ~150 production lines without dropping an
+edge case is mis-scoped upstream: bring the edge case back as a table row or
+a named invariant in the parent's scope, rather than widening the diff.
