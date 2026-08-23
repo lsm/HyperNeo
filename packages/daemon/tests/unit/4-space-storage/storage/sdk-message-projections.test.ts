@@ -43,8 +43,8 @@ describe('parseSdkMessageRow — malformed policy table', () => {
 });
 
 describe('projectTopLevelMessageRow', () => {
-  function projectRow(overrides: Partial<Parameters<typeof projectTopLevelMessageRow>[0]>) {
-    return projectTopLevelMessageRow({
+  function topRow(overrides: Partial<Parameters<typeof projectTopLevelMessageRow>[0]> = {}) {
+    return {
       id: 'row-1',
       sdk_message: rawAssistant,
       timestamp: TIMESTAMP,
@@ -52,11 +52,11 @@ describe('projectTopLevelMessageRow', () => {
       origin: 'system',
       send_status: null,
       ...overrides,
-    });
+    };
   }
 
   test('attaches row metadata around the parsed message', () => {
-    const projected = projectRow({});
+    const projected = projectTopLevelMessageRow(topRow());
     expect(projected.type).toBe('assistant');
     expect((projected as { id?: string }).id).toBe('row-1');
     expect(projected.timestamp).toBe(TIMESTAMP_MS);
@@ -65,25 +65,31 @@ describe('projectTopLevelMessageRow', () => {
   });
 
   test('normalizes null origin to an explicit undefined key', () => {
-    const projected = projectRow({ origin: null });
+    const projected = projectTopLevelMessageRow(topRow({ origin: null }));
     expect('origin' in projected).toBe(true);
     expect((projected as { origin?: string }).origin).toBeUndefined();
   });
 
   test('coerces non-number rowid values', () => {
-    expect((projectRow({ rowid: '42' }) as { rowid?: number }).rowid).toBe(42);
-    expect((projectRow({ rowid: null }) as { rowid?: number }).rowid).toBe(0);
+    expect((projectTopLevelMessageRow(topRow({ rowid: '42' })) as { rowid?: number }).rowid).toBe(
+      42
+    );
+    expect((projectTopLevelMessageRow(topRow({ rowid: null })) as { rowid?: number }).rowid).toBe(
+      0
+    );
   });
 
   test('row metadata overrides same-named payload fields', () => {
-    const projected = projectRow({
-      sdk_message: JSON.stringify({
-        type: 'assistant',
-        id: 'payload-id',
-        timestamp: 1,
-        rowid: 99,
-      }),
-    });
+    const projected = projectTopLevelMessageRow(
+      topRow({
+        sdk_message: JSON.stringify({
+          type: 'assistant',
+          id: 'payload-id',
+          timestamp: 1,
+          rowid: 99,
+        }),
+      })
+    );
     expect((projected as { id?: string }).id).toBe('row-1');
     expect(projected.timestamp).toBe(TIMESTAMP_MS);
     expect((projected as { rowid?: number }).rowid).toBe(7);
@@ -91,21 +97,26 @@ describe('projectTopLevelMessageRow', () => {
 
   test('maps send_status to deliveryStatus on user rows only', () => {
     const rawUser = JSON.stringify({ type: 'user', message: { content: 'hi' } });
-    const projectUser = (send_status: unknown) => projectRow({ sdk_message: rawUser, send_status });
+    const projectUser = (send_status: unknown) =>
+      projectTopLevelMessageRow(topRow({ sdk_message: rawUser, send_status }));
 
     expect((projectUser('enqueued') as { deliveryStatus?: string }).deliveryStatus).toBe('queued');
     expect((projectUser('failed') as { deliveryStatus?: string }).deliveryStatus).toBe('failed');
     expect((projectUser(null) as { deliveryStatus?: string }).deliveryStatus).toBe('delivered');
     expect('deliveryStatus' in projectUser('not-a-status')).toBe(false);
-    expect('deliveryStatus' in projectRow({ send_status: 'enqueued' })).toBe(false);
+    expect('deliveryStatus' in projectTopLevelMessageRow(topRow({ send_status: 'enqueued' }))).toBe(
+      false
+    );
   });
 
   test('synthesizes type=unknown for malformed rows while keeping metadata', () => {
-    const projected = projectRow({
-      id: 'bad',
-      sdk_message: RAW_MALFORMED,
-      send_status: 'enqueued',
-    });
+    const projected = projectTopLevelMessageRow(
+      topRow({
+        id: 'bad',
+        sdk_message: RAW_MALFORMED,
+        send_status: 'enqueued',
+      })
+    );
     expect(projected.type).toBe('unknown');
     expect((projected as { rawContent?: string }).rawContent).toBe(RAW_MALFORMED);
     expect((projected as { id?: string }).id).toBe('bad');
