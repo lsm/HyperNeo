@@ -240,6 +240,17 @@ describe('redactCommandSecrets', () => {
     ]);
   });
 
+  test('does not treat curl data clusters as trailing user flags', () => {
+    expect(redactCommandSecrets('curl', ['-du', 'https://a'])).toEqual(['-du', 'https://a']);
+    expect(getAcpCommandIdentityDigest('curl -du https://a')).not.toBe(
+      getAcpCommandIdentityDigest('curl -du https://b')
+    );
+    expect(redactCommandSecrets('curl', ['-su', 'alice:topsecret'])).toEqual([
+      '-su',
+      '[redacted]',
+    ]);
+  });
+
   test('does not treat curl data values as credential flags', () => {
     expect(redactCommandSecrets('curl', ['-duser=delete-all', '/a'])).toEqual([
       '-duser=delete-all',

@@ -120,8 +120,18 @@ export function redactCommandSecrets(command: string, args: string[]): string[] 
     if (tokenCurl && /^-[a-z]*$/i.test(arg)) {
       const letters = arg.slice(1).toLowerCase();
       const valueFlag = letters.charAt(letters.length - 1);
+      let clusterCarriesValue = false;
+      for (let scan = 0; scan < letters.length - 1; scan++) {
+        const ch = letters[scan];
+        if (ch === 'h' || ch === 'u') break;
+        if (CURL_VALUE_TAKING_SHORT.has(ch)) {
+          clusterCarriesValue = true;
+          break;
+        }
+      }
       const next = args[index + 1];
       if (
+        !clusterCarriesValue &&
         (valueFlag === 'h' || valueFlag === 'u') &&
         next !== undefined &&
         (valueFlag === 'u' || !next.startsWith('--'))
