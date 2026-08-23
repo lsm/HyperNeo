@@ -4252,11 +4252,11 @@ export class SpaceRuntime {
         }
       }
 
+      this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
       return { task: updatedTask, run: updatedRun };
     });
 
     const recovered = recoverTx();
-    this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
     await this.ensureExecutorRegistered(recovered.run);
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
