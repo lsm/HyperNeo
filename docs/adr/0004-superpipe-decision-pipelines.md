@@ -1391,11 +1391,15 @@ plan. The one deliberate exception is a caller-provided sequence:
 `allocate-consumed-seq` instruction as `providedSeq`, and the interpreter
 reuses it without spending an atomic allocation — pinned as such. Second,
 *every planned transition carries an expected-status guard*
-(`AND send_status IN (pending set)`): a row that left the pending window
-between snapshot and apply fails its whole transition — no stale timestamp,
-turn, or sequence instruction executes on it — and (the PR-review fix) the
+(`AND send_status IN (pending set)`): a row outside the pending set at
+apply time fails its whole transition — no stale timestamp, turn, or
+sequence instruction executes on it — and (the PR-review fix) the
 seq-allocation arm re-probes the window before spending an atomic sequence,
-so a rejected row does not burn one. The guard's scope is the planned set
+so a rejected row does not burn one. The guard is membership-at-apply, not
+continuous membership since the snapshot — no version or status history is
+recorded — so an ABA round trip between snapshot and apply (say
+`enqueued → failed → enqueued` through the live reopen route) re-admits the
+row and its planned effects land. The guard's scope is the planned set
 only, because the snapshot is gathered solely for `consumed`/`failed`
 targets: intermediate-target updates (`enqueued`, `deferred`, `submitted` —
 the re-queue paths call these live) take the unconditional arm with no
