@@ -136,6 +136,7 @@ import {
   formatMissingAgentReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
+  isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
 } from './workflow-node-execution-validation';
@@ -3927,6 +3928,7 @@ export class SpaceRuntime {
 
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
+        this.config.taskRepo.clearAllSpawnReservations();
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
         this.rehydrated = true;
@@ -6441,6 +6443,12 @@ export class SpaceRuntime {
             });
           }
         } catch (err) {
+          if (isSpawnSupersededError(err)) {
+            log.info(
+              `SpaceRuntime: spawn for execution ${execution.id} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this tick`
+            );
+            continue;
+          }
           if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
             permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
             continue;
@@ -6790,6 +6798,12 @@ export class SpaceRuntime {
             }
           }
         } catch (err) {
+          if (isSpawnSupersededError(err)) {
+            log.info(
+              `SpaceRuntime: queued handoff spawn for target ${targetAgentName} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this pass`
+            );
+            continue;
+          }
           const errMsg = err instanceof Error ? err.message : String(err);
           if (isPermanentSpawnError(err)) {
             log.warn(

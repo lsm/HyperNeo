@@ -202,15 +202,38 @@ export class NodeExecutionRepository {
   casExecutionStatus(
     id: string,
     expected: NodeExecutionStatus | readonly NodeExecutionStatus[],
-    next: NodeExecutionStatus
+    next: NodeExecutionStatus,
+    payload: {
+      agentSessionId?: string | null;
+      startedAt?: number | null;
+      completedAt?: number | null;
+    } = {}
   ): 'won' | 'superseded' {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
     const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const sets = ['status = ?', 'updated_at = ?'];
+    const values: SQLiteValue[] = [next, Date.now()];
+    if (payload.agentSessionId !== undefined) {
+      sets.push('agent_session_id = ?');
+      values.push(payload.agentSessionId);
+    }
+    if (payload.startedAt !== undefined) {
+      sets.push('started_at = ?');
+      values.push(payload.startedAt);
+    }
+    if (payload.completedAt !== undefined) {
+      sets.push('completed_at = ?');
+      values.push(payload.completedAt);
+    }
     const result = this.db
-      .prepare(`UPDATE node_executions SET status = ? WHERE id = ? AND status IN (${placeholders})`)
-      .run(next, id, ...expectedStatuses);
-    return result.changes > 0 ? 'won' : 'superseded';
+      .prepare(
+        `UPDATE node_executions SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(...values, id, ...expectedStatuses);
+    if (result.changes === 0) return 'superseded';
+    this.notify();
+    return 'won';
   }
 
   updateSessionId(id: string, agentSessionId: string | null): NodeExecution | null {

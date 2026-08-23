@@ -14,6 +14,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
+import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -2548,6 +2549,67 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('in_progress');
       expect(updated.taskAgentSessionId).toBeTruthy();
+    });
+
+    test('a superseded spawn skips for this tick without cancelling, blocking, or retrying (superpipe P5)', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+          const exec = execution as { id: string; agentName: string };
+          if (exec.agentName === 'Planner') {
+            throw new SpawnSupersededError(exec.id, 'reserve-task-spawn');
+          }
+          const sessionId = `session:${exec.agentName}:new`;
+          nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: sessionId,
+            startedAt: Date.now(),
+            completedAt: null,
+          });
+          return sessionId;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Superseded spawn ${Date.now()}`,
+        description: 'Test',
+        nodes: [
+          {
+            id: STEP_A,
+            name: 'Build',
+            agents: [
+              { agentId: AGENT_PLANNER, name: 'Planner' },
+              { agentId: AGENT_CODER, name: 'Coder' },
+            ],
+          },
+          {
+            id: STEP_B,
+            name: 'Done',
+            agents: [{ agentId: AGENT_PLANNER, name: 'Finisher' }],
+          },
+        ],
+        transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+        startNodeId: STEP_A,
+        endNodeId: STEP_B,
+        rules: [],
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await rt.executeTick();
+
+      const executions = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
+      const planner = executions.find((exec) => exec.agentName === 'Planner');
+      const coder = executions.find((exec) => exec.agentName === 'Coder');
+      expect(planner?.status).toBe('pending');
+      expect(planner?.agentSessionId).toBeNull();
+      expect(coder?.status).toBe('in_progress');
+      expect(coder?.agentSessionId).toBe('session:Coder:new');
+
+      const run = workflowRunRepo.getRun(tasks[0].workflowRunId!);
+      expect(run?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
     });
   });
 

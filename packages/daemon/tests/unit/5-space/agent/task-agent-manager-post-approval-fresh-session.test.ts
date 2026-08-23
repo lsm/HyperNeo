@@ -80,6 +80,27 @@ function reviewerExec(sessionId: string = REVIEWER_SESSION_ID) {
   };
 }
 
+function recordingCas(
+  updates: Array<{ id: string; payload: Record<string, unknown> }>,
+  rows: Array<Record<string, unknown>>
+): (
+  id: string,
+  expected: readonly string[],
+  next: string,
+  payload?: Record<string, unknown>
+) => 'won' | 'superseded' {
+  return (id, expected, next, payload) => {
+    updates.push({
+      id,
+      payload: { status: next, ...payload, __cas: expected },
+    });
+    const row = rows.find((candidate) => candidate.id === id);
+    if (!row || !expected.includes(String(row.status))) return 'superseded';
+    row.status = next;
+    return 'won';
+  };
+}
+
 function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
@@ -92,6 +113,10 @@ function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
       listByWorkflowRun: () => rows,
       listByNode: () => rows,
       update: () => rows[0],
+      casExecutionStatus: recordingCas(
+        [],
+        rows.map((row) => row as Record<string, unknown>)
+      ),
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
   } as unknown as TaskAgentManagerConfig);
@@ -269,6 +294,11 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
           updates.push({ id, payload });
           return null;
         },
+        casExecutionStatus: recordingCas(updates, [
+          staleCoOwner,
+          pendingCoOwner,
+          targetExec,
+        ] as Array<Record<string, unknown>>),
       },
       spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
     } as unknown as TaskAgentManagerConfig);
@@ -425,6 +455,7 @@ function makeRecordingManager(
         updates.push({ id, payload });
         return null;
       },
+      casExecutionStatus: recordingCas(updates, rows),
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
   } as unknown as TaskAgentManagerConfig);
@@ -497,7 +528,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
-  test('reuse path rebinds the node execution with an unconditional in_progress write (BEFORE picture)', async () => {
+  test('reuse path rebinds the node execution through a bindable-status CAS (AFTER picture, superpipe P5)', async () => {
     const { tam, updates } = makeRecordingManager([makeExecutionRow()]);
     seedLiveSession(tam);
     stubMcpReinjection(tam);
@@ -519,6 +550,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
         agentSessionId: REVIEWER_SESSION_ID,
         startedAt: 1,
         completedAt: null,
+        __cas: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
       },
     });
   });
@@ -595,11 +627,15 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     });
     expect(updates.find((u) => u.id === 'exec-active')).toEqual({
       id: 'exec-active',
-      payload: { agentSessionId: null, status: 'idle' },
+      payload: {
+        status: 'idle',
+        agentSessionId: null,
+        __cas: ['in_progress'],
+      },
     });
   });
 
-  test('fresh create binds the new session to the matching pending execution (unconditional write)', async () => {
+  test('fresh create binds the new session to the matching pending execution through the bindable-status CAS', async () => {
     const pendingExec = makeExecutionRow({
       id: 'exec-pending',
       agentSessionId: null,
@@ -623,6 +659,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
         agentSessionId: 'fresh-id',
         startedAt: expect.any(Number),
         completedAt: null,
+        __cas: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
       },
     });
   });

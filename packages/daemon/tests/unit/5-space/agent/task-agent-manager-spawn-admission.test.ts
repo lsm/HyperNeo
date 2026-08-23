@@ -108,25 +108,43 @@ interface SpawnHarnessOptions {
   worktreeGate?: Promise<{ path: string }>;
   missingAgent?: boolean;
   failEnsure?: boolean;
+  bindCasOutcome?: 'won' | 'superseded';
+  rebindCasOutcome?: 'won' | 'superseded';
+}
+
+export interface SpawnAdmissionCasCall {
+  id: string;
+  expected: string[];
+  next: string;
+  payload?: {
+    agentSessionId?: string | null;
+    startedAt?: number | null;
+    completedAt?: number | null;
+  };
 }
 
 interface SpawnHarness {
   tam: TaskAgentManager;
   updates: Array<{ id: string; patch: Record<string, unknown> }>;
+  casCalls: SpawnAdmissionCasCall[];
   order: string[];
   cancels: string[];
-  setReadback: (row: NodeExecution | null) => void;
+  reservations: string[];
+  reservationReleases: string[];
   spawn: () => Promise<string>;
 }
 
 function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  const casCalls: SpawnAdmissionCasCall[] = [];
   const order: string[] = [];
   const cancels: string[] = [];
+  const reservations: string[] = [];
+  const reservationReleases: string[] = [];
   const row = options.execution ?? makeExecution();
   const dbRow: NodeExecution = { ...row };
   const taskStatus = options.taskStatus ?? 'in_progress';
-  let readback: NodeExecution | null | undefined;
+  const heldReservations = new Set<string>();
 
   const tam = new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
@@ -135,6 +153,17 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
     taskRepo: {
       getTask: (id: string) =>
         options.taskMissing || id !== TASK_ID ? undefined : makeTask(taskStatus),
+      reserveSpawnForTick: (taskId: string, allowed: readonly string[]): 'won' | 'superseded' => {
+        reservations.push(taskId);
+        if (heldReservations.has(taskId)) return 'superseded';
+        if (!allowed.includes(taskStatus)) return 'superseded';
+        heldReservations.add(taskId);
+        return 'won';
+      },
+      releaseSpawnReservation: (taskId: string) => {
+        reservationReleases.push(taskId);
+        heldReservations.delete(taskId);
+      },
     },
     nodeExecutionRepo: {
       getById: (id: string) => (id === row.id ? dbRow : undefined),
@@ -147,8 +176,31 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
           order.push('execution-bind');
         }
         if (id === row.id) Object.assign(dbRow, patch);
-        if (readback !== undefined) return readback;
         return { ...dbRow };
+      },
+      casExecutionStatus: (
+        id: string,
+        expected: readonly string[] | string,
+        next: string,
+        payload?: SpawnAdmissionCasCall['payload']
+      ): 'won' | 'superseded' => {
+        const expectedList = Array.isArray(expected) ? [...expected] : [expected];
+        casCalls.push({ id, expected: expectedList, next, payload });
+        if (next === 'in_progress' && payload?.agentSessionId === 'live-session') {
+          return options.rebindCasOutcome ?? 'won';
+        }
+        if (options.bindCasOutcome && next === 'in_progress' && payload?.agentSessionId) {
+          return options.bindCasOutcome;
+        }
+        if (id !== row.id || !expectedList.includes(dbRow.status)) return 'superseded';
+        dbRow.status = next as NodeExecution['status'];
+        if (payload?.agentSessionId !== undefined) dbRow.agentSessionId = payload.agentSessionId;
+        if (payload?.startedAt !== undefined) dbRow.startedAt = payload.startedAt;
+        if (payload?.completedAt !== undefined) dbRow.completedAt = payload.completedAt;
+        if (next === 'in_progress' && payload?.agentSessionId === SPAWNED_SESSION_ID) {
+          order.push('execution-bind');
+        }
+        return 'won';
       },
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
@@ -203,11 +255,11 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
   return {
     tam,
     updates,
+    casCalls,
     order,
     cancels,
-    setReadback: (value) => {
-      readback = value;
-    },
+    reservations,
+    reservationReleases,
     spawn: () =>
       tam.spawnWorkflowNodeAgentForExecution(
         task,
@@ -232,7 +284,7 @@ function seedIndexedSession(
 }
 
 describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
-  test('indexed live session is reused: rebinds the execution to in_progress and returns the id', async () => {
+  test('indexed live session is reused: rebinds the execution to in_progress via CAS and returns the id', async () => {
     const h = makeSpawnHarness({
       execution: makeExecution({
         agentSessionId: 'live-session',
@@ -246,11 +298,13 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     const result = await h.spawn();
 
     expect(result).toBe('live-session');
-    expect(h.updates).toHaveLength(1);
-    expect(h.updates[0]).toEqual({
+    expect(h.updates).toEqual([]);
+    expect(h.casCalls).toHaveLength(1);
+    expect(h.casCalls[0]).toEqual({
       id: 'exec-1',
-      patch: {
-        status: 'in_progress',
+      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      next: 'in_progress',
+      payload: {
         agentSessionId: 'live-session',
         startedAt: 1234,
         completedAt: null,
@@ -259,7 +313,7 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.order).toEqual([]);
   });
 
-  test('live-session reuse precedes task validation: an archived task still rebinds (BEFORE picture)', async () => {
+  test('live-session reuse precedes task validation: an archived task still rebinds', async () => {
     const h = makeSpawnHarness({
       taskStatus: 'archived',
       execution: makeExecution({
@@ -273,15 +327,11 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     const result = await h.spawn();
 
     expect(result).toBe('live-session');
-    expect(h.updates).toHaveLength(1);
-    expect(h.updates[0]).toEqual({
-      id: 'exec-1',
-      patch: {
-        status: 'in_progress',
-        agentSessionId: 'live-session',
-        startedAt: 1234,
-        completedAt: null,
-      },
+    expect(h.casCalls).toHaveLength(1);
+    expect(h.casCalls[0]?.payload).toEqual({
+      agentSessionId: 'live-session',
+      startedAt: 1234,
+      completedAt: null,
     });
     expect(h.order).toEqual([]);
   });
@@ -294,7 +344,7 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
 
     await h.spawn();
 
-    expect(typeof h.updates[0]?.patch.startedAt).toBe('number');
+    expect(typeof h.casCalls[0]?.payload?.startedAt).toBe('number');
   });
 
   test('indexed but dead session: evicted from the index and spawned fresh', async () => {
@@ -386,14 +436,16 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.order).toEqual([]);
   });
 
-  test('PARKED stopped task passes spawn admission (mid-tick-park race this chain closes in P5)', async () => {
+  test('PARKED stopped task fails the spawn reservation: no spawn, no execution write (AFTER picture, superpipe P5)', async () => {
     const h = makeSpawnHarness({ taskStatus: 'stopped', kickoff: false });
 
-    const result = await h.spawn();
+    await expect(h.spawn()).rejects.toThrow('superseded at stage reserve-task-spawn');
 
-    expect(result).toBe(SPAWNED_SESSION_ID);
-    expect(h.order).toContain('createSubSession');
-    expect(h.updates.some((u) => u.patch.status === 'in_progress')).toBe(true);
+    expect(h.order).toEqual([]);
+    expect(h.casCalls).toEqual([]);
+    expect(h.updates).toEqual([]);
+    expect(h.cancels).toEqual([]);
+    expect(h.reservationReleases).toEqual([]);
   });
 
   test('null workflow (definition vanished) is a permanent rejection', async () => {
@@ -485,7 +537,7 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
     expect(await second).toBe(SPAWNED_SESSION_ID);
     expect(await first).toBe(SPAWNED_SESSION_ID);
     expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(1);
-    expect(h.updates.some((u) => u.patch.agentSessionId === SPAWNED_SESSION_ID)).toBe(true);
+    expect(h.casCalls.some((c) => c.payload?.agentSessionId === SPAWNED_SESSION_ID)).toBe(true);
   });
 
   test('rejects when the in-flight peer fails before creating a session', async () => {
@@ -494,10 +546,16 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
 
     const first = h.spawn();
     const second = h.spawn();
+    const secondMessage = second.then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
     gate.resolve({ path: '/tmp/wt-1237' });
 
     await expect(first).rejects.toThrow('Agent not found: agent-coder (task: task-1237)');
-    await expect(second).rejects.toThrow('failed before session was created');
+    expect(await secondMessage).toBe(
+      'Concurrent spawn for execution exec-1 failed before session was created'
+    );
     expect(h.cancels).toEqual([]);
     expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(0);
   });
@@ -507,16 +565,12 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
     const h = makeSpawnHarness({ kickoff: false, worktreeGate: gate.promise });
 
     const first = h.spawn();
-    const realNow = Date.now();
-    let clockOffset = 0;
-    const nowSpy = spyOn(Date, 'now').mockImplementation(() => realNow + clockOffset);
+    const restoreTimers = fireActivationTimeoutImmediately();
     try {
       const second = h.spawn();
-      clockOffset = 60_000;
       await expect(second).rejects.toThrow('timed out after 30000ms');
     } finally {
-      clockOffset = 0;
-      nowSpy.mockRestore();
+      restoreTimers();
       gate.resolve({ path: '/tmp/wt-1237' });
     }
     await expect(first).resolves.toBe(SPAWNED_SESSION_ID);
@@ -525,7 +579,7 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
 });
 
 describe('spawnWorkflowNodeAgentForExecution — post-create execution binding', () => {
-  test('ordering: createSubSession, execution bind, ensureNodeAgentAttached, completion callback, kickoff inject', async () => {
+  test('ordering: createSubSession, CAS execution bind, ensureNodeAgentAttached, completion callback, kickoff inject', async () => {
     const h = makeSpawnHarness();
 
     await h.spawn();
@@ -548,52 +602,36 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
     expect(h.order).not.toContain('kickoff-inject');
   });
 
-  test('readback returning null blocks the execution and throws corruption', async () => {
+  test('the bind carries the bindable-status precondition and the full bind payload (AFTER picture)', async () => {
     const h = makeSpawnHarness({ kickoff: false });
-    h.setReadback(null);
 
-    await expect(h.spawn()).rejects.toThrow('Execution state corruption after spawn for exec-1');
+    await h.spawn();
 
-    expect(h.updates[1]).toEqual({
+    const bind = h.casCalls.find(
+      (c) => c.payload?.agentSessionId === SPAWNED_SESSION_ID && c.next === 'in_progress'
+    );
+    expect(bind).toEqual({
       id: 'exec-1',
-      patch: {
-        status: 'blocked',
-        result: 'Execution state corruption after spawn',
-        completedAt: expect.any(Number),
+      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      next: 'in_progress',
+      payload: {
+        agentSessionId: SPAWNED_SESSION_ID,
+        startedAt: expect.any(Number),
+        completedAt: null,
       },
     });
+  });
+
+  test('a concurrent execution write that fails the bind CAS skips for this call: the spawned session is cancelled and the execution is not resurrected (AFTER picture)', async () => {
+    const h = makeSpawnHarness({ kickoff: false, bindCasOutcome: 'superseded' });
+    const spawnPromise = h.spawn();
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
+
+    expect(h.updates).toEqual([]);
     expect(h.order).not.toContain('ensureNodeAgentAttached');
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
-  });
-
-  test('readback with a mismatched status blocks the execution and throws corruption', async () => {
-    const h = makeSpawnHarness({ kickoff: false });
-    h.setReadback(
-      makeExecution({ status: 'pending', agentSessionId: SPAWNED_SESSION_ID, startedAt: 5 })
-    );
-
-    await expect(h.spawn()).rejects.toThrow('Execution state corruption after spawn for exec-1');
-    expect(h.updates[1]?.patch.status).toBe('blocked');
-  });
-
-  test('readback bound to a different session blocks the execution and throws corruption', async () => {
-    const h = makeSpawnHarness({ kickoff: false });
-    h.setReadback(
-      makeExecution({ status: 'in_progress', agentSessionId: 'other-session', startedAt: 5 })
-    );
-
-    await expect(h.spawn()).rejects.toThrow('Execution state corruption after spawn for exec-1');
-    expect(h.updates[1]?.patch.result).toBe('Execution state corruption after spawn');
-  });
-
-  test('readback without startedAt blocks the execution and throws corruption', async () => {
-    const h = makeSpawnHarness({ kickoff: false });
-    h.setReadback(
-      makeExecution({ status: 'in_progress', agentSessionId: SPAWNED_SESSION_ID, startedAt: null })
-    );
-
-    await expect(h.spawn()).rejects.toThrow('Execution state corruption after spawn for exec-1');
-    expect(h.updates[1]?.patch.status).toBe('blocked');
+    expect(h.reservationReleases).toEqual([TASK_ID]);
   });
 
   test('a failure after session creation cancels the spawned session and rethrows', async () => {
@@ -611,41 +649,44 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
   });
 });
 
-describe('spawnWorkflowNodeAgentForExecution — racy tolerated writes (BEFORE picture, ADR 0004 Phase 0)', () => {
-  test('live-session rebind writes in_progress with no precondition: a concurrent DB flip is clobbered', async () => {
+describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER picture, ADR 0004 Phase 0)', () => {
+  test('live-session rebind a CAS loses to a concurrent cancel: the cancelled row is not clobbered and the call skips', async () => {
     const h = makeSpawnHarness({
       execution: makeExecution({
         agentSessionId: 'live-session',
         status: 'in_progress',
         startedAt: 42,
       }),
+      rebindCasOutcome: 'superseded',
     });
     seedIndexedSession(h.tam, 'live-session');
-    h.setReadback(makeExecution({ agentSessionId: 'live-session', status: 'cancelled' }));
 
-    const result = await h.spawn();
+    const spawnPromise = h.spawn();
 
-    expect(result).toBe('live-session');
-    expect(h.updates[0]?.patch).toEqual({
-      status: 'in_progress',
+    await expect(spawnPromise).rejects.toThrow('superseded at stage rebind-live-session');
+    expect(h.casCalls[0]?.expected).toEqual(['pending', 'in_progress', 'idle', 'waiting_rebind']);
+    expect(h.casCalls[0]?.payload).toEqual({
       agentSessionId: 'live-session',
       startedAt: 42,
       completedAt: null,
     });
+    expect(h.updates).toEqual([]);
+    expect(h.reservations).toEqual([]);
   });
 
-  test('post-create bind carries no status precondition: exactly the in_progress bind payload', async () => {
+  test('post-create bind carries the bindable-status precondition: exactly the in_progress bind payload', async () => {
     const h = makeSpawnHarness({ kickoff: false });
 
     await h.spawn();
 
-    const bind = h.updates.find(
-      (u) => u.patch.agentSessionId === SPAWNED_SESSION_ID && u.patch.status === 'in_progress'
+    const bind = h.casCalls.find(
+      (c) => c.payload?.agentSessionId === SPAWNED_SESSION_ID && c.next === 'in_progress'
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      patch: {
-        status: 'in_progress',
+      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      next: 'in_progress',
+      payload: {
         agentSessionId: SPAWNED_SESSION_ID,
         startedAt: expect.any(Number),
         completedAt: null,
@@ -657,6 +698,7 @@ describe('spawnWorkflowNodeAgentForExecution — racy tolerated writes (BEFORE p
 interface ActivateHarness {
   tam: TaskAgentManager;
   updates: Array<{ id: string; patch: Record<string, unknown> }>;
+  casCalls: SpawnAdmissionCasCall[];
   order: string[];
   activate: (options?: {
     workflowNodeId?: string;
@@ -669,11 +711,14 @@ function makeActivateHarness(
     indexSession?: { id: string; processingStatus: string };
     workflow?: SpaceWorkflow;
     spawn?: () => Promise<string>;
+    resetCasOutcome?: 'won' | 'superseded';
   } = {}
 ): ActivateHarness {
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  const casCalls: SpawnAdmissionCasCall[] = [];
   const order: string[] = [];
   const rows = options.executions ?? [makeExecution()];
+  const rowStatuses = new Map(rows.map((row) => [row.id, row.status]));
 
   const tam = new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
@@ -697,6 +742,21 @@ function makeActivateHarness(
       update: (id: string, patch: Record<string, unknown>) => {
         updates.push({ id, patch });
         return { ...makeExecution(), ...patch };
+      },
+      casExecutionStatus: (
+        id: string,
+        expected: readonly string[] | string,
+        next: string,
+        payload?: SpawnAdmissionCasCall['payload']
+      ): 'won' | 'superseded' => {
+        const expectedList = Array.isArray(expected) ? [...expected] : [expected];
+        casCalls.push({ id, expected: expectedList, next, payload });
+        if (next === 'pending' && options.resetCasOutcome) {
+          return options.resetCasOutcome;
+        }
+        if (!expectedList.includes(rowStatuses.get(id) ?? 'pending')) return 'superseded';
+        rowStatuses.set(id, next as NodeExecution['status']);
+        return 'won';
       },
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
@@ -724,6 +784,7 @@ function makeActivateHarness(
   return {
     tam,
     updates,
+    casCalls,
     order,
     activate: (activateOptions) =>
       tam.activateTargetSessionsForMessage(TASK_ID, RUN_ID, AGENT_NAME, activateOptions),
@@ -772,7 +833,7 @@ describe('activateTargetSessionsForMessage — admission', () => {
     expect(h.updates).toEqual([]);
   });
 
-  test('a dead session resets the execution to pending (status only) and spawns fresh', async () => {
+  test('a dead session resets the execution to pending via CAS and spawns fresh', async () => {
     const h = makeActivateHarness({
       executions: [makeExecution({ status: 'in_progress', agentSessionId: 'dead-session' })],
       indexSession: { id: 'dead-session', processingStatus: 'completed' },
@@ -784,7 +845,8 @@ describe('activateTargetSessionsForMessage — admission', () => {
       const result = await h.activate();
 
       expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: 'new-session' }]);
-      expect(h.updates).toEqual([{ id: 'exec-1', patch: { status: 'pending' } }]);
+      expect(h.updates).toEqual([]);
+      expect(h.casCalls).toEqual([{ id: 'exec-1', expected: ['in_progress'], next: 'pending' }]);
       expect(index.agentSessionIndex.has('dead-session')).toBe(false);
       expect(h.order).toEqual(['activation', 'spawn']);
     } finally {
@@ -792,16 +854,19 @@ describe('activateTargetSessionsForMessage — admission', () => {
     }
   });
 
-  test('dead-session reset is an unconditional status-only write (BEFORE picture, ADR 0004 Phase 0)', async () => {
+  test('dead-session reset is CAS-guarded from the just-read status: a concurrent move skips activation for this call (AFTER picture, ADR 0004 Phase 0)', async () => {
     const h = makeActivateHarness({
       executions: [makeExecution({ status: 'in_progress', agentSessionId: 'dead-session' })],
+      resetCasOutcome: 'superseded',
     });
     const restoreTimers = fireActivationTimeoutImmediately();
 
     try {
-      await h.activate();
+      const result = await h.activate();
 
-      expect(h.updates).toEqual([{ id: 'exec-1', patch: { status: 'pending' } }]);
+      expect(result).toEqual([]);
+      expect(h.casCalls).toEqual([{ id: 'exec-1', expected: ['in_progress'], next: 'pending' }]);
+      expect(h.order).toEqual([]);
     } finally {
       restoreTimers();
     }

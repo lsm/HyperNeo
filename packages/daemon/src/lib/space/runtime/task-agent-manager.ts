@@ -72,11 +72,13 @@ import { jsonResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
-  validateExecutionAgainstWorkflow,
+  SPAWN_BINDABLE_EXECUTION_STATUSES,
+  SPAWN_RESERVABLE_TASK_STATUSES,
+  SpawnSupersededError,
+  isSpawnSupersededError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing';
-import { decideSpawnExecutionAdmission } from './spawn-admission-gates';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -89,7 +91,6 @@ import {
   buildSlotOverrides,
   findAvailableSessionId,
   resolveSpawnWorkspace,
-  resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution';
 import {
   assembleVerifiedStopResult,
@@ -329,6 +330,10 @@ export class TaskAgentManager {
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
 
   private spawningExecutionIds = new Set<string>();
+  private concurrentSpawnWaiters = new Map<
+    string,
+    Array<(outcome: { status: 'resolved'; sessionId: string } | { status: 'failed' }) => void>
+  >();
 
   private completionCallbacks: CompletionCallbackMap = new Map();
 
@@ -631,279 +636,6 @@ export class TaskAgentManager {
     execution: NodeExecution,
     options: SpawnTaskAgentOptions = {}
   ): Promise<string> {
-    const indexedSessionId = execution.agentSessionId;
-    let hasLiveIndexedSession = false;
-    if (indexedSessionId && this.agentSessionIndex.has(indexedSessionId)) {
-      if (this.isSessionAlive(indexedSessionId)) {
-        hasLiveIndexedSession = true;
-      } else {
-        this.agentSessionIndex.delete(indexedSessionId);
-      }
-    }
-
-    const freshTask = this.config.taskRepo.getTask(task.id) ?? task;
-    const slotResolution = resolveWorkflowNodeSlot(
-      workflow,
-      execution.workflowNodeId,
-      execution.agentName
-    );
-    const admission = decideSpawnExecutionAdmission({
-      hasLiveIndexedSession,
-      isSpawningExecution: this.spawningExecutionIds.has(execution.id),
-      taskStatus: freshTask.status,
-      executionWorkflowValid: validateExecutionAgainstWorkflow(execution, workflow).valid,
-      slotResolvable: slotResolution !== null,
-    });
-
-    if (admission.action === 'reuse_live') {
-      const sessionId = indexedSessionId!;
-      const startedAt = execution.startedAt ?? Date.now();
-      this.config.nodeExecutionRepo.update(execution.id, {
-        status: 'in_progress',
-        agentSessionId: sessionId,
-        startedAt,
-        completedAt: null,
-      });
-      return sessionId;
-    }
-
-    if (admission.action === 'wait_concurrent') {
-      return this.waitForConcurrentSpawnSession(execution);
-    }
-
-    if (admission.action === 'reject_permanent' || admission.action === 'reject_transient') {
-      validateTaskAllowsSpawn(freshTask);
-      assertExecutionValidAgainstWorkflow(execution, workflow);
-      throw new Error(
-        `No agent slot found for agent name "${execution.agentName}" in node "${execution.workflowNodeId}"`
-      );
-    }
-
-    const { node, slot } = slotResolution!;
-
-    this.spawningExecutionIds.add(execution.id);
-    let spawnedSessionId: string | null = null;
-
-    try {
-      const taskId = task.id;
-      const sessionId = this.resolveSessionId(
-        buildExecutionBaseSessionId(space.id, taskId, execution.id)
-      );
-
-      const workspace = resolveSpawnWorkspace({
-        cachedTaskWorktreePath: this.taskWorktreePaths.get(taskId),
-        hasWorktreeManager: Boolean(this.config.worktreeManager),
-        spaceWorkspacePath: space.workspacePath,
-      });
-      let workspacePath = workspace.workspacePath;
-      if (workspace.createWorktree && this.config.worktreeManager) {
-        try {
-          const result = await this.config.worktreeManager.createTaskWorktree(
-            space.id,
-            taskId,
-            task.title,
-            task.taskNumber
-          );
-          workspacePath = result.path;
-          this.taskWorktreePaths.set(taskId, result.path);
-        } catch (err) {
-          log.warn(
-            `TaskAgentManager: failed to create worktree for workflow task ${taskId}, falling back to space workspace: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      }
-
-      const slotOverrides = buildSlotOverrides(slot, {
-        task,
-        node,
-        workflow,
-        workflowRun,
-      });
-
-      let init = resolveAgentInit({
-        task,
-        space,
-        agentManager: this.config.spaceAgentManager,
-        sessionId,
-        workspacePath,
-        workflowRun,
-        workflow,
-        slotOverrides,
-        agentId: slot.agentId,
-      });
-
-      const shouldKickoff = options.kickoff ?? true;
-      const customAgent = shouldKickoff
-        ? this.config.spaceAgentManager.getById(slot.agentId)
-        : null;
-      if (shouldKickoff && !customAgent) {
-        throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
-      }
-
-      const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-        taskId,
-        sessionId,
-        execution.agentName,
-        space.id,
-        workflowRun.id,
-        workspacePath,
-        execution.workflowNodeId
-      );
-
-      init = assembleNodeAgentSessionInit({
-        baseInit: init,
-        title: formatWorkflowNodeSessionTitle(task, execution.agentName),
-        nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
-        agentMemoryMcpServers: this.buildAgentMemoryMcpServers(space.id, sessionId),
-      });
-
-      const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
-        agentId: slot.agentId,
-        agentName: execution.agentName,
-        nodeId: execution.workflowNodeId,
-      });
-      spawnedSessionId = actualSessionId;
-
-      const spawned = this.getSubSession(actualSessionId);
-      if (!spawned) {
-        throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
-      }
-
-      const startedAt = Date.now();
-      const updatedExecution = this.config.nodeExecutionRepo.update(execution.id, {
-        status: 'in_progress',
-        agentSessionId: actualSessionId,
-        startedAt,
-        completedAt: null,
-      });
-      if (
-        !updatedExecution ||
-        updatedExecution.status !== 'in_progress' ||
-        updatedExecution.agentSessionId !== actualSessionId ||
-        !updatedExecution.startedAt
-      ) {
-        log.error('[Spawn] Execution state mismatch after spawn', {
-          executionId: execution.id,
-          expectedStatus: 'in_progress',
-          actualStatus: updatedExecution?.status ?? null,
-          expectedSessionId: actualSessionId,
-          actualSessionId: updatedExecution?.agentSessionId ?? null,
-        });
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'blocked',
-          result: 'Execution state corruption after spawn',
-          completedAt: Date.now(),
-        });
-        throw new Error(`Execution state corruption after spawn for ${execution.id}`);
-      }
-
-      await this.ensureNodeAgentAttached(spawned, {
-        taskId,
-        subSessionId: actualSessionId,
-        agentName: execution.agentName,
-        spaceId: space.id,
-        workflowRunId: workflowRun.id,
-        workspacePath,
-        workflowNodeId: execution.workflowNodeId,
-        phase: 'spawn',
-      });
-
-      this.registerCompletionCallback(actualSessionId, async () => {
-        await this.handleSubSessionComplete(taskId, execution.workflowNodeId, actualSessionId);
-      });
-
-      if (shouldKickoff) {
-        const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
-        const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
-
-        const memoryQuery = `${task.title}\n${task.description}`;
-        const coreMemories = this.config.memoryRepo
-          ? this.config.memoryRepo.listCoreMemories(space.id, 10)
-          : [];
-        const relevantMemories = this.config.memoryRepo
-          ? await this.config.memoryRepo.search(space.id, memoryQuery, 5)
-          : [];
-        const relevantScopeLessons = this.config.evolutionScopeService
-          ? this.config.evolutionScopeService.selectActiveLessonsForTask({
-              taskId: task.id,
-              limit: 3,
-            })
-          : [];
-        const initialMessage = buildCustomAgentTaskMessage({
-          customAgent: customAgent!,
-          task,
-          workflowRun,
-          workflow,
-          space,
-          sessionId: actualSessionId,
-          workspacePath,
-          goal: linkedGoal,
-          relevantScopeLessons,
-          slotOverrides,
-          nodeId: execution.workflowNodeId,
-          agentSlotName: execution.agentName,
-          coreMemories,
-          relevantMemories,
-        });
-        const runtimeContract = this.buildNodeExecutionRuntimeContract(workflow, execution, space);
-        const kickoffMessage = runtimeContract
-          ? `${initialMessage}\n\n${runtimeContract}`
-          : initialMessage;
-        await this.withSessionInjectLock(spawned.session.id, () =>
-          this.injectMessageIntoSession(spawned, kickoffMessage)
-        );
-      }
-      return actualSessionId;
-    } catch (err) {
-      if (spawnedSessionId) {
-        this.cancelBySessionId(spawnedSessionId);
-      }
-      throw err;
-    } finally {
-      this.spawningExecutionIds.delete(execution.id);
-    }
-  }
-
-  private waitForConcurrentSpawnSession(execution: NodeExecution): Promise<string> {
-    const CONCURRENT_SPAWN_TIMEOUT_MS = 30_000;
-    const deadline = Date.now() + CONCURRENT_SPAWN_TIMEOUT_MS;
-    return new Promise((resolve, reject) => {
-      const interval = setInterval(() => {
-        const fresh = this.config.nodeExecutionRepo.getById(execution.id);
-        if (fresh?.agentSessionId) {
-          clearInterval(interval);
-          resolve(fresh.agentSessionId);
-          return;
-        }
-        if (!this.spawningExecutionIds.has(execution.id)) {
-          clearInterval(interval);
-          reject(
-            new Error(
-              `Concurrent spawn for execution ${execution.id} failed before session was created`
-            )
-          );
-          return;
-        }
-        if (Date.now() >= deadline) {
-          clearInterval(interval);
-          reject(
-            new Error(
-              `Concurrent spawn for execution ${execution.id} timed out after ${CONCURRENT_SPAWN_TIMEOUT_MS}ms`
-            )
-          );
-        }
-      }, 50);
-    });
-  }
-
-  async spawnWorkflowNodeAgentForExecutionViaFlow(
-    task: SpaceTask,
-    space: Space,
-    workflow: SpaceWorkflow,
-    workflowRun: SpaceWorkflowRun,
-    execution: NodeExecution,
-    options: SpawnTaskAgentOptions = {}
-  ): Promise<string> {
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(), {
       task,
       space,
@@ -913,12 +645,12 @@ export class TaskAgentManager {
       kickoff: options.kickoff ?? true,
     });
     if (outcome.status === 'error') {
+      this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
-      throw new Error(
-        `Spawn for execution ${execution.id} superseded at stage ${outcome.stage ?? 'unknown'}`
-      );
+      this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
+      throw new SpawnSupersededError(execution.id, outcome.stage ?? null);
     }
     const result = outcome.result;
     if (isSpawnFlowWaitConcurrent(result)) {
@@ -928,7 +660,67 @@ export class TaskAgentManager {
       return result.sessionId;
     }
     this.spawningExecutionIds.delete(execution.id);
+    this.settleConcurrentSpawnWaiters(execution.id, {
+      status: 'resolved',
+      sessionId: result as string,
+    });
     return result as string;
+  }
+
+  private waitForConcurrentSpawnSession(execution: NodeExecution): Promise<string> {
+    const CONCURRENT_SPAWN_TIMEOUT_MS = 30_000;
+    const fresh = this.config.nodeExecutionRepo.getById(execution.id);
+    if (fresh?.agentSessionId) {
+      return Promise.resolve(fresh.agentSessionId);
+    }
+    if (!this.spawningExecutionIds.has(execution.id)) {
+      return Promise.reject(
+        new Error(
+          `Concurrent spawn for execution ${execution.id} failed before session was created`
+        )
+      );
+    }
+    return new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = (finish: () => void) => {
+        if (timer !== undefined) clearTimeout(timer);
+        finish();
+      };
+      timer = setTimeout(() => {
+        settle(() => {
+          reject(
+            new Error(
+              `Concurrent spawn for execution ${execution.id} timed out after ${CONCURRENT_SPAWN_TIMEOUT_MS}ms`
+            )
+          );
+        });
+      }, CONCURRENT_SPAWN_TIMEOUT_MS);
+      const waiters = this.concurrentSpawnWaiters.get(execution.id) ?? [];
+      waiters.push((outcome) => {
+        settle(() => {
+          if (outcome.status === 'resolved') {
+            resolve(outcome.sessionId);
+          } else {
+            reject(
+              new Error(
+                `Concurrent spawn for execution ${execution.id} failed before session was created`
+              )
+            );
+          }
+        });
+      });
+      this.concurrentSpawnWaiters.set(execution.id, waiters);
+    });
+  }
+
+  private settleConcurrentSpawnWaiters(
+    executionId: string,
+    outcome: { status: 'resolved'; sessionId: string } | { status: 'failed' }
+  ): void {
+    const waiters = this.concurrentSpawnWaiters.get(executionId);
+    if (!waiters) return;
+    this.concurrentSpawnWaiters.delete(executionId);
+    for (const waiter of waiters) waiter(outcome);
   }
 
   private buildSpawnExecutionFlowDeps(): SpawnExecutionFlowDeps {
@@ -951,17 +743,26 @@ export class TaskAgentManager {
       releaseExecution: (executionId) => {
         this.spawningExecutionIds.delete(executionId);
       },
+      reserveTaskSpawn: (taskId) =>
+        this.config.taskRepo.reserveSpawnForTick(taskId, SPAWN_RESERVABLE_TASK_STATUSES),
+      releaseTaskSpawn: (taskId) => {
+        this.config.taskRepo.releaseSpawnReservation(taskId);
+      },
       cancelSpawnedSession: (sessionId) => {
         this.cancelBySessionId(sessionId);
       },
       rebindLiveExecution: (execution, sessionId) => {
         const startedAt = execution.startedAt ?? Date.now();
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'in_progress',
-          agentSessionId: sessionId,
-          startedAt,
-          completedAt: null,
-        });
+        return this.config.nodeExecutionRepo.casExecutionStatus(
+          execution.id,
+          SPAWN_BINDABLE_EXECUTION_STATUSES,
+          'in_progress',
+          {
+            agentSessionId: sessionId,
+            startedAt,
+            completedAt: null,
+          }
+        );
       },
       raiseSpawnRejection: (freshTask, rejectedExecution, rejectedWorkflow) => {
         validateTaskAllowsSpawn(freshTask);
@@ -1062,33 +863,16 @@ export class TaskAgentManager {
         return actualSessionId;
       },
       bindExecutionToSession: (execution, sessionId) => {
-        const startedAt = Date.now();
-        const updatedExecution = this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'in_progress',
-          agentSessionId: sessionId,
-          startedAt,
-          completedAt: null,
-        });
-        if (
-          !updatedExecution ||
-          updatedExecution.status !== 'in_progress' ||
-          updatedExecution.agentSessionId !== sessionId ||
-          !updatedExecution.startedAt
-        ) {
-          log.error('[Spawn] Execution state mismatch after spawn', {
-            executionId: execution.id,
-            expectedStatus: 'in_progress',
-            actualStatus: updatedExecution?.status ?? null,
-            expectedSessionId: sessionId,
-            actualSessionId: updatedExecution?.agentSessionId ?? null,
-          });
-          this.config.nodeExecutionRepo.update(execution.id, {
-            status: 'blocked',
-            result: 'Execution state corruption after spawn',
-            completedAt: Date.now(),
-          });
-          throw new Error(`Execution state corruption after spawn for ${execution.id}`);
-        }
+        return this.config.nodeExecutionRepo.casExecutionStatus(
+          execution.id,
+          SPAWN_BINDABLE_EXECUTION_STATUSES,
+          'in_progress',
+          {
+            agentSessionId: sessionId,
+            startedAt: Date.now(),
+            completedAt: null,
+          }
+        );
       },
       attachNodeAgent: async (request) => {
         const spawned = this.getSubSession(request.sessionId);
@@ -1217,12 +1001,21 @@ export class TaskAgentManager {
                     e.agentName === memberInfo.agentName && e.agentSessionId === existingSessionId
                 );
               if (match) {
-                this.config.nodeExecutionRepo.update(match.id, {
-                  status: 'in_progress',
-                  agentSessionId: existingSessionId,
-                  startedAt: match.startedAt ?? Date.now(),
-                  completedAt: null,
-                });
+                const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
+                  match.id,
+                  SPAWN_BINDABLE_EXECUTION_STATUSES,
+                  'in_progress',
+                  {
+                    agentSessionId: existingSessionId,
+                    startedAt: match.startedAt ?? Date.now(),
+                    completedAt: null,
+                  }
+                );
+                if (outcome === 'superseded') {
+                  log.info(
+                    `TaskAgentManager: skipped rebinding execution ${match.id} to reused session ${existingSessionId} — status moved concurrently`
+                  );
+                }
               }
               if (memberInfo.nodeId) {
                 const staleCoOwners = this.config.nodeExecutionRepo
@@ -1238,10 +1031,20 @@ export class TaskAgentManager {
                     stale.status === 'cancelled' ||
                     stale.status === 'waiting_rebind' ||
                     stale.status === 'pending';
-                  this.config.nodeExecutionRepo.update(stale.id, {
-                    agentSessionId: null,
-                    ...(!mustPreserve ? { status: 'idle' as const } : {}),
-                  });
+                  if (mustPreserve) {
+                    this.config.nodeExecutionRepo.update(stale.id, {
+                      agentSessionId: null,
+                    });
+                  } else {
+                    this.config.nodeExecutionRepo.casExecutionStatus(
+                      stale.id,
+                      [stale.status],
+                      'idle',
+                      {
+                        agentSessionId: null,
+                      }
+                    );
+                  }
                 }
               }
             }
@@ -1349,12 +1152,21 @@ export class TaskAgentManager {
         );
         const match = nodeExecs.find((e) => e.agentName === memberInfo.agentName);
         if (match && !match.agentSessionId) {
-          this.config.nodeExecutionRepo.update(match.id, {
-            status: 'in_progress',
-            agentSessionId: sessionId,
-            startedAt: match.startedAt ?? Date.now(),
-            completedAt: null,
-          });
+          const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
+            match.id,
+            SPAWN_BINDABLE_EXECUTION_STATUSES,
+            'in_progress',
+            {
+              agentSessionId: sessionId,
+              startedAt: match.startedAt ?? Date.now(),
+              completedAt: null,
+            }
+          );
+          if (outcome === 'superseded') {
+            log.info(
+              `TaskAgentManager: skipped binding new session ${sessionId} to execution ${match.id} — status moved concurrently`
+            );
+          }
         } else if (match && match.agentSessionId) {
           log.warn(
             `TaskAgentManager: NodeExecution ${match.id} already has agentSessionId ${match.agentSessionId}; skipping update for new session ${sessionId}`
@@ -2193,9 +2005,17 @@ export class TaskAgentManager {
       if (existing.agentSessionId) {
         this.agentSessionIndex.delete(existing.agentSessionId);
       }
-      this.config.nodeExecutionRepo.update(existing.id, {
-        status: 'pending',
-      });
+      const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
+        existing.id,
+        [existing.status],
+        'pending'
+      );
+      if (outcome === 'superseded') {
+        log.info(
+          `TaskAgentManager.activateTargetSessionsForMessage: execution ${existing.id} moved concurrently (${existing.status} no longer current); skipping activation for this call`
+        );
+        return [];
+      }
     }
 
     const gateRoute = decideActivationRouting({
@@ -2257,6 +2077,14 @@ export class TaskAgentManager {
     let sessionId: string | null;
     try {
       sessionId = await Promise.race([spawnPromise, timeoutPromise]);
+    } catch (err) {
+      if (isSpawnSupersededError(err)) {
+        log.info(
+          `TaskAgentManager.activateTargetSessionsForMessage: spawn of agent "${agentName}" for run ${workflowRunId} superseded; skipping activation for this call`
+        );
+        return [];
+      }
+      throw err;
     } finally {
       clearTimeout(timeoutTimer);
     }

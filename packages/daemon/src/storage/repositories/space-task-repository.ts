@@ -715,6 +715,10 @@ export class SpaceTaskRepository {
       .run(taskId);
   }
 
+  clearAllSpawnReservations(): void {
+    this.db.prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL`).run();
+  }
+
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
