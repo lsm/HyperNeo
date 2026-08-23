@@ -173,6 +173,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       errors?: string[];
       terminalReason?: string;
       minutesAgo?: number;
+      resultText?: string;
+      apiErrorStatus?: number;
+      recoveryIntercepted?: boolean;
     }
   ): void {
     const id = `${sessionId}-result-${Math.random().toString(36).slice(2)}`;
@@ -192,6 +195,11 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       uuid: id,
     };
     if (opts.terminalReason) message.terminal_reason = opts.terminalReason;
+    if (opts.subtype === 'success') {
+      message.result = opts.resultText ?? '';
+      if (typeof opts.apiErrorStatus === 'number') message.api_error_status = opts.apiErrorStatus;
+    }
+    if (opts.recoveryIntercepted) message.recovery_intercepted = 1;
     const ts = new Date(Date.now() - (opts.minutesAgo ?? 0) * 60_000).toISOString();
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
@@ -206,6 +214,9 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     taskStatus?: string;
     sessionAlive?: boolean;
     sessionId?: string;
+    resultText?: string;
+    apiErrorStatus?: number;
+    recoveryIntercepted?: boolean;
   }): { runId: string; taskId: string; executionId: string } {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -250,13 +261,23 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
       subtype: opts.subtype,
       errors: opts.errors,
       terminalReason: opts.terminalReason,
+      resultText: opts.resultText,
+      apiErrorStatus: opts.apiErrorStatus,
+      recoveryIntercepted: opts.recoveryIntercepted,
     });
     return { runId: run.id, taskId: task.id, executionId: execution.id };
   }
 
   function resumeToIdle(
     executionId: string,
-    opts: { subtype: string; errors?: string[]; terminalReason?: string }
+    opts: {
+      subtype: string;
+      errors?: string[];
+      terminalReason?: string;
+      resultText?: string;
+      apiErrorStatus?: number;
+      recoveryIntercepted?: boolean;
+    }
   ): void {
     const execution = nodeExecutionRepo.getById(executionId);
     const sessionId = execution?.agentSessionId ?? SESSION;
@@ -334,6 +355,118 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected).toHaveLength(1);
   });
 
+  test('api-error success result (is_error + terminal_reason api_error) injects one continue', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].sessionId).toBe(SESSION);
+    expect(tam._injected[0].message).toContain('[Runtime recovery — terminal error]');
+    expect(tam._injected[0].message).toContain('Connection refused');
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+  });
+
+  test('flagged 429 api-error result is carved out (limit machinery owns it)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Too many requests',
+      apiErrorStatus: 429,
+      recoveryIntercepted: true,
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+  });
+
+  test('flagged usage-limit-text api-error result is carved out (limit machinery owns it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: usage limit reached, upgrades available',
+      recoveryIntercepted: true,
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('unflagged status-only 429 result falls through to runtime continue (limit pipeline declined it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      apiErrorStatus: 429,
+      resultText: 'API Error: Too many requests',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('recovery_intercepted flag carves out a generic-text api-error result (limit pipeline owns it)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 500 Internal Server Error',
+      recoveryIntercepted: true,
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(0);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    expect(notifications).not.toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+  });
+
+  test('generic-text api-error result without the interception flag is still admitted', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 500 Internal Server Error',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].message).toContain('500 Internal Server Error');
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
   test('error_max_budget_usd (cost guard) is never continued or blocked', async () => {
     const { runId, taskId, executionId } = seedIdleErrorRun({
       subtype: 'error_max_budget_usd',
@@ -372,6 +505,23 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     seedIdleErrorRun({
       subtype: 'error_during_execution',
       errors: ['Error: prompt is too long'],
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(
+      tam._injected.filter((m) => m.message.includes('[Runtime recovery — terminal error]'))
+    ).toHaveLength(0);
+  });
+
+  test('prompt-too-long text on an api-error success result is skipped (deferred to the ptl path)', async () => {
+    seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: prompt is too long: 205616 tokens > 200000 maximum',
     });
     const tam = makeTam();
     const rt = new SpaceRuntime(buildConfig(tam));
@@ -642,6 +792,139 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(tam._injected).toHaveLength(1);
     expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
     expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+  });
+
+  test('identical api-error signature recurrence escalates to blocked', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
+    expect(tam._cancelled).toContain(SESSION);
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.result).toContain('Connection refused');
+    expect(notifications).toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+    expect(notifications).toContainEqual(expect.objectContaining({ kind: 'workflow_run_blocked' }));
+  });
+
+  test('declined blocking-limit result falls through to runtime continue (limit pipeline did not claim it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'blocking_limit',
+      resultText: 'API Error: usage limit reached',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('declined rapid-refill-breaker result falls through to runtime continue (limit pipeline did not claim it)', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'rapid_refill_breaker',
+      resultText: 'API Error: rapid refill breaker open',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(tam._injected[0].message).toContain('rapid refill breaker');
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+  });
+
+  test('status-only results with different HTTP statuses are distinct signatures', async () => {
+    const { executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      apiErrorStatus: 502,
+      resultText: '',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      apiErrorStatus: 503,
+      resultText: '',
+    });
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      apiErrorStatus: 504,
+      resultText: '',
+    });
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+  });
+
+  test('distinct api-error texts are distinct signatures (second continue before budget exhaustion)', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: Connection refused (ConnectionRefused)',
+    });
+    const tam = makeTam();
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 502 Bad Gateway',
+    });
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    resumeToIdle(executionId, {
+      subtype: 'success',
+      terminalReason: 'api_error',
+      resultText: 'API Error: 503 Service Unavailable',
+    });
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
   });

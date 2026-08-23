@@ -22,7 +22,7 @@ import {
   resolveNodeAgents,
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { isSDKResultError } from '@hyperneo/shared/sdk';
+import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
   ChannelCycleRepository,
@@ -7217,7 +7217,7 @@ export class SpaceRuntime {
       const sessionId = execution.agentSessionId!;
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
-      if (!lastMessage || !isSDKResultError(lastMessage)) continue;
+      if (!lastMessage || !this.isRecoverableTerminalErrorResult(lastMessage)) continue;
       const sessionExecutions = executionsBySession.get(sessionId) ?? [execution];
 
       if (sessionExecutions.some((e) => this.promptTooLongRecovery.has(`${runId}:${e.id}`))) {
@@ -7225,12 +7225,7 @@ export class SpaceRuntime {
       }
       if (this.isPromptTooLongResultError(lastMessage)) continue;
 
-      if (
-        lastMessage.subtype !== 'error_during_execution' &&
-        lastMessage.subtype !== 'error_max_turns'
-      ) {
-        continue;
-      }
+      if (this.isRecoveryInterceptedResult(lastMessage)) continue;
 
       if (
         sessionExecutions.some(
@@ -7305,7 +7300,8 @@ export class SpaceRuntime {
 
       if (
         state.lastRetriedErrorSignature === signature &&
-        lastMessage.subtype === 'error_during_execution'
+        (lastMessage.subtype === 'error_during_execution' ||
+          this.isApiErrorTerminalResult(lastMessage))
       ) {
         await this.escalateTerminalErrorToBlocked(
           runId,
@@ -7374,11 +7370,13 @@ export class SpaceRuntime {
     spaceId: string,
     canonicalTask: SpaceTask,
     execution: NodeExecution,
-    errorResult: { subtype: string; errors?: string[] },
+    errorResult: { subtype: string; errors?: string[]; result?: string },
     tam: TaskAgentManager,
     detail: string
   ): Promise<void> {
-    const errorSnippet = (errorResult.errors ?? []).join('; ').slice(0, 280);
+    const errorDetails = (errorResult.errors ?? []).join('; ');
+    const fallbackText = typeof errorResult.result === 'string' ? errorResult.result : '';
+    const errorSnippet = (errorDetails !== '' ? errorDetails : fallbackText).slice(0, 280);
     const reason =
       `Agent session ended on a terminal error result and exhausted runtime auto-continue recovery ` +
       `(node ${execution.workflowNodeId}, agent ${execution.agentName}, subtype ${errorResult.subtype}): ` +
@@ -7427,30 +7425,72 @@ export class SpaceRuntime {
     });
   }
 
+  private isRecoverableTerminalErrorResult(
+    message: SDKMessage
+  ): message is Extract<SDKMessage, { type: 'result' }> {
+    if (isSDKResultError(message)) {
+      return message.subtype === 'error_during_execution' || message.subtype === 'error_max_turns';
+    }
+    return this.isApiErrorTerminalResult(message);
+  }
+
+  private isApiErrorTerminalResult(
+    message: SDKMessage
+  ): message is Extract<SDKMessage, { type: 'result'; subtype: 'success' }> {
+    return (
+      isSDKResultSuccess(message) &&
+      message.is_error === true &&
+      (message.terminal_reason === 'api_error' ||
+        message.terminal_reason === 'blocking_limit' ||
+        message.terminal_reason === 'rapid_refill_breaker' ||
+        typeof message.api_error_status === 'number')
+    );
+  }
+
+  private isRecoveryInterceptedResult(message: {
+    subtype: string;
+    recovery_intercepted?: boolean | number;
+  }): boolean {
+    return message.recovery_intercepted === true || message.recovery_intercepted === 1;
+  }
+
   private computeTerminalErrorSignature(message: {
     subtype: string;
     terminal_reason?: string;
     errors?: string[];
+    result?: string;
+    api_error_status?: number | null;
   }): string {
     const terminalReason =
       typeof message.terminal_reason === 'string' ? message.terminal_reason : '';
     const errors = (message.errors ?? []).map((entry) => entry.trim().slice(0, 200));
-    return `${message.subtype}|${terminalReason}|${errors.join('\n')}`;
+    const resultText =
+      typeof message.result === 'string' ? message.result.trim().slice(0, 200) : '';
+    const status =
+      typeof message.api_error_status === 'number' ? String(message.api_error_status) : '';
+    return `${message.subtype}|${terminalReason}|${errors.join('\n')}${resultText}|${status}`;
   }
 
   private isPromptTooLongResultError(message: {
     terminal_reason?: string;
     errors?: string[];
+    result?: string;
   }): boolean {
     if (message.terminal_reason === 'prompt_too_long') return true;
-    return (message.errors ?? []).some((entry) => /prompt is too long/i.test(entry));
+    const text = [
+      ...(message.errors ?? []),
+      typeof message.result === 'string' ? message.result : '',
+    ].join('\n');
+    return /prompt is too long/i.test(text);
   }
 
   private buildTerminalErrorContinueMessage(
     execution: NodeExecution,
-    errorResult: { subtype: string; errors?: string[] }
+    errorResult: { subtype: string; errors?: string[]; result?: string }
   ): string {
-    const errorSummary = (errorResult.errors ?? []).join('; ').slice(0, 280);
+    const errorDetails = (errorResult.errors ?? []).join('; ');
+    const fallbackText = typeof errorResult.result === 'string' ? errorResult.result : '';
+    const errorSummary = (errorDetails !== '' ? errorDetails : fallbackText).slice(0, 280);
     return [
       '[Runtime recovery — terminal error]',
       '',
