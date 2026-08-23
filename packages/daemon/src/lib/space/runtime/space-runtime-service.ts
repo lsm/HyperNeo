@@ -5,12 +5,14 @@ import type {
   Session,
   Space,
   SpaceWorkerAgent,
+  SpaceGoalOutcomeNotification,
   SpaceLongHorizonAgent,
   SpaceTask,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
-import { isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
+import { generateUUID, isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
 import { SpaceMessageResolver } from '../messaging-adapter';
@@ -139,6 +141,7 @@ export interface SpaceRuntimeServiceConfig {
   goalService?: import('../goals/goal-service').SpaceGoalService;
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
+  outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
 }
 
 export class SpaceRuntimeService {
@@ -320,6 +323,53 @@ export class SpaceRuntimeService {
       message.idempotencyKey ?? message.messageId
     );
     return session.getSessionData().id;
+  }
+
+  async deliverGoalOutcomeWake(notification: SpaceGoalOutcomeNotification): Promise<void> {
+    if (this.config.outcomeNotificationRepo?.getById(notification.id)?.status !== 'pending') {
+      return;
+    }
+    const goal = this.config.goalService?.getGoal(notification.goalId);
+    if (!goal || goal.spaceId !== notification.spaceId) return;
+    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    let targetAgentId: string | null = null;
+    if (resolution?.action === 'resolved') {
+      targetAgentId = resolution.owner.agentId;
+    } else if (resolution?.action === 'coordinator_fallback') {
+      targetAgentId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'degraded') {
+      targetAgentId = this.config.longHorizonAgentRepo?.ensureCoordinator(goal.spaceId).id ?? null;
+    }
+    if (!targetAgentId) {
+      log.warn(
+        `Goal outcome wake has no owner or coordinator for notification "${notification.id}"`
+      );
+      return;
+    }
+    const agent = this.config.longHorizonAgentRepo?.getById(targetAgentId);
+    if (!agent) return;
+    const actor: ActorRef = {
+      actorId: `agent:${encodeActorIdComponent(agent.id)}`,
+      kind: 'agent',
+      spaceId: goal.spaceId,
+      handle: `@${agent.handle}`,
+      roles: ['space-agent', 'coordinator'],
+      status: 'inactive',
+    };
+    const { summary, taskStatus, taskTitle, goalTitle } = notification.payload;
+    const detail = summary ? ` ${summary}` : '';
+    const message: MessageRecord = {
+      messageId: generateUUID(),
+      spaceId: goal.spaceId,
+      senderActorId: `agent:coordinator:${goal.spaceId}`,
+      targets: [actor.actorId],
+      body: `Goal outcome ready for review: "${goalTitle}". Task "${taskTitle}" reached ${taskStatus}.${detail}`,
+      kind: 'message',
+      taskId: notification.taskId,
+      idempotencyKey: `goal-outcome:${notification.id}`,
+      createdAt: Date.now(),
+    };
+    await this.queueLongTermAgentMessage(actor, message);
   }
 
   private async queueLongTermAgentMessage(

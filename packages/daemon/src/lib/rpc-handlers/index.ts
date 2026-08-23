@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -438,6 +439,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     traceEvidenceService: evolutionTraceEvidenceService,
     jobQueue: deps.jobQueue,
   });
+  let deliverOutcomeWake: (notification: SpaceGoalOutcomeNotification) => void = () => {};
   const spaceGoalService = new SpaceGoalService({
     goalRepo: spaceGoalRepo,
     goalEventRepo: spaceGoalEventRepo,
@@ -468,35 +470,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
     onOutcomeNotification: (notification) => {
       try {
-        const goal = spaceGoalRepo.getById(notification.goalId);
-        if (!goal) return;
-        const resolution = longHorizonAgentRepo.getPrimaryGoalOwner(goal.id, goal.spaceId);
-        let targetAgentId: string | null = null;
-        if (resolution.action === 'resolved') {
-          targetAgentId = resolution.owner.agentId;
-        } else if (resolution.action === 'degraded') {
-          targetAgentId = longHorizonAgentRepo.ensureCoordinator(goal.spaceId).id;
-        } else if (resolution.action === 'coordinator_fallback') {
-          targetAgentId = resolution.coordinatorAgentId;
-        }
-        if (!targetAgentId) {
-          log.warn(
-            `Goal outcome notification ${notification.id} has no owner or coordinator to wake`
-          );
-          return;
-        }
-        const { summary, taskStatus, taskTitle, goalTitle } = notification.payload;
-        const detail = summary ? ` ${summary}` : '';
-        spaceAgentInboxRepo.enqueue({
-          spaceId: goal.spaceId,
-          targetAgentId,
-          sourceActorId: `agent:coordinator:${goal.spaceId}`,
-          message: `Goal outcome ready for review: "${goalTitle}". Task "${taskTitle}" reached ${taskStatus}.${detail}`,
-          idempotencyKey: `goal-outcome:${notification.id}`,
-        });
-        log.info(
-          `goal.outcome.wake: goalId=${goal.id} taskId=${notification.taskId} target=${targetAgentId}`
-        );
+        deliverOutcomeWake(notification);
       } catch (err) {
         log.warn(
           `Goal outcome wake delivery threw for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
@@ -685,7 +659,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     evolutionScopeService,
     evolutionEpisodeService,
     artifactProfile,
+    outcomeNotificationRepo,
   });
+  deliverOutcomeWake = (notification) => {
+    void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
+      log.warn(
+        `Goal outcome wake delivery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+  };
 
   deps.spaceManager.onSpaceResumedRegister((spaceId) => {
     try {
