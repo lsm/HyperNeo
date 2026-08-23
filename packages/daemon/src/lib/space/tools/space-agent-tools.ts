@@ -3014,6 +3014,91 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
+    async review_goal_outcome(args: {
+      goal_id?: string;
+      task_id?: string;
+      notification_id?: string;
+      disposition?: 'acknowledge' | 'reject' | 'supersede';
+      observed_goal_revision?: number | null;
+    }): Promise<ToolResult> {
+      try {
+        const goalService = requireGoalService();
+        const callerAgentId = myAgentId ?? null;
+        const humanAdmissionAllowed = false;
+        if (!args.notification_id) {
+          const notifications = goalService.listClaimableOutcomeNotifications({
+            spaceId,
+            callerAgentId,
+            humanAdmissionAllowed,
+            limit: 100,
+          });
+          return jsonResult({ success: true, discovery: true, notifications });
+        }
+        if (!args.disposition) {
+          return jsonResult({
+            success: false,
+            error:
+              'disposition (acknowledge, reject, or supersede) is required when notification_id is provided',
+          });
+        }
+        if (!args.goal_id || !args.task_id) {
+          return jsonResult({
+            success: false,
+            error: 'goal_id and task_id are required when notification_id is provided',
+          });
+        }
+        requireGoalInSpace(args.goal_id);
+        const result = goalService.claimOutcomeNotification({
+          notificationId: args.notification_id,
+          claimedGoalId: args.goal_id,
+          claimedTaskId: args.task_id,
+          actorAgentId: callerAgentId,
+          humanAdmissionAllowed,
+          mutatesGoalState: false,
+          dispositionStatus:
+            args.disposition === 'acknowledge'
+              ? 'acknowledged'
+              : args.disposition === 'reject'
+                ? 'rejected'
+                : 'superseded',
+          isResubmission: args.observed_goal_revision != null,
+          observedGoalRevision: args.observed_goal_revision ?? null,
+        });
+        if (result.status === 'claimed' || result.status === 'already_applied') {
+          logAudit(
+            'review_goal_outcome',
+            {
+              notification_id: args.notification_id,
+              goal_id: args.goal_id,
+              disposition: args.disposition,
+              status: result.status,
+            },
+            args.task_id
+          );
+          return jsonResult({
+            success: true,
+            status: result.status,
+            notification: result.notification,
+          });
+        }
+        if (result.status === 'denied') {
+          return jsonResult({
+            success: false,
+            reason: result.reason,
+            currentGoalRevision: result.currentGoalRevision,
+            goal: result.goal,
+          });
+        }
+        return jsonResult({
+          success: false,
+          error: `Notification not found: ${args.notification_id}`,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
     async create_goal(args: {
       title: string;
       description?: string;
@@ -5065,6 +5150,44 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           schedule_id: z.string().describe('ID of the scheduled task to delete'),
         },
         (args) => handlers.delete_scheduled_task(args)
+      )
+    );
+  }
+
+  if (config.callerRole === 'long_term_agent' || config.callerRole === 'coordinator') {
+    tools.push(
+      tool(
+        'review_goal_outcome',
+        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id, and a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without mutating goal state.',
+        {
+          goal_id: z
+            .string()
+            .optional()
+            .describe('Goal ID the outcome belongs to (required for a disposition)'),
+          task_id: z
+            .string()
+            .optional()
+            .describe('Completed task ID the outcome belongs to (required for a disposition)'),
+          notification_id: z
+            .string()
+            .optional()
+            .describe(
+              'Pending notification identity; omit to discover owned pending notifications'
+            ),
+          disposition: z
+            .enum(['acknowledge', 'reject', 'supersede'])
+            .optional()
+            .describe('Terminal disposition'),
+          observed_goal_revision: z
+            .number()
+            .int()
+            .optional()
+            .nullable()
+            .describe(
+              'Goal revision observed by the caller; set when resubmitting after a stale denial'
+            ),
+        },
+        (args) => handlers.review_goal_outcome(args)
       )
     );
   }
