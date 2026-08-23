@@ -210,13 +210,35 @@ describe('getAcpCommandIdentityDigest', () => {
       getAcpCommandIdentityDigest('devin acp --password-policy relaxed')
     );
   });
+
+  test('limits nested header redaction to header-taking commands', () => {
+    expect(getAcpCommandIdentityDigest(`bash -c "tool -H x file-a"`)).not.toBe(
+      getAcpCommandIdentityDigest(`bash -c "tool -H x file-b"`)
+    );
+    expect(
+      getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer topsecret' /a"`)
+    ).toBe(getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer othersafe' /a"`));
+  });
+
+  test('keeps curl ownership across positional arguments', () => {
+    expect(
+      getAcpCommandIdentityDigest('curl https://example.test -H "Authorization: Bearer a"')
+    ).toBe(getAcpCommandIdentityDigest('curl https://example.test -H "Authorization: Bearer b"'));
+    expect(getAcpCommandIdentityDigest('curl https://example.test -u alice:topsecret')).toBe(
+      getAcpCommandIdentityDigest('curl https://example.test -u alice:othersafe')
+    );
+  });
 });
 
 describe('redactCommandSecrets', () => {
   test('preserves token boundaries when redisplaying shell command arguments', () => {
     expect(redactCommandSecrets('sh', ['-c', `rm -- "important file" --token topsecret`])).toEqual([
       '-c',
-      `rm -- "important file" --token [redacted]`,
+      `rm -- "important file" --token topsecret`,
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', `rm "important file" --token topsecret`])).toEqual([
+      '-c',
+      `rm "important file" --token [redacted]`,
     ]);
     expect(
       redactCommandSecrets('sh', ['-c', `curl -H 'Authorization: Bearer topsecret' https://a`])
@@ -242,15 +264,6 @@ describe('redactCommandSecrets', () => {
     expect(
       redactCommandSecrets('sh', ['-c', `echo "--token topsecret" && curl --token topsecret`])
     ).toEqual(['-c', `echo "--token topsecret" && curl --token [redacted]`]);
-  });
-
-  test('limits nested header redaction to header-taking commands', () => {
-    expect(getAcpCommandIdentityDigest(`bash -c "tool -H x file-a"`)).not.toBe(
-      getAcpCommandIdentityDigest(`bash -c "tool -H x file-b"`)
-    );
-    expect(
-      getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer topsecret' /a"`)
-    ).toBe(getAcpCommandIdentityDigest(`bash -c "curl -H 'Authorization: Bearer othersafe' /a"`));
   });
 
   test('stops treating assignments as environment after the command word', () => {
@@ -279,6 +292,20 @@ describe('redactCommandSecrets', () => {
     ).toBe(
       getAcpCommandIdentityDigest(`sh -c 'curl https://a && API_TOKEN=othersafe curl https://b'`)
     );
+    expect(getAcpCommandIdentityDigest("sh -c 'echo ok; API_TOKEN=topsecret curl /a'")).toBe(
+      getAcpCommandIdentityDigest("sh -c 'echo ok; API_TOKEN=othersafe curl /a'")
+    );
+  });
+
+  test('treats tokens after -- as positional data', () => {
+    expect(getAcpCommandIdentityDigest(`rm -- --password file-a`)).not.toBe(
+      getAcpCommandIdentityDigest(`rm -- --password file-b`)
+    );
+    expect(redactCommandSecrets('rm', ['--', '--password', 'file-a'])).toEqual([
+      '--',
+      '--password',
+      'file-a',
+    ]);
   });
 
   test('keeps the quote wrapper around redacted url tokens', () => {

@@ -1383,14 +1383,8 @@ describe('AcpQueryRunner', () => {
 
       const created = await constructorOptions[0].onTerminalCreate?.({
         sessionId: 'acp-session-1',
-        command: process.execPath,
-        args: [
-          '-e',
-          'process.stdout.write(process.argv.slice(1).join(" "))',
-          '--',
-          '--token',
-          'topsecret',
-        ],
+        command: '/bin/sh',
+        args: ['-c', 'printf "[%s]" "$1"', '--token', 'topsecret'],
       });
       if (!created) throw new Error('ACP terminal was not created');
       await constructorOptions[0].onTerminalWaitForExit?.({
@@ -1413,7 +1407,7 @@ describe('AcpQueryRunner', () => {
           throw new Error('ACP terminal produced no output');
         if (!output) await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      expect(output).toContain('--token topsecret');
+      expect(output).toBe('[topsecret]');
       releasePrompt();
       await ctx.queryPromise;
     } finally {

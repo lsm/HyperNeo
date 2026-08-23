@@ -116,12 +116,27 @@ export function redactCommandSecrets(
   let inLeadingAssignments =
     options.shellScript === true ? command.indexOf('=') > 0 || isEnv : true;
   let currentCommand = command;
+  let awaitingCommandWord = options.shellScript === true;
+  let endOfOptions = false;
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (options.shellScript === true && SHELL_OPERATORS.has(arg)) {
+    if (options.shellScript === true && (SHELL_OPERATORS.has(arg) || /[;&|]$/.test(arg))) {
       inLeadingAssignments = true;
+      endOfOptions = false;
+      awaitingCommandWord = true;
+      const word = arg.replace(/[;&|]+$/, '');
+      if (word && !SHELL_OPERATORS.has(word)) currentCommand = word;
       redacted.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      endOfOptions = true;
+      redacted.push(arg);
+      continue;
+    }
+    if (endOfOptions) {
+      redacted.push(redactUrlUserinfo(arg));
       continue;
     }
     if (!arg.startsWith('-')) {
@@ -131,7 +146,10 @@ export function redactCommandSecrets(
       } else {
         if (!isAssignmentShaped) {
           inLeadingAssignments = false;
-          currentCommand = arg;
+          if (awaitingCommandWord) {
+            currentCommand = arg;
+            awaitingCommandWord = false;
+          }
         }
         redacted.push(redactUrlUserinfo(arg));
       }
