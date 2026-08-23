@@ -3,9 +3,9 @@
   "overallPercent": 84.57,
   "packages": {
     "daemon": {
-      "covered": 44900,
-      "total": 52564,
-      "percent": 85.42
+      "covered": 44959,
+      "total": 52629,
+      "percent": 85.43
     },
     "shared": {
       "covered": 1488,
@@ -13,11 +13,11 @@
       "percent": 86.81
     },
     "web": {
-      "covered": 17161,
+      "covered": 17160,
       "total": 20870,
-      "percent": 82.23
+      "percent": 82.22
     }
   },
-  "sourceCommit": "372d787b6fa0c19bf5460a063849f05195f9d55a",
-  "generatedAt": "2026-08-23T18:45:56.083Z"
+  "sourceCommit": "aef89b7493f9734fbd9a2e3fb058776bc8b69b10",
+  "generatedAt": "2026-08-23T18:56:54.007Z"
 }
