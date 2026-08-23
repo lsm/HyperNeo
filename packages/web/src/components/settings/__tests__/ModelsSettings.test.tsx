@@ -296,4 +296,61 @@ describe('ModelsSettings — load failure surfacing', () => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
   });
+
+  it('stops auto-retrying when failure messages alternate within one episode', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest
+      .mockRejectedValueOnce(new Error('alpha'))
+      .mockRejectedValueOnce(new Error('beta'))
+      .mockRejectedValueOnce(new Error('alpha'));
+
+    render(<ModelsSettings />);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(3);
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockRequest).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole('alert').textContent).toContain('alpha');
+  });
+
+  it('runs a deferred force refresh when the allowlist save lands during an active load', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockRejectedValue(new Error('boom'));
+
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(2);
+    });
+
+    let resolveRequest: (value: { models: unknown[] }) => void = () => {};
+    mockRequest.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      })
+    );
+
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(3);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockRequest).toHaveBeenCalledTimes(3);
+
+    mockRequest.mockResolvedValue({ models: [] });
+    resolveRequest({ models: [] });
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
 });

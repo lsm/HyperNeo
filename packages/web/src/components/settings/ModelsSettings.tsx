@@ -450,8 +450,9 @@ export function ModelsSettings() {
   const [loadError, setLoadError] = useState<{ message: string; forceRefresh: boolean } | null>(
     null
   );
-  const autoRetriedErrorRef = useRef<string | null>(null);
+  const autoRetriedMessagesRef = useRef<Set<string>>(new Set());
   const fetchInFlightRef = useRef(false);
+  const pendingForceRefreshRef = useRef(false);
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -469,7 +470,10 @@ export function ModelsSettings() {
   }, [settings]);
 
   const fetchModels = async (forceRefresh: boolean) => {
-    if (fetchInFlightRef.current) return;
+    if (fetchInFlightRef.current) {
+      if (forceRefresh) pendingForceRefreshRef.current = true;
+      return;
+    }
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       setLoadError({ message: 'Not connected to server', forceRefresh });
@@ -502,6 +506,10 @@ export function ModelsSettings() {
       throw e;
     } finally {
       fetchInFlightRef.current = false;
+      if (pendingForceRefreshRef.current) {
+        pendingForceRefreshRef.current = false;
+        void loadModels(true);
+      }
     }
   };
 
@@ -564,12 +572,12 @@ export function ModelsSettings() {
 
   useEffect(() => {
     if (!loadError) {
-      autoRetriedErrorRef.current = null;
+      autoRetriedMessagesRef.current.clear();
       return;
     }
     if (!isConnected) return;
-    if (autoRetriedErrorRef.current === loadError.message) return;
-    autoRetriedErrorRef.current = loadError.message;
+    if (autoRetriedMessagesRef.current.has(loadError.message)) return;
+    autoRetriedMessagesRef.current.add(loadError.message);
     void loadModels(loadError.forceRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, loadError]);
