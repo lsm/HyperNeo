@@ -56,6 +56,15 @@ for the policy-parameterization discipline the chain settled on and its
 closing sweep. (Pilot 8 is reserved for chain I, the pending-queue drain +
 injection shell, by Pilot 7's closing note; pilot 9 is chain C's.)
 
+Validated further by pilot 11 / chain B (2026-08-23): the `sdk_messages`
+write side — save admission as a pure core over a normalized input, badge
+maintenance as an instruction set, and the delivery-status flip as a
+plan/interpret whose per-instruction CAS guards apply inside one
+transaction (a Phase 4 relative at the storage layer: guarded effects
+inside the transaction, not after commit). See "Pilot 11" below for
+the coupled TS/SQL badge predicate, the per-variant admission placement
+divergence, and the closing sweep.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -1430,6 +1439,233 @@ tests net ≈ +1,457 (A1 +794 characterization pins; projections suite +204
 A2, +163 A3, +246 A4, +50 A5). As in pilots 3–7, the value is testability:
 the A1 pins run against pure functions, no database fixture required for the
 policy tables.
+
+## Pilot 11 — chain B: save admission, badge instruction set, status-plan interpreter (2026-08-23)
+
+Chain B is the write-side chain of the `sdk_messages` superpipe survey (task
+#1249, #2713): the three save paths' admission and badge decisions extracted
+as pure cores, and the delivery-status flip extracted as a pure planner plus
+a transaction-shell interpreter that owns its own SQL — the repository
+keeping the surrounding reads, transactions, and notifications. Five PRs:
+B1 the save-admission
+drift pins (#2736), B2 the admission core (#2767), B3 the badge instruction
+set (#2794), B4 the `updateMessageStatus` plan/interpret (#2815), and this
+closing sweep. The chain ran interleaved with chains A (read projections)
+and C (FTS admission + delivery-status routing) on the same file; changes
+from those chains and their review fixes are theirs, not credited here.
+
+Extracted:
+
+- `sdk-message-admission.ts` (169 lines) — `decideMessageAdmission` over a
+  normalized input, returning one admission record (`isRenderable`,
+  `isTerminal`, `isConversationAnchor`, `countsTowardsBadge`,
+  `parentToolUseId`, `sdkUuid`, `replacementEdges`), plus the per-fact
+  extractors (`computeIsRenderable`, `computeIsTerminal`,
+  `extractParentToolUseId`, `extractSdkUuid`, `extractReplacementEdges`) and
+  the `SendStatus` type.
+- `sdk-message-badge.ts` (16 lines) — the badge planners:
+  `planAdmissionBadgeUpdate` (delta `+1` iff the admission record counts) and
+  `planBadgeRecompute`, over the `BadgeUpdateInstruction` union.
+- `sdk-message-status-plan.ts` (137 lines) — `planMessageStatusApplication`
+  over the pending-row snapshot, producing the ordered instruction list
+  (`touch-timestamp` / `promote-turn` / `allocate-consumed-seq`), and
+  `applyMessageStatusPlan`, the transaction-shell interpreter with the
+  expected-status guards. The module's halves differ in kind: the planner is
+  pure, the interpreter is not — it prepares its own statements, reads the
+  clock, invokes the sequence allocator, and writes — so this module is a
+  planner/interpreter pair, not a third pure core.
+
+**Shape call: pure function, not `decisionRun`.** The save gates are
+independent derivations off one message — renderability, terminality,
+anchorhood, badge visibility, uuid, replacement edges — with no precedence
+among them; a gate list would have manufactured a first-decision-wins order
+the facts do not have. The ADR's original sanction (pilot 1) already covered
+plain pure-function admission gates. Chain B's addition is the *normalized
+input*: `normalizeMessageAdmissionInput` folds the disjoint
+`HyperNeoActionMessage` shape into a synthetic `SDKMessage`, so the three
+save sites — `saveSDKMessage`, `saveUserMessageCore`,
+`saveHyperNeoActionMessage` — consume one core. The deliberate divergences
+split by where they live: the one the core itself owns — the anchor status
+gate — becomes an explicit `variant` parameter, while `consumed_seq`
+allocation stays site-local policy interpreting the shared record:
+
+- **Anchor status gate.** `isConversationAnchor` requires `sendStatus`
+  `consumed`/`failed` on the user variant only; the SDK variant takes no send
+  status (the INSERT omits the column, so the schema default `'consumed'`
+  applies) and bypasses only that send-status arm — renderability and
+  user-type still gate the anchor, so non-user or non-renderable SDK rows
+  anchor exactly as they would on the user path.
+- **`consumed_seq` at insert.** The SDK variant allocates a sequence for
+  terminal results inside its insert transaction; the user variant leaves the
+  column NULL at insert and allocates only at the consumed flip. B1 pinned
+  this as the divergence a shared `isTerminal` field must not flatten — the
+  allocation decision stays at the sites (the flip side is B4's
+  interpreter-owned instruction), so the record carries the fact and each
+  site keeps its policy.
+- **Badge visibility** rides the same record (`countsTowardsBadge`) —
+  previously a repository-private predicate invoked at each site, now a core
+  field whose delta/recompute split B3 unified.
+
+**B3 — badge maintenance as an instruction set.** A save whose admission
+counts emits `delta(+1)`; a non-counting save emits the union's no-op
+`none` (hidden-subtype rows, tool-child rows, pending user rows); the
+status flip, both rewind operators, and `deletePendingUserMessage` emit a
+**recompute** instruction (authoritative `COUNT(*)` + conditional update,
+which also repairs pre-existing counter drift) — never delta subtraction,
+which would preserve exactly that drift. Two notification asymmetries are
+pinned, not normalized: `deletePendingUserMessage` recomputes but emits no
+`sessions` notification, while the rewind operators notify iff the recompute
+changed the row; and `recomputeVisibleMessageCount` stays public and
+notification-free for the recovery script (`scripts/recover-messages.ts:276`).
+The interpreter is the four-line `applyBadgeUpdate`; the rewind pair itself
+later collapsed into one `deleteMessagesFromTimestamp` (interleaved #2812,
+finishing B3's unification).
+
+**B4 — a plan/interpret flip with per-instruction CAS guards.**
+`updateMessageStatus` gathers the pending-row snapshot and plans *before*
+opening the transaction, then interprets inside it: the timestamp, turn,
+and sequence instructions execute first, each itself a guarded conditional
+update, and the final `send_status` flip is the last guarded statement in
+the same transaction, with the badge recompute alongside and only the
+notifications and search-index scheduling after commit. That ordering —
+effects-before-status-CAS, all inside the transaction — is a *relative* of
+the ADR's Phase 4 wording (read → plan → CAS within transaction → apply
+effects *after commit*), not an instance of it: the effects here are DB-only
+rows guarded by the same predicate, so transactionality, not commit
+ordering, is what makes them safe. The snapshot-to-apply gap is exactly
+why the expected-status guards below exist, and the synchronous
+single-threaded connection is why it stays theoretical today; the
+plan/interpret boundary must not widen it. Two disciplines carried
+structurally. First, *newly allocated values never appear in the plan*:
+turn promotion reads the live `MAX(conversation_turn_index)` per task (a
+shared-turn base frozen once per task inside the transaction), and a fresh
+`consumed_seq` comes from the atomic single-row `UPDATE … RETURNING`
+allocator — both invoked by the interpreter inside the open transaction,
+because pre-transaction allocation of either axis would make planning
+effectful or let a concurrent writer advancing the same task invalidate the
+plan. The one deliberate exception is a caller-provided sequence:
+`markDeliveriesConsumedAtTurnEnd` passes the result row's existing
+`consumed_seq` as `options.consumedSeq`, the planner stores it in each
+`allocate-consumed-seq` instruction as `providedSeq`, and the interpreter
+reuses it without spending an atomic allocation — pinned as such. Second,
+*every planned transition carries an expected-status guard*
+(`AND send_status IN (pending set)`): a row outside the pending set at
+apply time fails its whole transition — no stale timestamp, turn, or
+sequence instruction executes on it — and (the PR-review fix) the
+seq-allocation arm re-probes the window before spending an atomic sequence,
+so a rejected row does not burn one. The guard is membership-at-apply, not
+continuous membership since the snapshot — no version or status history is
+recorded — so an ABA round trip between snapshot and apply (say
+`enqueued → failed → enqueued` through the live reopen route) re-admits the
+row and its planned effects land. The guard's scope is the planned set
+only, because the snapshot is gathered solely for `consumed`/`failed`
+targets: intermediate-target updates (`enqueued`, `deferred`, `submitted` —
+the re-queue paths call these live) take the unconditional arm with no
+`send_status` predicate at all, as do ids outside the snapshot on terminal
+targets — flipping without turn/seq/timestamp effects, the pre-existing
+behavior for already-settled rows, now pinned as such. The options-carrying
+callers (`sharedTurn`, `consumedSeq`) are repository-internal delivery
+wrappers; the `Database` facade exposes the 2-arg form only.
+
+**Boundary caveats.**
+
+1. **The badge predicate lives twice.** The core's TypeScript
+   `isVisibleBadgeRow` (delta path) and `recomputeVisibleMessageCount`'s SQL
+   `WHERE` (authoritative path) encode the same membership — no
+   `parent_tool_use_id`, hidden subtypes excluded, user rows counted only
+   when consumed/failed — in two languages and two modules, and the
+   hidden-subtype list is itself defined twice (`BADGE_HIDDEN_SUBTYPES` in
+   the core; `EXCLUDED_FROM_PAGINATION_SQL_LIST` in the repository, whose
+   name records its first job — pagination and badge exclusion share one
+   list). The pair is coupled by design — recompute is what repairs delta
+   drift — but a change to either predicate must be mirrored in the other,
+   or recompute silently "repairs" the counter toward a different definition
+   of visible.
+2. **Admission placement diverges by site, preserved — and the placement is
+   not itself an invariant.** The SDK variant computes its record before its
+   transaction; the user variant computes it inside the composed transaction
+   (the `saveUserMessage` wrapper and the delivery outbox both call
+   `saveUserMessageCore` transactionally). The derivation reads only the
+   in-scope message and its options — no repository, clock, or other
+   mutable state — so the two placements cannot observe different inputs;
+   nothing about admission freshness pins the code where it is. What the
+   placement is load-bearing for is composition shape: the user core is
+   itself the transactional unit its callers compose (core inside the
+   transaction, `runPostSaveSideEffects` after commit), so hoisting its
+   admission computation out would change that seam, not correctness.
+   Recorded so the divergence is not read as a discipline.
+3. **The normalized input is a type seam.** Folding `HyperNeoActionMessage`
+   into a synthetic `SDKMessage` is an `as unknown as SDKMessage` cast. The
+   core reads `type`, `subtype`, and `uuid` off every input, and additionally
+   `message.content` (renderability), `parent_tool_use_id`, and
+   `supersedes`/`retracted_message_uuids` (replacement edges) where present —
+   the synthetic object omits all of those, and the omissions are
+   load-bearing defaults (non-array content renders, no parent, no edges). A
+   new admission fact reading deeper structure must extend the normalizer's
+   synthetic shape or its omissions become silent defaults; the seam is why
+   the disjoint shape crosses at all.
+4. **The repository re-export block is suite-pinned.** `computeIsRenderable`,
+   `computeIsTerminal`, `extractParentToolUseId`, and `extractReplacementEdges`
+   re-export from `sdk-message-repository.ts` for the helpers suite, which
+   pins them through the facade (`extractSdkUuid` is production-consumed by
+   the delivery outbox; `SendStatus` widely) — the pilots 6/7
+   pinned-export phenomenon, recorded rather than folded.
+
+**Worker and recovery-script contracts, verified by this sweep.** The
+constructor stays `(db, reactiveDb?)`: the message-search worker constructs
+the repository on a read-only connection (`{readonly: true}` plus
+`PRAGMA query_only`, `message-search-worker.ts:29`), while the recovery
+script constructs it on a writable one whose writes include the recompute's
+`UPDATE` (`scripts/recover-messages.ts:276`) — what the two share is the
+absence of a reactive database, against which every notification is a `?.`
+no-op, and `recomputeVisibleMessageCount` is the script's public entry. The
+module tops stay worker-safe across the repository and every module it
+imports: module-scope initialization exists — constant `Set`s,
+`message-search-admission.ts` composing its `decisionRun` pipeline at
+import, and the shared logger's `globalConfig` reading
+`NODE_ENV`/`LOG_LEVEL`/`LOG_FILTER` — but none of it touches database or
+reactive state, which is the requirement the worker's import graph
+actually imposes; the logging env read is the accepted exception, harmless
+on the worker's read-only connection. The facade
+(`storage/index.ts`) and the reactive proxy's `METHOD_TABLE_MAP` were not
+touched by any chain B PR. The proxy dispatches with `.apply(target, args)`,
+but the proxied facade method is itself 2-arg — `Database.updateMessageStatus`
+forwards `(messageIds, newStatus)` and would discard a third — so the
+options-bearing callers work because they are repository-internal wrappers
+calling `this.updateMessageStatus` directly, bypassing the facade; that
+narrowing is the recorded shape, not transparent passthrough. The
+interleaved `willEmitTableChange` addition (#2814) was that PR's own
+incident fix, not chain B's.
+
+**The closing sweep found no dead inline admission derivations.** B2
+deleted the inline copies as it landed — `isVisibleBadgeRow`, the per-site
+`isRenderable`/`isTerminal`/`isConversationAnchor`/`countsTowardsBadge`
+derivations at all three save sites — and B3 the bare
+`bumpVisibleMessageCount(…, 1)` calls; every save site now reads
+`admission.*` only, and knip (files/dependencies/exports), oxlint, and
+`tsc --noEmit` are clean, verified in this sweep. Live near-duplicates
+deliberately kept: the badge SQL mirror of caveat 1; `message-queue.ts`'s
+local `extractParentToolUseId` — a different function on a different input
+shape (queued content blocks, not an `SDKMessage`), never a core consumer
+despite the name; and the per-variant admission placement of caveat 2.
+
+**Costs:** production +418/−203 across B2–B4, chain-B-attributable only —
+three extracted modules +322 (169 + 16 + 137: two pure cores plus the
+planner/interpreter pair), the repository itself +96/−203
+(net −107; the survey's 2,199-line file was simultaneously shrinking under
+chains A and C). Tests +1,321: B1's drift matrix and task-id-resolution
+reactive harness +618, the admission suite +202, the badge suite +193, the
+status-plan suite +308. B1's matrix is the chain's parity proof (its save
+cells are one fixed-status `saveSDKMessage` row plus five send-status
+`saveUserMessageCore` rows — the SDK save API takes no status, so no
+pair × status grid exists — alongside the fixed-shape hyperneo-action
+table and the core/side-effects composition contract); B4's suite pins
+the CAS guards, including the probe's allocator skip.
+
+Pilot 11 PRs: #2736, #2767, #2794, #2815, plus this closing sweep. Numbering
+ledger for the survey's chains: pilot 7 is chain P; 8 stays reserved for chain I
+per pilot 7's note; 9 is chain C per its in-flight closing sweep; 10 is chain A
+(#2819); 11 is chain B.
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1466,7 +1702,13 @@ policy tables.
   join-all policy parameter, renderable-text projection, page composition) —
   see "Pilot 10" above for the policy-parameterization idiom and the closing
   sweep. The repository's read projections are done; the write/admission side
-  is chain C's (pilot 9), not revisited here.
+  is chain B's (pilot 11), not revisited here.
+- **Done (chain B / pilot 11):** the save-admission core, badge instruction
+  set, and `updateMessageStatus` plan interpreter under
+  `src/storage/repositories/` — see "Pilot 11" above for the
+  variant-parameterized divergences, the badge predicate's coupled TS/SQL
+  pair, and the worker/recovery-script contract. Chain C from the same
+  survey lands its own note.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1582,5 +1824,14 @@ policy tables.
   `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
   (A1), module suite in `sdk-message-projections.test.ts`. Pilot 10 PRs:
   #2730, #2766, #2793, #2811, plus this closing sweep.
+- Pilot 11 (chain B) files:
+  `packages/daemon/src/storage/repositories/{sdk-message-admission,sdk-message-badge,sdk-message-status-plan}.ts`;
+  interpreters in `sdk-message-repository.ts` (`saveSDKMessage`,
+  `saveUserMessageCore`, `saveHyperNeoActionMessage`, `updateMessageStatus`,
+  `applyBadgeUpdate`); pins in
+  `packages/daemon/tests/unit/4-space-storage/storage/{sdk-message-save-admission-drift,sdk-message-admission,sdk-message-badge,sdk-message-status-plan,task-id-resolution-cache}.test.ts`;
+  survey and chain plan in
+  `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 11 PRs:
+  #2736, #2767, #2794, #2815, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
