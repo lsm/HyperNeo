@@ -3,6 +3,7 @@ import {
   fingerprintDeliveryClaim,
   type MessageDeliveryLifecycleFields,
 } from '../lib/agent/message-delivery-metrics';
+import { Logger } from '../lib/logger';
 import type { TableChangeScope } from './reactive-database';
 import type {
   Job,
@@ -10,6 +11,17 @@ import type {
   PayloadMatch,
   ReclaimedJobClaim,
 } from './repositories/job-queue-repository';
+
+const log = new Logger('job-queue-processor');
+
+function describeStorageError(error: unknown): string {
+  if (error instanceof Error) {
+    const code = (error as { code?: unknown }).code;
+    const suffix = typeof code === 'string' ? ` (${code})` : '';
+    return `${error.name}: ${error.message}${suffix}`;
+  }
+  return String(error);
+}
 
 export interface JobHandlerStageDetails {
   generation?: number;
@@ -167,7 +179,10 @@ export class JobQueueProcessor {
   private readonly settlementGraceMs: number;
   private readonly heartbeatIntervalMs: number;
   private lastStaleCheck = 0;
+  private consecutivePollErrors = 0;
+  private lastPollErrorLogAt = 0;
   private static readonly STALE_CHECK_INTERVAL = 60_000;
+  private static readonly POLL_ERROR_LOG_INTERVAL_MS = 60_000;
 
   constructor(
     private repo: JobQueueRepository,
@@ -191,7 +206,11 @@ export class JobQueueProcessor {
 
   start(): void {
     this.running = true;
-    this.reclaimStaleClaims(Date.now() - this.staleThresholdMs);
+    try {
+      this.reclaimStaleClaims(Date.now() - this.staleThresholdMs);
+    } catch (error) {
+      this.notePollError('start_reclaim', undefined, error);
+    }
     this.lastStaleCheck = Date.now();
     this.pollTimer = setInterval(() => {
       this.tick();
@@ -224,52 +243,77 @@ export class JobQueueProcessor {
   }
 
   async tick(): Promise<number> {
-    this.checkStaleJobs();
-
     let claimed = 0;
-    let excludeIds: string[] | undefined;
-    if (this.settlingReclaimedJobIds.size > 0) {
-      const now = Date.now();
-      for (const [jobId, entry] of this.settlingReclaimedJobIds) {
-        if (entry.expireAt <= now) {
-          this.evictWedgedClaimSlot(jobId, entry.claimToken);
-          this.settlingReclaimedJobIds.delete(jobId);
-        }
+    let errored = false;
+    try {
+      try {
+        this.checkStaleJobs();
+      } catch (error) {
+        errored = true;
+        this.notePollError('stale_check', undefined, error);
       }
+
+      let excludeIds: string[] | undefined;
       if (this.settlingReclaimedJobIds.size > 0) {
-        excludeIds = [...this.settlingReclaimedJobIds.keys()];
-      }
-    }
-
-    let cappedSlots = this.maxConcurrent - this.inFlightCapped;
-    if (cappedSlots > 0) {
-      for (const [queue, reg] of this.handlers) {
-        if (cappedSlots <= 0) break;
-        const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
-        for (const job of jobs) {
-          this.emitLifecycle('claim', job, 'capped');
-          void this.processJob(job, false);
+        const now = Date.now();
+        for (const [jobId, entry] of this.settlingReclaimedJobIds) {
+          if (entry.expireAt <= now) {
+            this.evictWedgedClaimSlot(jobId, entry.claimToken);
+            this.settlingReclaimedJobIds.delete(jobId);
+          }
         }
-        claimed += jobs.length;
-        cappedSlots -= jobs.length;
-      }
-    }
-
-    let exemptSlots = this.maxConcurrent - this.inFlightExempt;
-    if (exemptSlots > 0) {
-      for (const [queue, reg] of this.handlers) {
-        if (exemptSlots <= 0) break;
-        if (!reg.exemptJobs) continue;
-        const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots, excludeIds);
-        for (const job of jobs) {
-          this.emitLifecycle('claim', job, 'exempt');
-          void this.processJob(job, true);
+        if (this.settlingReclaimedJobIds.size > 0) {
+          excludeIds = [...this.settlingReclaimedJobIds.keys()];
         }
-        claimed += jobs.length;
-        exemptSlots -= jobs.length;
       }
-    }
 
+      let cappedSlots = this.maxConcurrent - this.inFlightCapped;
+      if (cappedSlots > 0) {
+        for (const [queue, reg] of this.handlers) {
+          if (cappedSlots <= 0) break;
+          let jobs: Job[];
+          try {
+            jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
+          } catch (error) {
+            errored = true;
+            this.notePollError('dequeue', queue, error);
+            continue;
+          }
+          for (const job of jobs) {
+            this.emitLifecycle('claim', job, 'capped');
+            void this.processJob(job, false);
+          }
+          claimed += jobs.length;
+          cappedSlots -= jobs.length;
+        }
+      }
+
+      let exemptSlots = this.maxConcurrent - this.inFlightExempt;
+      if (exemptSlots > 0) {
+        for (const [queue, reg] of this.handlers) {
+          if (exemptSlots <= 0) break;
+          if (!reg.exemptJobs) continue;
+          let jobs: Job[];
+          try {
+            jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots, excludeIds);
+          } catch (error) {
+            errored = true;
+            this.notePollError('dequeue_exempt', queue, error);
+            continue;
+          }
+          for (const job of jobs) {
+            this.emitLifecycle('claim', job, 'exempt');
+            void this.processJob(job, true);
+          }
+          claimed += jobs.length;
+          exemptSlots -= jobs.length;
+        }
+      }
+    } catch (error) {
+      errored = true;
+      this.notePollError('tick', undefined, error);
+    }
+    if (!errored) this.notePollRecovery();
     return claimed;
   }
 
@@ -287,7 +331,14 @@ export class JobQueueProcessor {
         clearInterval(heartbeat);
         return;
       }
-      if (!this.repo.heartbeat(job.id, job.claimToken)) {
+      let alive: boolean;
+      try {
+        alive = this.repo.heartbeat(job.id, job.claimToken);
+      } catch (error) {
+        this.notePollError('heartbeat', job.queue, error);
+        return;
+      }
+      if (!alive) {
         this.emitLifecycle('old_handler_aborted', job, record.slotClass, {
           stage: record.stage,
           reason: 'heartbeat_rejected',
@@ -360,21 +411,27 @@ export class JobQueueProcessor {
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
-      const updated =
-        err instanceof DeadLetterImmediatelyError
-          ? this.repo.markDead(job.id, message, job.claimToken)
-          : this.repo.fail(job.id, message, job.claimToken);
-      record.settlement = updated?.status ?? 'fenced';
-      if (updated) {
-        this.emitLifecycle('settled', job, record.slotClass, {
-          stage: record.stage,
-          outcome: updated.status,
-        });
-      } else if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
-        this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
-          stage: record.stage,
-          reason: 'claim_replaced',
-        });
+      let updated: Job | null = null;
+      try {
+        updated =
+          err instanceof DeadLetterImmediatelyError
+            ? this.repo.markDead(job.id, message, job.claimToken)
+            : this.repo.fail(job.id, message, job.claimToken);
+        record.settlement = updated?.status ?? 'fenced';
+        if (updated) {
+          this.emitLifecycle('settled', job, record.slotClass, {
+            stage: record.stage,
+            outcome: updated.status,
+          });
+        } else if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+          this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
+            stage: record.stage,
+            reason: 'claim_replaced',
+          });
+        }
+      } catch (settleError) {
+        record.settlement = 'settle_failed';
+        this.notePollError('settle', job.queue, settleError);
       }
       if (updated && updated.status === 'dead' && reg?.onDead) {
         try {
@@ -582,8 +639,35 @@ export class JobQueueProcessor {
 
   private notifyChange(scope?: TableChangeScope): void {
     if (this.changeNotifier) {
-      this.changeNotifier('job_queue', scope);
+      try {
+        this.changeNotifier('job_queue', scope);
+      } catch (error) {
+        this.notePollError('notify_change', undefined, error);
+      }
     }
+  }
+
+  private notePollError(phase: string, queue: string | undefined, error: unknown): void {
+    this.consecutivePollErrors++;
+    const now = Date.now();
+    if (
+      this.consecutivePollErrors > 1 &&
+      now - this.lastPollErrorLogAt < JobQueueProcessor.POLL_ERROR_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.lastPollErrorLogAt = now;
+    const scope = queue === undefined ? `phase=${phase}` : `phase=${phase} queue=${queue}`;
+    log.error(
+      `job queue poll error (${scope}, consecutive=${this.consecutivePollErrors}):` +
+        ` ${describeStorageError(error)}`
+    );
+  }
+
+  private notePollRecovery(): void {
+    if (this.consecutivePollErrors === 0) return;
+    log.info(`job queue poll recovered after ${this.consecutivePollErrors} consecutive error(s)`);
+    this.consecutivePollErrors = 0;
   }
 
   private checkStaleJobs(): void {
