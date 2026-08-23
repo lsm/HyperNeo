@@ -74,6 +74,10 @@ export interface SpaceGoalServiceDeps {
     import('../evolution-scope-service').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
+  reactiveDb?: Pick<
+    import('../../../storage/reactive-database').ReactiveDatabase,
+    'beginTransaction' | 'commitTransaction' | 'abortTransaction'
+  >;
 }
 
 export class SpaceGoalService {
@@ -529,7 +533,16 @@ export class SpaceGoalService {
 
   private runAtomic<T>(fn: () => T): T {
     if (!this.deps.db) return fn();
-    return this.deps.db.transaction(fn)();
+    const reactive = this.deps.reactiveDb;
+    reactive?.beginTransaction();
+    try {
+      const result = this.deps.db.transaction(fn)();
+      reactive?.commitTransaction();
+      return result;
+    } catch (err) {
+      reactive?.abortTransaction();
+      throw err;
+    }
   }
 
   private pauseLinkedScheduleOrClear(goal: SpaceGoal): void {
