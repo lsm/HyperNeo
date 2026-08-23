@@ -2200,6 +2200,393 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('delivery-transition window matrix — accepted from-statuses for every uuid-keyed wrapper (C1)', () => {
+    const ALL_STATUSES = ['deferred', 'enqueued', 'submitted', 'consumed', 'failed'] as const;
+    type FromStatus = (typeof ALL_STATUSES)[number];
+
+    function sendStatusOf(dbId: string): string | null {
+      return (
+        db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get(dbId) as {
+          send_status: string | null;
+        }
+      ).send_status;
+    }
+
+    function seed(status: FromStatus): { sessionId: string; uuid: string; dbId: string } {
+      const key = `${status}-${crypto.randomUUID().slice(0, 8)}`;
+      const sessionId = `matrix-session-${key}`;
+      const uuid = `matrix-uuid-${key}`;
+      const dbId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage(`matrix member ${status}`, uuid),
+        status
+      );
+      return { sessionId, uuid, dbId };
+    }
+
+    const CASES: Array<{
+      wrapper: string;
+      accepted: readonly FromStatus[];
+      target: FromStatus;
+      invoke: (sessionId: string, uuid: string) => string | null;
+    }> = [
+      {
+        wrapper: 'markDeliveryFailedByUuid',
+        accepted: ['enqueued', 'deferred', 'submitted'],
+        target: 'failed',
+        invoke: (sessionId, uuid) => repository.markDeliveryFailedByUuid(sessionId, uuid),
+      },
+      {
+        wrapper: 'markDeliveryFailedByUuidInclusive',
+        accepted: ['enqueued', 'submitted', 'consumed'],
+        target: 'failed',
+        invoke: (sessionId, uuid) => repository.markDeliveryFailedByUuidInclusive(sessionId, uuid),
+      },
+      {
+        wrapper: 'markDeliveryConsumedByUuid',
+        accepted: ['enqueued', 'submitted'],
+        target: 'consumed',
+        invoke: (sessionId, uuid) => repository.markDeliveryConsumedByUuid(sessionId, uuid),
+      },
+      {
+        wrapper: 'markDeliverySubmittedByUuids',
+        accepted: ['enqueued'],
+        target: 'submitted',
+        invoke: (sessionId, uuid) =>
+          repository.markDeliverySubmittedByUuids(sessionId, [uuid])[0] ?? null,
+      },
+      {
+        wrapper: 'reopenDeliveryByUuid',
+        accepted: ['failed'],
+        target: 'enqueued',
+        invoke: (sessionId, uuid) => repository.reopenDeliveryByUuid(sessionId, uuid),
+      },
+      {
+        wrapper: 'markDeliveryRetryableByUuid',
+        accepted: ['consumed'],
+        target: 'enqueued',
+        invoke: (sessionId, uuid) => repository.markDeliveryRetryableByUuid(sessionId, uuid),
+      },
+      {
+        wrapper: 'markDeliveryDeferredByUuid',
+        accepted: ['enqueued'],
+        target: 'deferred',
+        invoke: (sessionId, uuid) => repository.markDeliveryDeferredByUuid(sessionId, uuid),
+      },
+    ];
+
+    for (const { wrapper, accepted, target, invoke } of CASES) {
+      it(`${wrapper}: ${accepted.join('/')} → ${target}; every other from-status is a null no-op`, () => {
+        for (const status of ALL_STATUSES) {
+          const { sessionId, uuid, dbId } = seed(status);
+          const isAccepted = accepted.includes(status);
+
+          expect(invoke(sessionId, uuid)).toBe(isAccepted ? dbId : null);
+          expect(sendStatusOf(dbId)).toBe(isAccepted ? target : status);
+        }
+      });
+    }
+
+    it('markDeliverySubmittedByUuids skips per-uuid: mixed from-statuses flip only the enqueued members', () => {
+      const sessionId = 'matrix-submitted-mixed';
+      const enqueuedId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('submit me', 'uuid-mix-enq'),
+        'enqueued'
+      );
+      const deferredId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('hold me', 'uuid-mix-def'),
+        'deferred'
+      );
+      const submittedId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('already submitted', 'uuid-mix-sub'),
+        'submitted'
+      );
+
+      expect(
+        repository.markDeliverySubmittedByUuids(sessionId, [
+          'uuid-mix-def',
+          'uuid-mix-enq',
+          'uuid-mix-sub',
+          'uuid-mix-enq',
+        ])
+      ).toEqual([enqueuedId]);
+      expect(sendStatusOf(enqueuedId)).toBe('submitted');
+      expect(sendStatusOf(deferredId)).toBe('deferred');
+      expect(sendStatusOf(submittedId)).toBe('submitted');
+    });
+
+    it('the previously-uncovered wrappers stay session-scoped and user-only — assistant probe rows carry in-window send_status so only the type filter excludes them', () => {
+      const sessionId = 'matrix-scope';
+      const scopedId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('scoped member', 'uuid-matrix-scope'),
+        'enqueued'
+      );
+      const failedId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('failed member', 'uuid-matrix-scope-failed'),
+        'enqueued'
+      );
+      repository.markDeliveryFailedByUuid(sessionId, 'uuid-matrix-scope-failed');
+      const insertAssistantRow = (id: string, uuid: string, sendStatus: string): void => {
+        db.prepare(
+          `INSERT INTO sdk_messages (
+             id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+             replacement_metadata_normalized
+           ) VALUES (?, ?, 'assistant', ?, ?, ?, ?, 1)`
+        ).run(
+          id,
+          sessionId,
+          JSON.stringify({
+            type: 'assistant',
+            uuid,
+            message: { role: 'assistant', content: [{ type: 'text', text: 'assistant row' }] },
+          }),
+          new Date().toISOString(),
+          sendStatus,
+          uuid
+        );
+      };
+      insertAssistantRow('matrix-assistant-enq', 'uuid-matrix-assistant-enq', 'enqueued');
+      insertAssistantRow('matrix-assistant-failed', 'uuid-matrix-assistant-failed', 'failed');
+
+      expect(repository.markDeliverySubmittedByUuids(sessionId, ['no-such-uuid'])).toEqual([]);
+      expect(
+        repository.markDeliverySubmittedByUuids(sessionId, ['uuid-matrix-assistant-enq'])
+      ).toEqual([]);
+      expect(
+        repository.markDeliverySubmittedByUuids('matrix-other-session', ['uuid-matrix-scope'])
+      ).toEqual([]);
+
+      expect(repository.reopenDeliveryByUuid(sessionId, 'no-such-uuid')).toBeNull();
+      expect(repository.reopenDeliveryByUuid(sessionId, 'uuid-matrix-assistant-failed')).toBeNull();
+      expect(
+        repository.reopenDeliveryByUuid('matrix-other-session', 'uuid-matrix-scope-failed')
+      ).toBeNull();
+      expect(sendStatusOf(failedId)).toBe('failed');
+
+      expect(repository.markDeliveryDeferredByUuid(sessionId, 'no-such-uuid')).toBeNull();
+      expect(
+        repository.markDeliveryDeferredByUuid(sessionId, 'uuid-matrix-assistant-enq')
+      ).toBeNull();
+      expect(
+        repository.markDeliveryDeferredByUuid('matrix-other-session', 'uuid-matrix-scope')
+      ).toBeNull();
+      expect(sendStatusOf(scopedId)).toBe('enqueued');
+    });
+  });
+
+  describe('deferEnqueuedUserMessage — dbId-keyed enqueued → deferred (C1)', () => {
+    function sendStatusOf(dbId: string): string | null {
+      return (
+        db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get(dbId) as {
+          send_status: string | null;
+        }
+      ).send_status;
+    }
+
+    it('flips an enqueued row to deferred and returns {dbId, uuid}', () => {
+      const dbId = repository.saveUserMessage(
+        'session-defer-by-id',
+        createUserMessage('defer by id', 'uuid-defer-by-id'),
+        'enqueued'
+      );
+
+      expect(repository.deferEnqueuedUserMessage('session-defer-by-id', dbId)).toEqual({
+        dbId,
+        uuid: 'uuid-defer-by-id',
+      });
+      expect(repository.getUserMessageIdsByStatus('session-defer-by-id', 'deferred')).toHaveLength(
+        1
+      );
+      expect(repository.getUserMessageIdsByStatus('session-defer-by-id', 'enqueued')).toHaveLength(
+        0
+      );
+    });
+
+    it('returns an empty-string uuid when the payload carries none', () => {
+      const dbId = repository.saveUserMessage(
+        'session-defer-no-uuid',
+        {
+          type: 'user',
+          message: { role: 'user', content: 'no uuid payload' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+
+      expect(repository.deferEnqueuedUserMessage('session-defer-no-uuid', dbId)).toEqual({
+        dbId,
+        uuid: '',
+      });
+    });
+
+    it('accepts only enqueued rows — every other from-status is a null no-op', () => {
+      for (const status of ['deferred', 'submitted', 'consumed', 'failed'] as const) {
+        const sessionId = `defer-window-${status}`;
+        const dbId = repository.saveUserMessage(
+          sessionId,
+          createUserMessage(`held ${status}`, `uuid-defer-window-${status}`),
+          status
+        );
+
+        expect(repository.deferEnqueuedUserMessage(sessionId, dbId)).toBeNull();
+        expect(sendStatusOf(dbId)).toBe(status);
+      }
+    });
+
+    it('is one-shot: a second call on the deferred row returns null', () => {
+      const dbId = repository.saveUserMessage(
+        'session-defer-oneshot',
+        createUserMessage('once only', 'uuid-defer-oneshot'),
+        'enqueued'
+      );
+
+      expect(repository.deferEnqueuedUserMessage('session-defer-oneshot', dbId)).toEqual({
+        dbId,
+        uuid: 'uuid-defer-oneshot',
+      });
+      expect(repository.deferEnqueuedUserMessage('session-defer-oneshot', dbId)).toBeNull();
+      expect(sendStatusOf(dbId)).toBe('deferred');
+    });
+
+    it('looks up by dbId within the session — unknown ids, other sessions, and non-user rows return null', () => {
+      const sessionId = 'session-defer-scope';
+      const scopedId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('scoped', 'uuid-defer-scope'),
+        'enqueued'
+      );
+      repository.saveSDKMessage(sessionId, createAssistantMessage('assistant row'));
+      const assistantRowId = (
+        db
+          .prepare(
+            `SELECT id FROM sdk_messages WHERE session_id = ? AND message_type = 'assistant'`
+          )
+          .get(sessionId) as { id: string }
+      ).id;
+
+      expect(repository.deferEnqueuedUserMessage(sessionId, 'no-such-id')).toBeNull();
+      expect(repository.deferEnqueuedUserMessage('session-defer-other', scopedId)).toBeNull();
+      expect(repository.deferEnqueuedUserMessage(sessionId, assistantRowId)).toBeNull();
+      expect(sendStatusOf(scopedId)).toBe('enqueued');
+    });
+  });
+
+  describe('turn-end batch semantics — result prerequisite, first-uuid all-or-nothing, shared watermark (C1)', () => {
+    function rowOf(dbId: string): { status: string | null; seq: number | null } {
+      return db
+        .prepare(`SELECT send_status AS status, consumed_seq AS seq FROM sdk_messages WHERE id = ?`)
+        .get(dbId) as { status: string | null; seq: number | null };
+    }
+
+    function seedEnqueued(sessionId: string, uuid: string): string {
+      return repository.saveUserMessage(
+        sessionId,
+        createUserMessage(`turn-end ${uuid}`, uuid),
+        'enqueued'
+      );
+    }
+
+    function saveSuccessResult(sessionId: string, resultUuid: string): number {
+      repository.saveSDKMessage(sessionId, {
+        type: 'result',
+        subtype: 'success',
+        uuid: resultUuid,
+        parent_tool_use_id: null,
+      } as unknown as SDKMessage);
+      return (
+        db.prepare(`SELECT consumed_seq FROM sdk_messages WHERE sdk_uuid = ?`).get(resultUuid) as {
+          consumed_seq: number;
+        }
+      ).consumed_seq;
+    }
+
+    it('returns empty without inspecting any delivery when the result uuid is unknown — even with eligible members', () => {
+      const sessionId = 'session-te-unknown-result';
+      const kickoffId = seedEnqueued(sessionId, 'te-unknown-1');
+
+      expect(
+        repository.markDeliveriesConsumedAtTurnEnd(sessionId, ['te-unknown-1'], 'no-such-result')
+      ).toEqual({ ids: [], uuids: [] });
+      expect(rowOf(kickoffId).status).toBe('enqueued');
+    });
+
+    it('returns empty when the success terminal result carries a NULL consumption watermark (migrated row)', () => {
+      const sessionId = 'session-te-unsequenced';
+      const kickoffId = seedEnqueued(sessionId, 'te-unseq-1');
+      db.prepare(
+        `INSERT INTO sdk_messages (
+           id, session_id, message_type, message_subtype, sdk_message, timestamp,
+           is_terminal, parent_tool_use_id, sdk_uuid, replacement_metadata_normalized
+         ) VALUES (?, ?, 'result', 'success', ?, ?, 1, NULL, ?, 1)`
+      ).run(
+        'unseq-result-row',
+        sessionId,
+        JSON.stringify({ type: 'result', subtype: 'success', uuid: 'te-unseq-result' }),
+        new Date().toISOString(),
+        'te-unseq-result'
+      );
+
+      expect(
+        repository.markDeliveriesConsumedAtTurnEnd(sessionId, ['te-unseq-1'], 'te-unseq-result')
+      ).toEqual({ ids: [], uuids: [] });
+      expect(rowOf(kickoffId).status).toBe('enqueued');
+    });
+
+    it('first-uuid all-or-nothing: a non-candidate first uuid voids the whole turn-end batch, while the bulk variant still consumes the eligible member', () => {
+      const sessionId = 'session-te-first-uuid';
+      const heldId = repository.saveUserMessage(
+        sessionId,
+        createUserMessage('held kickoff', 'te-first-held'),
+        'deferred'
+      );
+      const memberId = seedEnqueued(sessionId, 'te-first-member');
+      saveSuccessResult(sessionId, 'te-first-result');
+
+      expect(
+        repository.markDeliveriesConsumedAtTurnEnd(
+          sessionId,
+          ['te-first-held', 'te-first-member'],
+          'te-first-result'
+        )
+      ).toEqual({ ids: [], uuids: [] });
+      expect(rowOf(heldId).status).toBe('deferred');
+      expect(rowOf(memberId).status).toBe('enqueued');
+
+      expect(
+        repository.markDeliveryConsumedByUuids(sessionId, ['te-first-held', 'te-first-member'])
+      ).toEqual([memberId]);
+      expect(rowOf(memberId).status).toBe('consumed');
+    });
+
+    it('shared watermark: every consumed member reuses the result boundary sequence and the global counter does not advance', () => {
+      const sessionId = 'session-te-shared-seq';
+      const firstId = seedEnqueued(sessionId, 'te-seq-a');
+      const secondId = seedEnqueued(sessionId, 'te-seq-b');
+      const resultSeq = saveSuccessResult(sessionId, 'te-seq-result');
+      const nextSeqBefore = (
+        db.prepare(`SELECT next_seq FROM delivery_consumed_seq`).get() as { next_seq: number }
+      ).next_seq;
+
+      expect(
+        repository.markDeliveriesConsumedAtTurnEnd(
+          sessionId,
+          ['te-seq-a', 'te-seq-b'],
+          'te-seq-result'
+        )
+      ).toEqual({ ids: [firstId, secondId], uuids: ['te-seq-a', 'te-seq-b'] });
+      expect(new Set([rowOf(firstId).seq, rowOf(secondId).seq])).toEqual(new Set([resultSeq]));
+
+      const nextSeqAfter = (
+        db.prepare(`SELECT next_seq FROM delivery_consumed_seq`).get() as { next_seq: number }
+      ).next_seq;
+      expect(nextSeqAfter).toBe(nextSeqBefore);
+    });
+  });
+
   describe('hasTerminalResultAfter', () => {
     function insertMessage(
       sessionId: string,
@@ -4667,6 +5054,95 @@ describe('SDKMessageRepository', () => {
       expect(repository.searchMessages({ query: 'interleave replacement' }).results).toHaveLength(
         1
       );
+    });
+
+    describe('flush boundary — delete-then-decide ordering and malformed payload outcomes (C1)', () => {
+      function contentRowCount(id: string): number {
+        return (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM message_search_content WHERE kind = 'message' AND source_id = ?`
+            )
+            .get(id) as { n: number }
+        ).n;
+      }
+
+      function pendingCount(): number {
+        return (
+          db.prepare(`SELECT COUNT(*) AS n FROM message_search_pending`).get() as { n: number }
+        ).n;
+      }
+
+      it('deletes the old search row for a row that became ineligible — the DELETE runs before the admission gates, so nothing is re-inserted', () => {
+        createSearchIndex();
+        createSearchPolicyTables();
+        insertSession('session-1', { status: 'active' });
+        const id = repository.saveUserMessage(
+          'session-1',
+          createUserMessage('archived flush marker'),
+          'consumed'
+        );
+        expect(searchAfterFlush({ query: 'archived flush marker' }).results).toHaveLength(1);
+        expect(contentRowCount(id)).toBe(1);
+
+        db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = 'session-1'`).run();
+        repository.updateMessageTimestamp(id);
+
+        repository.flushMessageSearchIndex();
+
+        expect(contentRowCount(id)).toBe(0);
+        expect(pendingCount()).toBe(0);
+      });
+
+      it('a JSON-valid null payload throws in body extraction — the flush transaction rolls back, the indexed row survives, and the pending entry is retained for retry', () => {
+        createSearchIndex();
+        const id = repository.saveUserMessage(
+          'session-1',
+          createUserMessage('null payload marker'),
+          'consumed'
+        );
+        expect(searchAfterFlush({ query: 'null payload marker' }).results).toHaveLength(1);
+        expect(contentRowCount(id)).toBe(1);
+
+        db.prepare(`UPDATE sdk_messages SET sdk_message = 'null' WHERE id = ?`).run(id);
+        repository.updateMessageTimestamp(id);
+
+        repository.flushMessageSearchIndex();
+
+        expect(pendingCount()).toBe(1);
+        expect(contentRowCount(id)).toBe(1);
+
+        db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`).run(
+          JSON.stringify(createUserMessage('null payload repaired', `repaired-${id}`)),
+          id
+        );
+        repository.flushMessageSearchIndex();
+
+        expect(pendingCount()).toBe(0);
+        expect(repository.searchMessages({ query: 'null payload repaired' }).results).toHaveLength(
+          1
+        );
+      });
+
+      it('a syntactically invalid payload parse-catches before the DELETE — the pending entry is cleared and stale indexed content is kept with no retry', () => {
+        createSearchIndex();
+        const id = repository.saveUserMessage(
+          'session-1',
+          createUserMessage('stale content marker'),
+          'consumed'
+        );
+        expect(searchAfterFlush({ query: 'stale content' }).results).toHaveLength(1);
+        expect(contentRowCount(id)).toBe(1);
+
+        db.prepare(`UPDATE sdk_messages SET sdk_message = '{not-json' WHERE id = ?`).run(id);
+        repository.updateMessageTimestamp(id);
+
+        repository.flushMessageSearchIndex();
+
+        expect(pendingCount()).toBe(0);
+        expect(contentRowCount(id)).toBe(1);
+        expect(repository.searchMessages({ query: 'stale content' }).results).toHaveLength(1);
+      });
     });
   });
 

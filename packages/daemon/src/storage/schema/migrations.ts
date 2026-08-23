@@ -445,6 +445,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(202), () => runMigration202(db));
 
   run(migrationMarkerKey(203), () => runMigration203(db));
+
+  run(migrationMarkerKey(204), () => runMigration204(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9548,4 +9550,13 @@ export function runMigration203(db: BunDatabase): void {
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_space_lh_agent_goals_one_owner
     ON space_long_horizon_agent_goals(goal_id)
     WHERE relationship = 'owner'`);
+}
+
+export function runMigration204(db: BunDatabase): void {
+  if (tableExists(db, 'space_goals') && !tableHasColumn(db, 'space_goals', 'revision')) {
+    db.exec(`ALTER TABLE space_goals ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (tableExists(db, 'space_tasks') && !tableHasColumn(db, 'space_tasks', 'terminal_generation')) {
+    db.exec(`ALTER TABLE space_tasks ADD COLUMN terminal_generation INTEGER NOT NULL DEFAULT 0`);
+  }
 }

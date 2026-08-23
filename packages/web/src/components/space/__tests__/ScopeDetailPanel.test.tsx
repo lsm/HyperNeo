@@ -104,6 +104,7 @@ function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
     createdAt: now,
     updatedAt: now,
     completedAt: null,
+    revision: 2,
     ...overrides,
   };
 }

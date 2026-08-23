@@ -104,6 +104,7 @@ function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
     createdAt: now - 120_000,
     updatedAt: now,
     completedAt: null,
+    revision: 3,
     ...overrides,
   };
 }
@@ -134,6 +135,7 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
     reportedSummary: null,
     createdAt: now - 180_000,
     updatedAt: now - 60_000,
+    terminalGeneration: 1,
     ...overrides,
   };
 }
