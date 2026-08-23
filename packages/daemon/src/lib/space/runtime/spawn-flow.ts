@@ -287,6 +287,15 @@ export function runSpawnExecutionFlow(
         },
       }),
       s.effect({
+        name: 'release-task-spawn',
+        when: 'proceedFresh',
+        reads: ['task'],
+        writes: [],
+        run: (view) => {
+          deps.releaseTaskSpawn(view.task.id);
+        },
+      }),
+      s.effect({
         name: 'attach-node-agent',
         when: 'proceedFresh',
         reads: ['task', 'space', 'workflowRun', 'execution', 'spawnedSessionId', 'workspacePath'],
@@ -337,15 +346,6 @@ export function runSpawnExecutionFlow(
             workspacePath: view.workspacePath,
           });
           await deps.injectKickoffMessage(view.spawnedSessionId, message);
-        },
-      }),
-      s.effect({
-        name: 'release-task-spawn',
-        when: 'proceedFresh',
-        reads: ['task'],
-        writes: [],
-        run: (view) => {
-          deps.releaseTaskSpawn(view.task.id);
         },
       }),
       s.halt({

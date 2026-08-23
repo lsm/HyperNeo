@@ -2611,6 +2611,57 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(run?.status).toBe('in_progress');
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
     });
+
+    test('a park landing mid-spawn-pass is not undone by the trailing open→in_progress update (PR #2770 review)', async () => {
+      let parked = false;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+          const exec = execution as { id: string; agentName: string };
+          if (!parked) {
+            parked = true;
+            taskRepo.updateTask(
+              taskRepo.listByWorkflowRun(workflowRunRepo.listBySpace(SPACE_ID)[0].id)[0].id,
+              { status: 'stopped' }
+            );
+          }
+          throw new SpawnSupersededError(exec.id, 'reserve-task-spawn');
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Park mid-spawn ${Date.now()}`,
+        description: 'Test',
+        nodes: [
+          {
+            id: STEP_A,
+            name: 'Build',
+            agents: [
+              { agentId: AGENT_PLANNER, name: 'Planner' },
+              { agentId: AGENT_CODER, name: 'Coder' },
+            ],
+          },
+          {
+            id: STEP_B,
+            name: 'Done',
+            agents: [{ agentId: AGENT_PLANNER, name: 'Finisher' }],
+          },
+        ],
+        transitions: [{ from: STEP_A, to: STEP_B, condition: { type: 'always' }, order: 0 }],
+        startNodeId: STEP_A,
+        endNodeId: STEP_B,
+        rules: [],
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('stopped');
+      const executions = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
+      expect(executions.every((exec) => exec.status === 'pending')).toBe(true);
+    });
   });
 
   describe('rehydration does not duplicate executors from startWorkflowRun', () => {

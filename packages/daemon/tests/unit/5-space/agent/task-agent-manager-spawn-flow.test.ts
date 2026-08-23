@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type {
   NodeExecution,
   Space,
@@ -115,6 +115,7 @@ interface SpawnFlowHarnessOptions {
   workflow?: SpaceWorkflow | null;
   kickoff?: boolean;
   worktreeGate?: Promise<{ path: string }>;
+  kickoffGate?: Promise<void>;
   failEnsure?: boolean;
   bindCasOutcome?: 'won' | 'superseded';
 }
@@ -227,6 +228,7 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     order.push('registerCompletionCallback');
   };
   internal.injectMessageIntoSession = async () => {
+    if (options.kickoffGate) await options.kickoffGate;
     order.push('kickoff-inject');
     return 'msg-id';
   };
@@ -273,6 +275,21 @@ function seedIndexedSession(
     sessionId,
     fakeSession(sessionId, processingStatus)
   );
+}
+
+function fireLongTimersImmediately(): () => void {
+  const originalSetTimeout = globalThis.setTimeout;
+  const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((
+    callback: () => void,
+    delay?: number
+  ) => {
+    const effective = typeof delay === 'number' ? delay : 0;
+    if (effective >= 30_000) {
+      return originalSetTimeout(callback, 0);
+    }
+    return originalSetTimeout(callback, effective);
+  }) as unknown as typeof setTimeout);
+  return () => spy.mockRestore();
 }
 
 describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () => {
@@ -449,5 +466,73 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     expect(await first).toBe(SPAWNED_SESSION_ID);
     expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(1);
     expect(h.casCalls.some((c) => c.payload?.agentSessionId === SPAWNED_SESSION_ID)).toBe(true);
+  });
+
+  test('waiters settle at the winning bind, not after kickoff: a slow attach/kickoff cannot time out a waiting peer (PR #2770 review)', async () => {
+    const gate = deferred<{ path: string }>();
+    const kickoffGate = deferred<void>();
+    const h = makeSpawnFlowHarness({
+      worktreeGate: gate.promise,
+      kickoffGate: kickoffGate.promise,
+    });
+
+    const first = h.spawn();
+    const second = h.spawn();
+    gate.resolve({ path: '/tmp/wt-1240' });
+
+    expect(await second).toBe(SPAWNED_SESSION_ID);
+    expect(h.order).toContain('execution-bind');
+    expect(h.order).not.toContain('kickoff-inject');
+    expect(
+      (h.tam as unknown as { concurrentSpawnWaiters: Map<string, unknown[]> })
+        .concurrentSpawnWaiters.size
+    ).toBe(0);
+
+    kickoffGate.resolve();
+    expect(await first).toBe(SPAWNED_SESSION_ID);
+    expect(h.order).toContain('kickoff-inject');
+  });
+
+  test('a timed-out waiter removes itself from the waiter map (PR #2770 review)', async () => {
+    const restoreTimers = fireLongTimersImmediately();
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    h.spawningIds().add('exec-1');
+    const waiters = (h.tam as unknown as { concurrentSpawnWaiters: Map<string, unknown[]> })
+      .concurrentSpawnWaiters;
+
+    const waitPromise = (
+      h.tam as unknown as {
+        waitForConcurrentSpawnSession: (execution: NodeExecution) => Promise<string>;
+      }
+    ).waitForConcurrentSpawnSession(makeExecution());
+    const message = waitPromise.then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
+
+    expect(await message).toBe('Concurrent spawn for execution exec-1 timed out after 30000ms');
+    expect(waiters.size).toBe(0);
+    restoreTimers();
+  });
+
+  test('cleanupAll settles pending waiters as failed (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    h.spawningIds().add('exec-1');
+
+    const waitPromise = (
+      h.tam as unknown as {
+        waitForConcurrentSpawnSession: (execution: NodeExecution) => Promise<string>;
+      }
+    ).waitForConcurrentSpawnSession(makeExecution());
+    const message = waitPromise.then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
+
+    await h.tam.cleanupAll();
+
+    expect(await message).toBe(
+      'Concurrent spawn for execution exec-1 failed before session was created'
+    );
   });
 });

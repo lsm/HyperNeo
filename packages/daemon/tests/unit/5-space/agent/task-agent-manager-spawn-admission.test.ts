@@ -131,6 +131,7 @@ interface SpawnHarness {
   cancels: string[];
   reservations: string[];
   reservationReleases: string[];
+  flipExecutionStatus: (status: string) => void;
   spawn: () => Promise<string>;
 }
 
@@ -260,6 +261,9 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
     cancels,
     reservations,
     reservationReleases,
+    flipExecutionStatus: (status: string) => {
+      dbRow.status = status as NodeExecution['status'];
+    },
     spawn: () =>
       tam.spawnWorkflowNodeAgentForExecution(
         task,
@@ -602,7 +606,7 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
     expect(h.order).not.toContain('kickoff-inject');
   });
 
-  test('the bind carries the bindable-status precondition and the full bind payload (AFTER picture)', async () => {
+  test('the bind carries the observed-status precondition and the full bind payload (AFTER picture)', async () => {
     const h = makeSpawnHarness({ kickoff: false });
 
     await h.spawn();
@@ -612,7 +616,7 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      expected: ['pending', 'in_progress'],
       next: 'in_progress',
       payload: {
         agentSessionId: SPAWNED_SESSION_ID,
@@ -620,6 +624,25 @@ describe('spawnWorkflowNodeAgentForExecution — post-create execution binding',
         completedAt: null,
       },
     });
+  });
+
+  test('a mid-spawn quiesce to idle (observed pending) fails the bind CAS: no resurrection of the quiesced row (PR #2770 review)', async () => {
+    const h = makeSpawnHarness({ kickoff: false });
+    const internal = h.tam as unknown as {
+      createSubSession: (...args: unknown[]) => Promise<string>;
+    };
+    const originalCreate = internal.createSubSession.bind(internal);
+    internal.createSubSession = async (...args: unknown[]) => {
+      const sessionId = await originalCreate(...args);
+      h.flipExecutionStatus('idle');
+      return sessionId;
+    };
+
+    const spawnPromise = h.spawn();
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
+    expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    expect(h.order).not.toContain('ensureNodeAgentAttached');
   });
 
   test('a concurrent execution write that fails the bind CAS skips for this call: the spawned session is cancelled and the execution is not resurrected (AFTER picture)', async () => {
@@ -674,7 +697,7 @@ describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER
     expect(h.reservations).toEqual([]);
   });
 
-  test('post-create bind carries the bindable-status precondition: exactly the in_progress bind payload', async () => {
+  test('post-create bind carries the observed-status precondition: exactly the in_progress bind payload', async () => {
     const h = makeSpawnHarness({ kickoff: false });
 
     await h.spawn();
@@ -684,7 +707,7 @@ describe('spawnWorkflowNodeAgentForExecution — CAS-guarded spawn writes (AFTER
     );
     expect(bind).toEqual({
       id: 'exec-1',
-      expected: ['pending', 'in_progress', 'idle', 'waiting_rebind'],
+      expected: ['pending', 'in_progress'],
       next: 'in_progress',
       payload: {
         agentSessionId: SPAWNED_SESSION_ID,

@@ -273,4 +273,45 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent park/cancel during s
     expect(task).not.toBeNull();
     expect(h.taskRepo.reserveSpawnForTick(TASK_ID, ['in_progress', 'open'])).toBe('won');
   });
+
+  test('an attach stall releases the task reservation before slow post-bind work: a sibling execution still spawns (PR #2770 review)', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on('unhandledRejection', onUnhandled);
+    const attachGate = deferred<void>();
+    const h = makeRealRepoHarness();
+    h.tam as unknown as { ensureNodeAgentAttached: (...args: unknown[]) => Promise<void> };
+    const internal = h.tam as unknown as {
+      ensureNodeAgentAttached: (...args: unknown[]) => Promise<void>;
+    };
+    const originalAttach = internal.ensureNodeAgentAttached.bind(internal);
+    let attachCalls = 0;
+    internal.ensureNodeAgentAttached = async (...args: unknown[]) => {
+      attachCalls += 1;
+      if (attachCalls === 1) await attachGate.promise;
+      await originalAttach(...args);
+    };
+    const first = makeExecutionRow(h.execRepo, h.runId);
+    const sibling = h.execRepo.create({
+      workflowRunId: h.runId,
+      workflowNodeId: 'node-reviewer',
+      agentName: 'reviewer',
+      agentId: AGENT_ID,
+      status: 'pending',
+    });
+
+    const firstSpawn = h.spawn(first);
+    h.releaseWorkspaceGate({ path: '/tmp/wt-1241' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const siblingSpawn = h.spawn(sibling);
+
+    await expect(siblingSpawn).resolves.toBe(SPAWNED_SESSION_ID);
+    expect(h.execRepo.getById(sibling.id)?.status).toBe('in_progress');
+    expect(h.execRepo.getById(first.id)?.status).toBe('in_progress');
+
+    attachGate.resolve();
+    await expect(firstSpawn).resolves.toBe(SPAWNED_SESSION_ID);
+    expect(unhandled).toEqual([]);
+    process.off('unhandledRejection', onUnhandled);
+  });
 });

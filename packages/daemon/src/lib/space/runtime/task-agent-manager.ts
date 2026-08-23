@@ -682,11 +682,26 @@ export class TaskAgentManager {
     }
     return new Promise<string>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      let waiter:
+        | ((outcome: { status: 'resolved'; sessionId: string } | { status: 'failed' }) => void)
+        | undefined;
       const settle = (finish: () => void) => {
+        if (settled) return;
+        settled = true;
         if (timer !== undefined) clearTimeout(timer);
         finish();
       };
+      const removeWaiter = () => {
+        if (!waiter) return;
+        const current = this.concurrentSpawnWaiters.get(execution.id);
+        if (!current) return;
+        const index = current.indexOf(waiter);
+        if (index >= 0) current.splice(index, 1);
+        if (current.length === 0) this.concurrentSpawnWaiters.delete(execution.id);
+      };
       timer = setTimeout(() => {
+        removeWaiter();
         settle(() => {
           reject(
             new Error(
@@ -695,20 +710,26 @@ export class TaskAgentManager {
           );
         });
       }, CONCURRENT_SPAWN_TIMEOUT_MS);
-      const waiters = this.concurrentSpawnWaiters.get(execution.id) ?? [];
-      waiters.push((outcome) => {
+      waiter = (outcome) => {
         settle(() => {
           if (outcome.status === 'resolved') {
             resolve(outcome.sessionId);
-          } else {
-            reject(
-              new Error(
-                `Concurrent spawn for execution ${execution.id} failed before session was created`
-              )
-            );
+            return;
           }
+          const bound = this.config.nodeExecutionRepo.getById(execution.id)?.agentSessionId;
+          if (bound) {
+            resolve(bound);
+            return;
+          }
+          reject(
+            new Error(
+              `Concurrent spawn for execution ${execution.id} failed before session was created`
+            )
+          );
         });
-      });
+      };
+      const waiters = this.concurrentSpawnWaiters.get(execution.id) ?? [];
+      waiters.push(waiter);
       this.concurrentSpawnWaiters.set(execution.id, waiters);
     });
   }
@@ -724,6 +745,7 @@ export class TaskAgentManager {
   }
 
   private buildSpawnExecutionFlowDeps(): SpawnExecutionFlowDeps {
+    const spawnState = { reservationHeld: false };
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
       getNodeExecution: (executionId) => this.config.nodeExecutionRepo.getById(executionId),
@@ -743,9 +765,17 @@ export class TaskAgentManager {
       releaseExecution: (executionId) => {
         this.spawningExecutionIds.delete(executionId);
       },
-      reserveTaskSpawn: (taskId) =>
-        this.config.taskRepo.reserveSpawnForTick(taskId, SPAWN_RESERVABLE_TASK_STATUSES),
+      reserveTaskSpawn: (taskId) => {
+        const outcome = this.config.taskRepo.reserveSpawnForTick(
+          taskId,
+          SPAWN_RESERVABLE_TASK_STATUSES
+        );
+        if (outcome === 'won') spawnState.reservationHeld = true;
+        return outcome;
+      },
       releaseTaskSpawn: (taskId) => {
+        if (!spawnState.reservationHeld) return;
+        spawnState.reservationHeld = false;
         this.config.taskRepo.releaseSpawnReservation(taskId);
       },
       cancelSpawnedSession: (sessionId) => {
@@ -863,9 +893,14 @@ export class TaskAgentManager {
         return actualSessionId;
       },
       bindExecutionToSession: (execution, sessionId) => {
-        return this.config.nodeExecutionRepo.casExecutionStatus(
+        const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
+          ? execution.status === 'in_progress'
+            ? (['in_progress'] as const)
+            : ([execution.status, 'in_progress'] as const)
+          : ([] as const);
+        const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
           execution.id,
-          SPAWN_BINDABLE_EXECUTION_STATUSES,
+          expected,
           'in_progress',
           {
             agentSessionId: sessionId,
@@ -873,6 +908,13 @@ export class TaskAgentManager {
             completedAt: null,
           }
         );
+        if (outcome === 'won') {
+          this.settleConcurrentSpawnWaiters(execution.id, {
+            status: 'resolved',
+            sessionId,
+          });
+        }
+        return outcome;
       },
       attachNodeAgent: async (request) => {
         const spawned = this.getSubSession(request.sessionId);
@@ -1012,6 +1054,9 @@ export class TaskAgentManager {
                   }
                 );
                 if (outcome === 'superseded') {
+                  if (!match.agentSessionId) {
+                    throw new SpawnSupersededError(match.id, 'reuse-target-bind');
+                  }
                   log.info(
                     `TaskAgentManager: skipped rebinding execution ${match.id} to reused session ${existingSessionId} — status moved concurrently`
                   );
@@ -2552,6 +2597,9 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     clearAllRetryableHookActionTimers();
+    for (const executionId of [...this.concurrentSpawnWaiters.keys()]) {
+      this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });
+    }
     if (this.taskArchiveListenerUnsub) {
       this.taskArchiveListenerUnsub();
       this.taskArchiveListenerUnsub = null;

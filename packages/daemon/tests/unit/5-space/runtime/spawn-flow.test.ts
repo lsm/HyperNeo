@@ -143,8 +143,9 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     },
     releaseTaskSpawn: (taskId) => {
       calls.push(`release-task:${taskId}`);
-      taskReservationReleases.push(taskId);
+      if (!heldTaskReservations.has(taskId)) return;
       heldTaskReservations.delete(taskId);
+      taskReservationReleases.push(taskId);
     },
     cancelSpawnedSession: (sessionId) => {
       calls.push(`cancel:${sessionId}`);
@@ -242,7 +243,7 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
 }
 
 describe('spawn flow — proceed_fresh path', () => {
-  test('runs admission, task reservation, reserve, spawn, bind, attach, register, kickoff, release, and halts with the session id', async () => {
+  test('runs admission, task reservation, reserve, spawn, bind, early reservation release, attach, register, kickoff, and halts with the session id', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run();
     expect(outcome).toEqual({ status: 'completed', result: SPAWNED_SESSION_ID });
@@ -253,11 +254,11 @@ describe('spawn flow — proceed_fresh path', () => {
       'resolve-workspace',
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
+      `release-task:${TASK_ID}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
       'kickoff-message',
       `inject:${SPAWNED_SESSION_ID}`,
-      `release-task:${TASK_ID}`,
     ]);
     expect(h.cancels).toEqual([]);
     expect(h.releases).toEqual([]);
@@ -277,9 +278,9 @@ describe('spawn flow — proceed_fresh path', () => {
       'resolve-workspace',
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
+      `release-task:${TASK_ID}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
-      `release-task:${TASK_ID}`,
     ]);
   });
 

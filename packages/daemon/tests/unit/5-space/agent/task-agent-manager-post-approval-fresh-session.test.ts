@@ -636,6 +636,52 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     });
   });
 
+  test('a sessionless reuse target whose bind CAS loses aborts the reuse before any ownership transfer (PR #2770 review)', async () => {
+    const sessionlessTarget = makeExecutionRow({
+      id: 'exec-target-sessionless',
+      agentSessionId: null,
+      status: 'pending',
+      startedAt: null,
+    });
+    const boundElsewhere = makeExecutionRow({
+      id: 'exec-prior-owner',
+      workflowNodeId: 'node-prior',
+      status: 'in_progress',
+    });
+    const updates: Array<{ id: string; payload: Record<string, unknown> }> = [];
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: {
+        getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+      },
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [sessionlessTarget, boundElsewhere],
+        listByNode: (_runId: string, nodeId: string) =>
+          nodeId === REVIEWER_NODE_ID ? [sessionlessTarget] : [],
+        listByAgentSessionId: () => [],
+        update: (id: string, payload: Record<string, unknown>) => {
+          updates.push({ id, payload });
+          return null;
+        },
+        casExecutionStatus: () => 'superseded',
+      },
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    } as unknown as TaskAgentManagerConfig);
+    seedLiveSession(tam);
+    stubMcpReinjection(tam);
+
+    const spawnPromise = tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage reuse-target-bind');
+    expect(updates).toEqual([]);
+  });
+
   test('fresh create binds the new session to the matching pending execution through the bindable-status CAS', async () => {
     const pendingExec = makeExecutionRow({
       id: 'exec-pending',
