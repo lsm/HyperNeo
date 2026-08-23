@@ -510,6 +510,11 @@ describe('coder-only workflow template', () => {
       'revalidate it BEFORE requesting any re-approval'
     );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a dead bot is a reported blocker to escalate, never substituted'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('after EVERY fresh external gate');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('route the revalidation back through Review');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       "the Reviewer's backup re-review stands in for that bot's pass"
