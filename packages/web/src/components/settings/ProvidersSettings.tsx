@@ -485,7 +485,22 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {loadError ? (
+          {loadError && providers.length > 0 && (
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2">
+              <p class="text-sm text-red-300">
+                {sessionExpired
+                  ? 'Your session expired.'
+                  : gateTimeout
+                    ? 'Could not reach the HyperNeo daemon — showing cached providers.'
+                    : 'Failed to reload providers — showing cached providers.'}
+              </p>
+              <Button size="sm" variant="secondary" onClick={handleRetry}>
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {loadError && providers.length === 0 ? (
             <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-6 text-center">
               <p class="text-sm text-red-300">
                 {sessionExpired ? 'Your session expired.' : 'Failed to load providers.'}

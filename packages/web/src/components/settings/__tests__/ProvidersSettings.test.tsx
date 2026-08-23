@@ -880,6 +880,32 @@ describe('ProvidersSettings', () => {
     expect(mockListProviders).toHaveBeenCalledTimes(2);
   });
 
+  it('shows a compact error banner over the stale list when a reload fails', async () => {
+    mockOnConnected.mockResolvedValue(undefined);
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockRejectedValueOnce(new Error('handler error'));
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+
+    const toggle = container.querySelector('[role="switch"]');
+    if (toggle) fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain(
+        'Failed to reload providers — showing cached providers.'
+      );
+      expect(container.textContent).toContain('Retry');
+      expect(container.textContent).toContain('Anthropic');
+    });
+    expect(container.textContent).not.toContain('The load failed. Try again in a moment.');
+  });
+
   it('explains session expiry when mounted with reason=session_expired', async () => {
     vi.stubGlobal('location', {
       href: 'http://localhost/settings?tab=providers&reason=session_expired',
