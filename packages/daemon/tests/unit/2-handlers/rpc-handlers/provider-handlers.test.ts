@@ -8,10 +8,17 @@ import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import {
+  clearModelsCache,
+  getModelsCache,
+  hasRefreshBeenAttemptedFor,
+  setModelsCache,
+} from '../../../../src/lib/model-service';
+import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
-import type { ProviderRecord, CreateProviderParams } from '@hyperneo/shared';
+import type { ProviderRecord, CreateProviderParams, ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type {
   DaemonInternalEventMap,
@@ -145,6 +152,7 @@ describe('Provider RPC handlers', () => {
   afterEach(() => {
     resetProviderRegistry();
     resetProviderFactory();
+    clearModelsCache();
   });
 
   function setup(): Map<string, RequestHandler> {
@@ -781,6 +789,60 @@ describe('Provider RPC handlers', () => {
       const after = repo.getProvider(created.id);
       expect(after?.authType).toBe('none');
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('clears the global models cache and stranded-probe gate on disable→enable so recovery can run', async () => {
+      const created = repo.createProvider({
+        providerId: 'glm',
+        displayName: 'GLM',
+        kind: 'built_in',
+        authType: 'none',
+      });
+
+      getProviderRegistry().register({
+        id: 'glm',
+        displayName: 'GLM',
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as Provider);
+
+      const anthropicOnly = [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo];
+      setModelsCache(new Map([['global', anthropicOnly]]));
+
+      expect(await detectStrandedProviders(anthropicOnly)).toEqual(['glm']);
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      expect(await detectStrandedProviders(anthropicOnly)).toEqual([]);
+
+      const handlers = setup();
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
+      expect(getProviderRegistry().has('glm')).toBe(false);
+      expect(getModelsCache().size).toBe(0);
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { isEnabled: true }, credentials: { apiKey: 'glm-key' } },
+        {}
+      );
+      expect(getProviderRegistry().has('glm')).toBe(true);
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+
+      const provider = getProviderRegistry().get('glm');
+      expect(provider).toBeDefined();
+      expect(await provider!.isAvailable()).toBe(true);
+
+      expect(await detectStrandedProviders(anthropicOnly)).toEqual(['glm']);
     });
   });
 

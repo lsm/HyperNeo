@@ -319,6 +319,76 @@ describe('Session RPC Handlers — models.list', () => {
     });
   });
 
+  it('performs no further probe on cached models.list calls once upstream recovers, until a global cache clear', {
+    timeout: 15_000,
+  }, async () => {
+    let upstreamUp = false;
+    let getModelCalls = 0;
+    const recoveredModel = {
+      id: 'glm-5',
+      name: 'GLM-5',
+      family: 'glm',
+      provider: 'glm-stranded-once',
+      contextWindow: 200000,
+      description: '',
+      releaseDate: '',
+      available: true,
+    } as ModelInfo;
+    getProviderRegistry().register({
+      id: 'glm-stranded-once',
+      displayName: 'GLM',
+      capabilities: {
+        streaming: false,
+        extendedThinking: false,
+        thinkingModes: 'off',
+        maxContextWindow: 1000,
+        functionCalling: false,
+        vision: false,
+      },
+      isAvailable: () => true,
+      getModels: async () => {
+        getModelCalls++;
+        if (!upstreamUp) throw new Error('Z.ai API key rejected (HTTP 401)');
+        return [recoveredModel];
+      },
+      ownsModel: () => true,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as Provider);
+
+    setModelsCache(new Map([['global', [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo]]]));
+
+    const listModels = messageHubData.handlers.get('models.list')!;
+
+    const first = (await listModels({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+      cached: boolean;
+    };
+    expect(first.models.some((m) => m.id === 'glm-5')).toBe(false);
+    expect(first.cached).toBe(false);
+    expect(getModelCalls).toBe(1);
+
+    upstreamUp = true;
+
+    const second = (await listModels({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+      cached: boolean;
+    };
+    expect(second.models.some((m) => m.id === 'glm-5')).toBe(false);
+    expect(second.cached).toBe(true);
+    expect(getModelCalls).toBe(1);
+
+    await messageHubData.handlers.get('models.clearCache')!({}, {});
+
+    const third = (await listModels({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+      cached: boolean;
+    };
+    expect(third.models.some((m) => m.id === 'glm-5')).toBe(true);
+    expect(third.cached).toBe(false);
+    expect(getModelCalls).toBe(2);
+  });
+
   describe('detectStrandedProviders', () => {
     function mockProvider(
       id: string,
@@ -372,6 +442,23 @@ describe('Session RPC Handlers — models.list', () => {
       expect(first).toContain('stranded-once');
       const again = await detectStrandedProviders(anthropicOnly);
       expect(again).not.toContain('stranded-once');
+    });
+
+    it('does not re-probe a provider whose one-shot probe failed, even after upstream recovers', async () => {
+      let upstreamUp = false;
+      let probes = 0;
+      getProviderRegistry().register(
+        mockProvider('stranded-late', () => {
+          probes++;
+          return upstreamUp;
+        })
+      );
+      const first = await detectStrandedProviders(anthropicOnly);
+      expect(first).not.toContain('stranded-late');
+      upstreamUp = true;
+      const second = await detectStrandedProviders(anthropicOnly);
+      expect(second).toEqual([]);
+      expect(probes).toBe(1);
     });
 
     it('returns nothing when the cache already covers every provider', async () => {
