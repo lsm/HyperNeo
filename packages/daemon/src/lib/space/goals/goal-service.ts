@@ -609,6 +609,7 @@ export class SpaceGoalService {
     spaceId: string;
     callerAgentId: string | null;
     humanAdmissionAllowed: boolean;
+    limit?: number;
   }): SpaceGoalOutcomeNotification[] {
     const notificationRepo = this.deps.outcomeNotificationRepo;
     if (!notificationRepo) return [];
@@ -623,7 +624,7 @@ export class SpaceGoalService {
       if (!isAuthorized) continue;
       claimable.push(...notificationRepo.listPendingByGoal(goal.id));
     }
-    return claimable;
+    return claimable.slice(0, params.limit ?? 100);
   }
 
   private resolveClaimAuthorizedAgentIds(goal: SpaceGoal): string[] {

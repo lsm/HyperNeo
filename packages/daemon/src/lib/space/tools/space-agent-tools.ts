@@ -3024,12 +3024,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const goalService = requireGoalService();
         const callerAgentId = myAgentId ?? null;
-        const humanAdmissionAllowed = myAgentId == null && mySessionId != null;
+        const humanAdmissionAllowed = false;
         if (!args.notification_id) {
           const notifications = goalService.listClaimableOutcomeNotifications({
             spaceId,
             callerAgentId,
             humanAdmissionAllowed,
+            limit: 100,
           });
           return jsonResult({ success: true, discovery: true, notifications });
         }
@@ -3046,6 +3047,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: 'goal_id and task_id are required when notification_id is provided',
           });
         }
+        requireGoalInSpace(args.goal_id);
         const result = goalService.claimOutcomeNotification({
           notificationId: args.notification_id,
           claimedGoalId: args.goal_id,
@@ -3063,6 +3065,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           observedGoalRevision: args.observed_goal_revision ?? null,
         });
         if (result.status === 'claimed' || result.status === 'already_applied') {
+          logAudit(
+            'review_goal_outcome',
+            {
+              notification_id: args.notification_id,
+              goal_id: args.goal_id,
+              disposition: args.disposition,
+              status: result.status,
+            },
+            args.task_id
+          );
           return jsonResult({
             success: true,
             status: result.status,

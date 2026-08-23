@@ -2505,7 +2505,14 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
 
   test('discovers owned pending notifications and acknowledges with idempotent retry', async () => {
     const { agent, goal, task, notification } = await makeReviewerGoal();
-    const handlers = makeHandlers(ctx, { goalService, myAgentId: agent.id });
+    const auditLogRepo = {
+      createEntry: mock(() => null),
+    } as unknown as McpAuditLogRepository;
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      myAgentId: agent.id,
+      auditLogRepo,
+    });
 
     const discovery = JSON.parse(
       (await handlers.review_goal_outcome({ goal_id: goal.id, task_id: task.id })).content[0].text
@@ -2527,6 +2534,9 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
     expect(ack.success).toBe(true);
     expect(ack.status).toBe('claimed');
     expect(notifRepo.getById(notification.id)?.status).toBe('acknowledged');
+    expect(auditLogRepo.createEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: 'review_goal_outcome' })
+    );
 
     const retry = JSON.parse(
       (
