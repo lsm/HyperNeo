@@ -597,6 +597,15 @@ describe('coder-only workflow template', () => {
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'the same branch name can advance underneath the gate'
     );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'poll BOTH on every wait cycle while the gate is live'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('even a change that later reverts');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'AND the current baseRefOid (its recorded `base_oid`)'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
     expect(CODER_ONLY_PROMPT).toContain('depth: "<light|standard|deep|auto>", reason:');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
@@ -642,7 +651,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain(
       'Capture the baseRefName AND baseRefOid (`gh pr view <pr_url> --json baseRefName,baseRefOid`) when you START the external gate'
     );
-    expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the new base');
+    expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the current base');
     expect(CODER_ONLY_PROMPT).toContain('headRefName,isCrossRepository,headRepository,url');
     expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
     expect(CODER_ONLY_PROMPT).toContain('the fork case');
