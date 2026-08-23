@@ -328,7 +328,7 @@ export class SpaceRuntimeService {
       const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
       if (notification == null || notification.status !== 'pending') return null;
       const space = await this.config.spaceManager.getSpace(actor.spaceId);
-      if (!space || space.paused || space.stopped) return null;
+      if (!space || space.status !== 'active' || space.paused || space.stopped) return null;
     }
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
@@ -425,7 +425,7 @@ export class SpaceRuntimeService {
     queuedMessageId?: string
   ): Promise<void> {
     const space = await this.config.spaceManager.getSpace(actor.spaceId);
-    if (!space || space.paused || space.stopped) return;
+    if (!space || space.status !== 'active' || space.paused || space.stopped) return;
     const agentId = agentIdFromActorId(actor.actorId);
     const lockKey = agentId ? `${actor.spaceId}:${agentId}` : actor.actorId;
     const previous = this.longTermAgentFlushes.get(lockKey) ?? Promise.resolve();
@@ -473,7 +473,7 @@ export class SpaceRuntimeService {
           inboxRepo.markDelivered(row.id, session.getSessionData().id);
           continue;
         }
-        await this.injectLongTermAgentMessage(session, row.message, row.id);
+        await this.injectLongTermAgentMessage(session, row.message, row.idempotencyKey ?? row.id);
         inboxRepo.markDelivered(row.id, session.getSessionData().id);
       } catch (err) {
         inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
@@ -1144,32 +1144,43 @@ export class SpaceRuntimeService {
       });
   }
 
+  recoverLongTermAgentInboxForSpace(spaceId: string): void {
+    const inboxRepo = this.config.spaceAgentInboxRepo;
+    if (!inboxRepo) return;
+    try {
+      inboxRepo.expireStale(spaceId);
+      for (const row of inboxRepo.listPendingForSpace(spaceId)) {
+        const workerAgent = this.config.spaceAgentManager.getById(row.targetAgentId);
+        const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(row.targetAgentId);
+        if (workerAgent?.spaceId !== spaceId && longHorizonAgent?.spaceId !== spaceId) continue;
+        void this.activateLongTermAgentAndFlush(
+          {
+            actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,
+            kind: 'agent',
+            spaceId,
+            roles: ['space-agent'],
+            status: 'inactive',
+          },
+          row.id
+        ).catch((err) => {
+          inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
+          log.warn(
+            `Long-term Space agent inbox recovery failed for ${row.targetAgentId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.error(`SpaceRuntimeService: recoverLongTermAgentInbox failed for ${spaceId}:`, err);
+    }
+  }
+
   private async recoverLongTermAgentInbox(): Promise<void> {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     if (!inboxRepo) return;
     try {
       inboxRepo.expireStale();
       for (const space of await this.config.spaceManager.listSpaces()) {
-        for (const row of inboxRepo.listPendingForSpace(space.id)) {
-          const workerAgent = this.config.spaceAgentManager.getById(row.targetAgentId);
-          const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(row.targetAgentId);
-          if (workerAgent?.spaceId !== space.id && longHorizonAgent?.spaceId !== space.id) continue;
-          void this.activateLongTermAgentAndFlush(
-            {
-              actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,
-              kind: 'agent',
-              spaceId: space.id,
-              roles: ['space-agent'],
-              status: 'inactive',
-            },
-            row.id
-          ).catch((err) => {
-            inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
-            log.warn(
-              `Long-term Space agent inbox recovery failed for ${row.targetAgentId}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-        }
+        this.recoverLongTermAgentInboxForSpace(space.id);
       }
     } catch (err) {
       log.error('SpaceRuntimeService: recoverLongTermAgentInbox failed:', err);
