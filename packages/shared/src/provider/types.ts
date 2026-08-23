@@ -62,6 +62,12 @@ export interface ProviderOAuthFlowData {
   message: string;
 }
 
+export interface ListRemoteModelsOptions {
+  force?: boolean;
+  command?: string;
+  baseUrl?: string;
+}
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -74,6 +80,8 @@ export interface Provider {
   getModels(): Promise<ModelInfo[]>;
 
   getCachedModels?(): ModelInfo[] | null;
+
+  listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
 
   ownsModel(modelId: string): boolean;
 
