@@ -400,7 +400,15 @@ export class SpaceGoalService {
       return { goal: postBookkeeping, nextTask, terminalGeneration, notification };
     });
     if (result.nextTask) this.emitTaskCreated(result.nextTask);
-    if (result.notification) this.deps.onOutcomeNotification?.(result.notification);
+    if (result.notification) {
+      try {
+        this.deps.onOutcomeNotification?.(result.notification);
+      } catch (err) {
+        log.warn(
+          `Outcome notification delivery threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
     return result;
   }
 
@@ -436,7 +444,11 @@ export class SpaceGoalService {
       terminalGeneration,
       goalRevision: goal.revision,
       payload: {
-        summary: (task.reportedSummary ?? task.result ?? '').slice(0, 400),
+        summary: (
+          [task.reportedSummary, task.result].find(
+            (s) => typeof s === 'string' && s.trim().length > 0
+          ) ?? ''
+        ).slice(0, 400),
         taskStatus: task.status,
         taskTitle: task.title.slice(0, 200),
         goalTitle: goal.title.slice(0, 200),
