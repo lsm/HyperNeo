@@ -8,6 +8,7 @@ import type {
   SpaceGoalEventSource,
   SpaceGoalEventType,
   SpaceGoalListParams,
+  SpaceGoalMetrics,
   SpaceGoalOutcomeNotification,
   SpaceTask,
   SpaceTaskStatus,
@@ -79,6 +80,17 @@ export type ClaimOutcomeNotificationResult =
       goal: SpaceGoal;
     }
   | { status: 'not_found' };
+
+export interface ApplyOutcomeGoalUpdateParams {
+  goalId: string;
+  summary?: string;
+  nextSteps?: string[];
+  progress?: number;
+  metrics?: Record<string, string | number | boolean | null>;
+  observations?: Array<{ key: string; value: number }>;
+  sourceTaskId?: string;
+  sourceSessionId?: string | null;
+}
 
 export interface SpaceGoalServiceDeps {
   goalRepo: SpaceGoalRepository;
@@ -625,6 +637,61 @@ export class SpaceGoalService {
       claimable.push(...notificationRepo.listPendingByGoal(goal.id));
     }
     return claimable.slice(0, params.limit ?? 100);
+  }
+
+  /** @public */
+  applyOutcomeGoalUpdate(params: ApplyOutcomeGoalUpdateParams): SpaceGoal {
+    const goal = this.requireGoal(params.goalId);
+    const metrics = this.combineOutcomeMetrics(goal.metrics, params.metrics, params.observations);
+    const updates: UpdateSpaceGoalParams = {};
+    if (params.summary !== undefined) updates.summary = params.summary;
+    if (params.nextSteps !== undefined) updates.nextSteps = params.nextSteps;
+    if (params.progress !== undefined && goal.type !== 'recurring') {
+      updates.progress = params.progress;
+    }
+    if (metrics !== null) updates.metrics = metrics;
+    this.syncLinkedScheduleIfNeeded(
+      goal,
+      { summary: params.summary, nextSteps: params.nextSteps },
+      goal.status,
+      updates
+    );
+    const updated = this.deps.goalRepo.update(goal.id, updates);
+    if (!updated) return goal;
+    this.recordGoalEvent(updated, 'updated', goal, updated, {
+      source: 'space_agent_tool',
+      sourceTaskId: params.sourceTaskId ?? null,
+      sourceSessionId: params.sourceSessionId ?? null,
+      note: 'Goal outcome reviewed',
+    });
+    return updated;
+  }
+
+  private combineOutcomeMetrics(
+    current: SpaceGoalMetrics,
+    replacement?: Record<string, string | number | boolean | null>,
+    observations?: Array<{ key: string; value: number }>
+  ): SpaceGoalMetrics | null {
+    if (!replacement && !observations) return null;
+    const merged: SpaceGoalMetrics = { ...current };
+    if (replacement) {
+      for (const [key, value] of Object.entries(replacement)) merged[key] = value;
+    }
+    if (observations) {
+      for (const observation of observations) {
+        const existing = merged[observation.key];
+        if (existing === undefined || existing === null) {
+          merged[observation.key] = observation.value;
+        } else if (typeof existing === 'number') {
+          merged[observation.key] = existing + observation.value;
+        } else {
+          throw new Error(
+            `Cannot apply a numeric observation to non-numeric metric "${observation.key}"`
+          );
+        }
+      }
+    }
+    return merged;
   }
 
   private resolveClaimAuthorizedAgentIds(goal: SpaceGoal): string[] {
