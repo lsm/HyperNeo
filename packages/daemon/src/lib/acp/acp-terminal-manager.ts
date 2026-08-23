@@ -14,6 +14,7 @@ import type {
 import { Logger } from '../logger';
 import { parseAcpCommand } from './acp-command';
 import {
+  acpProcessGroupAlive,
   type AcpProcessTree,
   type AcpProcessTreeOwner,
   getAcpProcessTreeOwner,
@@ -23,15 +24,6 @@ const logger = new Logger('AcpTerminalManager');
 const DEFAULT_OUTPUT_BYTE_LIMIT = 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const DEFAULT_KILL_ESCALATION_MS = 5000;
-
-const defaultProcessGroupProbe = (pid: number): boolean => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-};
 
 interface TerminalSession {
   process: ChildProcess;
@@ -50,7 +42,6 @@ interface TerminalSession {
   processGroupGone: boolean;
 }
 
-/* @public - wired into the ACP query runner in a later stack PR */
 export class AcpTerminalManager {
   private sessions = new Map<string, TerminalSession>();
   private disposed = false;
@@ -240,7 +231,7 @@ export class AcpTerminalManager {
   private recordGroupGone(session: TerminalSession): void {
     if (session.processGroupGone) return;
     const pid = session.process.pid;
-    const groupExists = pid != null && (this.processGroupProbe ?? defaultProcessGroupProbe)(pid);
+    const groupExists = pid != null && (this.processGroupProbe ?? acpProcessGroupAlive)(pid);
     if (!groupExists) session.processGroupGone = true;
   }
 
