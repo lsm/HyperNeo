@@ -31,6 +31,7 @@ import {
 import type { SQLiteValue } from '../types';
 import {
   decideMessageAdmission,
+  extractReplacementEdges,
   normalizeMessageAdmissionInput,
   type SDKMessageReplacementEdge,
   type SendStatus,
