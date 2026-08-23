@@ -78,12 +78,14 @@ function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undef
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
     if (!Array.isArray(parsed.models)) return undefined;
-    return parsed.models.flatMap((model) => {
+    if (parsed.models.length === 0) return [];
+    const valid = parsed.models.flatMap((model) => {
       if (!model || typeof model !== 'object') return [];
       const { id, name } = model as { id?: unknown; name?: unknown };
       if (typeof id !== 'string') return [];
       return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
     });
+    return valid.length > 0 ? valid : undefined;
   } catch {
     return undefined;
   }

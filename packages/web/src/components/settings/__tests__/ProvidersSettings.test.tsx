@@ -85,16 +85,22 @@ vi.mock('../AcpEditorModal.tsx', () => ({
     command,
     models,
     envBacked,
+    configJson,
     onClose,
   }: {
     providerId: string;
     command: string;
-    models: Array<{ id: string }>;
+    models: Array<{ id: string }> | undefined;
     envBacked?: boolean;
+    configJson?: string;
     onClose: () => void;
   }) => (
     <div data-testid="acp-editor-modal">
       <span>{`${providerId}:${command}:${(models ?? []).map((model) => model.id).join(',')}`}</span>
+      <span data-testid="acp-editor-models-state">
+        {models === undefined ? 'absent' : models.length === 0 ? 'empty' : 'set'}
+      </span>
+      <span data-testid="acp-editor-config-json">{configJson ?? ''}</span>
       <span data-testid="acp-editor-env-backed">{envBacked ? 'env' : 'explicit'}</span>
       <button data-testid="acp-editor-close" onClick={onClose}>
         Close
@@ -422,6 +428,38 @@ describe('ProvidersSettings', () => {
     expect(screen.getByTestId('acp-editor-modal').textContent).toContain(
       'acp-1:devin acp:devin-model'
     );
+  });
+
+  it('treats an all-invalid ACP models array as absent when opening the editor', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({ command: 'devin acp', models: [null] }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Edit'));
+
+    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('absent');
+  });
+
+  it('keeps an explicitly empty ACP models array distinct from absent', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Edit'));
+
+    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('empty');
   });
 
   it('toggles provider enabled state', async () => {
