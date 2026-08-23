@@ -1940,6 +1940,31 @@ describe('SpaceRuntimeService', () => {
       );
       expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
     });
+
+    test('routes a no-recipient wake to the coordinator', async () => {
+      const longHorizonAgentRepo = {
+        getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
+        ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
+        getById: mock(() => null),
+      } as unknown as SpaceLongHorizonAgentRepository;
+      const goalService = {
+        getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
+      } as unknown as SpaceRuntimeServiceConfig['goalService'];
+      const outcomeNotificationRepo = {
+        getById: mock(() => ({ status: 'pending' })),
+      } as unknown as SpaceGoalOutcomeNotificationRepository;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        enableGoalOutcomeWake: true,
+        longHorizonAgentRepo,
+        goalService,
+        outcomeNotificationRepo,
+      });
+
+      await svc.deliverGoalOutcomeWake(notification);
+
+      expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
+    });
   });
 
   describe('attachSpaceToolsToMemberSession()', () => {

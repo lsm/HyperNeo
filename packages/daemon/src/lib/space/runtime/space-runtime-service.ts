@@ -25,9 +25,16 @@ import type { SpaceRepository } from '../../../storage/repositories/space-reposi
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { SessionRepository } from '../../../storage/repositories/session-repository';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
+import {
+  coordinatorLongHorizonAgentId,
+  coordinatorSessionId,
+  type SpaceLongHorizonAgentRepository,
+} from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
-import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
+import type {
+  SpaceAgentInboxMessageRecord,
+  SpaceAgentInboxRepository,
+} from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
@@ -339,7 +346,7 @@ export class SpaceRuntimeService {
       targetAgentId = resolution.owner.agentId;
     } else if (resolution?.action === 'coordinator_fallback') {
       targetAgentId = resolution.coordinatorAgentId;
-    } else if (resolution?.action === 'degraded') {
+    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
       targetAgentId = this.config.longHorizonAgentRepo?.ensureCoordinator(goal.spaceId).id ?? null;
     }
     if (!targetAgentId) {
@@ -409,6 +416,8 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     queuedMessageId?: string
   ): Promise<void> {
+    const space = await this.config.spaceManager.getSpace(actor.spaceId);
+    if (!space || space.paused || space.stopped) return;
     const agentId = agentIdFromActorId(actor.actorId);
     const lockKey = agentId ? `${actor.spaceId}:${agentId}` : actor.actorId;
     const previous = this.longTermAgentFlushes.get(lockKey) ?? Promise.resolve();
@@ -452,12 +461,23 @@ export class SpaceRuntimeService {
       : pending;
     for (const row of ordered) {
       try {
+        if (this.isGoalOutcomeWakeStale(row)) {
+          inboxRepo.markDelivered(row.id, session.getSessionData().id);
+          continue;
+        }
         await this.injectLongTermAgentMessage(session, row.message, row.id);
         inboxRepo.markDelivered(row.id, session.getSessionData().id);
       } catch (err) {
         inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
       }
     }
+  }
+
+  private isGoalOutcomeWakeStale(row: SpaceAgentInboxMessageRecord): boolean {
+    if (!row.idempotencyKey?.startsWith('goal-outcome:')) return false;
+    const notificationId = row.idempotencyKey.slice('goal-outcome:'.length);
+    const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
+    return notification == null || notification.status !== 'pending';
   }
 
   private async injectLongTermAgentMessage(
@@ -651,6 +671,12 @@ export class SpaceRuntimeService {
     }
   }
 
+  private async resolveCoordinatorSession(spaceId: string) {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager) return null;
+    return sessionManager.getSessionAsync(coordinatorSessionId(spaceId));
+  }
+
   private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
     const sessionManager = this.config.sessionManager;
     const repo = this.config.longHorizonAgentRepo;
@@ -719,6 +745,9 @@ export class SpaceRuntimeService {
     if (!agentId) return null;
     const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
     if (longHorizonAgent?.spaceId === actor.spaceId) {
+      if (longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId)) {
+        return this.resolveCoordinatorSession(actor.spaceId);
+      }
       return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
     }
     const agent = this.config.spaceAgentManager.getById(agentId);
