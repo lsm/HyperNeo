@@ -210,6 +210,13 @@ export interface DaemonAppContext {
   cleanup: () => Promise<void>;
 }
 
+async function invalidateInFlightModelLoads(): Promise<void> {
+  try {
+    const { clearModelsCache } = await import('./lib/model-service');
+    clearModelsCache();
+  } catch {}
+}
+
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
@@ -1126,6 +1133,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
         unsubscribeProviderFailureChanges?.();
+        await invalidateInFlightModelLoads();
 
         db.close();
 
@@ -1135,6 +1143,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
         unsubscribeProviderFailureChanges?.();
+        await invalidateInFlightModelLoads();
         throw error;
       } finally {
         await closeFileLogCapture();
@@ -1177,9 +1186,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   } catch (error) {
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
-    void import('./lib/model-service')
-      .then(({ clearModelsCache }) => clearModelsCache())
-      .catch(() => {});
+    await invalidateInFlightModelLoads();
     abortAgentMemoryEmbeddingModelPrefetch();
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;
