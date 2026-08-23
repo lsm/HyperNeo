@@ -9,6 +9,7 @@ import {
   clearModelsCache,
   getModelsCache,
   setModelsCache,
+  updateProviderModelsInCache,
   getSupportedModelsFromQuery,
   initializeModels,
   getSessionModelInfo,
@@ -133,6 +134,134 @@ describe('Model Service', () => {
 
       const cache = getModelsCache();
       expect(cache.size).toBe(0);
+    });
+  });
+
+  describe('updateProviderModelsInCache', () => {
+    const acpModels: ModelInfo[] = [
+      {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ];
+
+    function seedCache(entries: Record<string, ModelInfo[]>, timestamp?: number) {
+      setModelsCache(new Map(Object.entries(entries)), timestamp);
+    }
+
+    it('replaces the provider slice while preserving other providers', () => {
+      seedCache({
+        global: [...mockModels, { ...acpModels[0], id: 'stale-acp-model', contextWindow: 1000 }],
+      });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+    });
+
+    it('appends the provider models when the cached entry has no slice for the provider', () => {
+      seedCache({ global: mockModels });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('removes the provider slice when the replacement list is empty', () => {
+      seedCache({ global: [...mockModels, ...acpModels] });
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('does not create a missing cache entry', () => {
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(false);
+      expect(getModelsCache().size).toBe(0);
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('leaves other cache keys untouched', () => {
+      seedCache(
+        {
+          global: [...mockModels, ...acpModels],
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getAvailableModels('session-123')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('supports an explicit cache key', () => {
+      seedCache(
+        {
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', [], 'session-123');
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('session-123')).toEqual(mockModels);
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('drops an in-flight refresh result when the provider slice is updated mid-refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'slow-splice-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [
+            {
+              id: 'slow-splice-model',
+              name: 'Slow Splice Model',
+              family: 'test',
+              provider: 'slow-splice-provider',
+              contextWindow: 100000,
+            },
+          ];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      await refreshPromise;
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+      expect(models.some((m) => m.id === 'slow-splice-model')).toBe(false);
     });
   });
 

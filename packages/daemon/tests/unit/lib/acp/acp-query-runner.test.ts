@@ -3,7 +3,13 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
+import type {
+  AcpConfigOption,
+  MessageContent,
+  MessageHub,
+  ModelInfo,
+  Session,
+} from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
@@ -22,6 +28,12 @@ import {
 } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
+import {
+  clearModelsCache,
+  getAvailableModels,
+  getModelsCache,
+  setModelsCache,
+} from '../../../../src/lib/model-service';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
@@ -831,6 +843,94 @@ describe('AcpQueryRunner', () => {
     expect(process.env.HYPERNEO_ACP_COMMAND).toBe('mock-acp --stdio');
     expect(constructorOptions[0].command).toBe('configured-agent');
     expect(constructorOptions[0].args).toEqual(['--stdio']);
+  });
+
+  describe('ACP model cache seam', () => {
+    const anthropicModel: ModelInfo = {
+      id: 'sonnet',
+      name: 'Sonnet 4.5',
+      alias: 'sonnet',
+      family: 'sonnet',
+      provider: 'anthropic',
+      contextWindow: 200000,
+      description: 'Sonnet 4.5',
+      releaseDate: '2024-09-29',
+      available: true,
+    };
+    const staleAcpModel: ModelInfo = {
+      id: 'stale-acp-model',
+      name: 'Stale ACP Model',
+      alias: 'stale-acp',
+      family: 'acp',
+      provider: 'acp',
+      contextWindow: 1000,
+      description: 'Stale ACP model',
+      releaseDate: '2026-01-01',
+      available: true,
+    };
+
+    beforeEach(() => {
+      clearModelsCache();
+    });
+
+    afterEach(() => {
+      clearModelsCache();
+    });
+
+    test('splices discovered ACP models into the global cache, preserving other providers', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('mock-acp --stdio');
+      getProviderRegistry().register(provider);
+
+      setModelsCache(
+        new Map([['global', [anthropicModel, staleAcpModel]]]),
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const configOptions: AcpConfigOption[] = [
+        {
+          id: 'model',
+          name: 'Model',
+          type: 'select',
+          category: 'model',
+          currentValue: 'devin-default',
+          options: [{ name: 'Devin Default', value: 'devin-default' }],
+        },
+      ];
+      const client = createMockClient();
+      client.createSession = mock(async () => ({ sessionId: 'acp-session-1', configOptions }));
+      client.getConfigOptions = mock(() => configOptions);
+      const { runner, ctx } = createRunnerFixture({ client });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp').map((m) => m.id)).toEqual([
+        'devin-default',
+      ]);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual([anthropicModel]);
+
+      const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+      expect(publishAsync).toHaveBeenCalledWith('providers.changed', { sessionId: 'global' });
+    });
+
+    test('does not publish providers.changed when the global cache is not initialized', async () => {
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('mock-acp --stdio');
+      getProviderRegistry().register(provider);
+
+      const { runner, ctx } = createRunnerFixture();
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(getModelsCache().has('global')).toBe(false);
+      const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+      expect(publishAsync).not.toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
   });
 
   test('auto-allows ACP permission requests without prompting the user', async () => {

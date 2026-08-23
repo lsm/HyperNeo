@@ -358,6 +358,26 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
   }
 }
 
+export function updateProviderModelsInCache(
+  providerId: string,
+  models: ModelInfo[],
+  cacheKey: string = 'global'
+): boolean {
+  const cachedModels = modelsCache.get(cacheKey);
+  if (!cachedModels) return false;
+
+  const hadInFlight = refreshInProgress.has(cacheKey);
+  modelsCache.set(cacheKey, [
+    ...cachedModels.filter((model) => model.provider !== providerId),
+    ...models,
+  ]);
+  cacheTimestamps.set(cacheKey, Date.now());
+  if (hadInFlight || cacheGeneration.has(cacheKey)) {
+    cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
+  }
+  return true;
+}
+
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
   const normalized = idOrAlias.toLowerCase();
 
