@@ -694,6 +694,17 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.spyRepo.repo.getById(nodeRow.id)?.status).toBe('pending');
   });
 
+  it('drains space_agent rows regardless of workflow node scoping', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const nodeScoped = h.enqueue({ workflowNodeId: 'node-build', message: 'node scoped' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).toHaveBeenCalledTimes(1);
+    expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('delivered');
+  });
+
   it('marks rows delivered to the space-chat session id and emits the delivery event', async () => {
     const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);
