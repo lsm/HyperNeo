@@ -18,6 +18,7 @@ import {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 
 describe('Model Service', () => {
   const mockModels: ModelInfo[] = [
@@ -1238,6 +1239,58 @@ describe('Model Service', () => {
       await refreshPromise;
 
       expect(getAvailableModels('global')).toEqual([]);
+    });
+  });
+
+  describe('probe-based provider failures (characterization)', () => {
+    it('omits a provider whose getModels probe rejects from the cache built by refreshModels', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [mockModels[0]],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const rejectingFetch = (async () =>
+        new Response(null, { status: 401 })) as unknown as typeof fetch;
+      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, rejectingFetch));
+
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'anthropic')).toBe(true);
+      expect(models.some((m) => m.provider === 'glm')).toBe(false);
+    });
+
+    it('admits the provider again once its probe succeeds on a later refreshModels', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      let upstreamAccepts = false;
+      const mutableFetch = (async () =>
+        new Response(null, { status: upstreamAccepts ? 200 : 401 })) as unknown as typeof fetch;
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [mockModels[0]],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, mutableFetch));
+
+      await refreshModels();
+      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
+
+      upstreamAccepts = true;
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(true);
     });
   });
 });
