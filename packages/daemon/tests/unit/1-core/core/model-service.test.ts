@@ -290,10 +290,19 @@ describe('Model Service', () => {
       expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
 
       getAvailableModels('global');
-      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const deadline = Date.now() + 3_000;
+      let refreshed = false;
+      while (Date.now() < deadline) {
+        if (getAvailableModels('global').some((m) => m.id === 'fresh-model')) {
+          refreshed = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
 
       expect(getModels).toHaveBeenCalled();
-      expect(getAvailableModels('global').some((m) => m.id === 'fresh-model')).toBe(true);
+      expect(refreshed).toBe(true);
     });
   });
 
