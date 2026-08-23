@@ -257,16 +257,24 @@ export class SpaceTaskManager {
     if (reopened && newStatus === 'open') {
       updates.startedAt = null;
     }
-    const updated = this.db.transaction(() => {
-      const result = this.taskRepo.updateTask(taskId, updates);
-      if (!result) {
-        throw new Error(`Failed to update task: ${taskId}`);
-      }
-      if (reopened) {
-        this.onTaskReopened?.(taskId);
-      }
-      return result;
-    })();
+    this.reactiveDb?.beginTransaction();
+    let updated: SpaceTask;
+    try {
+      updated = this.db.transaction(() => {
+        const result = this.taskRepo.updateTask(taskId, updates);
+        if (!result) {
+          throw new Error(`Failed to update task: ${taskId}`);
+        }
+        if (reopened) {
+          this.onTaskReopened?.(taskId);
+        }
+        return result;
+      })();
+      this.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.reactiveDb?.abortTransaction();
+      throw err;
+    }
 
     if (newStatus === 'done') {
       if (!task.goalId) {

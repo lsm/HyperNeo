@@ -370,7 +370,13 @@ export class SpaceGoalService {
             `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
-        this.deps.goalAutomationService?.onTaskCompleted(taskId);
+        try {
+          this.deps.goalAutomationService?.onTaskCompleted(taskId);
+        } catch (err) {
+          log.warn(
+            `Goal automation onTaskCompleted threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       let nextTask: SpaceTask | null = null;
       let postBookkeeping: SpaceGoal = fresh;
