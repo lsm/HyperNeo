@@ -221,7 +221,7 @@ describe('QueryLifecycleManager', () => {
       });
       manager = new QueryLifecycleManager(mockContext);
 
-      await manager.stop();
+      await manager.stop({ timeoutMs: 50 });
 
       expect(newerController.signal.aborted).toBe(false);
       expect(mockContext.queryAbortController).toBe(newerController);

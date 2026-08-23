@@ -121,7 +121,7 @@ export function redactCommandSecrets(
   let inLeadingAssignments =
     options.shellScript === true ? command.indexOf('=') > 0 || isEnv : true;
   let currentCommand = command;
-  let awaitingCommandWord = options.shellScript === true;
+  let awaitingCommandWord = options.shellScript === true || isEnv;
   let endOfOptions = false;
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
@@ -145,6 +145,18 @@ export function redactCommandSecrets(
       continue;
     }
     if (!arg.startsWith('-')) {
+      const looksLikeUrl = /^[a-z][a-z0-9+.-]*:/i.test(arg);
+      if (options.shellScript === true && !looksLikeUrl && /[;&|]/.test(arg)) {
+        inLeadingAssignments = true;
+        endOfOptions = false;
+        awaitingCommandWord = true;
+        redacted.push(
+          arg.replace(/(^|[;&|])([A-Za-z_][\w-]*)=([^;&|\s]*)/g, (whole, pre, name) =>
+            isSecretEnvAssignment(`${name}=`) ? `${pre}${name}=[redacted]` : whole
+          )
+        );
+        continue;
+      }
       const isAssignmentShaped = arg.indexOf('=') > 0;
       if (inLeadingAssignments && assignmentsAllowed && isSecretEnvAssignment(arg)) {
         redacted.push(`${arg.slice(0, arg.indexOf('='))}=[redacted]`);
@@ -163,13 +175,43 @@ export function redactCommandSecrets(
     const tokenCommandName = commandBaseName(currentCommand);
     const tokenCurl = CURL_COMMAND_NAMES.has(tokenCommandName);
     const tokenShell = SHELL_COMMAND_NAMES.has(tokenCommandName);
-    if (tokenCurl && /^-H./.test(arg)) {
-      redacted.push(isSecretHeaderValue(arg.slice(2)) ? '-H[redacted]' : arg);
+    if (tokenCurl && /^-[a-z]*$/i.test(arg)) {
+      const letters = arg.slice(1).toLowerCase();
+      const valueFlag = letters.charAt(letters.length - 1);
+      const next = args[index + 1];
+      if (
+        (valueFlag === 'h' || valueFlag === 'u') &&
+        next !== undefined &&
+        !next.startsWith('--')
+      ) {
+        if (valueFlag === 'u' || isSecretHeaderValue(next)) {
+          redacted.push(arg, '[redacted]');
+          index++;
+          continue;
+        }
+      }
+      redacted.push(arg);
       continue;
     }
-    if (tokenCurl && /^-u./.test(arg)) {
-      redacted.push('-u[redacted]');
-      continue;
+    if (tokenCurl && /^-[a-z]*[hu]/i.test(arg)) {
+      const lowered = arg.toLowerCase();
+      let carrierIndex = -1;
+      for (let scan = 1; scan < lowered.length; scan++) {
+        const ch = lowered[scan];
+        if (ch === 'h' || ch === 'u') {
+          carrierIndex = scan;
+          break;
+        }
+        if (!/[a-z]/i.test(ch)) break;
+      }
+      if (carrierIndex > 0) {
+        const value = arg.slice(carrierIndex + 1);
+        const secret = lowered[carrierIndex] === 'u' || isSecretHeaderValue(value);
+        if (secret && value) {
+          redacted.push(`${arg.slice(0, carrierIndex + 1)}[redacted]`);
+          continue;
+        }
+      }
     }
     if (tokenShell && /^-[a-z]*c[a-z]*$/i.test(arg)) {
       const next = args[index + 1];
@@ -198,7 +240,8 @@ export function redactCommandSecrets(
       } else if (tokenCurl && isUserArgName(name)) {
         redacted.push(`${name}=[redacted]`);
       } else {
-        redacted.push(arg);
+        const redactedValue = redactUrlUserinfo(value);
+        redacted.push(redactedValue === value ? arg : `${name}=${redactedValue}`);
       }
       continue;
     }

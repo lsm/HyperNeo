@@ -797,6 +797,7 @@ export class AcpQueryRunner {
 
       await client.initialize();
       await client.authenticate();
+      assertActiveAcpStartup();
       const existingAcpSessionId = session.acpSessionId;
       if (existingAcpSessionId) {
         if (!client.canLoadSession()) {
@@ -1356,6 +1357,7 @@ export class AcpQueryRunner {
     session.acpSessionId = undefined;
     session.metadata = {
       ...session.metadata,
+      acpInstructionsSent: undefined,
       acpContextUsageEstimate: undefined,
     };
     db.updateSession(session.id, {

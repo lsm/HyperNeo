@@ -223,15 +223,17 @@ export class QueryLifecycleManager {
       noPidProcesses: noPidProcessSnapshot,
     });
 
-    const lateProcesses = this.ctx
-      .snapshotTrackedAgentProcesses()
-      .filter((process) => !trackedProcessSnapshot.some((entry) => entry[1] === process[1]));
-    if (lateProcesses.length > 0) {
-      this.ctx.terminateTrackedAgentProcesses({
-        forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
-        processes: lateProcesses,
-        noPidProcesses: [],
-      });
+    if (this.ctx.queryPromise === queryPromise) {
+      const lateProcesses = this.ctx
+        .snapshotTrackedAgentProcesses()
+        .filter((process) => !trackedProcessSnapshot.some((entry) => entry[1] === process[1]));
+      if (lateProcesses.length > 0) {
+        this.ctx.terminateTrackedAgentProcesses({
+          forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
+          processes: lateProcesses,
+          noPidProcesses: [],
+        });
+      }
     }
 
     if (queryObject && this.ctx.queryObject === queryObject) {
