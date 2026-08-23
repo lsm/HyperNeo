@@ -2,6 +2,11 @@ import type { ModelInfo, Session } from '@hyperneo/shared';
 import type { QueryLike } from './agent/query-like';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
+import {
+  clearProviderFailure,
+  type ProviderFailureRecord,
+  recordProviderFailure,
+} from './providers/provider-failure-store.js';
 import type { Provider } from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
@@ -147,7 +152,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 
   const refreshPromise = (async () => {
     try {
-      const models = await loadModelsFromProviders();
+      const { models } = await loadModelsFromProviders();
       if (models.length > 0 && (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
         const mergedModels = mergeWithFallbackModels(models);
         modelsCache.set(cacheKey, mergedModels);
@@ -170,7 +175,12 @@ function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boole
   return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
 }
 
-async function loadModelsFromProviders(): Promise<ModelInfo[]> {
+interface ModelsLoadResult {
+  models: ModelInfo[];
+  failures: ProviderFailureRecord[];
+}
+
+async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
     initializeProviders();
@@ -189,12 +199,19 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
   );
 
   const allModels: ModelInfo[] = [];
-  results.forEach((result) => {
-    /* v8 ignore next 2 */
-    if (result.status === 'fulfilled') allModels.push(...result.value);
+  const failures: ProviderFailureRecord[] = [];
+  results.forEach((result, index) => {
+    const provider = providers[index];
+    if (result.status === 'fulfilled') {
+      clearProviderFailure(provider.id);
+      /* v8 ignore next 2 */
+      allModels.push(...result.value);
+    } else {
+      failures.push(recordProviderFailure(provider.id, result.reason));
+    }
   });
 
-  return allModels;
+  return { models: allModels, failures };
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -228,7 +245,7 @@ export async function initializeModels(): Promise<void> {
   await waitForOptionalProviderRegistration();
 
   try {
-    const models = await loadModelsFromProviders();
+    const { models } = await loadModelsFromProviders();
     if (models.length > 0) {
       const mergedModels = mergeWithFallbackModels(models);
       modelsCache.set(cacheKey, mergedModels);
@@ -311,7 +328,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       if (signal?.aborted) {
         return;
       }
-      const models = await loadModelsFromProviders();
+      const { models } = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }

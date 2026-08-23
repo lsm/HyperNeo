@@ -52,6 +52,7 @@ import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
+import { subscribeProviderFailureChanges } from './lib/providers/provider-failure-store.js';
 import {
   backfillDeepSeekProvider,
   migrateProvidersIfNeeded,
@@ -442,6 +443,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
+    const unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
+      internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+    });
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
 
@@ -1120,6 +1124,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
+        unsubscribeProviderFailureChanges();
 
         db.close();
 
@@ -1128,6 +1133,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('Error during cleanup:', error);
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
+        unsubscribeProviderFailureChanges();
         throw error;
       } finally {
         await closeFileLogCapture();
