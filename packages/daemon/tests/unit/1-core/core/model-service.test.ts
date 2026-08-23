@@ -1255,6 +1255,7 @@ describe('Model Service', () => {
       models?: ModelInfo[];
       error?: Error;
       rejectDelayMs?: number;
+      onFirstProbe?: () => void;
     }
 
     async function registerProvider(id: string, behavior: MockProviderBehavior): Promise<void> {
@@ -1269,7 +1270,10 @@ describe('Model Service', () => {
           if (behavior.error) throw behavior.error;
           return behavior.models ?? [];
         },
-        isAvailable: async () => behavior.available ?? true,
+        isAvailable: async () => {
+          behavior.onFirstProbe?.();
+          return behavior.available ?? true;
+        },
       } as ProviderLike);
     }
 
@@ -1397,15 +1401,20 @@ describe('Model Service', () => {
     it('does not apply failure writes from a superseded initialization', async () => {
       const { initializeProviders } = await import('../../../../src/lib/providers/factory');
       initializeProviders();
+      let signalFirstProbe: () => void = () => {};
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbe = resolve;
+      });
       await registerProvider('stub-failing-provider', {
         error: new Error('Z.ai API key rejected (HTTP 401)'),
         models: mockModels,
         rejectDelayMs: 150,
+        onFirstProbe: signalFirstProbe,
       });
 
       const { initializeModels } = await import('../../../../src/lib/model-service');
       const initialization = initializeModels();
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await firstProbeStarted;
       clearModelsCache();
       await initialization;
 
@@ -1415,15 +1424,20 @@ describe('Model Service', () => {
     it('preserves replacement refresh state when a superseded initialization settles', async () => {
       const { initializeProviders } = await import('../../../../src/lib/providers/factory');
       initializeProviders();
+      let signalFirstProbe: () => void = () => {};
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbe = resolve;
+      });
       await registerProvider('stub-failing-provider', {
         error: new Error('Z.ai API key rejected (HTTP 401)'),
         models: mockModels,
         rejectDelayMs: 150,
+        onFirstProbe: signalFirstProbe,
       });
 
       const { initializeModels, refreshModels } = await import('../../../../src/lib/model-service');
       const initialization = initializeModels();
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await firstProbeStarted;
       clearModelsCache();
       const replacement = refreshModels();
       await initialization;
