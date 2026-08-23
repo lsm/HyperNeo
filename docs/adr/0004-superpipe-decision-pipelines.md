@@ -871,8 +871,12 @@ corruption; a dead-session activation reset as an unconditional
 status-only write. The AFTER pins (#2770) record the superseded outcomes —
 a losing CAS means a concurrent legitimate writer won, and the call skips
 instead of clobbering or misflagging. Concretely: a parked (`stopped`)
-task is admitted by the gates (the passes pin) and stopped by the
-reservation — no spawn, no execution write; a park landing mid-spawn-pass
+task on the fresh-spawn arm is admitted by the gates (the passes pin) and
+stopped by the reservation — no spawn, no execution write; the `reuse_live`
+arm deliberately precedes every task-status gate (the archived-task-rebind
+pin), so a parked task whose execution still has a live indexed session
+rebinds through the guarded CAS without acquiring the reservation; a park
+landing mid-spawn-pass
 fails the next execution's reservation, so the remainder does not spawn
 onto the parked task, and the trailing promotion CAS-loses instead of
 resurrecting it (pinned in the tick-loop suite); a mid-spawn cancel loses
@@ -928,8 +932,10 @@ rebinds an execution whose own indexed live session exists
 `createSubSession`'s direct path — the deliberate final-round descope that
 collapsed the transfer-rollback, per-agent exclusivity, and double-flush
 findings. Third, the parked-task asymmetry is policy, not accident:
-admission does not reject `stopped`; the reservation does — the admission
-decision table alone is not the complete spawn policy. Fourth, admission
+admission does not reject `stopped`; on the fresh-spawn arm the
+reservation does (and `reuse_live` precedes task status entirely) — the
+admission decision table alone is not the complete spawn policy. Fourth,
+admission
 reasons are computed twice: booleans in the core, the precise message
 re-derived in the shell (`raiseSpawnRejection` re-runs
 `validateTaskAllowsSpawn`/`assertExecutionValidAgainstWorkflow`), because
@@ -966,8 +972,9 @@ writes adjacent to but outside the converted seam survive unchanged —
 co-owner sweep's pointer-only preserve arm, and the tick's recovery
 writes — later phases' scope, tolerance unchanged.
 
-**Costs:** production +1,547/−545 across PRs 2–5 (five new pure modules,
-697 lines; `task-agent-manager.ts` at 4,461 lines — the spawn body became
+**Costs:** production +1,547/−545 across PRs 2–5 (five new modules — four
+pure cores plus the `spawn-flow.ts` staged composition — 697 lines;
+`task-agent-manager.ts` at 4,461 lines — the spawn body became
 the `buildSpawnExecutionFlowDeps` adapter plus a thin interpreter); tests
 +4,584/−146 across PRs 1–5 — nine new suites (admission gates/table,
 decision-pipeline parity, slot resolution, the flow contract, activation
