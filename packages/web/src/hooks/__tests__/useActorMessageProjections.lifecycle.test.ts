@@ -216,6 +216,47 @@ describe('useActorMessageProjections liveQuery lifecycle', () => {
       expect(result.current.rows.map((r) => r.id)).toEqual(['r1']);
       expect(result.current.isLoading).toBe(false);
     });
+
+    it('pauses deltas after a snapshot-phase error while live and revives on a fresh snapshot', () => {
+      const { result } = renderHook(() =>
+        useActorMessageProjections({ scope: 'task_timeline', taskId: 'task-1' })
+      );
+      const subId = subscribeCalls()[0][1].subscriptionId;
+      act(() => {
+        fireEvent('liveQuery.snapshot', {
+          subscriptionId: subId,
+          rows: [makeRow('r1', 1, 'hello')],
+          version: 1,
+        });
+      });
+      act(() => {
+        fireEvent('liveQuery.error', {
+          subscriptionId: subId,
+          code: 'QUERY_FAILED',
+          message: 'query failed',
+          phase: 'snapshot',
+        });
+      });
+      expect(result.current.rows.map((r) => r.id)).toEqual(['r1']);
+      act(() => {
+        fireEvent('liveQuery.delta', {
+          subscriptionId: subId,
+          added: [makeRow('r2', 2, 'paused')],
+          version: 2,
+        });
+      });
+      expect(result.current.rows.map((r) => r.id)).toEqual(['r1']);
+      expect(result.current.isLoading).toBe(false);
+      act(() => {
+        fireEvent('liveQuery.snapshot', {
+          subscriptionId: subId,
+          rows: [makeRow('r3', 3, 'revived')],
+          version: 3,
+        });
+      });
+      expect(result.current.rows.map((r) => r.id)).toEqual(['r3']);
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
   describe('reconnect and disconnect', () => {
