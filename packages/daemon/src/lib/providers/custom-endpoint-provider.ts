@@ -185,6 +185,10 @@ export class CustomEndpointProvider implements Provider {
     return this.config.models.map((model) => this.toModelInfo(model));
   }
 
+  getCachedModels(): ModelInfo[] | null {
+    return this.config.models.map((model) => this.toModelInfo(model));
+  }
+
   ownsModel(modelId: string): boolean {
     return this.config.models.some((m) => m.id === modelId);
   }

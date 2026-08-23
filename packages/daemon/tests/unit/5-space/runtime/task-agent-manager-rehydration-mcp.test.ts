@@ -139,6 +139,7 @@ function makeManager(): {
     nodeExecutionRepo: {
       listByWorkflowRun: () => [execution],
       listByAgentSessionId: () => [execution],
+      getByAgentSessionId: () => execution,
       getById: () => execution,
       update: () => execution,
     },
@@ -279,6 +280,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(registered.get(SUB_SESSION_ID)).toBe(started.agentSession);
     expect(started.state.calls).toContain('restartQuery');
     expect(stale.state.calls).toContain('handleInterrupt');
+    const adopted = started.agentSession as unknown as { slotResetsContext?: () => boolean };
+    expect(adopted.slotResetsContext).toBeTypeOf('function');
+    expect(adopted.slotResetsContext?.()).toBe(false);
     const completionCallbacks = (tam as unknown as { completionCallbacks: Map<string, unknown[]> })
       .completionCallbacks;
     expect(completionCallbacks.get(SUB_SESSION_ID)).toHaveLength(1);

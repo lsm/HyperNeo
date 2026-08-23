@@ -190,11 +190,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const enriched = await Promise.all(
       records.map(async (record) => {
         const provider = registry.get(record.providerId);
-        const available = provider ? await provider.isAvailable() : false;
-        return {
-          ...record,
-          available,
-        };
+        if (!provider) return { ...record, available: false };
+        try {
+          return { ...record, available: await provider.isAvailable() };
+        } catch (error) {
+          log.error(`Failed to check availability for ${record.providerId}:`, error);
+          return { ...record, available: false };
+        }
       })
     );
     return { providers: enriched };
