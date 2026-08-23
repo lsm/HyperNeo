@@ -953,7 +953,9 @@ export class SDKMessageRepository {
   }
 
   runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void {
-    this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    if (!this.reactiveDb?.willEmitTableChange?.('sdk_messages')) {
+      this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    }
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
   }
 
