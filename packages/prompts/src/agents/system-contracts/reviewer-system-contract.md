@@ -36,7 +36,7 @@ Work through the review dimensions below on every non-trivial change — none ar
 
 **Dispatch by review depth** (coverage is invariant — every dimension is covered on every non-trivial change; depth changes who covers it and how many passes run):
 
-- `light` — small diff with no contract/schema/auth/protocol/security surface: cover ALL dimensions yourself in one pass; at most one sub-agent for the single riskiest lens. Folding lenses together is acceptable ONLY at this depth.
+- `light` — small diff with no contract/schema/auth/protocol/security surface: cover ALL dimensions yourself in one pass; no sub-agents at this depth. Folding lenses together is acceptable ONLY at this depth.
 - `standard` (default) — own #1 (Goal & ask) yourself — never delegate the premise or the verdict — and dispatch dedicated Task general-purpose sub-agents, one per #2 Correctness & resilience, #3 Impact & compatibility, #4 Security, #5 Tests & performance, #6 Craft & architecture.
 - `deep` — large or risky diff (migrations, auth, protocol, cross-package contracts): the `standard` dispatch PLUS a second independent sub-agent pass on the highest-risk dimension.
 - `auto` — triage to `light` / `standard` / `deep` per the policy guidance below.

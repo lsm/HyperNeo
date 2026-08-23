@@ -825,6 +825,7 @@ describe('createCustomAgentInit', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('unresolved bot findings are your findings too');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('you become the gate');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('Dispatch by review depth');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('no sub-agents at this depth');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('coverage is invariant');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'Folding lenses together is acceptable ONLY at this depth'

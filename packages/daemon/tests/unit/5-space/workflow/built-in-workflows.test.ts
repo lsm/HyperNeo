@@ -387,6 +387,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
     expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'the external gate is REQUIRED — report the missing external gate as a blocker'
+    );
+    expect(CODER_ONLY_PROMPT).toContain('an emptied gate set there is a blocker');
     expect(CODER_ONLY_PROMPT).not.toContain('there is no internal backstop');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('internal fallback review');
   });
@@ -409,6 +413,7 @@ describe('coder-only workflow template', () => {
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'the run-scoped `gh api graphql` lookup is permitted by your contract'
     );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('BOTH conditions must hold');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('logins that are REVIEW bots');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('are NOT review bots');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
@@ -436,6 +441,9 @@ describe('coder-only workflow template', () => {
     expect(RESEARCH_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(RESEARCH_PROMPT).toContain('always send the gated PR handoff to Review');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('never substitutes for the review source');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'retargeting a PR changes the reviewed diff WITHOUT changing'
+    );
   });
 
   test('merge instructions sync fork PRs from the base repository remote', () => {
