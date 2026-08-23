@@ -43,8 +43,9 @@ the Pilot 3 spawn-seam race closure, and the boundary caveats.
 Validated further by pilot 10 / chain B (2026-08-23): the `sdk_messages`
 write side — save admission as a pure core over a normalized input, badge
 maintenance as an instruction set, and the delivery-status flip as a
-read → plan → CAS-within-transaction → apply interpreter (the Phase 4
-transaction-sandwich shape at the storage layer). See "Pilot 10" below for
+plan/interpret whose per-instruction CAS guards apply inside one
+transaction (a Phase 4 relative at the storage layer: guarded effects
+inside the transaction, not after commit). See "Pilot 10" below for
 the coupled TS/SQL badge predicate, the per-variant admission placement
 divergence, and the closing sweep.
 
@@ -1258,11 +1259,18 @@ The interpreter is the four-line `applyBadgeUpdate`; the rewind pair itself
 later collapsed into one `deleteMessagesFromTimestamp` (interleaved #2812,
 finishing B3's unification).
 
-**B4 — the Phase 4 transaction sandwich at the storage layer.**
+**B4 — a plan/interpret flip with per-instruction CAS guards.**
 `updateMessageStatus` gathers the pending-row snapshot and plans *before*
-opening the transaction, then applies inside it — read → plan →
-CAS-within-transaction → apply, with only the instruction application and
-the badge recompute transactional. That snapshot-to-apply gap is exactly
+opening the transaction, then interprets inside it: the timestamp, turn,
+and sequence instructions execute first, each itself a guarded conditional
+update, and the final `send_status` flip is the last guarded statement in
+the same transaction, with the badge recompute alongside and only the
+notifications and search-index scheduling after commit. That ordering —
+effects-before-status-CAS, all inside the transaction — is a *relative* of
+the ADR's Phase 4 wording (read → plan → CAS within transaction → apply
+effects *after commit*), not an instance of it: the effects here are DB-only
+rows guarded by the same predicate, so transactionality, not commit
+ordering, is what makes them safe. The snapshot-to-apply gap is exactly
 why the expected-status guards below exist, and the synchronous
 single-threaded connection is why it stays theoretical today; the
 plan/interpret boundary must not widen it. Two disciplines carried
@@ -1278,13 +1286,17 @@ plan. The one deliberate exception is a caller-provided sequence:
 `consumed_seq` as `options.consumedSeq`, the planner stores it in each
 `allocate-consumed-seq` instruction as `providedSeq`, and the interpreter
 reuses it without spending an atomic allocation — pinned as such. Second,
-*every applied transition carries an expected-status guard*
+*every planned transition carries an expected-status guard*
 (`AND send_status IN (pending set)`): a row that left the pending window
 between snapshot and apply fails its whole transition — no stale timestamp,
 turn, or sequence instruction executes on it — and (the PR-review fix) the
 seq-allocation arm re-probes the window before spending an atomic sequence,
-so a rejected row does not burn one. Ids outside the planned snapshot flip
-unconditionally, without turn/seq/timestamp effects — the pre-existing
+so a rejected row does not burn one. The guard's scope is the planned set
+only, because the snapshot is gathered solely for `consumed`/`failed`
+targets: intermediate-target updates (`enqueued`, `deferred`, `submitted` —
+the re-queue paths call these live) take the unconditional arm with no
+`send_status` predicate at all, as do ids outside the snapshot on terminal
+targets — flipping without turn/seq/timestamp effects, the pre-existing
 behavior for already-settled rows, now pinned as such. The options-carrying
 callers (`sharedTurn`, `consumedSeq`) are repository-internal delivery
 wrappers; the `Database` facade exposes the 2-arg form only.
@@ -1341,9 +1353,12 @@ script constructs it on a writable one whose writes include the recompute's
 `UPDATE` (`scripts/recover-messages.ts:276`) — what the two share is the
 absence of a reactive database, against which every notification is a `?.`
 no-op, and `recomputeVisibleMessageCount` is the script's public entry. The
-module tops stay pure — constants and SQL strings only, no module-scope
-initialization — across the repository and every module it now imports,
-which is what the worker's import graph requires. The facade
+module tops stay worker-safe across the repository and every module it
+imports: module-scope initialization exists — constant `Set`s, and
+`message-search-admission.ts` composes its `decisionRun` pipeline at
+import — but none of it is environment-dependent or touches database or
+reactive state, which is the actual requirement the worker's import graph
+imposes. The facade
 (`storage/index.ts`) and the reactive proxy's `METHOD_TABLE_MAP` were not
 touched by any chain B PR. The proxy dispatches with `.apply(target, args)`,
 but the proxied facade method is itself 2-arg — `Database.updateMessageStatus`
