@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -438,6 +439,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     traceEvidenceService: evolutionTraceEvidenceService,
     jobQueue: deps.jobQueue,
   });
+  let deliverOutcomeWake: (notification: SpaceGoalOutcomeNotification) => void = () => {};
   const spaceGoalService = new SpaceGoalService({
     goalRepo: spaceGoalRepo,
     goalEventRepo: spaceGoalEventRepo,
@@ -464,6 +466,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         } catch (err) {
           log.warn('could not sync self-nag schedule on goal resume', err);
         }
+      }
+    },
+    onOutcomeNotification: (notification) => {
+      try {
+        deliverOutcomeWake(notification);
+      } catch (err) {
+        log.warn(
+          `Goal outcome wake delivery threw for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
   });
@@ -648,7 +659,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     evolutionScopeService,
     evolutionEpisodeService,
     artifactProfile,
+    outcomeNotificationRepo,
+    enableGoalOutcomeWake: false,
   });
+  deliverOutcomeWake = (notification) => {
+    void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
+      log.warn(
+        `Goal outcome wake delivery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+      );
+    });
+  };
 
   deps.spaceManager.onSpaceResumedRegister((spaceId) => {
     try {

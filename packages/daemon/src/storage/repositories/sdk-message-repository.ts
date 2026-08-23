@@ -50,6 +50,11 @@ import {
   type RenderableTextMessageRow,
   type SubagentMessageRow,
 } from './sdk-message-projections';
+import {
+  planAdmissionBadgeUpdate,
+  planBadgeRecompute,
+  type BadgeUpdateInstruction,
+} from './sdk-message-badge';
 
 export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 export {
@@ -414,6 +419,7 @@ export class SDKMessageRepository {
         sendStatus: null,
         origin,
       });
+      const badgeUpdate = planAdmissionBadgeUpdate(admission);
       const messageType = message.type;
       const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
       const timestamp = new Date().toISOString();
@@ -457,10 +463,10 @@ export class SDKMessageRepository {
         }
         this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
         this.scheduleMessageSearchIndex(id);
-        if (admission.countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+        this.applyBadgeUpdate(sessionId, badgeUpdate);
       })();
       try {
-        if (admission.countsTowardsBadge) this.notifySessionsChanged(sessionId);
+        if (badgeUpdate.kind === 'delta') this.notifySessionsChanged(sessionId);
         this.deleteSupersededMessageSearchRows(sessionId, message);
       } catch (error) {
         this.logger.error('[Database] Post-commit side effects failed for SDK message:', error);
@@ -865,6 +871,15 @@ export class SDKMessageRepository {
     return result.changes > 0;
   }
 
+  private applyBadgeUpdate(sessionId: string, instruction: BadgeUpdateInstruction): boolean {
+    if (instruction.kind === 'delta') {
+      this.bumpVisibleMessageCount(sessionId, instruction.delta);
+      return true;
+    }
+    if (instruction.kind === 'recompute') return this.recomputeVisibleMessageCount(sessionId);
+    return false;
+  }
+
   private notifySessionsChanged(sessionId: string): void {
     this.reactiveDb?.notifyChange('sessions', { sessionId });
   }
@@ -929,7 +944,7 @@ export class SDKMessageRepository {
     stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
     this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
     this.scheduleMessageSearchIndex(id);
-    if (admission.countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+    this.applyBadgeUpdate(sessionId, planAdmissionBadgeUpdate(admission));
     return { id, countsTowardsBadge: admission.countsTowardsBadge };
   }
 
@@ -1096,6 +1111,7 @@ export class SDKMessageRepository {
       `UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
     );
     const changedSessions: string[] = [];
+    const badgeUpdate = planBadgeRecompute();
     this.db.transaction(() => {
       stmt.run(newStatus, ...messageIds);
 
@@ -1138,7 +1154,7 @@ export class SDKMessageRepository {
       }
 
       for (const { sid } of affectedSessions) {
-        if (this.recomputeVisibleMessageCount(sid)) changedSessions.push(sid);
+        if (this.applyBadgeUpdate(sid, badgeUpdate)) changedSessions.push(sid);
       }
     })();
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
@@ -1190,7 +1206,7 @@ export class SDKMessageRepository {
       deleted =
         deleteStmt.run(sessionId, messageId, expectedStatus ?? null, expectedStatus ?? null)
           .changes > 0;
-      if (deleted) this.recomputeVisibleMessageCount(sessionId);
+      if (deleted) this.applyBadgeUpdate(sessionId, planBadgeRecompute());
     })();
 
     if (!deleted) {
@@ -1251,7 +1267,7 @@ export class SDKMessageRepository {
     let badgeChanged = false;
     this.db.transaction(() => {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
-      badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+      badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
       for (const { sdk_uuid } of rows) {
         if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
       }
@@ -1273,7 +1289,7 @@ export class SDKMessageRepository {
     let badgeChanged = false;
     this.db.transaction(() => {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
-      badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+      badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
       for (const { sdk_uuid } of rows) {
         if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
       }
@@ -1692,6 +1708,7 @@ export class SDKMessageRepository {
       variant: 'hyperneo_action',
       sendStatus: null,
     });
+    const badgeUpdate = planAdmissionBadgeUpdate(admission);
     const taskId = this.resolveTaskIdForSession(sessionId);
     const conversationTurnIndex = this.resolveConversationTurnIndex(
       taskId,
@@ -1718,9 +1735,9 @@ export class SDKMessageRepository {
 
     this.db.transaction(() => {
       insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid);
-      if (admission.countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+      this.applyBadgeUpdate(sessionId, badgeUpdate);
     })();
-    if (admission.countsTowardsBadge) this.notifySessionsChanged(sessionId);
+    if (badgeUpdate.kind === 'delta') this.notifySessionsChanged(sessionId);
     this.scheduleMessageSearchIndex(id);
     return id;
   }
