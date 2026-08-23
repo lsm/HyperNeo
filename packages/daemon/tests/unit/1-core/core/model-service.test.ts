@@ -18,6 +18,8 @@ import {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
+import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/provider';
 
 describe('Model Service', () => {
   const mockModels: ModelInfo[] = [
@@ -394,6 +396,130 @@ describe('Model Service', () => {
       expect(await isValidModel('unknown-deepseek', 'global', 'deepseek', 'session-key')).toBe(
         false
       );
+    });
+  });
+
+  describe('static model metadata seam', () => {
+    it('serves every MinimaxProvider.MODELS entry from the static seam', async () => {
+      clearModelsCache();
+
+      expect(MinimaxProvider.MODELS).toHaveLength(4);
+
+      for (const entry of MinimaxProvider.MODELS) {
+        const model = await getModelInfo(entry.id, 'global', 'minimax');
+        expect(model).not.toBeNull();
+        expect(model?.id).toBe(entry.id);
+        expect(model?.provider).toBe('minimax');
+        expect(model?.contextWindow).toBe(entry.contextWindow);
+      }
+    });
+
+    it('resolves Minimax aliases to static metadata', async () => {
+      clearModelsCache();
+
+      expect(await getModelInfo('minimax', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.5',
+      });
+      expect(await getModelInfo('minimax-fast', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.5-highspeed',
+      });
+      expect(await getModelInfo('minimax-m27', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.7',
+      });
+      expect(await getModelInfo('minimax-m27-fast', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.7-highspeed',
+      });
+    });
+
+    it('does not resolve Minimax static metadata for other providers', async () => {
+      clearModelsCache();
+
+      expect(await getModelInfo('MiniMax-M2.7', 'global', 'glm')).toBeNull();
+      expect(await getModelInfo('MiniMax-M2.7', 'global', 'anthropic-copilot')).toBeNull();
+    });
+
+    it('serves every COPILOT_ANTHROPIC_MODELS entry from the static seam', async () => {
+      clearModelsCache();
+
+      expect(COPILOT_ANTHROPIC_MODELS).toHaveLength(7);
+
+      for (const entry of COPILOT_ANTHROPIC_MODELS) {
+        const model = await getModelInfo(entry.id, 'global', 'anthropic-copilot');
+        expect(model).not.toBeNull();
+        expect(model?.id).toBe(entry.id);
+        expect(model?.provider).toBe('anthropic-copilot');
+        expect(model?.contextWindow).toBe(entry.contextWindow);
+      }
+    });
+
+    it('resolves Copilot aliases to static metadata', async () => {
+      clearModelsCache();
+
+      expect(
+        await getModelInfo('copilot-anthropic-opus', 'global', 'anthropic-copilot')
+      ).toMatchObject({
+        id: 'claude-opus-4.6',
+        contextWindow: 200000,
+      });
+      expect(
+        await getModelInfo('copilot-anthropic-codex', 'global', 'anthropic-copilot')
+      ).toMatchObject({
+        id: 'gpt-5.3-codex',
+        contextWindow: 272000,
+      });
+      expect(
+        await getModelInfo('copilot-anthropic-mini', 'global', 'anthropic-copilot')
+      ).toMatchObject({
+        id: 'gpt-5-mini',
+        contextWindow: 128000,
+      });
+    });
+
+    it('does not leak Copilot static metadata to anthropic-only requests', async () => {
+      clearModelsCache();
+
+      expect(await getModelInfo('claude-opus-4.6', 'global', 'anthropic')).toBeNull();
+      expect(await getModelInfo('gpt-5.5', 'global', 'anthropic')).toBeNull();
+    });
+
+    it('gates Minimax static validation on provider availability', async () => {
+      clearModelsCache();
+
+      expect(await isValidModel('MiniMax-M2.7', 'global', 'minimax')).toBe(false);
+      expect(await isValidModel('MiniMax-M2.7', 'global', 'minimax', 'session-key')).toBe(true);
+      expect(await isValidModel('unknown-minimax', 'global', 'minimax', 'session-key')).toBe(false);
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'minimax',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      expect(await isValidModel('MiniMax-M2.7', 'global', 'minimax')).toBe(true);
+    });
+
+    it('gates Copilot static validation on provider availability', async () => {
+      clearModelsCache();
+
+      expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(false);
+      expect(
+        await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot', 'session-key')
+      ).toBe(true);
+      expect(
+        await isValidModel('unknown-copilot-model', 'global', 'anthropic-copilot', 'session-key')
+      ).toBe(false);
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-copilot',
+        getModels: async () => [],
+        isAvailable: async () => false,
+      } as ProviderLike);
+      expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(false);
     });
   });
 

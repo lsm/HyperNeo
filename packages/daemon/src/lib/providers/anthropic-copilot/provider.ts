@@ -53,7 +53,7 @@ function inferModelFamily(modelId: string): string {
   return 'gpt';
 }
 
-const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
+export const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
   {
     id: 'claude-opus-4.6',
     name: 'Claude Opus 4.6 (Copilot)',
