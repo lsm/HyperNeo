@@ -31,10 +31,12 @@ import {
 import type { SQLiteValue } from '../types';
 import {
   decideMessageAdmission,
+  extractReplacementEdges,
   normalizeMessageAdmissionInput,
   type SDKMessageReplacementEdge,
   type SendStatus,
 } from './sdk-message-admission';
+import { decideMessageSearchAdmission } from './message-search-admission';
 
 export {
   computeIsRenderable,
@@ -45,11 +47,6 @@ export {
 } from './sdk-message-admission';
 export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 
-const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const ROOM_SESSION_PREFIXES = ['room:chat:', 'planner:', 'coder:', 'leader:', 'general:'];
-const ROOM_SESSION_TYPES = new Set(['room_chat', 'planner', 'coder', 'leader', 'general']);
-const TERMINAL_SPACE_TASK_STATUSES = new Set(['done', 'cancelled', 'completed']);
-const SEARCHABLE_MESSAGE_TYPES = new Set(['system', 'user', 'assistant']);
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
@@ -81,13 +78,6 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   'thinking_tokens',
   'model_refusal_fallback',
 ]);
-
-function isOlderThanMessageSearchTtl(value: string | number | null | undefined): boolean {
-  if (value === null || value === undefined) return false;
-  const timestamp = typeof value === 'number' ? value : Date.parse(value);
-  if (!Number.isFinite(timestamp)) return false;
-  return timestamp < Date.now() - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS;
-}
 
 export class SDKMessageRepository {
   private logger = new Logger('Database');
@@ -156,7 +146,7 @@ export class SDKMessageRepository {
     }
   }
 
-  private upsertMessageSearchRow(rowId: string): void {
+  private upsertMessageSearchRow(rowId: string, now: number): void {
     if (!this.hasMessageSearchIndex()) return;
     const hasSessions = this.tableExists('sessions');
     const hasSpaceTasks = this.tableExists('space_tasks');
@@ -217,23 +207,26 @@ export class SDKMessageRepository {
       | undefined;
     if (!row) return;
 
-    let parsed: SDKMessage | null = null;
+    let parsedMessage: SDKMessage | null = null;
     try {
-      parsed = JSON.parse(row.sdk_message) as SDKMessage;
+      parsedMessage = JSON.parse(row.sdk_message) as SDKMessage;
     } catch {
       return;
     }
-    const body = extractVisibleSearchText(parsed);
+    const message = parsedMessage;
+    const body = extractVisibleSearchText(message);
     this.db
       .prepare(`DELETE FROM message_search_content WHERE kind = 'message' AND source_id = ?`)
       .run(row.id);
-    if (this.isMessageSuperseded(row.id, row.session_id, parsed)) return;
-    if (!SEARCHABLE_MESSAGE_TYPES.has(row.message_type)) return;
-    if (!this.isMessageSearchIndexEligible(row)) return;
-    if (!body) return;
-    if (row.message_type === 'user' && !this.isSearchableUserMessageStatus(row.id)) {
-      return;
-    }
+    const admission = decideMessageSearchAdmission({
+      messageType: row.message_type,
+      body,
+      now,
+      eligibility: row,
+      isSuperseded: () => this.isMessageSuperseded(row.id, row.session_id, message),
+      isSearchableUserStatus: () => this.isSearchableUserMessageStatus(row.id),
+    });
+    if (admission.action !== 'index') return;
     this.db
       .prepare(
         `INSERT INTO message_search_content (
@@ -243,7 +236,7 @@ export class SDKMessageRepository {
       )
       .run(
         row.id,
-        (parsed as { uuid?: string }).uuid ?? row.id,
+        (message as { uuid?: string }).uuid ?? row.id,
         row.session_id,
         row.task_id,
         row.space_id,
@@ -253,48 +246,6 @@ export class SDKMessageRepository {
         body,
         parseSearchTimestamp(row.timestamp)
       );
-  }
-
-  private isMessageSearchIndexEligible(row: {
-    session_id: string;
-    session_status: string | null;
-    session_type: string | null;
-    session_last_active_at: string | null;
-    session_room_id: string | null;
-    task_status: string | null;
-    task_completed_at: number | null;
-    task_updated_at: number | null;
-  }): boolean {
-    if (ROOM_SESSION_PREFIXES.some((prefix) => row.session_id.startsWith(prefix))) {
-      return false;
-    }
-
-    if (row.session_status === 'archived') return false;
-    if (row.session_status === 'ended' && isOlderThanMessageSearchTtl(row.session_last_active_at)) {
-      return false;
-    }
-
-    if (row.session_type && ROOM_SESSION_TYPES.has(row.session_type)) return false;
-    if (row.session_room_id) return false;
-
-    const isSpaceSession =
-      row.session_id.startsWith('space:') ||
-      row.session_type === 'space_chat' ||
-      row.session_type === 'space_task_agent';
-    const isNormalSession =
-      !row.session_id.includes(':') && (!row.session_type || row.session_type === 'worker');
-    if (!isSpaceSession && !isNormalSession) return false;
-
-    if (row.task_status === 'archived') return false;
-    if (
-      row.task_status &&
-      TERMINAL_SPACE_TASK_STATUSES.has(row.task_status) &&
-      isOlderThanMessageSearchTtl(row.task_completed_at ?? row.task_updated_at)
-    ) {
-      return false;
-    }
-
-    return true;
   }
 
   private deleteMessageSearchRow(rowId: string): void {
@@ -327,7 +278,7 @@ export class SDKMessageRepository {
   private scheduleMessageSearchIndex(messageId: string): void {
     if (!this.hasMessageSearchIndex()) return;
     if (!this.tableExists('message_search_pending')) {
-      this.upsertMessageSearchRow(messageId);
+      this.upsertMessageSearchRow(messageId, Date.now());
       return;
     }
     this.db
@@ -352,7 +303,7 @@ export class SDKMessageRepository {
     for (const { message_id } of pending) {
       try {
         this.db.transaction(() => {
-          this.upsertMessageSearchRow(message_id);
+          this.upsertMessageSearchRow(message_id, Date.now());
           deletePendingStmt.run(message_id);
         })();
       } catch (err) {
