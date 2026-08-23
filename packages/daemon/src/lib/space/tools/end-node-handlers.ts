@@ -192,6 +192,14 @@ export function createMarkCompleteHandler(
       const reportedSummary = normalizeMeaningfulTaskResult(task.reportedSummary);
       const existingResult = normalizeMeaningfulTaskResult(task.result);
       const result = artifactSummary ?? existingResult ?? reportedSummary ?? 'Task completed.';
+      const updated = await taskManager.setTaskStatus(taskId, 'done', {
+        approvalSource: task.approvalSource ?? 'agent',
+        result,
+        reportedSummary: artifactSummary ?? reportedSummary ?? undefined,
+        onCascadedTasks: async (cascadedTasks) => {
+          for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+        },
+      });
       if (goalUpdate) {
         goalService?.updateGoal(
           goalUpdate.goalId,
@@ -204,14 +212,6 @@ export function createMarkCompleteHandler(
           { source: 'workflow_node_agent', sourceTaskId: taskId }
         );
       }
-      const updated = await taskManager.setTaskStatus(taskId, 'done', {
-        approvalSource: task.approvalSource ?? 'agent',
-        result,
-        reportedSummary: artifactSummary ?? reportedSummary ?? undefined,
-        onCascadedTasks: async (cascadedTasks) => {
-          for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
-        },
-      });
       emitTaskUpdated(updated);
       log.info(
         `post-approval.complete: spaceId=${spaceId} taskId=${taskId} outcome=done mode=${task.postApprovalSessionId ? 'spawn' : 'inline'}`

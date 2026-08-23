@@ -894,7 +894,11 @@ export class SpaceRuntimeService {
         this.config.reactiveDb,
         this.config.evolutionScopeService,
         (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1397,7 +1401,11 @@ export class SpaceRuntimeService {
         this.config.reactiveDb,
         this.config.evolutionScopeService,
         (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1570,7 +1578,11 @@ export class SpaceRuntimeService {
         this.config.reactiveDb,
         this.config.evolutionScopeService,
         (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,

@@ -2112,14 +2112,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             return jsonResult({ success: true, task: stopped });
           }
           case 'set_status': {
-            let updated = await taskManager.setTaskStatus(args.task_id, args.status!, {
+            if (hasFieldUpdates) {
+              await applyFieldUpdates();
+            }
+            const updated = await taskManager.setTaskStatus(args.task_id, args.status!, {
               onCascadedTasks: async (cascadedTasks) => {
                 for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
               },
             });
-            if (hasFieldUpdates) {
-              updated = await applyFieldUpdates();
-            }
             logAudit('update_task', transitionAuditParams, args.task_id);
             emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });

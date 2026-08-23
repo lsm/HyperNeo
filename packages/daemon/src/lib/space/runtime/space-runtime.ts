@@ -3575,23 +3575,22 @@ export class SpaceRuntime {
     if (previous && params.status !== undefined && params.status !== previous.status) {
       assertValidSpaceTaskTransition(previous.status, params.status);
     }
-    let updated = this.config.taskRepo.updateTask(taskId, params);
+    const isTerminal = (status: SpaceTaskStatus): boolean =>
+      status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived';
+    const reopensFromTerminal =
+      previous &&
+      params.status !== undefined &&
+      isTerminal(previous.status) &&
+      !isTerminal(params.status);
+    let updated = reopensFromTerminal
+      ? this.config.db.transaction(() => {
+          const result = this.config.taskRepo.updateTask(taskId, params);
+          this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
+          return result;
+        })()
+      : this.config.taskRepo.updateTask(taskId, params);
     if (updated) {
       let emitUpdated = true;
-
-      const isTerminal = (status: SpaceTaskStatus): boolean =>
-        status === 'done' ||
-        status === 'blocked' ||
-        status === 'cancelled' ||
-        status === 'archived';
-      if (
-        previous &&
-        params.status !== undefined &&
-        isTerminal(previous.status) &&
-        !isTerminal(params.status)
-      ) {
-        this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
-      }
 
       if (params.status === 'blocked') {
         const reason = params.result ?? updated.result ?? 'Task blocked';
@@ -8335,7 +8334,11 @@ export class SpaceRuntime {
         this.config.reactiveDb,
         this.config.evolutionScopeService,
         (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
-        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       );
       this.taskManagers.set(spaceId, manager);
     }

@@ -309,7 +309,11 @@ export class SpaceGoalService {
 
   handleTaskTerminal(
     taskId: string,
-    transition?: { fromStatus?: SpaceTaskStatus | null; updates?: InternalUpdateSpaceTaskParams }
+    transition?: {
+      fromStatus?: SpaceTaskStatus | null;
+      updates?: InternalUpdateSpaceTaskParams;
+      deferPostCommitEffects?: boolean;
+    }
   ): {
     goal: SpaceGoal;
     nextTask: SpaceTask | null;
@@ -409,15 +413,22 @@ export class SpaceGoalService {
       );
       return { goal: postBookkeeping, nextTask, terminalGeneration, notification };
     });
-    if (result.nextTask) this.emitTaskCreated(result.nextTask);
-    if (result.notification) {
-      try {
-        this.deps.onOutcomeNotification?.(result.notification);
-      } catch (err) {
-        log.warn(
-          `Outcome notification delivery threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
-        );
+    const deliverPostCommit = (): void => {
+      if (result.nextTask) this.emitTaskCreated(result.nextTask);
+      if (result.notification) {
+        try {
+          this.deps.onOutcomeNotification?.(result.notification);
+        } catch (err) {
+          log.warn(
+            `Outcome notification delivery threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
+    };
+    if (transition?.deferPostCommitEffects) {
+      setImmediate(deliverPostCommit);
+    } else {
+      deliverPostCommit();
     }
     return result;
   }
