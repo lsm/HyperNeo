@@ -85,7 +85,7 @@ export function ProvidersSettings() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [gateTimeout, setGateTimeout] = useState(false);
-  const [sessionExpired] = useState(
+  const [sessionExpired, setSessionExpired] = useState(
     () => new URLSearchParams(window.location.search).get('reason') === 'session_expired'
   );
   const loadGenerationRef = useRef(0);
@@ -133,6 +133,17 @@ export function ProvidersSettings() {
       ]);
       if (generation !== loadGenerationRef.current) return;
       autoRetriedRef.current = false;
+      if (sessionExpired) {
+        setSessionExpired(false);
+        const params = new URLSearchParams(window.location.search);
+        params.delete('reason');
+        const query = params.toString();
+        window.history.replaceState(
+          null,
+          '',
+          `${window.location.pathname}${query ? `?${query}` : ''}`
+        );
+      }
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
         ...r,
@@ -165,6 +176,9 @@ export function ProvidersSettings() {
 
   useEffect(() => {
     loadProviders();
+    return () => {
+      loadGenerationRef.current++;
+    };
   }, []);
 
   useEffect(() => {

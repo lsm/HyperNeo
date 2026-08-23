@@ -906,12 +906,18 @@ describe('ProvidersSettings', () => {
     expect(container.textContent).not.toContain('The load failed. Try again in a moment.');
   });
 
-  it('explains session expiry when mounted with reason=session_expired', async () => {
+  it('explains session expiry when mounted with reason=session_expired and clears it after recovery', async () => {
     vi.stubGlobal('location', {
       href: 'http://localhost/settings?tab=providers&reason=session_expired',
       search: '?tab=providers&reason=session_expired',
+      pathname: '/settings',
     });
-    mockOnConnected.mockRejectedValue(new ConnectionTimeoutError(10000));
+    mockOnConnected.mockRejectedValueOnce(new ConnectionTimeoutError(10000));
+    mockOnConnected.mockResolvedValue(undefined);
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
 
     const { container } = render(<ProvidersSettings />);
 
@@ -919,8 +925,38 @@ describe('ProvidersSettings', () => {
       expect(container.textContent).toContain('Your session expired.');
       expect(container.textContent).toContain('Re-authenticate, then retry');
     });
-    expect(container.textContent).not.toContain('Could not reach the HyperNeo daemon');
     expect(mockListProviders).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Retry'));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Anthropic');
+    });
+    expect(container.textContent).not.toContain('Your session expired.');
+    expect(container.textContent).not.toContain('Retry');
+  });
+
+  it('abandons the gated load when unmounted before the connection resolves', async () => {
+    let resolveConnect: () => void;
+    mockOnConnected.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConnect = resolve;
+        })
+    );
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { unmount } = render(<ProvidersSettings />);
+    unmount();
+
+    resolveConnect!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListProviders).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 
   it('shows warning toast when auth status fails', async () => {

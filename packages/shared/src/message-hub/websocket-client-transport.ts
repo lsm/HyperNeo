@@ -148,6 +148,10 @@ export class WebSocketClientTransport implements IMessageTransport {
       `Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
     );
 
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch((error) => {
         log.error(`Reconnection failed:`, error);
