@@ -31,6 +31,14 @@
       "namePattern": "preserve both provider entries for shared model IDs",
       "reason": "Known intermittent shared model ID provider cache/registry isolation failure.",
       "addedAt": "2026-05-28"
+    },
+    {
+      "id": "daemon-goal-service-cadence-audit",
+      "suite": "daemon-unit",
+      "path": "packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts",
+      "namePattern": "records cadence changes in the audit diff even for paused goals",
+      "reason": "Known intermittent audit-event failure on paused-goal cadence updates: asserted eventType 'updated' but observed 'created'; passed on an identical-code rerun (PR #2722, CI run 32585478879).",
+      "addedAt": "2026-08-23"
     }
   ]
 }
