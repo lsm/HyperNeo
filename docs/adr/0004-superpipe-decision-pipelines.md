@@ -1225,9 +1225,10 @@ plain pure-function admission gates. Chain B's addition is the *normalized
 input*: `normalizeMessageAdmissionInput` folds the disjoint
 `HyperNeoActionMessage` shape into a synthetic `SDKMessage`, so the three
 save sites — `saveSDKMessage`, `saveUserMessageCore`,
-`saveHyperNeoActionMessage` — consume one core, and the deliberate
-divergences between them become explicit `variant` parameters rather than
-site-local code:
+`saveHyperNeoActionMessage` — consume one core. The deliberate divergences
+split by where they live: the one the core itself owns — the anchor status
+gate — becomes an explicit `variant` parameter, while `consumed_seq`
+allocation stays site-local policy interpreting the shared record:
 
 - **Anchor status gate.** `isConversationAnchor` requires `sendStatus`
   `consumed`/`failed` on the user variant only; the SDK variant takes no send
@@ -1246,8 +1247,10 @@ site-local code:
   previously a repository-private predicate invoked at each site, now a core
   field whose delta/recompute split B3 unified.
 
-**B3 — badge maintenance as an instruction set.** Saves emit `delta(+1)`;
-the status flip, both rewind operators, and `deletePendingUserMessage` emit a
+**B3 — badge maintenance as an instruction set.** A save whose admission
+counts emits `delta(+1)`; a non-counting save emits the union's no-op
+`none` (hidden-subtype rows, tool-child rows, pending user rows); the
+status flip, both rewind operators, and `deletePendingUserMessage` emit a
 **recompute** instruction (authoritative `COUNT(*)` + conditional update,
 which also repairs pre-existing counter drift) — never delta subtraction,
 which would preserve exactly that drift. Two notification asymmetries are
@@ -1354,11 +1357,13 @@ script constructs it on a writable one whose writes include the recompute's
 absence of a reactive database, against which every notification is a `?.`
 no-op, and `recomputeVisibleMessageCount` is the script's public entry. The
 module tops stay worker-safe across the repository and every module it
-imports: module-scope initialization exists — constant `Set`s, and
-`message-search-admission.ts` composes its `decisionRun` pipeline at
-import — but none of it is environment-dependent or touches database or
-reactive state, which is the actual requirement the worker's import graph
-imposes. The facade
+imports: module-scope initialization exists — constant `Set`s,
+`message-search-admission.ts` composing its `decisionRun` pipeline at
+import, and the shared logger's `globalConfig` reading
+`NODE_ENV`/`LOG_LEVEL`/`LOG_FILTER` — but none of it touches database or
+reactive state, which is the requirement the worker's import graph
+actually imposes; the logging env read is the accepted exception, harmless
+on the worker's read-only connection. The facade
 (`storage/index.ts`) and the reactive proxy's `METHOD_TABLE_MAP` were not
 touched by any chain B PR. The proxy dispatches with `.apply(target, args)`,
 but the proxied facade method is itself 2-arg — `Database.updateMessageStatus`
@@ -1387,10 +1392,12 @@ planner/interpreter pair), the repository itself +96/−203
 (net −107; the survey's 2,199-line file was simultaneously shrinking under
 chains A and C). Tests +1,321: B1's drift matrix and task-id-resolution
 reactive harness +618, the admission suite +202, the badge suite +193, the
-status-plan suite +308. B1's matrix is the chain's parity proof (the
-SDK-pair × five-send-status grid, the fixed-shape hyperneo-action table,
-and the core/side-effects composition contract); B4's suite pins the CAS
-guards, including the probe's allocator skip.
+status-plan suite +308. B1's matrix is the chain's parity proof (its save
+cells are one fixed-status `saveSDKMessage` row plus five send-status
+`saveUserMessageCore` rows — the SDK save API takes no status, so no
+pair × status grid exists — alongside the fixed-shape hyperneo-action
+table and the core/side-effects composition contract); B4's suite pins
+the CAS guards, including the probe's allocator skip.
 
 Pilot 10 PRs: #2736, #2767, #2794, #2815, plus this closing sweep. Numbering
 ledger for the survey's chains: pilot 7 is chain P (merged); 8 stays reserved
