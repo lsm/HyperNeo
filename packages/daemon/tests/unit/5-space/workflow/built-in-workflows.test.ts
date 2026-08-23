@@ -383,7 +383,11 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain(
       'second independent sub-agent pass on the highest-risk dimension'
     );
-    expect(CODER_ONLY_PROMPT).toContain('gate_set: [], source: "internal-fallback"');
+    expect(CODER_ONLY_PROMPT).toContain('kind: "internal-review-gate", key: "internal"');
+    expect(CODER_ONLY_PROMPT).toContain('NEVER under the external gate');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'the artifact store upserts on the key, so writing the internal result there would destroy a recorded external gate'
+    );
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
     expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
@@ -438,12 +442,22 @@ describe('coder-only workflow template', () => {
       CODER_ONLY_PROMPT.lastIndexOf('Do this once per PR')
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal fallback review is the gate');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the two gates are separate records under separate keys, and `both` requires both of them'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'external under "gate", internal under "internal" — never overwrite one with the other'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(REVIEW_POLICY_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('always send the gated PR handoff');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('verifies the external gate and is the backup');
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       "the Reviewer's backup role covers exactly this failure"
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('kind: "review-base", key: "base"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'the post-approval merge runs in a separate session that never sees that handoff'
     );
     expect(CODER_OWNED_MERGE_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(CODING_WORKFLOW.nodes[0]!.agents[0]!.customPrompt!.value).toBe(CODER_OWNED_MERGE_PROMPT);
@@ -454,7 +468,7 @@ describe('coder-only workflow template', () => {
       'Retargeting a PR changes the reviewed diff WITHOUT changing'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'or for internal modes the baseRefName you captured'
+      'the `base_ref` recorded in your `review-base` note artifact (key "base")'
     );
   });
 
