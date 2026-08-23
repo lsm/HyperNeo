@@ -388,6 +388,28 @@ describe('SpaceGoalService', () => {
     expect(taskRepo.listBySpace(spaceId).map((task) => task.id)).toEqual([first.task!.id]);
   });
 
+  it('retries queued auto-trigger runs after the host space resumes', () => {
+    const goal = service.createGoal({
+      spaceId,
+      title: 'Retry queued run',
+      autoTriggerNext: true,
+    });
+    const first = service.createImmediateTask(goal.id);
+    expect(first.task).not.toBeNull();
+    service.createImmediateTask(goal.id);
+    spaceRepo.pauseSpace(spaceId);
+    taskRepo.updateTask(first.task!.id, { status: 'done' });
+    service.handleTaskTerminal(first.task!.id);
+    expect(goalRepo.getById(goal.id)?.pendingNextRun).toBe(true);
+
+    spaceRepo.resumeSpace(spaceId);
+    const created = service.retryQueuedRunsForSpace(spaceId);
+    expect(created).toBe(1);
+    const updated = goalRepo.getById(goal.id);
+    expect(updated?.pendingNextRun).toBe(false);
+    expect(updated?.activeTaskId).not.toBeNull();
+  });
+
   it('auto-triggers one queued task after the active task reaches a terminal status', () => {
     const goal = service.createGoal({
       spaceId,
