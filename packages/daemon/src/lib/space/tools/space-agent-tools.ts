@@ -4642,39 +4642,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         (args) => handlers.get_goal(args)
       ),
       tool(
-        'review_goal_outcome',
-        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id, and a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without mutating goal state.',
-        {
-          goal_id: z
-            .string()
-            .optional()
-            .describe('Goal ID the outcome belongs to (required for a disposition)'),
-          task_id: z
-            .string()
-            .optional()
-            .describe('Completed task ID the outcome belongs to (required for a disposition)'),
-          notification_id: z
-            .string()
-            .optional()
-            .describe(
-              'Pending notification identity; omit to discover owned pending notifications'
-            ),
-          disposition: z
-            .enum(['acknowledge', 'reject', 'supersede'])
-            .optional()
-            .describe('Terminal disposition'),
-          observed_goal_revision: z
-            .number()
-            .int()
-            .optional()
-            .nullable()
-            .describe(
-              'Goal revision observed by the caller; set when resubmitting after a stale denial'
-            ),
-        },
-        (args) => handlers.review_goal_outcome(args)
-      ),
-      tool(
         'create_goal',
         'Create a long-horizon goal in this space. Optionally schedule recurring check-ins or trigger the first task immediately.',
         {
@@ -5183,6 +5150,44 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           schedule_id: z.string().describe('ID of the scheduled task to delete'),
         },
         (args) => handlers.delete_scheduled_task(args)
+      )
+    );
+  }
+
+  if (config.callerRole === 'long_term_agent' || config.callerRole === 'coordinator') {
+    tools.push(
+      tool(
+        'review_goal_outcome',
+        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id, and a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without mutating goal state.',
+        {
+          goal_id: z
+            .string()
+            .optional()
+            .describe('Goal ID the outcome belongs to (required for a disposition)'),
+          task_id: z
+            .string()
+            .optional()
+            .describe('Completed task ID the outcome belongs to (required for a disposition)'),
+          notification_id: z
+            .string()
+            .optional()
+            .describe(
+              'Pending notification identity; omit to discover owned pending notifications'
+            ),
+          disposition: z
+            .enum(['acknowledge', 'reject', 'supersede'])
+            .optional()
+            .describe('Terminal disposition'),
+          observed_goal_revision: z
+            .number()
+            .int()
+            .optional()
+            .nullable()
+            .describe(
+              'Goal revision observed by the caller; set when resubmitting after a stale denial'
+            ),
+        },
+        (args) => handlers.review_goal_outcome(args)
       )
     );
   }

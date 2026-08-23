@@ -2553,7 +2553,11 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
 
   test('rejects an outcome without mutating goal state', async () => {
     const { agent, goal, task, notification } = await makeReviewerGoal();
-    const handlers = makeHandlers(ctx, { goalService, myAgentId: agent.id });
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: agent.id,
+    });
 
     const out = JSON.parse(
       (
@@ -2578,7 +2582,11 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
       handle: '@other',
       displayName: 'Other',
     });
-    const handlers = makeHandlers(ctx, { goalService, myAgentId: otherAgent.id });
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: otherAgent.id,
+    });
 
     const out = JSON.parse(
       (
@@ -2597,7 +2605,11 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
 
   test('requires a disposition when a notification is provided', async () => {
     const { agent, goal, task, notification } = await makeReviewerGoal();
-    const handlers = makeHandlers(ctx, { goalService, myAgentId: agent.id });
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: agent.id,
+    });
 
     const out = JSON.parse(
       (
