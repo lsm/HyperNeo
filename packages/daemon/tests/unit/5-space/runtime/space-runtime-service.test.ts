@@ -35,9 +35,12 @@ import type {
   ModelInfo,
   Session,
   Space,
+  SpaceGoalOutcomeNotification,
   SpaceLongHorizonAgent,
   SpaceWorkerAgent,
 } from '@hyperneo/shared';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
   getProviderRegistry,
@@ -1865,6 +1868,77 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
 
       expect(unsubFn).toHaveBeenCalledTimes(10);
+    });
+  });
+
+  describe('deliverGoalOutcomeWake()', () => {
+    const notification: SpaceGoalOutcomeNotification = {
+      id: 'notif-1',
+      spaceId: mockSpace.id,
+      goalId: 'goal-1',
+      taskId: 'task-1',
+      terminalGeneration: 1,
+      goalRevision: 1,
+      status: 'pending',
+      payload: {
+        summary: '',
+        taskStatus: 'done',
+        taskTitle: 'Task 1',
+        goalTitle: 'Goal 1',
+      },
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+
+    test('does not resolve an owner while goal outcome wakes are gated', async () => {
+      const longHorizonAgentRepo = {
+        getPrimaryGoalOwner: mock(() => null),
+      } as unknown as SpaceLongHorizonAgentRepository;
+      const goalService = {
+        getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
+      } as unknown as SpaceRuntimeServiceConfig['goalService'];
+      const outcomeNotificationRepo = {
+        getById: mock(() => ({ status: 'pending' })),
+      } as unknown as SpaceGoalOutcomeNotificationRepository;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+        goalService,
+        outcomeNotificationRepo,
+      });
+
+      await svc.deliverGoalOutcomeWake(notification);
+
+      expect(longHorizonAgentRepo.getPrimaryGoalOwner).not.toHaveBeenCalled();
+    });
+
+    test('resolves the owner when goal outcome wakes are enabled', async () => {
+      const longHorizonAgentRepo = {
+        getPrimaryGoalOwner: mock(() => ({ action: 'degraded' })),
+        ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
+        getById: mock(() => null),
+      } as unknown as SpaceLongHorizonAgentRepository;
+      const goalService = {
+        getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
+      } as unknown as SpaceRuntimeServiceConfig['goalService'];
+      const outcomeNotificationRepo = {
+        getById: mock(() => ({ status: 'pending' })),
+      } as unknown as SpaceGoalOutcomeNotificationRepository;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        enableGoalOutcomeWake: true,
+        longHorizonAgentRepo,
+        goalService,
+        outcomeNotificationRepo,
+      });
+
+      await svc.deliverGoalOutcomeWake(notification);
+
+      expect(longHorizonAgentRepo.getPrimaryGoalOwner).toHaveBeenCalledWith(
+        notification.goalId,
+        notification.spaceId
+      );
+      expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
     });
   });
 

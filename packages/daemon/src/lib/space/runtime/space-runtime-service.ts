@@ -142,6 +142,7 @@ export interface SpaceRuntimeServiceConfig {
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
+  enableGoalOutcomeWake?: boolean;
 }
 
 export class SpaceRuntimeService {
@@ -326,6 +327,7 @@ export class SpaceRuntimeService {
   }
 
   async deliverGoalOutcomeWake(notification: SpaceGoalOutcomeNotification): Promise<void> {
+    if (!this.config.enableGoalOutcomeWake) return;
     if (this.config.outcomeNotificationRepo?.getById(notification.id)?.status !== 'pending') {
       return;
     }
