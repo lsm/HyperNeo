@@ -323,6 +323,13 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     message: MessageRecord
   ): Promise<string | null> {
+    if (message.idempotencyKey?.startsWith('goal-outcome:')) {
+      const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
+      const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
+      if (notification == null || notification.status !== 'pending') return null;
+      const space = await this.config.spaceManager.getSpace(actor.spaceId);
+      if (!space || space.paused || space.stopped) return null;
+    }
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
     await this.injectLongTermAgentMessage(
@@ -390,7 +397,8 @@ export class SpaceRuntimeService {
     if (!agentId) return null;
     const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
     if (longHorizonAgent?.spaceId === actor.spaceId) {
-      return this.deliverToLongTermAgent(actor, message);
+      const delivered = await this.deliverToLongTermAgent(actor, message);
+      if (delivered) return delivered;
     }
     if (!inboxRepo) return null;
     const sourceSessionId = sourceSessionIdFromActorId(message.senderActorId);
@@ -746,6 +754,7 @@ export class SpaceRuntimeService {
     const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
     if (longHorizonAgent?.spaceId === actor.spaceId) {
       if (longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId)) {
+        if (longHorizonAgent.status !== 'active') return null;
         return this.resolveCoordinatorSession(actor.spaceId);
       }
       return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
