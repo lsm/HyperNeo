@@ -26,9 +26,11 @@ design lessons it added to the record.
 
 Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
 seam and the lazy-activation path as staged interpreters over extracted
-admission/routing cores — and the first production consumers of the Phase 0
-CAS/reservation primitives, whose superseded outcomes replace previously
-tolerated racy writes. See "Pilot 7" below for the pinned behavior deltas,
+admission/routing cores — and the first production consumer of
+`casExecutionStatus` and the spawn reservation, whose superseded outcomes
+replace previously tolerated racy writes (the other Phase 0 primitives had
+already gained consumers just before the chain: transition-table enforcement
+#2682, `casStatus` #2684). See "Pilot 7" below for the pinned behavior deltas,
 the Pilot 3 spawn-seam race closure, and the boundary caveats.
 
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
@@ -800,15 +802,16 @@ table.
 
 Pilot 5 PRs: #2663, #2668, #2669, #2673, #2676, plus this closing sweep.
 
-## Pilot 7 — spawn/activation seam + first Phase 0 consumers (Chain P, 2026-08-23)
+## Pilot 7 — spawn/activation seam + the Phase 0 consumption record (Chain P, 2026-08-23)
 
 Pilot 7 (sub-pilot 7, "Chain P") converted the workflow-node spawn seam —
 `TaskAgentManager.spawnWorkflowNodeAgentForExecution` and the
 `activateTargetSessionsForMessage` lazy-activation path — into staged
 interpreters over extracted cores, and made them the first production
-consumers of the Phase 0 primitives landed just ahead of the chain
-(#2677 `casStatus`, #2678 `casExecutionStatus`, #2680 the spawn
-reservation). The chain ran pin → extract → compose → apply: PR 1 (#2712)
+consumer of `casExecutionStatus` (#2678) and the spawn reservation (#2680)
+— `casStatus` (#2677) and transition-table enforcement had already gained
+theirs in the recovery paths just before the chain (#2684, #2682). The
+chain ran pin → extract → compose → apply: PR 1 (#2712)
 pinned the admission table and the tolerated non-CAS execution-status
 writes as the Phase 0 BEFORE picture; PRs 2–3 (#2725, #2735) extracted the
 pure cores with inline interpretation (no behavior change, pins green);
@@ -838,7 +841,7 @@ Extracted:
   reset_pending_and_continue / reject_undeclared / spawn_with_timeout /
   return_empty) plus the `selectWorkflowNodeForAgent` target-node selector.
 
-**First Phase 0 consumers.** `casExecutionStatus` — extended for the seam
+**Phase 0 consumption.** `casExecutionStatus` — extended for the seam
 to carry the bind payload atomically (`agentSessionId`/`startedAt`/
 `completedAt`), an `expectAgentSessionId` NULL-safe identity guard, and
 `updated_at` + reactive notification on a win — is the write path at six
@@ -854,7 +857,11 @@ a stalled attach/kickoff cannot starve sibling executions) and compensated
 on unwind; `clearAllSpawnReservations` runs at first-tick rehydration so a
 crash cannot strand a token. The tick's trailing `open → in_progress`
 promotion goes through `casStatus(['open'], 'in_progress')`, with
-auxiliary fields and emission written only on a win.
+auxiliary fields and emission written only on a win. Pilot 7 is the first
+consumer of `casExecutionStatus` and the spawn reservation; `casStatus`'s
+first consumer predates the chain (#2684 routed the alive-stuck recovery
+handler's blocked write through it), as does transition-table enforcement
+(#2682, asserted at the top of `updateTaskAndEmit`).
 
 **Superseded-outcome behavior deltas, pinned both ways.** The BEFORE pins
 (#2712) recorded unconditional writes: a live-session rebind whose
@@ -869,13 +876,18 @@ reservation — no spawn, no execution write; a park landing mid-spawn-pass
 fails the next execution's reservation, so the remainder does not spawn
 onto the parked task, and the trailing promotion CAS-loses instead of
 resurrecting it (pinned in the tick-loop suite); a mid-spawn cancel loses
-nothing — the bind CAS supersedes, the spawned session is compensated, the
-never-streamed session row is deleted, the cancelled row is not
-resurrected, and no rejection goes unhandled; a superseded spawn is
-skipped — not classified — by the tick spawn loop, queued-handoff repair,
-and the activation path, while the post-approval router maps it to a
-benign skipped route that persists `postApprovalBlockedReason` as durable
-retry state instead of silently clearing the dispatch. Review rounds added
+nothing — the bind CAS supersedes, the spawned session is compensated
+(cancelled and unregistered under preserve-DB semantics: only the direct
+`createSubSession` inner-bind abort deletes the never-streamed row), the
+cancelled row is not resurrected, and no rejection goes unhandled; a
+superseded spawn is skipped — not classified — by the tick spawn loop,
+queued-handoff repair, and the activation path, while the post-approval
+router maps it to a benign skipped route that persists
+`postApprovalBlockedReason` as durable diagnostic state rather than
+silently clearing the dispatch — display-only today (`mapPostApprovalDispatchWarning`
+feeds the detail surfaces; no reader schedules a retry, an `approved` task
+is already-resolved for settlement, so only a fresh human approval
+re-dispatches). Review rounds added
 the finer pins: the bind guards on the admission-observed status (a
 mid-spawn quiesce to `idle` is not laundered by an inner pre-bind), the
 identity guard (a foreign binding cannot be overwritten), and the
@@ -983,10 +995,10 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
   follow-ups (session tools, agent CRUD, forge/goals, messaging, the RPC task
   cascade) as mini-pilot candidates.
 - **Done (pilot 7, Chain P):** the spawn/activation seam staged over the
-  Phase 0 primitives — see "Pilot 7" above, which records the first Phase 0
-  consumers, the superseded-outcome pins, and the Pilot 3 spawn-seam race
-  closure, and whose close unblocks Chain I (pending-drain + injection
-  shell).
+  Phase 0 primitives — see "Pilot 7" above, which records the Phase 0
+  consumption ledger, the superseded-outcome pins, and the Pilot 3
+  spawn-seam race closure, and whose close unblocks Chain I (pending-drain +
+  injection shell).
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1018,7 +1030,7 @@ call sites with the spawn seam and was sequenced behind the P5 apply.
 
   | Phase | Scope | Notes |
   | --- | --- | --- |
-  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). First consumers landed (Pilot 7): `casExecutionStatus` across the spawn seam, the spawn reservation, and the CAS'd trailing promotion — with their before/after pins; the remaining primitives (transition-table enforcement, durable intent/outbox) are still unconsumed. |
+  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). Consumption so far: transition-table enforcement (#2682); `casStatus` (#2684 recovery blocked-write; Pilot 7 added the trailing promotion); `casExecutionStatus` across the spawn seam and the spawn reservation (Pilot 7 — its consumers carry the before/after pins). Still unconsumed: the run CAS (`casRunStatus`) and durable intent/outbox + compensation-record repositories. |
   | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
   | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
   | 3 | `handleWaitingRebindExecutions` | |
