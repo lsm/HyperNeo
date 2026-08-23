@@ -918,4 +918,47 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
       addEventListenerSpy.mockRestore();
     });
   });
+
+  describe('auth-expiry redirect (one-shot)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it('should redirect to the providers settings page on an auth error', async () => {
+      mockTransportObj.initialize.mockResolvedValue(undefined);
+      mockHubObj.isConnected.mockReturnValue(true);
+      mockTransportObj.isReady.mockReturnValue(true);
+      await manager.getHub();
+
+      const hrefSetter = vi.spyOn(window.location, 'href', 'set');
+
+      mockHubObj._connectionCallback('error', new Error('HTTP 401 Unauthorized'));
+
+      expect(hrefSetter).toHaveBeenCalledTimes(1);
+      expect(hrefSetter).toHaveBeenCalledWith('/settings?tab=providers&reason=session_expired');
+      expect(mockTransportObj.close).toHaveBeenCalled();
+      hrefSetter.mockRestore();
+    });
+
+    it('should not redirect again while the URL already carries reason=session_expired', async () => {
+      const stubLocation = {
+        href: 'http://localhost/settings?tab=providers&reason=session_expired',
+        search: '?tab=providers&reason=session_expired',
+      };
+      vi.stubGlobal('location', stubLocation);
+
+      mockTransportObj.initialize.mockResolvedValue(undefined);
+      mockHubObj.isConnected.mockReturnValue(true);
+      mockTransportObj.isReady.mockReturnValue(true);
+      await manager.getHub();
+
+      mockHubObj._connectionCallback('error', new Error('HTTP 401 Unauthorized'));
+      mockHubObj._connectionCallback('error', new Error('Session expired'));
+
+      expect(stubLocation.href).toBe(
+        'http://localhost/settings?tab=providers&reason=session_expired'
+      );
+    });
+  });
 });

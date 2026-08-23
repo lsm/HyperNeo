@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -14,7 +14,8 @@ import {
   refreshProvider,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import { credentialStoreStatus } from '../../lib/state.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
+import { connectionState, credentialStoreStatus } from '../../lib/state.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
@@ -76,9 +77,16 @@ const KIMI_REGION_LABELS: Record<'china' | 'global', string> = {
   global: 'Global (api.moonshot.ai)',
 };
 
+const CONNECTION_GATE_TIMEOUT_MS = 10000;
+
 export function ProvidersSettings() {
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [sessionExpired] = useState(
+    () => new URLSearchParams(window.location.search).get('reason') === 'session_expired'
+  );
+  const loadGenerationRef = useRef(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -106,8 +114,12 @@ export function ProvidersSettings() {
     useFetchModels(customEditor);
 
   const loadProviders = async () => {
+    const generation = ++loadGenerationRef.current;
     try {
       setLoading(true);
+      setLoadError(false);
+      await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
+      if (generation !== loadGenerationRef.current) return;
       const [{ providers: records }, authResponse] = await Promise.all([
         listProviders(),
         listProviderAuthStatus().catch((_err) => {
@@ -115,6 +127,7 @@ export function ProvidersSettings() {
           return { providers: [] as ProviderAuthStatus[] };
         }),
       ]);
+      if (generation !== loadGenerationRef.current) return;
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
         ...r,
@@ -132,15 +145,25 @@ export function ProvidersSettings() {
         setOauthFlow(null);
       }
     } catch {
+      if (generation !== loadGenerationRef.current) return;
+      setLoadError(true);
       toast.error('Failed to load providers');
     } finally {
-      setLoading(false);
+      if (generation === loadGenerationRef.current) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     loadProviders();
   }, []);
+
+  useEffect(() => {
+    if (connectionState.value === 'connected' && loadError) {
+      loadProviders();
+    }
+  }, [connectionState.value]);
 
   useEffect(() => {
     if (!oauthFlow) return;
@@ -446,12 +469,28 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {providers.length === 0 && (
+          {loadError ? (
+            <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-6 text-center">
+              <p class="text-sm text-red-300">
+                {sessionExpired ? 'Your session expired.' : 'Failed to load providers.'}
+              </p>
+              <p class="text-xs text-gray-400 mt-1">
+                {sessionExpired
+                  ? 'Re-authenticate, then retry to reload your providers.'
+                  : 'Could not reach the HyperNeo daemon — check that it is running, then retry.'}
+              </p>
+              <div class="mt-3">
+                <Button size="sm" variant="secondary" onClick={() => loadProviders()}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : providers.length === 0 ? (
             <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
               <p class="text-sm text-gray-400">No providers configured.</p>
               <p class="text-xs text-gray-500 mt-1">Add a provider to start using AI models.</p>
             </div>
-          )}
+          ) : null}
 
           {providers.length > 0 && (
             <div class="space-y-2">

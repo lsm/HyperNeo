@@ -169,7 +169,10 @@ export class ConnectionManager {
         if (this.transport) {
           this.transport.close();
         }
-        if (typeof window !== 'undefined') {
+        if (
+          typeof window !== 'undefined' &&
+          !window.location.search.includes('reason=session_expired')
+        ) {
           window.location.href = '/settings?tab=providers&reason=session_expired';
         }
         return;
