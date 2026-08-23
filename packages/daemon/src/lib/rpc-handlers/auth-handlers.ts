@@ -14,6 +14,7 @@ import type { AuthManager } from '../auth-manager';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
+  ExternallyManagedCredentialsError,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry';
@@ -231,11 +232,13 @@ export function setupAuthHandlers(
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
       } catch (error) {
-        try {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
-        } catch (cleanupError) {
-          if (!(cleanupError instanceof KeychainUnavailableError)) {
-            log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
+        if (!(error instanceof ExternallyManagedCredentialsError)) {
+          try {
+            await removeCredentialsOrKeychainError(credentialManager, providerId);
+          } catch (cleanupError) {
+            if (!(cleanupError instanceof KeychainUnavailableError)) {
+              log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
+            }
           }
         }
         await clearCacheAndNotifyProvidersChanged(internalEventBus);

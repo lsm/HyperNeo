@@ -19,6 +19,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Logger } from '../../logger.js';
 import { buildCopilotEnv } from './bun-node-wrapper.js';
+import { ExternallyManagedCredentialsError } from '../../credentials/credential-store.js';
 
 const execFileAsync = promisify(execFile);
 const logger = new Logger('anthropic-copilot-provider');
@@ -400,7 +401,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   async logout(): Promise<void> {
     const externalSource = await this.findExternalCredentialSource();
     if (externalSource) {
-      throw new Error(
+      throw new ExternallyManagedCredentialsError(
         `GitHub Copilot credentials are managed by ${externalSource}. ` +
           'Remove that source to log out.'
       );
@@ -423,10 +424,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async findExternalCredentialSource(): Promise<string | undefined> {
-    if (this.env.COPILOT_GITHUB_TOKEN) return 'the COPILOT_GITHUB_TOKEN environment variable';
-    if (this.env.GH_TOKEN) return 'the GH_TOKEN environment variable';
-    if (await this.tryGhCliToken()) return 'the gh CLI (gh auth logout)';
-    if (await this.tryGhHostsToken()) return 'the gh CLI hosts.yml oauth_token';
+    const envSources: Array<[string | undefined, string]> = [
+      [this.env.COPILOT_GITHUB_TOKEN, 'the COPILOT_GITHUB_TOKEN environment variable'],
+      [this.env.GH_TOKEN, 'the GH_TOKEN environment variable'],
+    ];
+    for (const [token, label] of envSources) {
+      if (token && !token.startsWith('ghp_')) return label;
+    }
+    const ghCliToken = await this.tryGhCliToken();
+    if (ghCliToken && !ghCliToken.startsWith('ghp_')) return 'the gh CLI (gh auth logout)';
+    const hostsToken = await this.tryGhHostsToken();
+    if (hostsToken && !hostsToken.startsWith('ghp_')) return 'the gh CLI hosts.yml oauth_token';
     return undefined;
   }
 

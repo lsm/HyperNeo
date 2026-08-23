@@ -942,6 +942,28 @@ describe('logout()', () => {
     );
     expect((p as unknown as Record<string, unknown>)['tokenCache']).not.toBeNull();
   });
+
+  it('does not block logout for an unusable classic PAT (ghp_) in COPILOT_GITHUB_TOKEN', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_classic' });
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
+
+  it('does not block logout for an unusable classic PAT (ghp_) from the gh CLI', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      'ghp_cli_classic' as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    await expect(p.logout()).resolves.toBeUndefined();
+  });
 });
 
 describe('startOAuthFlow()', () => {
