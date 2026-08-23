@@ -814,6 +814,7 @@ describe('createCustomAgentInit', () => {
   it('REVIEWER_SYSTEM_CONTRACT selects role by review source and dispatch by review depth', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('Your role by review source');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are THE gate');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('substitution is for `auto` only');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are the verifier and the backup');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('BOTH gates must pass');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('does NOT apply in `both` mode');

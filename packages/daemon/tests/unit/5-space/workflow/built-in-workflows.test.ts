@@ -388,7 +388,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain(
       'the artifact store upserts on the key, so writing the internal result there would destroy a recorded external gate'
     );
-    expect(CODER_ONLY_PROMPT).toContain('ONLY when no external gate was recorded for this run');
+    expect(CODER_ONLY_PROMPT).toContain('when no external gate was recorded for this run');
+    expect(CODER_ONLY_PROMPT).toContain('on a mid-run source switch TO `internal`');
+    expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies ONLY under `auto`');
+    expect(CODER_ONLY_PROMPT).toContain('escalate saying the repository has no external reviewer');
     expect(CODER_ONLY_PROMPT).toContain('the merge cannot proceed under the selected source');
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
@@ -433,6 +436,10 @@ describe('coder-only workflow template', () => {
       'do NOT silently substitute the internal fallback'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('request their re-review directly');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'no-activity window (~30 minutes after your trigger)'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('no verdict within ~2 hours');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'resolving threads does NOT withdraw a `CHANGES_REQUESTED` review'
     );
