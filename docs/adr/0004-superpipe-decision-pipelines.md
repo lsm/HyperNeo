@@ -30,6 +30,14 @@ gates — the combinator's first composed-then-swapped production flow. See
 "Pilot 6" below for the boundary caveats, the compensation deferral, and the
 closing sweep.
 
+Validated further by pilot 7 / chain C (2026-08-23): the message-search FTS
+admission gates as a `decisionRun` core and the delivery-status family as a
+routing table under `src/storage/` — the first pilot whose cores live in the
+repository layer — with the second production FTS admission implementation
+(`SessionRepository.rebuildMessageSearchRows`) aligned to the extracted
+vocabulary and parity-pinned. See "Pilot 7" below for the lazy-fact caveats
+and the deliberate rebuild residual.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -945,6 +953,125 @@ the shared combinator landed at S2 (+738). Tests net +1,861 (S1 +654/−7
 including the settle-window upper bound, gates suite +367, two flow suites
 +419 each, S5 +25/−16) on top of the shared 1,975-line S2 contract suite.
 
+## Pilot 7 — chain C: message-search FTS admission + delivery-status routing (2026-08-23)
+
+Chain C carried the sandwich below `src/lib/`, into the storage layer's
+message-repository cluster — the third-ranked chain of the sdk-message-repository
+survey (`docs/reports/sdk-message-repository-superpipe-survey.md`). Five PRs:
+C1 the characterization pins (#2755 — the delivery-transition window matrix,
+the turn-end batch semantics, and the FTS flush boundary incl.
+delete-then-decide ordering and both malformed-payload outcomes), C2 the
+admission core (#2771), C3 the routing table (#2791), C4 the session-rebuild
+alignment (#2804), and this closing sweep.
+
+Extracted:
+
+- `message-search-admission.ts` (160 lines) — `decideMessageSearchAdmission`,
+  a real `decisionRun` over six gates (superseded → searchable-type →
+  eligibility → body-nonempty → user-status → index), first-skip-wins; the FTS
+  policy vocabulary (retention TTL, room-session prefixes and types, terminal
+  space-task statuses, searchable message types) exported as data; and every
+  retention check evaluated against an injected `now` — the survey's purity
+  finding was that the old `isOlderThanMessageSearchTtl` read `Date.now()`
+  internally, and the synchronous fallback path
+  (`scheduleMessageSearchIndex` with no pending table) means *every* admission
+  shell, not just the 2 s flush, must supply a clock.
+- `delivery-status-routing.ts` (47 lines) — `DELIVERY_TRANSITION_RULES`: the
+  seven delivery-transition actions' accepted from-status windows and targets
+  as one table, consumed through `routeDeliveryTransition` (boolean routing)
+  and `deliveryTransitionRule` (window + target, for SQL interpolation) —
+  `task-transition-routing.ts`'s precedent at repository scale.
+
+Interpreters: `upsertMessageSearchRow` keeps the delete-then-decide order and
+the body-extraction-first placement the C1 pins protect (a JSON-valid but
+invalid payload throws inside the flush transaction, so the pending row is
+retained for retry; syntactically invalid JSON returns before the old-row
+delete). The ten `markDelivery*`/`reopenDelivery*` wrappers plus the
+dbId-keyed `deferEnqueuedUserMessage` interpolate `deliveryTransitionRule`'s
+window into their SELECT and UPDATE; `updateMessageStatus` remains the shared
+effect underneath them — chain B's B4 plan/interpret material, untouched here.
+
+**The session-rebuild outcome: routed vocabulary, deliberate residual.** The
+survey flagged `SessionRepository.rebuildMessageSearchRows` as a second
+production FTS admission implementation drifting against the repo's. C4 routed
+its *policy* through the core — the bulk WHERE interpolates the exported
+vocabulary, and both retention cutoffs bind as millisecond parameters from one
+injected clock (`updateSession`'s optional third parameter), ms-exact and
+NULL-keeping to match `isOlderThanMessageSearchTtl`, replacing SQLite's
+`'now'` — while the *shape* stays set-based, and that residual duplication is
+deliberate: the rebuild remains one DELETE plus one `INSERT … SELECT` per
+session flip rather than a per-row JS loop over the shared predicates; its
+supersession match keeps the codebase-wide `COALESCE(sdk_uuid, id)` fallback;
+and its body assembly stays SQL `GROUP_CONCAT`, where non-string
+text/thinking scalars (and non-ASCII whitespace-only bodies) can still diverge
+from `extractVisibleSearchText` for malformed-content rows. Writing the parity
+matrix (`session-search-rebuild-parity.test.ts`) surfaced five real
+divergences, all fixed: second-truncated SQL kept rows the core rejected
+(sub-second-in-second), the `COALESCE(…, 0)` task cutoff rejected
+null-timestamp terminal tasks the core keeps, empty-body rows were inserted,
+room-prefixed session ids typed as Space sessions were admitted, and
+self-supersession edges were dropped — the same incident-shaped payoff as
+pilot 4's pins.
+
+Boundary caveats, recorded for the same reason as pilot 3's:
+
+1. **The expensive facts are lazy thunks.** `isSuperseded` and
+   `isSearchableUserMessageStatus` enter the core as thunks, forced inside the
+   gates — pilot 3's lazy-thunk pattern — so a row skipped by an earlier gate
+   never pays the replacement-table or send-status read. The suite pins the
+   consultation contract directly: superseded first, user-status last, the
+   user-status fact never consulted when an earlier gate skips and never for
+   non-user rows.
+2. **The gates are wiring, not surface.** The six `applyXGate` functions are
+   consumed only intra-module, composed into the run that
+   `decideMessageSearchAdmission` executes; knip's `ignoreExportsUsedInFile`
+   admits them, and the suite pins the decision table through the composed
+   run's precedence ("superseded wins over every later gate") rather than
+   per-gate pass-through identity tests. The run is the production surface;
+   adding per-gate identity pins would test the combinator, not the policy.
+3. **The fact suppliers stay repo-private.** `isMessageSuperseded` and
+   `isSearchableUserMessageStatus` remain private methods — the reads the core
+   delegates. The searchable-user-status policy also survives as SQL
+   (`COALESCE(send_status, 'consumed') IN ('consumed', 'failed')`) in the
+   read-projection builders (survey zone 1: do-not-extract, hand-tuned SQL)
+   and one line of the rebuild's WHERE — the same policy in three syntaxes,
+   unified only at the gate.
+
+**The closing sweep found no dead inline copies.** The ten wrappers'
+hardcoded status windows and the old five-gate FTS cascade are gone from both
+files; knip (files/dependencies/exports), oxlint, and `tsc --noEmit` are
+clean. Live near-duplicates deliberately kept: `updateMessageStatus`'s
+pending-selection window `('deferred', 'enqueued', 'submitted')` — set-equal
+to `fail`'s acceptedFrom but a distinct predicate (rows still pending
+delivery, keyed on target ∈ {consumed, failed}, driving turn-promotion side
+effects) and B4's scope, not a delivery-action window;
+`deletePendingUserMessage`'s `('deferred', 'enqueued')` pending set — the same
+B-chain mutator territory; and the searchable-user-status SQL family of
+caveat 3. Every core export is production-consumed or pinned by the C suites:
+the five vocabulary constants by `session-repository.ts`'s rebuild (the TTL
+also by the parity suite), `decideMessageSearchAdmission` by
+`upsertMessageSearchRow` and both suites, `isMessageSearchIndexEligible` and
+`isOlderThanMessageSearchTtl` by the admission suite (the former also
+intra-module as the eligibility gate), the six gates intra-module by the
+composed run, `routeDeliveryTransition` by `deferEnqueuedUserMessage` and the
+routing suite, `deliveryTransitionRule` by the four wrapper call sites and the
+suite, `DeliveryTransitionAction` by the wrapper signatures, and the remaining
+types intra-module.
+
+**Costs:** production +166 across C2–C4 — the two cores +207 (160 + 47),
+`sdk-message-repository.ts` net −79 from chain C's own PRs (the file is 1,943
+lines now; chains A and B's interleaved extractions account for the rest of
+the shrink from the survey's 2,199-line base), `session-repository.ts` +38
+for the vocabulary interpolation and parameterized cutoffs. Tests +1,579:
+C1's pins +585 net (window matrix, turn-end batch semantics, flush boundary),
+the admission suite +212, the routing suite +98, the parity matrix +684 —
+again the value is testability, and here the parity matrix paid for itself by
+surfacing the five rebuild divergences on identical rows.
+
+Pilot 7 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chains A
+(read projections) and B (save admission) from the same survey are still in
+flight and land their own notes.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -965,6 +1092,11 @@ including the settle-window upper bound, gates suite +367, two flow suites
   `verified-stop-flow.ts` and applied in `stopSessionVerified` — see "Pilot 6"
   above for the boundary caveats, the compensation deferral, and the closing
   sweep. The stop flow is done; later chains do not revisit it.
+- **Done (chain C / pilot 7):** the message-search FTS admission gates
+  (`decisionRun`) and the delivery-status routing table under
+  `src/storage/repositories/`, with the session-rebuild parity alignment —
+  see "Pilot 7" above for the lazy-fact caveats and the deliberate rebuild
+  residual. Chains A and B from the same survey remain in flight.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1057,5 +1189,12 @@ including the settle-window upper bound, gates suite +367, two flow suites
   interpreter in `task-agent-manager.ts` (`stopSessionsVerified` /
   `stopSessionVerified` and the deps builder). Pilot 6 PRs: #2709, #2717,
   #2729, #2763, #2787, plus this closing sweep.
+- Pilot 7 (chain C) files:
+  `packages/daemon/src/storage/repositories/{message-search-admission,delivery-status-routing}.ts`;
+  interpreters in `sdk-message-repository.ts` (`upsertMessageSearchRow`, the
+  ten delivery wrappers, `deferEnqueuedUserMessage`) and
+  `session-repository.ts` (`rebuildMessageSearchRows`); survey and C4 outcome
+  in `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 7 PRs:
+  #2755, #2771, #2791, #2804, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
