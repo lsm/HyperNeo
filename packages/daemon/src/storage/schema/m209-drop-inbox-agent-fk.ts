@@ -4,7 +4,7 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   const row = db
     .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(tableName);
-  return row !== undefined;
+  return !!row;
 }
 
 export function runMigration209(db: BunDatabase): void {

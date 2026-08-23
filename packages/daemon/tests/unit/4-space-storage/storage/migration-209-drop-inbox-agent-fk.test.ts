@@ -35,13 +35,13 @@ describe('migration 209 drops the inbox target-agent FK', () => {
   test('removes the space_agents FK and preserves rows', () => {
     const db = new BunDatabase(':memory:');
     try {
-      db.exec('PRAGMA foreign_keys = ON');
+      db.exec('PRAGMA foreign_keys = OFF');
       createTables(db);
       createLegacyInboxTable(db);
       db.prepare(
         `INSERT INTO space_agent_inbox_messages
           (id, space_id, target_agent_id, source_actor_id, source_session_id, message, expires_at, created_at)
-         VALUES ('row-1', 'space-1', 'agent-1', 'src', NULL, 'hello', 9999, 1)`
+         VALUES ('row-1', 'space-1', 'space-lh-agent:coordinator:space-1', 'src', NULL, 'hello', 9999, 1)`
       ).run();
 
       runMigration209(db);
