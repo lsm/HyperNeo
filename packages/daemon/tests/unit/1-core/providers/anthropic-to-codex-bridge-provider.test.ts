@@ -1154,6 +1154,121 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
   });
 
+  describe('getBridgeAuth() negative auth cache', () => {
+    let tmpDir: string;
+    let fetchSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-negative-cache-test-'));
+      fetchSpy = spyOn(globalThis, 'fetch').mockRejectedValue(
+        new Error('fetch not mocked for this test')
+      );
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function authJsonReadCount(): number {
+      return fsPromiseMocks.readFile.mock.calls.filter((call) =>
+        String(call[0]).endsWith('auth.json')
+      ).length;
+    }
+
+    it('caches the miss for the instance lifetime: a later-appearing ~/.hyperneo/auth.json is never re-read', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBeUndefined();
+      expect(await p.isAvailable()).toBe(false);
+
+      writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'late-hyperneo-token' });
+      const readsBefore = authJsonReadCount();
+
+      expect(await p.getApiKey()).toBeUndefined();
+      expect(await p.isAvailable()).toBe(false);
+      expect(authJsonReadCount()).toBe(readsBefore);
+
+      p.stopAllBridgeServers();
+    });
+
+    it('caches the miss for the instance lifetime: a later-appearing ~/.codex/auth.json is never re-read', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBeUndefined();
+
+      writeCodexAuth(codexDir, { OPENAI_API_KEY: 'late-codex-key' });
+
+      expect(await p.getApiKey()).toBeUndefined();
+      expect(await p.isAvailable()).toBe(false);
+
+      p.stopAllBridgeServers();
+    });
+
+    it('treats unusable credential files like absent ones when caching the miss', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      mkdirSync(hyperneoDir, { recursive: true });
+      writeFileSync(path.join(hyperneoDir, 'auth.json'), 'not-json', { mode: 0o600 });
+      writeCodexAuth(codexDir, { tokens: { refresh_token: 'refresh-only-token' } });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBeUndefined();
+      expect(await p.isAvailable()).toBe(false);
+
+      writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'late-usable-token' });
+      expect(await p.getApiKey()).toBeUndefined();
+
+      p.stopAllBridgeServers();
+    });
+
+    it('a fresh instance (disable then enable) re-reads unconditionally and picks up late credentials', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+
+      const first = makeProvider({}, hyperneoDir, codexDir);
+      expect(await first.getApiKey()).toBeUndefined();
+      first.stopAllBridgeServers();
+
+      writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'late-hyperneo-token' });
+
+      const second = makeProvider({}, hyperneoDir, codexDir);
+      expect(await second.getApiKey()).toBe('late-hyperneo-token');
+      expect(await second.isAvailable()).toBe(true);
+      second.stopAllBridgeServers();
+    });
+
+    it('does not cache a miss when the in-import token refresh fails transiently (network error)', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeCodexAuth(codexDir, {
+        tokens: { access_token: 'codex-existing-token', refresh_token: 'codex-refresh-token' },
+      });
+
+      fetchSpy.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe('codex-existing-token');
+      expect(await p.isAvailable()).toBe(true);
+      expect(await p.getApiKey()).toBe('codex-existing-token');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      const hyperneoAuth = JSON.parse(
+        readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
+      ) as {
+        openai: { type: string; access: string; refresh: string };
+      };
+      expect(hyperneoAuth.openai.type).toBe('oauth');
+      expect(hyperneoAuth.openai.access).toBe('codex-existing-token');
+      expect(hyperneoAuth.openai.refresh).toBe('codex-refresh-token');
+      p.stopAllBridgeServers();
+    });
+  });
+
   describe('refreshToken() stale credential clearing', () => {
     let tmpDir: string;
     let fetchSpy: ReturnType<typeof spyOn>;
