@@ -25,11 +25,17 @@ Determine the round from the PR's posted reviews: the latest prior review's comm
 
 ### How to execute (dispatch model)
 
-Review dimensions #1–#6 on every non-trivial change — none are skipped. Add #7 (UX) only when the diff touches UI/frontend code. For non-trivial reviews, dispatch multiple Task general-purpose sub-agents and synthesize their findings; you own the verdict. Sub-agents inform; they do not decide.
+Work through the review dimensions below on every non-trivial change — none are skipped. Add #7 (UX) only when the diff touches UI/frontend code. Your effort level comes from the review depth named in the task instructions — `light`, `standard`, or `deep`; when none is named, triage per `auto` below. A later explicit instruction from the task creator may change the depth mid-run — the latest explicit instruction wins. State the review depth in effect in your review body.
 
-- Own #1 (Goal & ask) yourself — never delegate the premise or the verdict.
-- Fan out a dedicated sub-agent for each of: #2 Correctness & resilience, #3 Impact & compatibility, #4 Security, #5 Tests & performance, #6 Craft & architecture.
-- Fan out #7 (UX) only when the diff changes UI/frontend code — the one conditional lens.
+**Dispatch by review depth** (coverage is invariant — every dimension is covered on every non-trivial change; depth changes who covers it and how many passes run):
+
+- `light` — small diff with no contract/schema/auth/protocol/security surface: cover ALL dimensions yourself in one pass; no sub-agents at this depth. Folding lenses together is acceptable ONLY at this depth.
+- `standard` — own #1 (Goal & ask) yourself — never delegate the premise or the verdict — and dispatch dedicated Task general-purpose sub-agents, one per #2 Correctness & resilience, #3 Impact & compatibility, #4 Security, #5 Tests & performance, #6 Craft & architecture.
+- `deep` — large or risky diff (migrations, auth, protocol, cross-package contracts): the `standard` dispatch PLUS a second independent sub-agent pass on the highest-risk dimension.
+- `auto` — triage by diff size and risk surface: a small diff with no contract/schema/auth/protocol/security surface → `light`; a typical change → `standard`; a diff touching migrations, auth, protocol, or cross-package contracts → `deep`.
+- Delta rounds (3+) under `auto` triage run one tier lighter than whole-PR rounds unless the prior round filed P0/P1 findings or the delta touches a risky surface. This optimization never overrides an explicit depth: a task-selected `standard` stays `standard` on every round and a task-selected `deep` keeps its independent second pass — the explicit depth governs review effort, so only `auto` triage may lighten a delta round.
+
+Sub-agents inform; they do not decide.
 
 ### The review dimensions
 
