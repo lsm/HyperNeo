@@ -10,6 +10,7 @@ const baseArgs = {
   hasPriorContext: true,
   slotResetsContext: true,
   hasActiveDeliveryJob: false,
+  hasUnconsumedDeliveredWork: false,
 };
 
 describe('planInjectContextReset', () => {
@@ -48,6 +49,26 @@ describe('planInjectContextReset', () => {
     });
   });
 
+  test('unconsumed delivered work blocks the clear step (#1085)', () => {
+    expect(planInjectContextReset({ ...baseArgs, hasUnconsumedDeliveredWork: true })).toEqual({
+      action: 'deliver_without_clear',
+      reason: 'unconsumed_work_pending',
+    });
+  });
+
+  test('an active delivery job outranks unconsumed delivered work', () => {
+    expect(
+      planInjectContextReset({
+        ...baseArgs,
+        hasActiveDeliveryJob: true,
+        hasUnconsumedDeliveredWork: true,
+      })
+    ).toEqual({
+      action: 'deliver_without_clear',
+      reason: 'delivery_job_active',
+    });
+  });
+
   test('all conjuncts true clears before delivery', () => {
     expect(planInjectContextReset(baseArgs)).toEqual({
       action: 'clear_before_deliver',
@@ -62,6 +83,7 @@ describe('planInjectContextReset', () => {
         hasPriorContext: false,
         slotResetsContext: false,
         hasActiveDeliveryJob: true,
+        hasUnconsumedDeliveredWork: true,
       })
     ).toEqual({
       action: 'deliver_without_clear',
@@ -70,31 +92,74 @@ describe('planInjectContextReset', () => {
   });
 });
 
-describe('planTurnEndFlushContextReset [KNOWN-BUG #1085]', () => {
-  test('turn-end flush never clears even when a reset slot has deliverables', () => {
+describe('planTurnEndFlushContextReset', () => {
+  test('a reset slot with task deliverables clears once before the first message (#1085)', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: true,
-        deliverableCount: 3,
+        hasPriorContext: true,
+        hasActiveDeliveryJob: false,
+        taskDeliverableCount: 3,
       })
-    ).toEqual({ action: 'flush_without_clear' });
+    ).toEqual({ action: 'clear_then_flush' });
   });
 
-  test('turn-end flush keeps no-clear behavior for non-reset slots', () => {
+  test('a batch of any size gets exactly one clear plan, never per message', () => {
+    for (const taskDeliverableCount of [1, 2, 8, 64]) {
+      expect(
+        planTurnEndFlushContextReset({
+          slotResetsContext: true,
+          hasPriorContext: true,
+          hasActiveDeliveryJob: false,
+          taskDeliverableCount,
+        })
+      ).toEqual({
+        action: 'clear_then_flush',
+      });
+    }
+  });
+
+  test('a non-reset slot flushes without a clear even with task deliverables', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: false,
-        deliverableCount: 3,
+        hasPriorContext: true,
+        hasActiveDeliveryJob: false,
+        taskDeliverableCount: 3,
       })
     ).toEqual({ action: 'flush_without_clear' });
   });
 
-  test('turn-end flush keeps no-clear behavior when the queue is empty', () => {
+  test('a reset slot with an empty queue flushes without a clear', () => {
     expect(
       planTurnEndFlushContextReset({
         slotResetsContext: true,
-        deliverableCount: 0,
+        hasPriorContext: true,
+        hasActiveDeliveryJob: false,
+        taskDeliverableCount: 0,
       })
     ).toEqual({ action: 'flush_without_clear' });
+  });
+
+  test('a session without prior context flushes without a clear on the first turn', () => {
+    expect(
+      planTurnEndFlushContextReset({
+        slotResetsContext: true,
+        hasPriorContext: false,
+        hasActiveDeliveryJob: false,
+        taskDeliverableCount: 3,
+      })
+    ).toEqual({ action: 'flush_without_clear' });
+  });
+
+  test('an active delivery job suppresses the flush clear and defers the reset', () => {
+    expect(
+      planTurnEndFlushContextReset({
+        slotResetsContext: true,
+        hasPriorContext: true,
+        hasActiveDeliveryJob: true,
+        taskDeliverableCount: 3,
+      })
+    ).toEqual({ action: 'flush_without_clear', reason: 'active_delivery_job' });
   });
 });

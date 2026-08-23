@@ -167,10 +167,11 @@ export class SpaceTaskRepository {
           .get(params.spaceId) as { next: number }
       ).next;
 
+      const initialStatus = params.status ?? 'open';
       this.db
         .prepare(
-          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, evolution_scope_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, evolution_scope_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at, terminal_generation)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
@@ -178,7 +179,7 @@ export class SpaceTaskRepository {
           nextNumber,
           params.title,
           params.description ?? '',
-          params.status ?? 'open',
+          initialStatus,
           params.priority ?? 'normal',
           JSON.stringify(params.labels ?? []),
           params.workflowRunId ?? null,
@@ -192,7 +193,8 @@ export class SpaceTaskRepository {
           params.createdBySession ?? null,
           params.createdByTaskScheduleId ?? null,
           now,
-          now
+          now,
+          isTerminalStatus(initialStatus) ? 1 : 0
         );
     });
 
@@ -453,6 +455,12 @@ export class SpaceTaskRepository {
         fields.push('archived_at = ?');
         values.push(Date.now());
       }
+      if (isTerminalStatus(params.status)) {
+        fields.push(
+          `terminal_generation = terminal_generation + CASE WHEN status = ? THEN 0 ELSE 1 END`
+        );
+        values.push(params.status);
+      }
     }
     if (params.priority !== undefined) {
       fields.push('priority = ?');
@@ -629,9 +637,19 @@ export class SpaceTaskRepository {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
     const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const sets = ['status = ?'];
+    const values: SQLiteValue[] = [next];
+    if (isTerminalStatus(next)) {
+      sets.push(
+        `terminal_generation = terminal_generation + CASE WHEN status = ? THEN 0 ELSE 1 END`
+      );
+      values.push(next);
+    }
     const result = this.db
-      .prepare(`UPDATE space_tasks SET status = ? WHERE id = ? AND status IN (${placeholders})`)
-      .run(next, taskId, ...expectedStatuses);
+      .prepare(
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+      )
+      .run(...values, taskId, ...expectedStatuses);
     return result.changes > 0 ? 'won' : 'superseded';
   }
 
@@ -654,6 +672,12 @@ export class SpaceTaskRepository {
     if (next === 'in_progress') {
       sets.push('started_at = ?', 'completed_at = ?');
       values.push(now, null);
+    }
+    if (isTerminalStatus(next)) {
+      sets.push(
+        `terminal_generation = terminal_generation + CASE WHEN status = ? THEN 0 ELSE 1 END`
+      );
+      values.push(next);
     }
     const result = this.db
       .prepare(
@@ -694,7 +718,9 @@ export class SpaceTaskRepository {
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
-      `UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?`
+      `UPDATE space_tasks SET status = 'archived', archived_at = ?, updated_at = ?,
+        terminal_generation = terminal_generation + CASE WHEN status = 'archived' THEN 0 ELSE 1 END
+       WHERE id = ?`
     );
     stmt.run(now, now, id);
     this.upsertTaskSearchRow(id);
@@ -842,8 +868,15 @@ export class SpaceTaskRepository {
       startedAt: (row.started_at as number | null) ?? null,
       completedAt: (row.completed_at as number | null) ?? null,
       updatedAt: (row.updated_at as number | null) ?? (row.created_at as number),
+      terminalGeneration: (row.terminal_generation as number) ?? 0,
     };
   }
+}
+
+function isTerminalStatus(status: SpaceTaskStatus): boolean {
+  return (
+    status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
+  );
 }
 
 function parseRestrictions(raw: unknown): TaskRestriction | null {

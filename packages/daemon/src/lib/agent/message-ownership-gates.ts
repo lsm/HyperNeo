@@ -13,8 +13,15 @@ export function resolveMessageOwnership(args: {
 
 export interface FlushMessage {
   uuid: string;
+  dbId: string;
   isUserMessage: boolean;
+  isTaskInput: boolean;
   flattenedText: string | null;
+}
+
+export function isTaskFlushInput(message: { isSynthetic?: boolean; inputKind?: string }): boolean {
+  if (message.inputKind !== undefined) return message.inputKind === 'task';
+  return message.isSynthetic === true;
 }
 
 export type FlushSkipOwnership = 'job_queue' | 'memory_queue' | 'not_user_message';

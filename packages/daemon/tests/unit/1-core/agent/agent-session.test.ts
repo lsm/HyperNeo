@@ -14,6 +14,7 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   waitForDeliveryConsumption,
+  withSessionResetCoordination,
 } from '../../../../src/lib/agent/message-delivery';
 import type { Database } from '../../../../src/storage/database';
 import {
@@ -2005,6 +2006,64 @@ describe('AgentSession', () => {
         if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
         else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
       }
+    });
+
+    it('reconcileStrandedDeliveries waits for the reset-coordination lock before re-enqueueing', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          getActiveDeliveryRole: mock(() => null),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued' ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }] : []
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({
+          markDeliveryFailedByUuid: mock(() => null),
+        }));
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const holder = withSessionResetCoordination('test-session-id', async () => {
+          await gate;
+        });
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+        const reconcilePromise = agentSession.reconcileStrandedDeliveries();
+        await settle();
+        await settle();
+
+        expect(enqueue).not.toHaveBeenCalled();
+
+        release();
+        await holder;
+        await reconcilePromise;
+
+        expect(enqueue).toHaveBeenCalledTimes(1);
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
+    it('replayAllPendingMessages bypasses the manual-mode guard that stops immediate-mode replay', async () => {
+      agentSession.session.config.queryMode = 'manual';
+      const inner = agentSession.queryModeHandler as unknown as {
+        replayPendingMessagesForImmediateMode: ReturnType<typeof mock>;
+      };
+      const innerSpy = spyOn(inner, 'replayPendingMessagesForImmediateMode').mockResolvedValue(
+        undefined
+      );
+
+      await agentSession.replayPendingMessagesForImmediateMode();
+      expect(innerSpy).not.toHaveBeenCalled();
+
+      await agentSession.replayAllPendingMessages();
+      expect(innerSpy).toHaveBeenCalledTimes(1);
     });
 
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {

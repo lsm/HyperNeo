@@ -6,6 +6,7 @@ import {
 import {
   decideDeferAdmission,
   type FlushMessage,
+  isTaskFlushInput,
   planFlushDelivery,
   resolveDeliveryRole,
   resolveMessageOwnership,
@@ -15,10 +16,31 @@ function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
   return {
     uuid: 'uuid-1',
     isUserMessage: true,
+    isTaskInput: true,
     flattenedText: 'hello',
     ...overrides,
   };
 }
+
+describe('isTaskFlushInput', () => {
+  test('a persisted task input kind classifies as a task', () => {
+    expect(isTaskFlushInput({ isSynthetic: true, inputKind: 'task' })).toBe(true);
+  });
+
+  test('a persisted system input kind never classifies as a task, even when synthetic', () => {
+    expect(isTaskFlushInput({ isSynthetic: true, inputKind: 'system' })).toBe(false);
+  });
+
+  test('a persisted human input kind never classifies as a task', () => {
+    expect(isTaskFlushInput({ isSynthetic: false, inputKind: 'human' })).toBe(false);
+  });
+
+  test('a legacy row without an input kind falls back to the synthetic flag', () => {
+    expect(isTaskFlushInput({ isSynthetic: true })).toBe(true);
+    expect(isTaskFlushInput({ isSynthetic: false })).toBe(false);
+    expect(isTaskFlushInput({})).toBe(false);
+  });
+});
 
 describe('resolveMessageOwnership', () => {
   test('job_queue wins when both queues hold the message', () => {

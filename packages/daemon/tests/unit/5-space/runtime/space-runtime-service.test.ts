@@ -1976,6 +1976,21 @@ describe('SpaceRuntimeService', () => {
       expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
     });
 
+    test('re-attaches the slot context reset policy onto the fresh session instance', async () => {
+      const agent = makeMemberAgentSession();
+      const sessionManager = makeSessionManager(agent);
+      const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+      const reattachSlotContextReset = mock(() => {});
+      svc.setTaskAgentManager({
+        reattachSlotContextReset,
+      } as unknown as TaskAgentManager);
+
+      await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+      expect(reattachSlotContextReset).toHaveBeenCalledTimes(1);
+      expect(reattachSlotContextReset).toHaveBeenCalledWith(agent);
+    });
+
     test('also attaches db-query when dbPath is configured', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = makeSessionManager(agent);
