@@ -167,6 +167,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       agentSessionId?: string | null;
       lastActivityAt?: number | null;
       startedAt?: number | null;
+      completedAt?: number | null;
     } = {}
   ) {
     const existing = nodeExecutionRepo.listByNode(runId, nodeId)[0];
@@ -184,6 +185,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       agentSessionId: opts.agentSessionId ?? null,
       lastActivityAt: opts.lastActivityAt ?? null,
       ...(opts.startedAt !== undefined ? { startedAt: opts.startedAt } : {}),
+      ...(opts.completedAt !== undefined ? { completedAt: opts.completedAt } : {}),
     });
     return nodeExecutionRepo.getById(target.id)!;
   }
@@ -400,11 +402,29 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: null,
         lastActivityAt: null,
         startedAt: Date.now() - 3 * 60 * 60 * 1000,
+        completedAt: Date.now() - 3 * 60 * 60 * 1000,
       });
 
       const rt = makeRuntime();
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(1);
+    });
+
+    test('stays quiet when a sessionless execution was detached and marked idle recently', () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+      ]);
+      const { runId, taskId } = seedRun(workflow, 'Sessionless Fresh Idle Transition Run');
+      seedExec(runId, STEP_A, 'Coding', 'idle', {
+        agentSessionId: null,
+        lastActivityAt: null,
+        startedAt: Date.now() - 3 * 60 * 60 * 1000,
+        completedAt: Date.now() - 30_000,
+      });
+
+      const rt = makeRuntime();
+      runDetector(rt, runId, taskId);
+      expect(silentStallWarnings()).toHaveLength(0);
     });
 
     test('stays quiet when a sessionless idle execution started recently', () => {
@@ -416,6 +436,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: null,
         lastActivityAt: null,
         startedAt: Date.now() - 30_000,
+        completedAt: Date.now() - 30_000,
       });
 
       const rt = makeRuntime();
@@ -432,6 +453,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: null,
         lastActivityAt: null,
         startedAt: null,
+        completedAt: null,
       });
 
       const rt = makeRuntime();
@@ -449,6 +471,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
         agentSessionId: null,
         lastActivityAt: null,
         startedAt: Date.now() - 3 * 60 * 60 * 1000,
+        completedAt: Date.now() - 3 * 60 * 60 * 1000,
       });
       seedExec(runId, STEP_B, 'Review', 'idle', {
         agentSessionId: 'mixed-signals-session',

@@ -7415,6 +7415,9 @@ export class SpaceRuntime {
       const sessionId = execution.agentSessionId;
       if (!sessionId) {
         if (typeof execution.startedAt === 'number') silenceSignals.push(execution.startedAt);
+        if (typeof execution.completedAt === 'number') {
+          silenceSignals.push(execution.completedAt);
+        }
         continue;
       }
       const continueState = this.terminalErrorContinueStates.get(`${runId}:${execution.id}`);
