@@ -1,6 +1,6 @@
 import type { UUID } from 'crypto';
 import { fileURLToPath } from 'node:url';
-import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
   THINKING_LEVEL_TOKENS,
@@ -10,9 +10,18 @@ import {
 import type {
   AcpConfigOption,
   AcpContentBlock,
+  AcpFsReadParams,
+  AcpFsReadResult,
+  AcpFsWriteParams,
+  AcpFsWriteResult,
   AcpMcpServerConfig,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
+  AcpTerminalCreateParams,
+  AcpTerminalKillParams,
+  AcpTerminalOutputParams,
+  AcpTerminalReleaseParams,
+  AcpTerminalWaitForExitParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ErrorCategory } from '../error-manager';
@@ -33,13 +42,18 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
+import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
+import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
+import { isSafeFsSupported, readFileWithinWorkspace, writeFileWithinWorkspace } from './acp-safe-fs';
+import { AcpTerminalManager } from './acp-terminal-manager';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -251,69 +265,36 @@ export function convertMcpServersForAcp(
   });
 }
 
-function getAcpWorkspacePath(session: Session, queryOptions: Options): string {
-  return (
-    queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd()
-  );
+function getAcpWorkspacePath(session: Session, queryOptions: Options): string | undefined {
+  return queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
 }
 
-function acpPermissionQuestion(params: AcpPermissionRequest): string {
-  return params.toolCall.title
-    ? `Allow ${params.toolCall.title}?`
-    : `Allow ACP tool ${params.toolCall.toolCallId}?`;
-}
-
-function acpPermissionQuestionInput(params: AcpPermissionRequest): Record<string, unknown> {
-  const question = acpPermissionQuestion(params);
+function normalizeAcpTerminalCreate(params: AcpTerminalCreateParams): AcpTerminalCreateParams {
+  if (params.cwd != null || (params.env?.length ?? 0) > 0) {
+    throw new Error('ACP terminal cwd and environment overrides are not supported');
+  }
+  const parsed =
+    params.args === undefined
+      ? parseAcpCommand(params.command)
+      : { command: params.command, args: params.args };
   return {
-    questions: [
-      {
-        question,
-        header: 'ACP approval',
-        options: params.options.map((option) => ({
-          label: option.name,
-          description: option.kind.replaceAll('_', ' '),
-        })),
-        multiSelect: false,
-      },
-    ],
+    ...params,
+    command: parsed.command,
+    args: parsed.args,
+    cwd: undefined,
+    env: undefined,
   };
 }
 
-async function handleAcpPermissionRequest(
-  params: AcpPermissionRequest,
-  canUseTool: CanUseTool
+async function allowAcpPermissionRequest(
+  params: AcpPermissionRequest
 ): Promise<AcpPermissionResponseResult> {
-  if (params.options.length === 0) {
-    return { outcome: { outcome: 'cancelled' } };
-  }
-
-  const controller = new AbortController();
-  const question = acpPermissionQuestion(params);
-  const result = await canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
-    signal: controller.signal,
-    toolUseID: params.toolCall.toolCallId,
-    title: question,
-    displayName: params.toolCall.title ?? params.toolCall.kind ?? 'ACP tool',
-    description: params.toolCall.kind,
-    requestId: generateUUID(),
-  });
-
-  if (!result || result.behavior === 'deny') {
-    return { outcome: { outcome: 'cancelled' } };
-  }
-
-  const answers = (result.updatedInput as { answers?: Record<string, string> } | undefined)
-    ?.answers;
-  const selectedName = answers?.[question] ?? Object.values(answers ?? {})[0];
-  const selectedOption = params.options.find((option) => option.name === selectedName);
-
-  if (selectedOption) {
-    return { outcome: { outcome: 'selected', optionId: selectedOption.optionId } };
-  }
-
-  return { outcome: { outcome: 'cancelled' } };
+  const option =
+    params.options.find((candidate) => candidate.kind.startsWith('allow')) ?? params.options[0];
+  if (!option) return { outcome: { outcome: 'cancelled' } };
+  return { outcome: { outcome: 'selected', optionId: option.optionId } };
 }
+
 
 function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
   if (!systemPrompt) return [];
@@ -410,6 +391,7 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
+    let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
@@ -496,7 +478,8 @@ export class AcpQueryRunner {
         (message) => logger.warn(message),
         proxyBridge
       );
-      const cwd = getAcpWorkspacePath(session, queryOptions);
+      const workspace = getAcpWorkspacePath(session, queryOptions);
+      const cwd = workspace ?? process.cwd();
       const startupTimeoutMs = getStartupTimeoutMs();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
@@ -563,15 +546,49 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
+      const processTreeOwner = await getAcpProcessTreeOwner();
+      const hostCallbacks = workspace
+        ? (() => {
+            const manager = new AcpTerminalManager(
+              buildAcpSafeEnv(acpEnv),
+              workspace,
+              processTreeOwner
+            );
+            terminalManager = manager;
+            return {
+              onTerminalCreate: async (params: AcpTerminalCreateParams) => {
+                const normalized = normalizeAcpTerminalCreate(params);
+                if (abortController.signal.aborted) {
+                  throw new Error('ACP terminal command cancelled');
+                }
+                return manager.create(normalized);
+              },
+              onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
+              onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
+                manager.waitForExit(params),
+              onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
+              onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
+              ...(isSafeFsSupported()
+                ? {
+                    onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
+                    onFsWrite: (params: AcpFsWriteParams) =>
+                      this.handleFsWrite(params, workspace, abortController.signal),
+                  }
+                : {}),
+            };
+          })()
+        : {};
       client = this.createAcpClient({
         command,
         args,
         cwd,
         env: acpEnv as Record<string, string> | undefined,
+        processTreeOwner,
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-        onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
+        onPermissionRequest: allowAcpPermissionRequest,
+        ...hostCallbacks,
       });
 
       if (messageQueue.size() > 0) {
@@ -754,6 +771,8 @@ export class AcpQueryRunner {
         !runAbortController?.signal.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
+      terminalManager?.dispose();
+      terminalManager = null;
       const effectiveError =
         startupTimeoutReached && !this.ctx.firstMessageReceived
           ? new Error('ACP startup timeout - query aborted')
@@ -773,6 +792,7 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
+      terminalManager?.dispose();
       await proxyBridge?.close();
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
@@ -971,6 +991,54 @@ export class AcpQueryRunner {
         );
         await stateManager.setIdle();
       }
+    }
+  }
+
+  private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    return {
+      content: await readFileWithinWorkspace(workspacePath, segments, {
+        startLine: Math.max(0, (params.line ?? 1) - 1),
+        lineLimit: params.limit ?? undefined,
+        maxBytes: MAX_FS_READ_BYTES,
+      }),
+    };
+  }
+
+  private async handleFsWrite(
+    params: AcpFsWriteParams,
+    workspace: string,
+    signal: AbortSignal
+  ): Promise<AcpFsWriteResult> {
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    await writeFileWithinWorkspace(workspacePath, segments, params.content, signal);
+    return {};
+  }
+
+  private async resolveWorkspaceSegments(
+    path: string,
+    workspace: string
+  ): Promise<{ workspacePath: string; segments: string[] }> {
+    const { realpath } = await import('node:fs/promises');
+    const workspacePath = await realpath(workspace);
+    const lexicalWorkspace = resolve(workspace);
+    const requestedPath = isAbsolute(path) ? resolve(path) : resolve(lexicalWorkspace, path);
+    let relativePath = relative(lexicalWorkspace, requestedPath);
+    try {
+      this.assertWorkspacePath(requestedPath, lexicalWorkspace, path);
+    } catch {
+      this.assertWorkspacePath(requestedPath, workspacePath, path);
+      relativePath = relative(workspacePath, requestedPath);
+    }
+    if (!relativePath) throw new Error(`ACP filesystem path must identify a file: ${path}`);
+    return { workspacePath, segments: relativePath.split(sep) };
+  }
+
+  private assertWorkspacePath(path: string, workspace: string, requestedPath: string): void {
+    const relativePath = relative(workspace, path);
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new Error(`ACP filesystem path escapes workspace: ${requestedPath}`);
     }
   }
 
