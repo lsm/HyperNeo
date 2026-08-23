@@ -17,6 +17,8 @@ const {
   mockToastSuccess,
   mockToastWarning,
   mockOnConnected,
+  mockIsConnected,
+  mockReconnect,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -32,6 +34,8 @@ const {
   mockToastSuccess: vi.fn(),
   mockToastWarning: vi.fn(),
   mockOnConnected: vi.fn(),
+  mockIsConnected: vi.fn(),
+  mockReconnect: vi.fn(),
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
@@ -61,6 +65,8 @@ vi.mock('../../../lib/toast.ts', () => ({
 vi.mock('../../../lib/connection-manager.ts', () => ({
   connectionManager: {
     onConnected: (timeout?: number) => mockOnConnected(timeout),
+    isConnected: () => mockIsConnected(),
+    reconnect: () => mockReconnect(),
   },
 }));
 
@@ -238,6 +244,10 @@ describe('ProvidersSettings', () => {
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
     mockOnConnected.mockReset();
     mockOnConnected.mockResolvedValue(undefined);
+    mockIsConnected.mockReset();
+    mockIsConnected.mockReturnValue(false);
+    mockReconnect.mockReset();
+    mockReconnect.mockResolvedValue(undefined);
     globalStore.systemState.value = null;
     connectionState.value = 'connecting';
   });
@@ -707,15 +717,17 @@ describe('ProvidersSettings', () => {
   });
 
   it('shows error toast when listProviders fails', async () => {
-    mockListProviders.mockRejectedValue(new Error('Network error'));
+    mockListProviders.mockRejectedValue(new Error('Provider registry corrupt'));
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
 
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
       expect(container.textContent).toContain('Failed to load providers.');
+      expect(container.textContent).toContain('The load failed. Try again in a moment.');
       expect(container.textContent).toContain('Retry');
       expect(container.textContent).not.toContain('No providers configured.');
+      expect(container.textContent).not.toContain('Could not reach the HyperNeo daemon');
     });
   });
 
@@ -731,6 +743,7 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
       expect(container.textContent).toContain('Failed to load providers.');
+      expect(container.textContent).toContain('Could not reach the HyperNeo daemon');
       expect(container.textContent).toContain('Retry');
     });
     expect(mockListProviders).not.toHaveBeenCalled();
@@ -788,7 +801,7 @@ describe('ProvidersSettings', () => {
     });
   });
 
-  it('retries the load when Retry is clicked', async () => {
+  it('retries the load and restarts the connection when Retry is clicked', async () => {
     mockOnConnected.mockRejectedValueOnce(new ConnectionTimeoutError(10000));
     mockOnConnected.mockResolvedValue(undefined);
     mockListProviders.mockResolvedValue({
@@ -806,8 +819,65 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Anthropic');
     });
+    expect(mockReconnect).toHaveBeenCalledTimes(1);
     expect(mockOnConnected).toHaveBeenCalledTimes(2);
     expect(mockListProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart a healthy connection when Retry is clicked', async () => {
+    mockOnConnected.mockResolvedValue(undefined);
+    mockIsConnected.mockReturnValue(true);
+    mockListProviders.mockRejectedValueOnce(new Error('handler error')).mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => {
+      expect(container.textContent).toContain('Retry');
+    });
+
+    fireEvent.click(screen.getByText('Retry'));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Anthropic');
+    });
+    expect(mockReconnect).not.toHaveBeenCalled();
+  });
+
+  it('auto-retries once when the load fails while connected', async () => {
+    connectionState.value = 'connected';
+    mockOnConnected.mockResolvedValue(undefined);
+    mockListProviders.mockRejectedValueOnce(new Error('handler error')).mockResolvedValue({
+      providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('Anthropic');
+      expect(container.textContent).not.toContain('Retry');
+    });
+    expect(mockListProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it('limits the auto-retry to one attempt while the failure persists', async () => {
+    connectionState.value = 'connected';
+    mockOnConnected.mockResolvedValue(undefined);
+    mockListProviders.mockRejectedValue(new Error('handler error'));
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Retry');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListProviders).toHaveBeenCalledTimes(2);
   });
 
   it('explains session expiry when mounted with reason=session_expired', async () => {

@@ -15,6 +15,7 @@ import {
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { ConnectionNotReadyError, ConnectionTimeoutError } from '../../lib/errors.ts';
 import { connectionState, credentialStoreStatus } from '../../lib/state.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
@@ -83,10 +84,12 @@ export function ProvidersSettings() {
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [gateTimeout, setGateTimeout] = useState(false);
   const [sessionExpired] = useState(
     () => new URLSearchParams(window.location.search).get('reason') === 'session_expired'
   );
   const loadGenerationRef = useRef(0);
+  const autoRetriedRef = useRef(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -118,6 +121,7 @@ export function ProvidersSettings() {
     try {
       setLoading(true);
       setLoadError(false);
+      setGateTimeout(false);
       await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
       if (generation !== loadGenerationRef.current) return;
       const [{ providers: records }, authResponse] = await Promise.all([
@@ -128,6 +132,7 @@ export function ProvidersSettings() {
         }),
       ]);
       if (generation !== loadGenerationRef.current) return;
+      autoRetriedRef.current = false;
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
         ...r,
@@ -144,9 +149,12 @@ export function ProvidersSettings() {
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
       }
-    } catch {
+    } catch (err) {
       if (generation !== loadGenerationRef.current) return;
       setLoadError(true);
+      setGateTimeout(
+        err instanceof ConnectionTimeoutError || err instanceof ConnectionNotReadyError
+      );
       toast.error('Failed to load providers');
     } finally {
       if (generation === loadGenerationRef.current) {
@@ -160,10 +168,18 @@ export function ProvidersSettings() {
   }, []);
 
   useEffect(() => {
-    if (connectionState.value === 'connected' && loadError) {
-      loadProviders();
+    if (connectionState.value !== 'connected' || !loadError) return;
+    if (autoRetriedRef.current) return;
+    autoRetriedRef.current = true;
+    loadProviders();
+  }, [connectionState.value, loadError]);
+
+  const handleRetry = () => {
+    if (!connectionManager.isConnected()) {
+      connectionManager.reconnect();
     }
-  }, [connectionState.value]);
+    loadProviders();
+  };
 
   useEffect(() => {
     if (!oauthFlow) return;
@@ -477,10 +493,12 @@ export function ProvidersSettings() {
               <p class="text-xs text-gray-400 mt-1">
                 {sessionExpired
                   ? 'Re-authenticate, then retry to reload your providers.'
-                  : 'Could not reach the HyperNeo daemon — check that it is running, then retry.'}
+                  : gateTimeout
+                    ? 'Could not reach the HyperNeo daemon — check that it is running, then retry.'
+                    : 'The load failed. Try again in a moment.'}
               </p>
               <div class="mt-3">
-                <Button size="sm" variant="secondary" onClick={() => loadProviders()}>
+                <Button size="sm" variant="secondary" onClick={handleRetry}>
                   Retry
                 </Button>
               </div>
