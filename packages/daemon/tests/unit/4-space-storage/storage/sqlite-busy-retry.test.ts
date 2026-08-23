@@ -109,7 +109,7 @@ describe('SDK message writes under a held WAL write lock', () => {
     expect(row.session_id).toBe('session-busy');
   });
 
-  it('saves user messages without throwing when the write lock is held', () => {
+  it('propagates the busy error for user messages after exhausting retries, then recovers', () => {
     const holder = holdWriteLock();
 
     expect(() => repository.saveUserMessage('session-busy', user('queued'))).toThrow(
