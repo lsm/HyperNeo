@@ -81,10 +81,14 @@ export class QueryLifecycleManager {
       session.acpSessionId = undefined;
       updates.acpSessionId = undefined;
     }
-    if (session.metadata?.acpInstructionsSent) {
+    if (
+      session.metadata?.acpInstructionsSent ||
+      session.metadata?.acpContextUsageEstimate !== undefined
+    ) {
       session.metadata = {
         ...session.metadata,
         acpInstructionsSent: undefined,
+        acpContextUsageEstimate: undefined,
       };
       updates.metadata = session.metadata;
     }
@@ -186,10 +190,14 @@ export class QueryLifecycleManager {
     const processExitedPromise = this.ctx.processExitedPromise;
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
     const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
+    const queryAbortController = this.ctx.queryAbortController;
+    const queryPromise = this.ctx.queryPromise;
+    const queryObject = this.ctx.queryObject;
+    const startupTimeoutTimer = this.ctx.startupTimeoutTimer;
 
     messageQueue.stop();
+    queryAbortController?.abort();
 
-    const queryObject = this.ctx.queryObject;
     if (queryObject && typeof queryObject.interrupt === 'function') {
       if (this.ctx.firstMessageReceived) {
         try {
@@ -198,7 +206,6 @@ export class QueryLifecycleManager {
       }
     }
 
-    const queryPromise = this.ctx.queryPromise;
     if (queryPromise) {
       try {
         const promiseToAwait = catchQueryErrors ? queryPromise.catch(() => {}) : queryPromise;
@@ -216,6 +223,19 @@ export class QueryLifecycleManager {
       noPidProcesses: noPidProcessSnapshot,
     });
 
+    if (this.ctx.queryPromise === queryPromise) {
+      const lateProcesses = this.ctx
+        .snapshotTrackedAgentProcesses()
+        .filter((process) => !trackedProcessSnapshot.some((entry) => entry[1] === process[1]));
+      if (lateProcesses.length > 0) {
+        this.ctx.terminateTrackedAgentProcesses({
+          forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
+          processes: lateProcesses,
+          noPidProcesses: [],
+        });
+      }
+    }
+
     if (queryObject && this.ctx.queryObject === queryObject) {
       try {
         queryObject.close();
@@ -231,17 +251,25 @@ export class QueryLifecycleManager {
     }
 
     const staleTimer = this.ctx.startupTimeoutTimer;
-    if (staleTimer) {
+    if (staleTimer && staleTimer === startupTimeoutTimer) {
       clearTimeout(staleTimer);
       this.ctx.startupTimeoutTimer = null;
     }
     const staleAbort = this.ctx.queryAbortController;
-    if (staleAbort) {
-      this.ctx.queryAbortController = null;
+    if (
+      staleAbort &&
+      staleAbort !== queryAbortController &&
+      this.ctx.queryPromise === queryPromise
+    ) {
+      staleAbort.abort();
     }
-
-    this.ctx.queryObject = null;
-    this.ctx.queryPromise = null;
+    if (this.ctx.queryPromise === queryPromise) {
+      this.ctx.queryAbortController = null;
+      this.ctx.queryPromise = null;
+    }
+    if (this.ctx.queryObject === queryObject) {
+      this.ctx.queryObject = null;
+    }
   }
 
   async restart(): Promise<void> {
