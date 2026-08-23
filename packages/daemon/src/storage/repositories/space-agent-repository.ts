@@ -169,7 +169,14 @@ export class SpaceAgentRepository {
   }
 
   delete(id: string): void {
-    this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
+    const hasInbox = !!this.db
+      .prepare(
+        `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
+      )
+      .get();
+    if (hasInbox) {
+      this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
+    }
     this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
   }
 
