@@ -504,7 +504,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceId,
       deps.reactiveDb,
       evolutionScopeService,
-      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId)
+      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      (taskId, fromStatus) => spaceGoalService.handleTaskTerminal(taskId, { fromStatus })
     );
   };
 
@@ -948,7 +949,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       spaceId,
       deps.reactiveDb,
       evolutionScopeService,
-      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId)
+      (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
+      (taskId, fromStatus) => spaceGoalService.handleTaskTerminal(taskId, { fromStatus })
     );
   };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());

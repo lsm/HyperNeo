@@ -79,7 +79,8 @@ export class SpaceTaskManager {
     private spaceId: string,
     private reactiveDb?: ReactiveDatabase,
     private evolutionScopeService?: EvolutionScopeService,
-    private onTaskReopened?: (taskId: string) => void
+    private onTaskReopened?: (taskId: string) => void,
+    private onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
   }
@@ -267,6 +268,9 @@ export class SpaceTaskManager {
         }
         if (reopened) {
           this.onTaskReopened?.(taskId);
+        }
+        if (isTerminalTaskStatus(newStatus)) {
+          this.onTerminalTransition?.(taskId, task.status);
         }
         return result;
       })();

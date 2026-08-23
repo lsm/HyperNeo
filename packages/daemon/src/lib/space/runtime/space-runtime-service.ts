@@ -893,7 +893,8 @@ export class SpaceRuntimeService {
         space.id,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1395,7 +1396,8 @@ export class SpaceRuntimeService {
         space.id,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1567,7 +1569,8 @@ export class SpaceRuntimeService {
         space.id,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,

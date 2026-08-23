@@ -3579,6 +3579,20 @@ export class SpaceRuntime {
     if (updated) {
       let emitUpdated = true;
 
+      const isTerminal = (status: SpaceTaskStatus): boolean =>
+        status === 'done' ||
+        status === 'blocked' ||
+        status === 'cancelled' ||
+        status === 'archived';
+      if (
+        previous &&
+        params.status !== undefined &&
+        isTerminal(previous.status) &&
+        !isTerminal(params.status)
+      ) {
+        this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
+      }
+
       if (params.status === 'blocked') {
         const reason = params.result ?? updated.result ?? 'Task blocked';
         if (params.blockReason === 'dependency_added') {
@@ -8320,7 +8334,8 @@ export class SpaceRuntime {
         spaceId,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) => this.config.goalService?.handleTaskTerminal(taskId, { fromStatus })
       );
       this.taskManagers.set(spaceId, manager);
     }
