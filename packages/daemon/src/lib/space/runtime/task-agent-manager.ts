@@ -2597,7 +2597,7 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     clearAllRetryableHookActionTimers();
-    for (const executionId of [...this.concurrentSpawnWaiters.keys()]) {
+    for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });
     }
     if (this.taskArchiveListenerUnsub) {
