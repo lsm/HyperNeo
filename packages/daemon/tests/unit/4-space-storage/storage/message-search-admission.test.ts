@@ -10,6 +10,7 @@ import {
   isMessageSearchIndexEligible,
   isOlderThanMessageSearchTtl,
   type MessageSearchAdmissionCtx,
+  type MessageSearchAdmissionDecision,
   type MessageSearchAdmissionInput,
   type MessageSearchEligibilityRow,
 } from '../../../../src/storage/repositories/message-search-admission';
@@ -246,36 +247,59 @@ describe('gate pass-through identity (ADR 0004 Decision item 6b)', () => {
     }
   });
 
+  function assertDecides(
+    gate: (ctx: MessageSearchAdmissionCtx) => MessageSearchAdmissionCtx,
+    overrides: Partial<MessageSearchAdmissionCtx>,
+    decision: MessageSearchAdmissionDecision
+  ): void {
+    const input = gateCtx(overrides);
+    const expected = { ...input, decision };
+    const result = gate(input);
+    expect(result).not.toBe(input);
+    expect(result).toEqual(expected);
+  }
+
   test('each deciding gate stamps its skip reason on a copied ctx', () => {
-    const superseded = gateCtx({ isSuperseded: true });
-    expect(applySupersededGate(superseded)).toEqual({
-      ...superseded,
-      decision: { action: 'skip', reason: 'superseded' },
-    });
-    const nonSearchable = gateCtx({ messageType: 'result' });
-    expect(applySearchableTypeGate(nonSearchable)).toEqual({
-      ...nonSearchable,
-      decision: { action: 'skip', reason: 'non_searchable_type' },
-    });
-    const ineligible = gateCtx({ eligibility: eligibleRow({ session_status: 'archived' }) });
-    expect(applyEligibilityGate(ineligible)).toEqual({
-      ...ineligible,
-      decision: { action: 'skip', reason: 'ineligible' },
-    });
-    const emptyBody = gateCtx({ body: '' });
-    expect(applyBodyNonemptyGate(emptyBody)).toEqual({
-      ...emptyBody,
-      decision: { action: 'skip', reason: 'empty_body' },
-    });
-    const unsearchableStatus = gateCtx({ isSearchableUserStatus: false });
-    expect(applyUserStatusGate(unsearchableStatus)).toEqual({
-      ...unsearchableStatus,
-      decision: { action: 'skip', reason: 'user_status_not_searchable' },
-    });
+    assertDecides(
+      applySupersededGate,
+      { isSuperseded: true },
+      {
+        action: 'skip',
+        reason: 'superseded',
+      }
+    );
+    assertDecides(
+      applySearchableTypeGate,
+      { messageType: 'result' },
+      {
+        action: 'skip',
+        reason: 'non_searchable_type',
+      }
+    );
+    assertDecides(
+      applyEligibilityGate,
+      { eligibility: eligibleRow({ session_status: 'archived' }) },
+      { action: 'skip', reason: 'ineligible' }
+    );
+    assertDecides(
+      applyBodyNonemptyGate,
+      { body: '' },
+      {
+        action: 'skip',
+        reason: 'empty_body',
+      }
+    );
+    assertDecides(
+      applyUserStatusGate,
+      { isSearchableUserStatus: false },
+      {
+        action: 'skip',
+        reason: 'user_status_not_searchable',
+      }
+    );
   });
 
   test('the index gate always decides', () => {
-    const ctx = gateCtx();
-    expect(applyIndexGate(ctx)).toEqual({ ...ctx, decision: { action: 'index' } });
+    assertDecides(applyIndexGate, {}, { action: 'index' });
   });
 });
