@@ -36,14 +36,15 @@ import {
 } from './sdk-message-admission';
 import {
   RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
+  buildRowIdHydrationBatches,
+  composeMessagePage,
   extractFirstTextBlockContent,
   extractToolCallNames,
   extractVisibleText,
   inflatePersistedMessage,
+  orderHydratedMessages,
   projectBackgroundTaskMessageRow,
   projectRenderableTextRow,
-  projectSubagentMessageRow,
-  projectTopLevelMessageRow,
   resolveRenderableTextScanBudget,
   type BackgroundTaskMessageRow,
   type PaginationMessageRow,
@@ -66,7 +67,6 @@ export {
   extractSdkUuid,
 } from './sdk-message-admission';
 
-const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
   AND json_valid(sdk_message)
   AND json_extract(sdk_message, '$.type') = 'user'
@@ -95,6 +95,8 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   'thinking_tokens',
   'model_refusal_fallback',
 ]);
+
+type TimestampComparison = '>' | '>=';
 
 export class SDKMessageRepository {
   private logger = new Logger('Database');
@@ -627,57 +629,19 @@ export class SDKMessageRepository {
     const stmt = this.db.prepare(query);
     const rows = stmt.all(...params) as Array<PaginationMessageRow>;
 
-    const messages: Array<SDKMessage & { timestamp: number }> = [];
-    for (const r of rows) {
-      messages.push(projectTopLevelMessageRow(r));
-      if (messages.length >= limit) break;
-    }
-
-    const topLevelMessages = messages.reverse();
-
-    const hasMore = topLevelMessages.length === limit;
-
-    const toolUseIds = new Set<string>();
-    topLevelMessages.forEach((msg) => {
-      if (msg.type === 'assistant' && msg.message && Array.isArray(msg.message.content)) {
-        msg.message.content.forEach((block: unknown) => {
-          const blockObj = block as Record<string, unknown>;
-          if (blockObj.type === 'tool_use' && blockObj.id) {
-            toolUseIds.add(blockObj.id as string);
-          }
-        });
-      }
-    });
-
-    let subagentMessages: Array<SDKMessage & { timestamp: number }> = [];
-    if (toolUseIds.size > 0) {
-      const placeholders = Array.from(toolUseIds)
-        .map(() => '?')
-        .join(',');
+    return composeMessagePage(rows, limit, (toolUseIds) => {
+      const placeholders = toolUseIds.map(() => '?').join(',');
       const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
          AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
         ORDER BY timestamp ASC, rowid ASC`;
-      const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
+      const subagentParams: SQLiteValue[] = [sessionId, ...toolUseIds];
 
       const subagentStmt = this.db.prepare(subagentQuery);
-      const subagentRows = subagentStmt.all(...subagentParams) as Array<SubagentMessageRow>;
-
-      subagentMessages = subagentRows.map((r) => projectSubagentMessageRow(r));
-    }
-
-    return {
-      messages: [...topLevelMessages, ...subagentMessages] as Array<
-        SDKMessage & {
-          timestamp: number;
-          origin?: MessageOrigin;
-          deliveryStatus?: MessageDeliveryStatus;
-        }
-      >,
-      hasMore,
-    };
+      return subagentStmt.all(...subagentParams) as Array<SubagentMessageRow>;
+    });
   }
 
   getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {
@@ -953,7 +917,9 @@ export class SDKMessageRepository {
   }
 
   runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void {
-    this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    if (!this.reactiveDb?.willEmitTableChange?.('sdk_messages')) {
+      this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
+    }
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
   }
 
@@ -986,15 +952,13 @@ export class SDKMessageRepository {
         : (this.db.prepare(projectionSql).all(sessionId, status) as Array<{ row_id: number }>);
     const messagesByRowId = new Map<number, SDKUserMessage & { dbId: string; timestamp: number }>();
 
-    for (let offset = 0; offset < projected.length; offset += STATUS_MESSAGE_HYDRATION_BATCH_SIZE) {
-      const batch = projected.slice(offset, offset + STATUS_MESSAGE_HYDRATION_BATCH_SIZE);
-      const placeholders = batch.map(() => '?').join(', ');
+    for (const { rowIds, placeholders } of buildRowIdHydrationBatches(projected)) {
       const rows = this.db
         .prepare(
           `SELECT rowid AS row_id, id, sdk_message, timestamp FROM sdk_messages
            WHERE rowid IN (${placeholders})`
         )
-        .all(...batch.map((row) => row.row_id)) as Array<{
+        .all(...rowIds) as Array<{
         row_id: number;
         id: string;
         sdk_message: string;
@@ -1011,10 +975,7 @@ export class SDKMessageRepository {
       }
     }
 
-    const messages = projected.flatMap((row) => {
-      const message = messagesByRowId.get(row.row_id);
-      return message ? [message] : [];
-    });
+    const messages = orderHydratedMessages(projected, messagesByRowId);
     return { messages, total: countRow ? countRow.count : messages.length };
   }
 
@@ -1262,12 +1223,20 @@ export class SDKMessageRepository {
     return result.count;
   }
 
-  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
-    const isoTimestamp = new Date(afterTimestamp).toISOString();
+  private deleteMessagesFromTimestamp(
+    sessionId: string,
+    timestamp: number,
+    comparison: TimestampComparison
+  ): number {
+    const isoTimestamp = new Date(timestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
+      .prepare(
+        `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+      )
       .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
-    const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
+    const stmt = this.db.prepare(
+      `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+    );
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
@@ -1282,26 +1251,12 @@ export class SDKMessageRepository {
     return deleted;
   }
 
+  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+    return this.deleteMessagesFromTimestamp(sessionId, afterTimestamp, '>');
+  }
+
   deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
-    const isoTimestamp = new Date(atTimestamp).toISOString();
-    const rows = this.db
-      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
-    const stmt = this.db.prepare(
-      `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
-    );
-    let deleted = 0;
-    let badgeChanged = false;
-    this.db.transaction(() => {
-      deleted = stmt.run(sessionId, isoTimestamp).changes;
-      badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
-      for (const { sdk_uuid } of rows) {
-        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
-      }
-    })();
-    if (badgeChanged) this.notifySessionsChanged(sessionId);
-    for (const row of rows) this.deleteMessageSearchRow(row.id);
-    return deleted;
+    return this.deleteMessagesFromTimestamp(sessionId, atTimestamp, '>=');
   }
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {

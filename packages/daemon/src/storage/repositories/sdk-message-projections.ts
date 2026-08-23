@@ -1,5 +1,5 @@
 import { sendStatusToDeliveryStatus } from '@hyperneo/shared';
-import type { ChatMessage, MessageOrigin } from '@hyperneo/shared';
+import type { ChatMessage, MessageDeliveryStatus, MessageOrigin } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 export type MalformedSdkRowPolicy = 'synthesize' | 'skip' | 'throw' | 'null';
@@ -96,6 +96,55 @@ export function inflatePersistedMessage(row: {
   } as SDKMessage & { dbId: string; timestamp: number };
 }
 
+export function collectToolUseIds(messages: Array<SDKMessage & { timestamp: number }>): string[] {
+  const toolUseIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.type === 'assistant' && msg.message && Array.isArray(msg.message.content)) {
+      for (const block of msg.message.content) {
+        const blockObj = block as Record<string, unknown>;
+        if (blockObj.type === 'tool_use' && blockObj.id) {
+          toolUseIds.add(blockObj.id as string);
+        }
+      }
+    }
+  }
+  return Array.from(toolUseIds);
+}
+
+interface ComposedMessagePage {
+  messages: Array<
+    SDKMessage & {
+      timestamp: number;
+      origin?: MessageOrigin;
+      deliveryStatus?: MessageDeliveryStatus;
+    }
+  >;
+  hasMore: boolean;
+}
+
+export function composeMessagePage(
+  topLevelRows: PaginationMessageRow[],
+  limit: number,
+  fetchSubagentRows: (toolUseIds: string[]) => SubagentMessageRow[]
+): ComposedMessagePage {
+  const projected: Array<SDKMessage & { timestamp: number }> = [];
+  for (const row of topLevelRows) {
+    projected.push(projectTopLevelMessageRow(row));
+    if (projected.length >= limit) break;
+  }
+
+  const topLevelMessages = projected.reverse();
+  const hasMore = topLevelMessages.length === limit;
+  const toolUseIds = collectToolUseIds(topLevelMessages);
+  const subagentRows = toolUseIds.length > 0 ? fetchSubagentRows(toolUseIds) : [];
+  const subagentMessages = subagentRows.map((row) => projectSubagentMessageRow(row));
+
+  return {
+    messages: [...topLevelMessages, ...subagentMessages] as ComposedMessagePage['messages'],
+    hasMore,
+  };
+}
+
 export function extractVisibleText(msg: Record<string, unknown>): string {
   const parts: string[] = [];
   const message = msg.message as Record<string, unknown> | undefined;
@@ -178,4 +227,34 @@ const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
 
 export function resolveRenderableTextScanBudget(limit: number): number {
   return Math.max(limit, RENDERABLE_TEXT_MESSAGE_MAX_SCAN);
+}
+
+const STATUS_MESSAGE_HYDRATION_BATCH_SIZE = 900;
+
+interface RowIdHydrationBatch {
+  rowIds: number[];
+  placeholders: string;
+}
+
+export function buildRowIdHydrationBatches(
+  projected: Array<{ row_id: number }>
+): RowIdHydrationBatch[] {
+  const batches: RowIdHydrationBatch[] = [];
+  for (let offset = 0; offset < projected.length; offset += STATUS_MESSAGE_HYDRATION_BATCH_SIZE) {
+    const rowIds = projected
+      .slice(offset, offset + STATUS_MESSAGE_HYDRATION_BATCH_SIZE)
+      .map((row) => row.row_id);
+    batches.push({ rowIds, placeholders: rowIds.map(() => '?').join(', ') });
+  }
+  return batches;
+}
+
+export function orderHydratedMessages<M>(
+  projected: Array<{ row_id: number }>,
+  hydratedByRowId: Map<number, M>
+): M[] {
+  return projected.flatMap((row) => {
+    const message = hydratedByRowId.get(row.row_id);
+    return message ? [message] : [];
+  });
 }

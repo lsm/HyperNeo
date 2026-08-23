@@ -31,6 +31,7 @@ export interface ReactiveDatabase {
   commitTransaction(): void;
   abortTransaction(): void;
   notifyChange(table: string, scope?: TableChangeScope): void;
+  willEmitTableChange(table: string): boolean;
   resolveTaskIdForSession(sessionId: string): string | null;
 }
 
@@ -283,6 +284,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
   let transactionDepth = 0;
   const pendingTables = new Set<string>();
   const pendingTableScopes = new Map<string, TableChangeScope | null>();
+  const proxiedTableWrites: string[] = [];
 
   function getVersion(table: string): number {
     return tableVersions[table] ?? 0;
@@ -371,10 +373,15 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
         if (SESSION_TABLE_WRITE_METHODS.has(prop)) {
           invalidateTaskIdForSession(target, sessionWriteInvalidatesTaskId(prop, args));
         }
-        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
-        const scope = mapping.extractScope?.(args, target);
-        incrementAndEmit(mapping.table, scope);
-        return result;
+        proxiedTableWrites.push(mapping.table);
+        try {
+          const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+          const scope = mapping.extractScope?.(args, target);
+          incrementAndEmit(mapping.table, scope);
+          return result;
+        } finally {
+          proxiedTableWrites.pop();
+        }
       };
     },
   });
@@ -411,6 +418,9 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
     },
     notifyChange(table: string, scope?: TableChangeScope): void {
       incrementAndEmit(table, scope);
+    },
+    willEmitTableChange(table: string): boolean {
+      return proxiedTableWrites[proxiedTableWrites.length - 1] === table;
     },
     resolveTaskIdForSession(sessionId: string): string | null {
       return resolveTaskIdForSession(db, sessionId);

@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
+  buildRowIdHydrationBatches,
+  collectToolUseIds,
+  composeMessagePage,
   extractFirstTextBlockContent,
   extractToolCallNames,
   extractVisibleText,
   inflatePersistedMessage,
+  orderHydratedMessages,
   parseSdkMessageRow,
   projectBackgroundTaskMessageRow,
   projectRenderableTextRow,
@@ -208,6 +212,197 @@ describe('inflatePersistedMessage', () => {
   });
 });
 
+describe('collectToolUseIds', () => {
+  function pageMessage(raw: object): SDKMessage & { timestamp: number } {
+    return { ...raw, timestamp: TIMESTAMP_MS } as SDKMessage & { timestamp: number };
+  }
+
+  test('collects tool_use ids from assistant messages in page order, deduped', () => {
+    const messages = [
+      pageMessage({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'tu-1', name: 'Task' },
+            { type: 'tool_use', id: 'tu-2', name: 'Read' },
+          ],
+        },
+      }),
+      pageMessage({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'no tools here' }] },
+      }),
+      pageMessage({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tu-1', name: 'Task' }],
+        },
+      }),
+    ];
+
+    expect(collectToolUseIds(messages)).toEqual(['tu-1', 'tu-2']);
+  });
+
+  test('ignores non-assistant messages, string content, and id-less tool blocks', () => {
+    const messages = [
+      pageMessage({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_use', id: 'tu-user', name: 'Task' }] },
+      }),
+      pageMessage({ type: 'user', message: { role: 'user', content: 'plain string' } }),
+      pageMessage({ type: 'assistant', message: { role: 'assistant', content: 'plain string' } }),
+      pageMessage({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', name: 'NoId' }],
+        },
+      }),
+    ];
+
+    expect(collectToolUseIds(messages)).toEqual([]);
+  });
+});
+
+describe('composeMessagePage', () => {
+  const rawAssistantText = (text: string) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text }] },
+    });
+
+  const rawAssistantToolUse = (toolUseId: string) =>
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'Task' }],
+      },
+    });
+
+  function topLevelRow(
+    id: string,
+    sdkMessage: string,
+    timestamp: string,
+    rowid: number
+  ): Parameters<typeof composeMessagePage>[0][number] {
+    return { id, sdk_message: sdkMessage, timestamp, rowid, origin: null, send_status: null };
+  }
+
+  function subagentRow(
+    id: string,
+    timestamp: string
+  ): Parameters<typeof projectSubagentMessageRow>[0] {
+    return { id, sdk_message: rawAssistantText(`sub ${id}`), timestamp };
+  }
+
+  function firstText(message: SDKMessage): string | undefined {
+    const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } })
+      .message?.content;
+    return (content ?? []).find((block) => block.type === 'text')?.text;
+  }
+
+  test('reverses newest-first rows into chronological order and stops at the limit', () => {
+    const rows = [
+      topLevelRow('row-new', rawAssistantText('Newest'), '2026-08-11T10:02:00.000Z', 3),
+      topLevelRow('row-mid', rawAssistantText('Middle'), '2026-08-11T10:01:00.000Z', 2),
+      topLevelRow('row-old', rawAssistantText('Oldest'), '2026-08-11T10:00:00.000Z', 1),
+    ];
+
+    const { messages, hasMore } = composeMessagePage(rows, 2, () => []);
+
+    expect(messages.map(firstText)).toEqual(['Middle', 'Newest']);
+    expect(hasMore).toBe(true);
+  });
+
+  test('hasMore stays false when the top-level page is shorter than the limit', () => {
+    const rows = [topLevelRow('row-a', rawAssistantText('A'), '2026-08-11T10:00:00.000Z', 1)];
+
+    const { messages, hasMore } = composeMessagePage(rows, 2, () => []);
+
+    expect(messages).toHaveLength(1);
+    expect(hasMore).toBe(false);
+  });
+
+  test('appends subagent rows after the whole top-level page, projected with row metadata', () => {
+    const rows = [
+      topLevelRow('top-b', rawAssistantToolUse('tu-1'), '2026-08-11T10:04:00.000Z', 2),
+      topLevelRow('top-a', rawAssistantText('Top A'), '2026-08-11T10:01:00.000Z', 1),
+    ];
+    const subRows = [
+      subagentRow('sub-1', '2026-08-11T10:02:00.000Z'),
+      subagentRow('sub-2', '2026-08-11T10:03:00.000Z'),
+    ];
+
+    const { messages, hasMore } = composeMessagePage(rows, 2, () => subRows);
+
+    expect(messages.map((message) => (message as { id?: string }).id)).toEqual([
+      'top-a',
+      'top-b',
+      'sub-1',
+      'sub-2',
+    ]);
+    expect(messages).toHaveLength(4);
+    expect(hasMore).toBe(true);
+  });
+
+  test('never reports hasMore from subagent fan-out alone', () => {
+    const rows = [topLevelRow('top', rawAssistantToolUse('tu-1'), '2026-08-11T10:00:00.000Z', 1)];
+    const subRows = Array.from({ length: 6 }, (_, index) =>
+      subagentRow(`sub-${index}`, `2026-08-11T10:00:0${index}.000Z`)
+    );
+
+    const { messages, hasMore } = composeMessagePage(rows, 2, () => subRows);
+
+    expect(messages).toHaveLength(7);
+    expect(hasMore).toBe(false);
+  });
+
+  test('fans out once with every deduped tool-use id when the page has tool uses', () => {
+    const rows = [
+      topLevelRow('top-b', rawAssistantToolUse('tu-2'), '2026-08-11T10:03:00.000Z', 2),
+      topLevelRow('top-a', rawAssistantToolUse('tu-1'), '2026-08-11T10:01:00.000Z', 1),
+      topLevelRow('top-c', rawAssistantToolUse('tu-1'), '2026-08-11T10:00:00.000Z', 0),
+    ];
+    const fetchedIds: string[][] = [];
+    composeMessagePage(rows, 3, (toolUseIds) => {
+      fetchedIds.push(toolUseIds);
+      return [];
+    });
+
+    expect(fetchedIds).toEqual([['tu-1', 'tu-2']]);
+  });
+
+  test('skips the subagent fetch entirely when the page has no tool uses', () => {
+    const rows = [topLevelRow('top', rawAssistantText('No tools'), '2026-08-11T10:00:00.000Z', 1)];
+    let fetchCount = 0;
+
+    const { messages } = composeMessagePage(rows, 1, () => {
+      fetchCount += 1;
+      return [subagentRow('sub-1', '2026-08-11T10:00:01.000Z')];
+    });
+
+    expect(fetchCount).toBe(0);
+    expect(messages).toHaveLength(1);
+  });
+
+  test('collects tool-use ids from the truncated page only — off-page rows fan out nothing', () => {
+    const rows = [
+      topLevelRow('top-b', rawAssistantToolUse('tu-b'), '2026-08-11T10:03:00.000Z', 1),
+      topLevelRow('top-a', rawAssistantToolUse('tu-a'), '2026-08-11T10:02:00.000Z', 0),
+    ];
+    const fetchedIds: string[][] = [];
+    composeMessagePage(rows, 1, (toolUseIds) => {
+      fetchedIds.push(toolUseIds);
+      return [subagentRow('sub-b', '2026-08-11T10:03:01.000Z')];
+    });
+
+    expect(fetchedIds).toEqual([['tu-b']]);
+  });
+});
+
 describe('extractVisibleText — join-all policy', () => {
   test('joins every text block with blank lines and trims the result', () => {
     const msg = {
@@ -363,5 +558,56 @@ describe('resolveRenderableTextScanBudget', () => {
     expect(resolveRenderableTextScanBudget(20)).toBe(250);
     expect(resolveRenderableTextScanBudget(250)).toBe(250);
     expect(resolveRenderableTextScanBudget(400)).toBe(400);
+  });
+});
+
+describe('buildRowIdHydrationBatches', () => {
+  test('returns no batches for an empty projection', () => {
+    expect(buildRowIdHydrationBatches([])).toEqual([]);
+  });
+
+  test('keeps a window within the batch size in one batch with one placeholder per row', () => {
+    const batches = buildRowIdHydrationBatches([{ row_id: 3 }, { row_id: 1 }, { row_id: 2 }]);
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0].rowIds).toEqual([3, 1, 2]);
+    expect(batches[0].placeholders).toBe('?, ?, ?');
+  });
+
+  test('splits 901 projected rows into 900 + 1 at the hydration batch boundary', () => {
+    const projected = Array.from({ length: 901 }, (_, row_id) => ({ row_id }));
+
+    const batches = buildRowIdHydrationBatches(projected);
+
+    expect(batches.map((batch) => batch.rowIds.length)).toEqual([900, 1]);
+    expect(batches[0].rowIds[0]).toBe(0);
+    expect(batches[0].rowIds[899]).toBe(899);
+    expect(batches[1].rowIds).toEqual([900]);
+    expect(batches[0].placeholders.split(', ')).toHaveLength(900);
+    expect(batches[1].placeholders).toBe('?');
+  });
+});
+
+describe('orderHydratedMessages', () => {
+  test('preserves projected order regardless of hydration insertion order', () => {
+    const projected = [{ row_id: 3 }, { row_id: 1 }, { row_id: 2 }];
+    const hydrated = new Map([
+      [1, 'one'],
+      [3, 'three'],
+      [2, 'two'],
+    ]);
+
+    expect(orderHydratedMessages(projected, hydrated)).toEqual(['three', 'one', 'two']);
+  });
+
+  test('drops row ids that did not hydrate', () => {
+    const projected = [{ row_id: 3 }, { row_id: 9 }, { row_id: 1 }];
+    const hydrated = new Map([
+      [1, 'one'],
+      [3, 'three'],
+    ]);
+
+    expect(orderHydratedMessages(projected, hydrated)).toEqual(['three', 'one']);
+    expect(orderHydratedMessages([{ row_id: 9 }], new Map())).toEqual([]);
   });
 });

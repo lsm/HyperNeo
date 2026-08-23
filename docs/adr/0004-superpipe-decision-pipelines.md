@@ -30,13 +30,24 @@ gates — the combinator's first composed-then-swapped production flow. See
 "Pilot 6" below for the boundary caveats, the compensation deferral, and the
 closing sweep.
 
-Validated further by pilot 7 / chain C (2026-08-23): the message-search FTS
+Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
+seam applied as a staged interpreter over extracted cores and the
+lazy-activation path as an inline interpreter over its pure routing core —
+and the first production consumer of
+`casExecutionStatus` and the spawn reservation, whose superseded outcomes
+replace previously tolerated racy writes (the other Phase 0 primitives had
+already gained consumers just before the chain: transition-table enforcement
+#2682, `casStatus` #2684). See "Pilot 7" below for the pinned behavior deltas,
+the Pilot 3 spawn-seam race closure, and the boundary caveats.
+
+Validated further by pilot 9 / chain C (2026-08-23): the message-search FTS
 admission gates as a `decisionRun` core and the delivery-status family as a
 routing table under `src/storage/` — the first pilot whose cores live in the
 repository layer — with the second production FTS admission implementation
 (`SessionRepository.rebuildMessageSearchRows`) aligned to the extracted
-vocabulary and parity-pinned. See "Pilot 7" below for the lazy-fact caveats
-and the deliberate rebuild residual.
+vocabulary and parity-pinned. See "Pilot 9" below for the lazy-fact caveats
+and the deliberate rebuild residual. (Pilot 8 is reserved for chain I, the
+pending-queue drain + injection shell, by Pilot 7's closing note.)
 
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
@@ -953,7 +964,224 @@ the shared combinator landed at S2 (+738). Tests net +1,861 (S1 +654/−7
 including the settle-window upper bound, gates suite +367, two flow suites
 +419 each, S5 +25/−16) on top of the shared 1,975-line S2 contract suite.
 
-## Pilot 7 — chain C: message-search FTS admission + delivery-status routing (2026-08-23)
+## Pilot 7 — spawn/activation seam + the Phase 0 consumption record (Chain P, 2026-08-23)
+
+Pilot 7 (sub-pilot 7, "Chain P") converted the workflow-node spawn seam:
+`TaskAgentManager.spawnWorkflowNodeAgentForExecution` became a staged
+interpreter over extracted cores, and the `activateTargetSessionsForMessage`
+lazy-activation path gained a pure routing core it interprets inline around
+its shell effects (no `stagedRun` — see the boundary caveats). The chain
+made the seam the first production
+consumer of `casExecutionStatus` (#2678) and the spawn reservation (#2680)
+— `casStatus` (#2677) and transition-table enforcement had already gained
+theirs in the recovery paths just before the chain (#2684, #2682). The
+chain ran pin → extract → compose → apply: PR 1 (#2712)
+pinned the admission table and the tolerated non-CAS execution-status
+writes as the Phase 0 BEFORE picture; PRs 2–3 (#2725, #2735) extracted the
+pure cores with inline interpretation (no behavior change, pins green);
+PR 4 (#2761) composed the spawn flow over `decisionRun` + `stagedRun`
+additively; PR 5 (#2770) applied it — the method became the flow
+interpreter, every execution-status write at the seam moved onto
+`casExecutionStatus`, and the spawn pass reserves the task. This PR is the
+closing sweep.
+
+Extracted:
+
+- `spawn-admission-gates.ts` — the admission decision (`reuse_live |
+  wait_concurrent | proceed_fresh | reject_permanent | reject_transient`)
+  over plain inputs, mirroring `validateTaskAllowsSpawn` semantics.
+- `spawn-admission-decision-pipeline.ts` — the same gates as a
+  `decisionRun` gate list (`decideSpawnExecutionAdmissionViaPipeline`),
+  parity-pinned against the pure function across the full input matrix.
+- `spawn-slot-resolution.ts` — slot lookup, `buildSlotOverrides`,
+  base-session-id/availability, workspace resolution, session-init
+  assembly.
+- `spawn-flow.ts` — the `stagedRun` composition: snapshot → decide
+  (branch routing via `?dep` guards on the decision member, no per-action
+  dispatcher) → reserve/spawn → bind → attach/register → kickoff → flush →
+  halt, with reservation release as the registered reverse-unwind
+  compensation, joined by the spawned-session cancel once session creation
+  has resolved — if `createSubSession` throws after registering the
+  session but before returning (e.g. a `startStreamingQuery` rejection),
+  the attempt box never records the id and the compensation releases the
+  reservations without cancelling the partially created session.
+- `activation-routing.ts` — `decideActivationRouting` (reuse_existing /
+  reset_pending_and_continue / reject_undeclared / spawn_with_timeout /
+  return_empty) plus the `selectWorkflowNodeForAgent` target-node selector.
+
+**Phase 0 consumption.** `casExecutionStatus` — extended for the seam
+to carry the bind payload atomically (`agentSessionId`/`startedAt`/
+`completedAt`), an `expectAgentSessionId` NULL-safe identity guard, and
+`updated_at` + reactive notification on a win — is the write path at six
+sites: the flow's live-session rebind and post-create bind,
+`createSubSession`'s reuse-target and fresh-create binds and its stale
+co-owner idle flip, and the activation path's dead-session reset. The
+spawn pass reserves the task through
+`reserveSpawnForTick`/`releaseSpawnReservation`
+(`spawn_reservation_token`; won only when the status is reservable —
+draft/open/in_progress/review/approved/blocked — and no token is held),
+released immediately after the bind is confirmed (release-once closure, so
+a stalled attach/kickoff cannot starve sibling executions) and compensated
+on unwind; `clearAllSpawnReservations` runs at first-tick rehydration so a
+crash cannot strand a token. The tick's trailing `open → in_progress`
+promotion goes through `casStatus(['open'], 'in_progress')`, with
+auxiliary fields and emission written only on a win. Pilot 7 is the first
+consumer of `casExecutionStatus` and the spawn reservation; `casStatus`'s
+first consumer predates the chain (#2684 routed the alive-stuck recovery
+handler's blocked write through it), as does transition-table enforcement
+(#2682, asserted at the top of `updateTaskAndEmit`).
+
+**Superseded-outcome behavior deltas, pinned both ways.** The BEFORE pins
+(#2712) recorded unconditional writes: a live-session rebind whose
+`in_progress` write clobbered a concurrent DB flip; a post-create bind
+with no status precondition, whose readback mismatch was misflagged as
+corruption; a dead-session activation reset as an unconditional
+status-only write. The AFTER pins (#2770) record the superseded outcomes —
+a losing CAS means the guarded precondition no longer matched (the row
+moved concurrently, the observed status was not bindable, or the identity
+guard found an unexpected existing binding), not proof of which writer won,
+and the call skips instead of clobbering or misflagging. Concretely: a
+parked (`stopped`)
+task on the fresh-spawn arm is admitted by the gates (the passes pin) and
+stopped by the reservation — no spawn, no execution write; the `reuse_live`
+arm deliberately precedes every task-status gate (the archived-task-rebind
+pin), so a parked task whose execution still has a live indexed session
+rebinds through the guarded CAS without acquiring the reservation; a park
+landing mid-spawn-pass
+fails the next execution's reservation, so the remainder does not spawn
+onto the parked task, and the trailing promotion CAS-loses instead of
+resurrecting it (pinned in the tick-loop suite); a mid-spawn cancel loses
+nothing — the bind CAS supersedes, the spawned session is cancelled
+best-effort (the compensation's `cancelBySessionId` is fire-and-forget: a
+rejected strict stop logs and leaves the session-manager registration and
+`subSessions` entry in place; only the direct
+`createSubSession` inner-bind abort deletes the never-streamed row), the
+cancelled execution row is not resurrected, and no rejection goes unhandled; a
+superseded spawn is skipped — not classified — by the tick spawn loop,
+queued-handoff repair, and the activation path, while the post-approval
+router maps it to a benign skipped route that persists
+`postApprovalBlockedReason` as durable diagnostic state rather than
+silently clearing the dispatch — display-only today (`mapPostApprovalDispatchWarning`
+feeds the detail surfaces; no reader schedules a retry, an `approved` task
+is already-resolved for settlement, so only a fresh human approval
+re-dispatches). Review rounds added
+the finer pins: the bind guards on the admission-observed status (a
+mid-spawn quiesce to `idle` is not laundered by an inner pre-bind), the
+identity guard on the post-create bind (it predicates on the
+admission-observed binding, so a foreign binding cannot be overwritten
+there; the live-session rebind guards on status only — a pointer-only
+change by another path while the observed status holds can still be
+overwritten by the stale rebind), and the
+`freshSessionOnly` descope (a reused session is never transferred). The
+50 ms DB-polling concurrent-spawn waiter became an explicit promise
+handoff with the same three outcome classes (resolved/failed/timeout):
+waiters already registered settle at the winning bind, a failed peer's
+waiter re-checks the DB before rejecting, waiters remove themselves on
+timeout, and `cleanupAll` settles stragglers — but registration is not
+wake-up-safe: a caller paused between its `spawningExecutionIds` check
+and waiter insertion watches the winner settle both calls and clear the
+map, then waits out the full 30 s despite the successful binding (the pin
+registers its waiter before releasing the winner, so this window is
+recorded here, not pinned). A new real-repository suite (`task-agent-manager-spawn-cas.test.ts`)
+drives `spawnWorkflowNodeAgentForExecution` directly against real task and
+execution repositories — session creation and attachment stubbed — to pin
+the mid-spawn-loop park and cancel races at the flow level; the tick-loop
+suite covers the loop half with a superseded-throwing spawn stub. No single
+test runs the real tick loop over the real reservation and interpreter; the
+two halves are pinned separately.
+
+**Pilot 3 race note — closed at the TaskAgentManager seam.** The Pilot 3
+caveat's spawn-seam portion — a park landing while the spawn loop awaits
+the first of several spawns still spawns the remainder with the stale
+task, and the trailing unvalidated update writes the parked task back to
+`in_progress` — is closed by the reservation and the CAS'd trailing
+promotion, both pinned (#2770); likewise the observation that
+`validateTaskAllowsSpawn` passes a parked task (it rejects only
+archived/cancelled/rate-usage-limited statuses) — the reservation, not the
+validator, now stops the parked task. Pilot 3's closing requirement —
+atomic coordination *plus* the
+equivalent guards around every task-status write in the tick — is hereby
+half-landed: the spawn-seam half. The remaining guards (handoff repair,
+`attemptBlockedRunRecovery`, the admission interpreter's blocking branches,
+the four recovery handlers, the spawn-failure `blockRun*` calls) stay
+exactly as recorded in Pilot 3 and belong to the later staged-rollout
+phases; this chain touched none of them.
+
+**Boundary caveats.** First, nothing aborts an in-flight spawn: the bind
+re-checks the execution's guarded status and binding, never the task row,
+so an execution that already holds the reservation when the park lands
+still spawns and binds onto the parked task — the real-repository suite
+pins exactly this (the first gated spawn resolves and goes `in_progress`
+after the task is stopped; only the remainder is rejected). Released at
+the confirmed bind, attach/kickoff/flush run unreserved. The guarantees
+are therefore scoped to *subsequent* executions — they no longer spawn —
+plus the trailing promotion CAS-loss; no in-flight execution or post-bind
+stage is aborted.
+Second, the flow never transfers a session: the `reuse_live` arm only
+rebinds an execution whose own indexed live session exists
+(`freshSessionOnly`), and cross-execution session reuse survives only in
+`createSubSession`'s direct path — the deliberate final-round descope that
+collapsed the transfer-rollback, per-agent exclusivity, and double-flush
+findings. Third, the parked-task asymmetry is policy, not accident:
+admission does not reject `stopped`; on the fresh-spawn arm the
+reservation does (and `reuse_live` precedes task status entirely) — the
+admission decision table alone is not the complete spawn policy. Fourth,
+admission
+reasons are computed twice: booleans in the core, the precise message
+re-derived in the shell (`raiseSpawnRejection` re-runs
+`validateTaskAllowsSpawn`/`assertExecutionValidAgainstWorkflow`), because
+the core's reason enum is coarser than the validators' messages. Fifth,
+the activation path interprets its core inline — three
+`decideActivationRouting` calls across two fact-gathering stages — with
+the spawn call and the 30 s timeout race as shell effects: core-only
+extraction, no `stagedRun` composition, deliberately. Sixth, the waiter
+map and the flow compensations are in-memory only, consistent with
+`DEFERRED_DURABLE_COMPENSATION_ARMS`: a daemon crash mid-spawn is covered
+only for reservation liveness — first-tick `clearAllSpawnReservations`
+releases the token so another spawn can proceed — while a session row
+persisted before the outer bind stays orphaned (rehydration keys on
+`execution.agentSessionId`, so nothing picks it up); that session cleanup
+remains a deferred durable-compensation gap, not recovered state.
+
+**The closing sweep found no dead inline copies.** Each conversion PR
+removed its inline copy as it landed — the admission cascade, the
+slot/session assembly, the activation routing cascade, the polling waiter,
+the readback corruption check, and the P4-era `spawnWorkflowNodeAgentForExecutionViaFlow`
+intermediate. knip (files/dependencies/exports), oxlint, `tsc --noEmit`,
+format, and the no-comments guard are clean, with no knip special-casing
+for any Chain P module. Every core export is production-consumed or pinned
+by the gate suites (Decision item 6): the one production-unreferenced
+export, the pure `decideSpawnExecutionAdmission`, is the parity oracle for
+the pipeline suite. Live near-duplicates remain, deliberately:
+`createSubSession`'s own execution-binding updates (reuse-target bind,
+fresh-create bind, co-owner sweep) stay shell effects — the flow calls it
+with `deferFreshExecutionBind` + `freshSessionOnly`, so the flow's guarded
+outer bind is authoritative, while direct callers keep the guarded inner
+binds — and `spawnPostApprovalSubSession` remains an inline near-copy of
+the flow's stages (init → MCP assembly → create → attach → kickoff),
+unconverted; both are future mini-pilot material, not cleanup fodder. The
+bindability guard idiom (`SPAWN_BINDABLE_EXECUTION_STATUSES.includes(s) ?
+[s] : []`) repeats at the four bind sites. Non-CAS execution-status
+writes adjacent to but outside the converted seam survive unchanged —
+`respawnRateLimitedExecution`'s reset, the completion/error handlers, the
+co-owner sweep's pointer-only preserve arm, and the tick's recovery
+writes — later phases' scope, tolerance unchanged.
+
+**Costs:** production +1,547/−545 across PRs 2–5 (five new modules — four
+pure cores plus the `spawn-flow.ts` staged composition — 697 lines;
+`task-agent-manager.ts` at 4,461 lines — the spawn body became
+the `buildSpawnExecutionFlowDeps` adapter plus a thin interpreter); tests
++4,584/−146 across PRs 1–5 — nine new suites (admission gates/table,
+decision-pipeline parity, slot resolution, the flow contract, activation
+routing ×2, manager flow, the real-repo CAS suite) plus extensions to the
+post-approval, tick-loop, and repository CAS-fake suites.
+
+Pilot 7 PRs: #2712, #2725, #2735, #2761, #2770, plus this closing sweep.
+Chain P's close unblocks Chain I (sub-pilot 8: the pending-queue drain +
+injection shell, tasks #1243+), which shares `injectMessageIntoSession`
+call sites with the spawn seam and was sequenced behind the P5 apply.
+
+## Pilot 9 — chain C: message-search FTS admission + delivery-status routing (2026-08-23)
 
 Chain C carried the sandwich below `src/lib/`, into the storage layer's
 message-repository cluster — the third-ranked chain of the sdk-message-repository
@@ -1059,16 +1287,18 @@ suite, `DeliveryTransitionAction` by the wrapper signatures, and the remaining
 types intra-module.
 
 **Costs:** production +166 across C2–C4 — the two cores +207 (160 + 47),
-`sdk-message-repository.ts` net −79 from chain C's own PRs (the file is 1,943
-lines now; chains A and B's interleaved extractions account for the rest of
-the shrink from the survey's 2,199-line base), `session-repository.ts` +38
-for the vocabulary interpolation and parameterized cutoffs. Tests +1,579:
+`sdk-message-repository.ts` net −79 from chain C's own PRs (1,943 lines at
+the chain's close, 1,898 after dev's interleaved extractions — chain A PR 4
+and the rewind-operator dedup — landed beside it; chains A and B account for
+the rest of the shrink from the survey's 2,199-line base),
+`session-repository.ts` +38 for the vocabulary interpolation and
+parameterized cutoffs. Tests +1,579:
 C1's pins +585 net (window matrix, turn-end batch semantics, flush boundary),
 the admission suite +212, the routing suite +98, the parity matrix +684 —
 again the value is testability, and here the parity matrix paid for itself by
 surfacing the five rebuild divergences on identical rows.
 
-Pilot 7 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chains A
+Pilot 9 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chains A
 (read projections) and B (save admission) from the same survey are still in
 flight and land their own notes.
 
@@ -1092,10 +1322,15 @@ flight and land their own notes.
   `verified-stop-flow.ts` and applied in `stopSessionVerified` — see "Pilot 6"
   above for the boundary caveats, the compensation deferral, and the closing
   sweep. The stop flow is done; later chains do not revisit it.
-- **Done (chain C / pilot 7):** the message-search FTS admission gates
+- **Done (pilot 7, Chain P):** the spawn/activation seam staged over the
+  Phase 0 primitives — see "Pilot 7" above, which records the Phase 0
+  consumption ledger, the superseded-outcome pins, and the Pilot 3
+  spawn-seam race closure, and whose close unblocks Chain I (pending-drain +
+  injection shell).
+- **Done (chain C / pilot 9):** the message-search FTS admission gates
   (`decisionRun`) and the delivery-status routing table under
   `src/storage/repositories/`, with the session-rebuild parity alignment —
-  see "Pilot 7" above for the lazy-fact caveats and the deliberate rebuild
+  see "Pilot 9" above for the lazy-fact caveats and the deliberate rebuild
   residual. Chains A and B from the same survey remain in flight.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
@@ -1133,7 +1368,7 @@ flight and land their own notes.
 
   | Phase | Scope | Notes |
   | --- | --- | --- |
-  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). |
+  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). Consumption so far: transition-table enforcement (#2682); `casStatus` (#2684 recovery blocked-write; Pilot 7 added the trailing promotion); `casExecutionStatus` across the spawn seam and the spawn reservation (Pilot 7 — its consumers carry the before/after pins). Implemented but unconsumed: the run CAS (`casRunStatus`). Not yet implemented at all: the durable intent/outbox and compensation-record repositories for Space flows (only the unrelated message-delivery outbox exists), so those rows name future primitives, not dormant code. |
   | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
   | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
   | 3 | `handleWaitingRebindExecutions` | |
@@ -1178,6 +1413,16 @@ flight and land their own notes.
   task-transition-routing,space-tool-pipeline}.ts`; interpreters in
   `space-agent-tools.ts` (the eight task-mutation handlers). Pilot 5 PRs:
   #2663, #2668, #2669, #2673, #2676.
+- Pilot 7 files: `packages/daemon/src/lib/space/runtime/{spawn-admission-gates,
+  spawn-admission-decision-pipeline,spawn-slot-resolution,spawn-flow,
+  activation-routing}.ts`; interpreters in `task-agent-manager.ts`
+  (`spawnWorkflowNodeAgentForExecution`, `activateTargetSessionsForMessage`).
+  Phase 0 primitives in `storage/repositories/{node-execution-repository,
+  space-task-repository}.ts` (#2677, #2678, #2680). BEFORE/AFTER pins:
+  `tests/unit/5-space/agent/task-agent-manager-{spawn-admission,spawn-cas,
+  spawn-flow}.test.ts`; real-repo race pins in the spawn-cas suite; tick-loop
+  pins in `tests/unit/5-space/runtime/space-runtime-tick-loop.test.ts`.
+  Pilot 7 PRs: #2712, #2725, #2735, #2761, #2770.
 - RFC: issue #2670 (`stagedRun` rollout proposal; its open questions are answered
   by the "Staged run pipelines" section).
 - Staged combinator (landed 2026-08-22):
@@ -1189,12 +1434,12 @@ flight and land their own notes.
   interpreter in `task-agent-manager.ts` (`stopSessionsVerified` /
   `stopSessionVerified` and the deps builder). Pilot 6 PRs: #2709, #2717,
   #2729, #2763, #2787, plus this closing sweep.
-- Pilot 7 (chain C) files:
+- Pilot 9 (chain C) files:
   `packages/daemon/src/storage/repositories/{message-search-admission,delivery-status-routing}.ts`;
   interpreters in `sdk-message-repository.ts` (`upsertMessageSearchRow`, the
   ten delivery wrappers, `deferEnqueuedUserMessage`) and
   `session-repository.ts` (`rebuildMessageSearchRows`); survey and C4 outcome
-  in `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 7 PRs:
+  in `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 9 PRs:
   #2755, #2771, #2791, #2804, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
