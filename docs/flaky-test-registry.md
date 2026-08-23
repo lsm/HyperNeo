@@ -14,7 +14,10 @@ Registration criteria per suite:
 
 - **daemon-unit / web**: registration acceptable for diagnosed
   intermittent defects while a fix is pending. Keep entries dated
-  (`addedAt`/`expiresAt`) and pointed at an issue.
+  (`addedAt`/`expiresAt`) and pointed at an issue. `expiresAt` is a
+  curation marker — `flaky-test-runner` does not enforce it yet, so
+  expired entries must be retired or re-dated by hand (enforcement
+  tracked in #2851).
 - **daemon-online**: **keep zero registered entries.** Online shards run
   mocked through Dev Proxy; their flakes are almost always load/timing
   sensitivity (SDK subprocess cold-start, runner scheduling), and the
