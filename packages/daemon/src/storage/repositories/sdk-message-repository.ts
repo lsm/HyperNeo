@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageContent,
   MessageDeliveryStatus,
@@ -11,6 +11,15 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
+import {
+  inflatePersistedMessage,
+  projectBackgroundTaskMessageRow,
+  projectSubagentMessageRow,
+  projectTopLevelMessageRow,
+  type BackgroundTaskMessageRow,
+  type PaginationMessageRow,
+  type SubagentMessageRow,
+} from './sdk-message-projections';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -755,30 +764,11 @@ export class SDKMessageRepository {
     params.push(limit);
 
     const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params) as Record<string, unknown>[];
+    const rows = stmt.all(...params) as Array<PaginationMessageRow>;
 
     const messages: Array<SDKMessage & { timestamp: number }> = [];
     for (const r of rows) {
-      let sdkMessage: SDKMessage;
-      try {
-        sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-      } catch {
-        sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
-      }
-      const timestamp = new Date(r.timestamp as string).getTime();
-      const extra: Record<string, unknown> = {
-        id: r.id,
-        timestamp,
-        rowid: typeof r.rowid === 'number' ? r.rowid : Number(r.rowid ?? 0),
-        origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
-      };
-      if (sdkMessage.type === 'user') {
-        const deliveryStatus = sendStatusToDeliveryStatus(
-          r.send_status as string | null | undefined
-        );
-        if (deliveryStatus) extra.deliveryStatus = deliveryStatus;
-      }
-      messages.push({ ...sdkMessage, ...extra } as SDKMessage & { timestamp: number });
+      messages.push(projectTopLevelMessageRow(r));
       if (messages.length >= limit) break;
     }
 
@@ -812,27 +802,9 @@ export class SDKMessageRepository {
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 
       const subagentStmt = this.db.prepare(subagentQuery);
-      const subagentRows = subagentStmt.all(...subagentParams) as Record<string, unknown>[];
+      const subagentRows = subagentStmt.all(...subagentParams) as Array<SubagentMessageRow>;
 
-      subagentMessages = subagentRows.flatMap((r) => {
-        let sdkMessage: SDKMessage;
-        try {
-          sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-        } catch {
-          sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
-        }
-        const timestamp = new Date(r.timestamp as string).getTime();
-        return [
-          {
-            ...sdkMessage,
-            id: r.id,
-            timestamp,
-            origin: undefined,
-          } as unknown as SDKMessage & {
-            timestamp: number;
-          },
-        ];
-      });
+      subagentMessages = subagentRows.map((r) => projectSubagentMessageRow(r));
     }
 
     return {
@@ -941,29 +913,14 @@ export class SDKMessageRepository {
          )
          ORDER BY timestamp DESC, rowid DESC`
       )
-      .all(sessionId, BACKGROUND_TASK_METADATA_BATCH_SIZE, sessionId, sessionId) as Array<{
-      id: string;
-      sdk_message: string;
-      timestamp: string;
-      origin: MessageOrigin | null;
-    }>;
+      .all(
+        sessionId,
+        BACKGROUND_TASK_METADATA_BATCH_SIZE,
+        sessionId,
+        sessionId
+      ) as Array<BackgroundTaskMessageRow>;
 
-    return rows
-      .map((row) => {
-        let sdkMessage: SDKMessage;
-        try {
-          sdkMessage = JSON.parse(row.sdk_message) as SDKMessage;
-        } catch {
-          sdkMessage = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
-        }
-        return {
-          ...sdkMessage,
-          id: row.id,
-          timestamp: new Date(row.timestamp).getTime(),
-          origin: row.origin ?? undefined,
-        } as unknown as ChatMessage & { timestamp: number };
-      })
-      .reverse();
+    return rows.map((row) => projectBackgroundTaskMessageRow(row)).reverse();
   }
 
   getSDKMessagesByType(
@@ -1004,7 +961,7 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     } | null;
-    return row ? this.inflatePersistedMessage(row) : null;
+    return row ? inflatePersistedMessage(row) : null;
   }
 
   getSDKMessageCount(sessionId: string): number {
@@ -1184,7 +1141,7 @@ export class SDKMessageRepository {
       for (const row of rows) {
         messagesByRowId.set(
           row.row_id,
-          this.inflatePersistedMessage(row) as SDKUserMessage & {
+          inflatePersistedMessage(row) as SDKUserMessage & {
             dbId: string;
             timestamp: number;
           }
@@ -1217,7 +1174,7 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     } | null;
-    return row ? this.inflatePersistedMessage(row) : null;
+    return row ? inflatePersistedMessage(row) : null;
   }
 
   getMessageByStatusAndDbId(
@@ -1236,7 +1193,7 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     } | null;
-    return row ? this.inflatePersistedMessage(row) : null;
+    return row ? inflatePersistedMessage(row) : null;
   }
 
   getUserMessageIdsByStatus(
@@ -1259,24 +1216,6 @@ export class SDKMessageRepository {
       uuid: row.sdk_uuid ?? undefined,
       timestamp: new Date(row.timestamp).getTime(),
     }));
-  }
-
-  private inflatePersistedMessage(row: {
-    id: string;
-    sdk_message: string;
-    timestamp: string;
-  }): SDKMessage & { dbId: string; timestamp: number } {
-    let message: SDKMessage;
-    try {
-      message = JSON.parse(row.sdk_message) as SDKMessage;
-    } catch {
-      message = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
-    }
-    return {
-      ...message,
-      dbId: row.id,
-      timestamp: new Date(row.timestamp).getTime(),
-    } as SDKMessage & { dbId: string; timestamp: number };
   }
 
   updateMessageStatus(
