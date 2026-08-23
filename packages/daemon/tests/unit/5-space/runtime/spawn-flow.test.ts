@@ -72,6 +72,8 @@ interface FlowFixture {
   cancels: string[];
   releases: string[];
   reservations: string[];
+  taskReservations: string[];
+  taskReservationReleases: string[];
   rebinds: Array<{ executionId: string; sessionId: string }>;
   binds: Array<{ executionId: string; sessionId: string }>;
   attaches: NodeExecution[];
@@ -98,6 +100,8 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
   const cancels: string[] = [];
   const releases: string[] = [];
   const reservations: string[] = [];
+  const taskReservations: string[] = [];
+  const taskReservationReleases: string[] = [];
   const rebinds: Array<{ executionId: string; sessionId: string }> = [];
   const binds: Array<{ executionId: string; sessionId: string }> = [];
   const attaches: NodeExecution[] = [];
@@ -113,6 +117,7 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
   };
   let liveIndexedSessionId: string | null = null;
   let workspaceGate: Promise<string> | null = null;
+  const heldTaskReservations = new Set<string>();
 
   const deps: SpawnExecutionFlowDeps = {
     getFreshTask: () => task,
@@ -129,6 +134,19 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
       releases.push(executionId);
       spawningExecutionIds.delete(executionId);
     },
+    reserveTaskSpawn: (taskId) => {
+      calls.push(`reserve-task:${taskId}`);
+      taskReservations.push(taskId);
+      if (heldTaskReservations.has(taskId)) return 'superseded';
+      heldTaskReservations.add(taskId);
+      return 'won';
+    },
+    releaseTaskSpawn: (taskId) => {
+      calls.push(`release-task:${taskId}`);
+      if (!heldTaskReservations.has(taskId)) return;
+      heldTaskReservations.delete(taskId);
+      taskReservationReleases.push(taskId);
+    },
     cancelSpawnedSession: (sessionId) => {
       calls.push(`cancel:${sessionId}`);
       cancels.push(sessionId);
@@ -136,6 +154,7 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     rebindLiveExecution: (row, sessionId) => {
       calls.push(`rebind:${sessionId}`);
       rebinds.push({ executionId: row.id, sessionId });
+      return 'won';
     },
     raiseSpawnRejection: () => {
       calls.push('reject');
@@ -156,6 +175,10 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     bindExecutionToSession: (row, sessionId) => {
       calls.push(`bind:${sessionId}`);
       binds.push({ executionId: row.id, sessionId });
+      return 'won';
+    },
+    flushPendingMessagesForTarget: (workflowRunId, agentName) => {
+      calls.push(`flush-pending:${workflowRunId}:${agentName}`);
     },
     attachNodeAgent: async (request) => {
       calls.push('attach');
@@ -181,6 +204,8 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     cancels,
     releases,
     reservations,
+    taskReservations,
+    taskReservationReleases,
     rebinds,
     binds,
     attaches,
@@ -221,24 +246,29 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
 }
 
 describe('spawn flow — proceed_fresh path', () => {
-  test('runs admission, reserve, spawn, bind, attach, register, kickoff, and halts with the session id', async () => {
+  test('runs admission, task reservation, reserve, spawn, bind, early reservation release, attach, register, kickoff, and halts with the session id', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run();
     expect(outcome).toEqual({ status: 'completed', result: SPAWNED_SESSION_ID });
     expect(h.calls).toEqual([
+      `reserve-task:${TASK_ID}`,
       'reserve',
       'resolve-session-id',
       'resolve-workspace',
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
+      `release-task:${TASK_ID}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
       'kickoff-message',
       `inject:${SPAWNED_SESSION_ID}`,
+      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
     expect(h.cancels).toEqual([]);
     expect(h.releases).toEqual([]);
     expect(h.reservations).toEqual([EXECUTION_ID]);
+    expect(h.taskReservations).toEqual([TASK_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
   });
 
   test('a kickoff-disabled spawn skips the kickoff message and inject but still binds and attaches', async () => {
@@ -246,13 +276,16 @@ describe('spawn flow — proceed_fresh path', () => {
     const outcome = await h.run();
     expect(outcome).toEqual({ status: 'completed', result: SPAWNED_SESSION_ID });
     expect(h.calls).toEqual([
+      `reserve-task:${TASK_ID}`,
       'reserve',
       'resolve-session-id',
       'resolve-workspace',
       'create',
       `bind:${SPAWNED_SESSION_ID}`,
+      `release-task:${TASK_ID}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
+      `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
   });
 
@@ -318,7 +351,7 @@ describe('spawn flow — alternative admission branches', () => {
 });
 
 describe('spawn flow — failure unwind (the catch-path cancel compensation)', () => {
-  test('a bind failure after session creation cancels the spawned session and releases the reservation', async () => {
+  test('a bind failure after session creation cancels the spawned session and releases both reservations', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run({
       bindExecutionToSession: () => {
@@ -331,16 +364,18 @@ describe('spawn flow — failure unwind (the catch-path cancel compensation)', (
       expect((outcome.error as Error).message).toBe('bind boom');
       expect(outcome.unwind).toEqual([
         { stage: 'reserve-and-spawn-session', status: 'compensated' },
+        { stage: 'reserve-task-spawn', status: 'compensated' },
       ]);
     }
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
     expect(h.releases).toEqual([EXECUTION_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
     expect(h.calls.indexOf(`cancel:${SPAWNED_SESSION_ID}`)).toBeLessThan(
       h.calls.indexOf('release')
     );
   });
 
-  test('a create failure before the session exists releases the reservation without cancelling', async () => {
+  test('a create failure before the session exists releases both reservations without cancelling', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run({
       createSpawnedSession: async () => {
@@ -354,9 +389,10 @@ describe('spawn flow — failure unwind (the catch-path cancel compensation)', (
     }
     expect(h.cancels).toEqual([]);
     expect(h.releases).toEqual([EXECUTION_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
   });
 
-  test('an attach failure cancels the spawned session and releases the reservation', async () => {
+  test('an attach failure cancels the spawned session and releases both reservations', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run({
       attachNodeAgent: async () => {
@@ -366,10 +402,11 @@ describe('spawn flow — failure unwind (the catch-path cancel compensation)', (
     expect(outcome.status).toBe('error');
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
     expect(h.releases).toEqual([EXECUTION_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
     expect(h.binds).toHaveLength(1);
   });
 
-  test('a kickoff inject failure cancels the spawned session and releases the reservation', async () => {
+  test('a kickoff inject failure cancels the spawned session and releases both reservations', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run({
       injectKickoffMessage: async () => {
@@ -382,6 +419,7 @@ describe('spawn flow — failure unwind (the catch-path cancel compensation)', (
     }
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
     expect(h.releases).toEqual([EXECUTION_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
   });
 
   test('the compensation runs even when the spawn reservation was the only committed write', async () => {
@@ -395,6 +433,72 @@ describe('spawn flow — failure unwind (the catch-path cancel compensation)', (
     expect(h.cancels).toEqual([]);
     expect(h.releases).toEqual([EXECUTION_ID]);
     expect(h.spawningExecutionIds.has(EXECUTION_ID)).toBe(false);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
+  });
+});
+
+describe('spawn flow — superseded CAS outcomes (ADR 0004 Phase 0 condition 3)', () => {
+  test('a lost task-spawn reservation supersedes before any spawn work and releases nothing', async () => {
+    const h = makeFlowFixture();
+    const outcome = await h.run({
+      reserveTaskSpawn: (taskId) => {
+        h.deps.reserveTaskSpawn(taskId);
+        return 'superseded' as const;
+      },
+    });
+    expect(outcome).toEqual({
+      status: 'superseded',
+      stage: 'reserve-task-spawn',
+      unwind: [{ stage: 'reserve-task-spawn', status: 'compensated' }],
+    });
+    expect(h.calls).toEqual([`reserve-task:${TASK_ID}`]);
+    expect(h.cancels).toEqual([]);
+    expect(h.reservations).toEqual([]);
+    expect(h.taskReservationReleases).toEqual([]);
+    expect(h.spawningExecutionIds.has(EXECUTION_ID)).toBe(false);
+  });
+
+  test('a lost bind CAS supersedes after the spawn, cancelling the spawned session and releasing both reservations', async () => {
+    const h = makeFlowFixture();
+    const outcome = await h.run({
+      bindExecutionToSession: () => 'superseded',
+    });
+    expect(outcome.status).toBe('superseded');
+    if (outcome.status === 'superseded') {
+      expect(outcome.stage).toBe('bind-execution-session');
+      expect(outcome.unwind).toEqual([
+        { stage: 'reserve-and-spawn-session', status: 'compensated' },
+        { stage: 'reserve-task-spawn', status: 'compensated' },
+      ]);
+    }
+    expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    expect(h.releases).toEqual([EXECUTION_ID]);
+    expect(h.taskReservationReleases).toEqual([TASK_ID]);
+    expect(h.attaches).toEqual([]);
+    expect(h.injected).toEqual([]);
+    expect(h.taskReservationReleases).not.toContain(undefined);
+  });
+
+  test('a lost rebind CAS supersedes the reuse_live branch with nothing to compensate', async () => {
+    const h = makeFlowFixture();
+    const outcome = await h.run({
+      inspectIndexedSession: (agentSessionId) => ({
+        sessionId: agentSessionId ?? 'live-1',
+        alive: true,
+      }),
+      rebindLiveExecution: (row, sessionId) => {
+        h.deps.rebindLiveExecution(row, sessionId);
+        return 'superseded' as const;
+      },
+    });
+    expect(outcome).toEqual({
+      status: 'superseded',
+      stage: 'rebind-live-session',
+      unwind: [],
+    });
+    expect(h.calls).toEqual(['rebind:live-1']);
+    expect(h.cancels).toEqual([]);
+    expect(h.reservations).toEqual([]);
   });
 });
 
@@ -427,7 +531,12 @@ describe('spawn flow microtask profile', () => {
         return '/tmp/ws';
       },
     });
-    expect(h.calls).toEqual(['reserve', 'resolve-session-id', 'resolve-workspace']);
+    expect(h.calls).toEqual([
+      `reserve-task:${TASK_ID}`,
+      'reserve',
+      'resolve-session-id',
+      'resolve-workspace',
+    ]);
     expect(h.spawningExecutionIds.has(EXECUTION_ID)).toBe(true);
     expect(h.calls).not.toContain('create');
     releaseWorkspace!('/tmp/ws');
@@ -446,6 +555,7 @@ describe('spawn flow microtask profile', () => {
         },
         bindExecutionToSession: () => {
           order.push('bind');
+          return 'won' as const;
         },
       },
       h.input

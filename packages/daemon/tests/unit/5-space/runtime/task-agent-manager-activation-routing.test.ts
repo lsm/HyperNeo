@@ -57,6 +57,18 @@ function makeManager(input: {
       update: (id: string, params: unknown) => {
         updates.push({ id, params });
       },
+      casExecutionStatus: (
+        id: string,
+        expected: readonly string[],
+        next: string
+      ): 'won' | 'superseded' => {
+        updates.push({ id, params: { status: next, __cas: [...expected] } });
+        if (!execution || id !== execution.id || !expected.includes(execution.status)) {
+          return 'superseded';
+        }
+        execution.status = next as typeof execution.status;
+        return 'won';
+      },
     },
   } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
   const internals = manager as unknown as Record<string, unknown>;
@@ -93,7 +105,9 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
       { workflowNodeId: NODE_ID }
     );
     expect(result).toEqual([]);
-    expect(harness.updates).toEqual([{ id: EXEC_ID, params: { status: 'pending' } }]);
+    expect(harness.updates).toEqual([
+      { id: EXEC_ID, params: { status: 'pending', __cas: ['in_progress'] } },
+    ]);
     expect(harness.activationCalls()).toBe(0);
     expect(harness.spawnCalls()).toBe(0);
   });
@@ -130,7 +144,9 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
       { workflowNodeId: NODE_ID }
     );
     expect(result).toEqual([{ agentName: AGENT_NAME, sessionId: LIVE_SESSION_ID }]);
-    expect(harness.updates).toEqual([{ id: EXEC_ID, params: { status: 'pending' } }]);
+    expect(harness.updates).toEqual([
+      { id: EXEC_ID, params: { status: 'pending', __cas: ['blocked'] } },
+    ]);
     expect(harness.activationCalls()).toBe(1);
     expect(harness.spawnCalls()).toBe(1);
   });

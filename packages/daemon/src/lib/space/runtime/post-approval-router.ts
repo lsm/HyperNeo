@@ -12,6 +12,7 @@ import {
   type PostApprovalTemplateContext,
 } from '../workflows/post-approval-template';
 import { Logger } from '../../logger';
+import { isSpawnSupersededError } from './workflow-node-execution-validation';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 
 const log = new Logger('post-approval-router');
@@ -243,12 +244,25 @@ export class PostApprovalRouter {
 
     const startedAt = Date.now();
     const kickoffMessage = appendPostApprovalCompletionInstructions(interpolatedInstructions);
-    const { sessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
-      task,
-      workflow,
-      targetAgent: route.targetAgent!,
-      kickoffMessage,
-    });
+    let spawnedSessionId: string;
+    try {
+      ({ sessionId: spawnedSessionId } = await this.deps.spawner.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: route.targetAgent!,
+        kickoffMessage,
+      }));
+    } catch (err) {
+      if (isSpawnSupersededError(err)) {
+        const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; the dispatch stays recorded as blocked for retry`;
+        log.warn(`PostApprovalRouter.route: ${reason}`);
+        clearPendingCompletionState(this.deps.taskRepo, task.id);
+        this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
+        return { mode: 'skipped', reason };
+      }
+      throw err;
+    }
+    const sessionId = spawnedSessionId;
 
     this.deps.taskRepo.updateTask(task.id, {
       pendingCheckpointType: null,

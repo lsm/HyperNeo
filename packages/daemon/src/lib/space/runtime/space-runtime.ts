@@ -137,6 +137,7 @@ import {
   formatMissingAgentReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
+  isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
 } from './workflow-node-execution-validation';
@@ -3967,6 +3968,7 @@ export class SpaceRuntime {
 
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
+        this.config.taskRepo.clearAllSpawnReservations();
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
         this.rehydrated = true;
@@ -6501,6 +6503,12 @@ export class SpaceRuntime {
             });
           }
         } catch (err) {
+          if (isSpawnSupersededError(err)) {
+            log.info(
+              `SpaceRuntime: spawn for execution ${execution.id} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this tick`
+            );
+            continue;
+          }
           if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
             permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
             continue;
@@ -6559,13 +6567,19 @@ export class SpaceRuntime {
         return;
       }
       if (canonicalTask.status === 'open') {
-        const nowTs = Date.now();
-        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-          status: 'in_progress',
-          startedAt: canonicalTask.startedAt ?? nowTs,
-          completedAt: null,
-          pendingCheckpointType: null,
-        });
+        const outcome = this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress');
+        if (outcome === 'won') {
+          const nowTs = Date.now();
+          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+            startedAt: canonicalTask.startedAt ?? nowTs,
+            completedAt: null,
+            pendingCheckpointType: null,
+          });
+        } else {
+          log.info(
+            `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently during the spawn pass`
+          );
+        }
       }
     }
 
@@ -6850,6 +6864,12 @@ export class SpaceRuntime {
             }
           }
         } catch (err) {
+          if (isSpawnSupersededError(err)) {
+            log.info(
+              `SpaceRuntime: queued handoff spawn for target ${targetAgentName} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this pass`
+            );
+            continue;
+          }
           const errMsg = err instanceof Error ? err.message : String(err);
           if (isPermanentSpawnError(err)) {
             log.warn(

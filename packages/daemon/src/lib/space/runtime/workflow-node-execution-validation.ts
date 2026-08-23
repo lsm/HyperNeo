@@ -1,9 +1,32 @@
-import type { NodeExecution, SpaceTask, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import type {
+  NodeExecution,
+  NodeExecutionStatus,
+  SpaceTask,
+  SpaceTaskStatus,
+  SpaceWorkflow,
+  WorkflowNode,
+} from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
   | { valid: false; reason: string; permanent: true };
+
+export const SPAWN_BINDABLE_EXECUTION_STATUSES: readonly NodeExecutionStatus[] = [
+  'pending',
+  'in_progress',
+  'idle',
+  'waiting_rebind',
+];
+
+export const SPAWN_RESERVABLE_TASK_STATUSES: readonly SpaceTaskStatus[] = [
+  'draft',
+  'open',
+  'in_progress',
+  'review',
+  'approved',
+  'blocked',
+];
 
 export class PermanentSpawnError extends Error {
   readonly permanent = true;
@@ -27,6 +50,24 @@ export class TransientSpawnError extends Error {
 
 export function isTransientSpawnError(err: unknown): err is TransientSpawnError {
   return err instanceof TransientSpawnError;
+}
+
+export class SpawnSupersededError extends Error {
+  readonly executionId: string;
+  readonly stage: string | null;
+
+  constructor(executionId: string, stage: string | null) {
+    super(
+      `Spawn for execution ${executionId} superseded at stage ${stage ?? 'unknown'} — a concurrent writer moved the guarded row first; skipping for this call`
+    );
+    this.name = 'SpawnSupersededError';
+    this.executionId = executionId;
+    this.stage = stage;
+  }
+}
+
+export function isSpawnSupersededError(err: unknown): err is SpawnSupersededError {
+  return err instanceof SpawnSupersededError;
 }
 
 export interface MissingNodeAgentReference {
