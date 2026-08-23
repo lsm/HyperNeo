@@ -497,10 +497,16 @@ describe('coder-only workflow template', () => {
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never as an external pass');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'Accept `MERGED` as verified ONLY when the final `baseRefOid` still equals'
+      'Accept `MERGED` as verified ONLY when that first parent equals the `base_oid` recorded in your gate artifact'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'Accept `MERGED` as verified ONLY when the final `baseRefOid` still equals'
+      'Accept `MERGED` as verified ONLY when that first parent equals the `base_oid` recorded in your gate artifact'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'the live baseRefOid has advanced past the merge and must not be compared'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'equals the merge commit' + "'" + 's first parent'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
@@ -641,7 +647,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
     expect(CODER_ONLY_PROMPT).toContain('the fork case');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      '`base_ref`/`base_oid` equal the final baseRefName/baseRefOid'
+      "its `base_oid` equals the merge commit's first parent"
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       '--force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID"'
