@@ -1529,6 +1529,10 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('the reset-horizon policy value itself is exactly seven days', () => {
+      expect(MAX_RESET_HORIZON_MS).toBe(7 * 24 * 60 * 60 * 1000);
+    });
+
     it('ladder pause kind falls back to message classification when the hint carries no kind', async () => {
       const { deps, notifyPause } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
