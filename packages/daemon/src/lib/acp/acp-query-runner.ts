@@ -58,6 +58,8 @@ import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
+const MAX_POST_ABORT_DRAIN_MESSAGES = 256;
+const POST_ABORT_DRAIN_TIMEOUT_MS = 1000;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -299,6 +301,23 @@ async function allowAcpPermissionRequest(
   return { outcome: { outcome: 'selected', optionId: option.optionId } };
 }
 
+function isAcpToolResultMessage(message: SDKMessage): boolean {
+  return message.type === 'user' && (message as SDKUserMessage).parent_tool_use_id != null;
+}
+
+function isAcpToolUseMessage(message: SDKMessage): boolean {
+  if (message.type !== 'assistant') return false;
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  return (
+    Array.isArray(content) &&
+    content.some((block) => (block as { type?: string } | null)?.type === 'tool_use')
+  );
+}
+
+function isAcpPostAbortRelevantMessage(message: SDKMessage): boolean {
+  return isAcpToolResultMessage(message) || isAcpToolUseMessage(message);
+}
+
 function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
   if (!systemPrompt) return [];
   if (typeof systemPrompt === 'string') return [systemPrompt];
@@ -387,6 +406,17 @@ export class AcpQueryRunner {
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const assertActiveAcpStartup = () => {
+      if (
+        this.ctx.isCleaningUp() ||
+        this.ctx.getQueryGeneration() !== queryGeneration ||
+        stateManager.getState().status === 'interrupted'
+      ) {
+        const error = new Error('ACP query aborted during startup');
+        error.name = 'AbortError';
+        throw error;
+      }
+    };
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
@@ -484,6 +514,7 @@ export class AcpQueryRunner {
       const workspace = getAcpWorkspacePath(session, queryOptions);
       const cwd = workspace ?? process.cwd();
       const startupTimeoutMs = getStartupTimeoutMs();
+      assertActiveAcpStartup();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
       runAbortController = abortController;
@@ -511,6 +542,12 @@ export class AcpQueryRunner {
                 `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
             );
             abortController.abort();
+            try {
+              client?.cancel();
+              if (client?.canCloseSession()) {
+                client.closeSession().catch(() => {});
+              }
+            } catch {}
             this.ctx.queryObject?.close();
             client?.close();
           }
@@ -581,6 +618,7 @@ export class AcpQueryRunner {
             };
           })()
         : {};
+      assertActiveAcpStartup();
       client = this.createAcpClient({
         command,
         args,
@@ -593,6 +631,7 @@ export class AcpQueryRunner {
         onPermissionRequest: allowAcpPermissionRequest,
         ...hostCallbacks,
       });
+      assertActiveAcpStartup();
 
       if (messageQueue.size() > 0) {
         startStartupTimer(() => false);
@@ -600,6 +639,7 @@ export class AcpQueryRunner {
 
       await client.initialize();
       await client.authenticate();
+      assertActiveAcpStartup();
       const existingAcpSessionId = session.acpSessionId;
       if (existingAcpSessionId) {
         if (!client.canLoadSession()) {
@@ -647,6 +687,7 @@ export class AcpQueryRunner {
       await this.ctx.onModelsFetched().catch((error) => {
         logger.warn('Background fetch of models failed:', error);
       });
+      assertActiveAcpStartup();
 
       for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
         suppressPreYieldCallback: true,
@@ -800,6 +841,11 @@ export class AcpQueryRunner {
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
+      if (isStaleQuery && client) {
+        try {
+          client.close();
+        } catch {}
+      }
       if (!isStaleQuery) {
         this.clearStartupTimer();
 
@@ -847,6 +893,7 @@ export class AcpQueryRunner {
           });
         }
 
+        this._lastConsumedUserMessage = null;
         this.ctx.queryPromise = null;
       }
     }
@@ -897,7 +944,7 @@ export class AcpQueryRunner {
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
-        this.persistAcpSessionId(undefined);
+        this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
@@ -1133,7 +1180,7 @@ export class AcpQueryRunner {
     }
   }
 
-  private persistAcpSessionId(acpSessionId: string | undefined): void {
+  private persistAcpSessionId(acpSessionId: string): void {
     const { session, db } = this.ctx;
     if (session.acpSessionId === acpSessionId && !this.pendingAcpIdentityMetadata) return;
     session.acpSessionId = acpSessionId;
@@ -1143,6 +1190,20 @@ export class AcpQueryRunner {
       return;
     }
     db.updateSession(session.id, { acpSessionId });
+  }
+
+  private clearAcpSessionState(): void {
+    const { session, db } = this.ctx;
+    session.acpSessionId = undefined;
+    session.metadata = {
+      ...session.metadata,
+      acpInstructionsSent: undefined,
+      acpContextUsageEstimate: undefined,
+    };
+    db.updateSession(session.id, {
+      acpSessionId: undefined,
+      metadata: session.metadata,
+    });
   }
 
   private persistAcpInstructionsSent(): void {
@@ -1266,6 +1327,8 @@ export class AcpQueryRunner {
       resolveAbort = resolve;
     });
     const onAbort = () => resolveAbort(abortResult);
+    let messageDelivered = false;
+    let pendingNext: Promise<IteratorResult<SDKMessage>> | null = null;
 
     try {
       if (signal.aborted) {
@@ -1275,23 +1338,89 @@ export class AcpQueryRunner {
       signal.addEventListener('abort', onAbort, { once: true });
 
       while (!signal.aborted) {
-        const result = await Promise.race([iterator.next(), abortPromise]);
+        pendingNext = iterator.next();
+        const result = await Promise.race([pendingNext, abortPromise]);
 
-        if ('aborted' in result || signal.aborted) {
+        if ('aborted' in result) {
           break;
         }
+
+        pendingNext = null;
 
         if (result.done) {
           break;
         }
 
+        messageDelivered = true;
         yield result.value;
       }
     } finally {
       signal.removeEventListener('abort', onAbort);
-      try {
-        await iterator.return?.();
-      } catch {}
+      pendingNext?.catch(() => {});
+      if (signal.aborted && messageDelivered) {
+        const drainDeadline = { expired: true } as const;
+        let clearDrainTimer: (() => void) | undefined;
+        const drainTimeout = new Promise<typeof drainDeadline>((resolve) => {
+          const timer = setTimeout(() => resolve(drainDeadline), POST_ABORT_DRAIN_TIMEOUT_MS);
+          timer.unref?.();
+          clearDrainTimer = () => {
+            clearTimeout(timer);
+            resolve(drainDeadline);
+          };
+        });
+        if (pendingNext) {
+          const inFlight = pendingNext;
+          inFlight.catch(() => {});
+          let result: IteratorResult<SDKMessage> | typeof drainDeadline;
+          try {
+            result = await Promise.race([inFlight, drainTimeout]);
+          } catch {
+            result = drainDeadline;
+          }
+          if (
+            !('expired' in result) &&
+            !result.done &&
+            isAcpPostAbortRelevantMessage(result.value)
+          ) {
+            yield result.value;
+          }
+          pendingNext = null;
+        }
+        for (const msg of queryObj.flushPendingMessages()) {
+          yield msg;
+        }
+        let drained = 0;
+        while (drained < MAX_POST_ABORT_DRAIN_MESSAGES) {
+          const next = iterator.next();
+          next.catch(() => {});
+          let result: IteratorResult<SDKMessage> | typeof drainDeadline;
+          try {
+            result = await Promise.race([next, drainTimeout]);
+          } catch {
+            break;
+          }
+          if ('expired' in result) break;
+          if (result.done) break;
+          drained++;
+          if (isAcpPostAbortRelevantMessage(result.value)) {
+            yield result.value;
+          }
+        }
+        clearDrainTimer?.();
+      }
+      if (signal.aborted) {
+        try {
+          const settled = new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, POST_ABORT_DRAIN_TIMEOUT_MS);
+            timer.unref?.();
+          });
+          await Promise.race([Promise.resolve(iterator.return?.()), settled]);
+        } catch {}
+      } else {
+        try {
+          await iterator.return?.();
+        } catch {}
+      }
     }
   }
 
