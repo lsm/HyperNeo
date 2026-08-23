@@ -474,14 +474,16 @@ export function ModelsSettings() {
       if (forceRefresh) pendingForceRefreshRef.current = true;
       return;
     }
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) {
-      setLoadError({ message: 'Not connected to server', forceRefresh });
-      return;
-    }
 
     fetchInFlightRef.current = true;
+    setLoading(true);
     try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) {
+        setLoadError({ message: 'Not connected to server', forceRefresh });
+        return;
+      }
+
       const [modelsResponse, authResponse] = await Promise.all([
         hub.request(
           'models.list',
@@ -508,7 +510,9 @@ export function ModelsSettings() {
       fetchInFlightRef.current = false;
       if (pendingForceRefreshRef.current) {
         pendingForceRefreshRef.current = false;
-        void loadModels(true);
+        loadModels(true);
+      } else {
+        setLoading(false);
       }
     }
   };
@@ -555,18 +559,12 @@ export function ModelsSettings() {
 
   const isConnected = connectionState.value === 'connected';
 
-  const loadModels = async (forceRefresh: boolean) => {
-    setLoading(true);
-    try {
-      await fetchModels(forceRefresh);
-    } catch {
-    } finally {
-      if (!fetchInFlightRef.current) setLoading(false);
-    }
+  const loadModels = (forceRefresh: boolean) => {
+    void fetchModels(forceRefresh).catch(() => {});
   };
 
   useEffect(() => {
-    void loadModels(false);
+    loadModels(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -578,7 +576,7 @@ export function ModelsSettings() {
     if (!isConnected) return;
     if (autoRetriedMessagesRef.current.has(loadError.message)) return;
     autoRetriedMessagesRef.current.add(loadError.message);
-    void loadModels(loadError.forceRefresh);
+    loadModels(loadError.forceRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, loadError]);
 
@@ -718,7 +716,7 @@ export function ModelsSettings() {
             size="xs"
             loading={loading}
             disabled={refreshing}
-            onClick={() => void loadModels(loadError.forceRefresh)}
+            onClick={() => loadModels(loadError.forceRefresh)}
           >
             Retry
           </Button>

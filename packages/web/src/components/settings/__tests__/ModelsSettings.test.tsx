@@ -189,10 +189,12 @@ describe('ModelsSettings — load failure surfacing', () => {
     render(<ModelsSettings />);
 
     await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(2);
+    });
+    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { useCache: true });
+    await waitFor(() => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
-    expect(mockRequest).toHaveBeenCalledTimes(2);
-    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { useCache: true });
   });
 
   it('disables Retry while an explicit Refresh models is in flight', async () => {
@@ -356,6 +358,47 @@ describe('ModelsSettings — load failure surfacing', () => {
     });
 
     resolvers[1]({ models: [] });
+    await waitFor(() => {
+      expect(refresh.disabled).toBe(false);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  it('disables Retry while the allowlist-save refresh is in flight and clears loading after', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockRejectedValue(new Error('boom'));
+
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(2);
+    });
+
+    const resolvers: Array<(value: { models: unknown[] }) => void> = [];
+    mockRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
+    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(3);
+    });
+    await waitFor(() => {
+      expect(retry.disabled).toBe(true);
+    });
+
+    resolvers[0]({ models: [] });
     await waitFor(() => {
       expect(refresh.disabled).toBe(false);
     });
