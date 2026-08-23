@@ -7,17 +7,16 @@ import {
 function input(overrides: Partial<ClaimAdmissionInput> = {}): ClaimAdmissionInput {
   return {
     actorAgentId: 'owner-1',
-    ownerAgentIds: ['owner-1'],
-    coordinatorAgentId: 'coordinator-1',
-    coordinatorIsFallback: false,
+    authorizedAgentIds: ['owner-1'],
     humanAdmissionAllowed: false,
     notificationStatus: 'pending',
     notificationGoalId: 'goal-1',
     notificationTaskId: 'task-1',
+    notificationGoalRevision: 1,
     claimedGoalId: 'goal-1',
     claimedTaskId: 'task-1',
     mutatesGoalState: true,
-    observedGoalRevision: 1,
+    observedGoalRevision: null,
     currentGoalRevision: 1,
     ...overrides,
   };
@@ -25,23 +24,22 @@ function input(overrides: Partial<ClaimAdmissionInput> = {}): ClaimAdmissionInpu
 
 describe('decideClaimAdmission', () => {
   describe('authorized gate', () => {
-    test('admits the current primary owner', () => {
+    test('admits the resolved primary owner', () => {
       expect(decideClaimAdmission(input())).toEqual({ action: 'admit' });
     });
 
-    test('admits the coordinator when it is the resolved fallback', () => {
+    test('admits the coordinator when it is the resolved recipient', () => {
       expect(
         decideClaimAdmission(
-          input({ actorAgentId: 'coordinator-1', ownerAgentIds: [], coordinatorIsFallback: true })
+          input({ actorAgentId: 'coordinator-1', authorizedAgentIds: ['coordinator-1'] })
         )
       ).toEqual({ action: 'admit' });
     });
 
-    test('denies the coordinator while an active owner exists', () => {
-      expect(decideClaimAdmission(input({ actorAgentId: 'coordinator-1' }))).toEqual({
-        action: 'deny',
-        reason: 'unauthorized',
-      });
+    test('denies a stale non-primary owner that is not the resolved identity', () => {
+      expect(
+        decideClaimAdmission(input({ actorAgentId: 'owner-2', authorizedAgentIds: ['owner-1'] }))
+      ).toEqual({ action: 'deny', reason: 'unauthorized' });
     });
 
     test('admits a human operator when human admission is allowed', () => {
@@ -105,6 +103,16 @@ describe('decideClaimAdmission', () => {
   });
 
   describe('revision-match gate', () => {
+    test('admits an initial claim whose notification revision matches the current goal', () => {
+      expect(decideClaimAdmission(input())).toEqual({ action: 'admit' });
+    });
+
+    test('denies an initial claim based on a stale notification revision', () => {
+      expect(
+        decideClaimAdmission(input({ notificationGoalRevision: 0, currentGoalRevision: 1 }))
+      ).toEqual({ action: 'deny', reason: 'stale_revision' });
+    });
+
     test('denies a stale resubmission with an older observed revision', () => {
       expect(decideClaimAdmission(input({ observedGoalRevision: 0 }))).toEqual({
         action: 'deny',
@@ -112,7 +120,13 @@ describe('decideClaimAdmission', () => {
       });
     });
 
-    test('denies a claim observed against a newer goal snapshot', () => {
+    test('admits a resubmission whose observed revision still matches', () => {
+      expect(decideClaimAdmission(input({ observedGoalRevision: 1 }))).toEqual({
+        action: 'admit',
+      });
+    });
+
+    test('denies a resubmission observed against a newer goal snapshot', () => {
       expect(decideClaimAdmission(input({ observedGoalRevision: 2 }))).toEqual({
         action: 'deny',
         reason: 'stale_revision',

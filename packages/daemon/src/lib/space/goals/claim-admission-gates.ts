@@ -13,17 +13,16 @@ export type ClaimAdmissionDecision =
 
 export interface ClaimAdmissionCtx {
   actorAgentId: string | null;
-  ownerAgentIds: string[];
-  coordinatorAgentId: string | null;
-  coordinatorIsFallback: boolean;
+  authorizedAgentIds: string[];
   humanAdmissionAllowed: boolean;
   notificationStatus: SpaceGoalOutcomeNotificationStatus;
   notificationGoalId: string;
   notificationTaskId: string;
+  notificationGoalRevision: number;
   claimedGoalId: string;
   claimedTaskId: string;
   mutatesGoalState: boolean;
-  observedGoalRevision: number;
+  observedGoalRevision: number | null;
   currentGoalRevision: number;
   decision: ClaimAdmissionDecision | null;
 }
@@ -36,8 +35,7 @@ function decided(ctx: ClaimAdmissionCtx, decision: ClaimAdmissionDecision): Clai
 
 function isAuthorizedActor(ctx: ClaimAdmissionCtx): boolean {
   if (ctx.actorAgentId === null) return ctx.humanAdmissionAllowed;
-  if (ctx.ownerAgentIds.includes(ctx.actorAgentId)) return true;
-  return ctx.actorAgentId === ctx.coordinatorAgentId && ctx.coordinatorIsFallback;
+  return ctx.authorizedAgentIds.includes(ctx.actorAgentId);
 }
 
 export function applyAuthorizedGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
@@ -60,7 +58,8 @@ export function applyIdentityBoundGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCt
 
 export function applyRevisionMatchGate(ctx: ClaimAdmissionCtx): ClaimAdmissionCtx {
   if (!ctx.mutatesGoalState) return ctx;
-  return ctx.observedGoalRevision === ctx.currentGoalRevision
+  const baseRevision = ctx.observedGoalRevision ?? ctx.notificationGoalRevision;
+  return baseRevision === ctx.currentGoalRevision
     ? ctx
     : decided(ctx, { action: 'deny', reason: 'stale_revision' });
 }
