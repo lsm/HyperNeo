@@ -21,6 +21,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
+import { coordinatorLongHorizonAgentId } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
 import { Logger } from '../../logger';
@@ -94,7 +95,7 @@ export interface SpaceGoalServiceDeps {
   onGoalResumed?: (goalId: string, spaceId: string) => void;
   longHorizonAgentRepo?: Pick<
     SpaceLongHorizonAgentRepository,
-    'assignGoal' | 'getPrimaryGoalOwner' | 'ensureCoordinator'
+    'assignGoal' | 'getPrimaryGoalOwner'
   >;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
@@ -558,6 +559,17 @@ export class SpaceGoalService {
             goal,
           };
         }
+        const identityBound =
+          params.claimedGoalId === notification.goalId &&
+          params.claimedTaskId === notification.taskId;
+        if (!identityBound) {
+          return {
+            status: 'denied',
+            reason: 'identity_mismatch',
+            currentGoalRevision: goal.revision,
+            goal,
+          };
+        }
         return { status: 'already_applied', notification, goal };
       }
       const decision = decideClaimAdmission({
@@ -583,7 +595,7 @@ export class SpaceGoalService {
           goal,
         };
       }
-      const appliedGoal = params.apply ? params.apply(goal) : goal;
+      const appliedGoal = params.mutatesGoalState && params.apply ? params.apply(goal) : goal;
       const terminalized =
         this.deps.outcomeNotificationRepo?.updateStatus(
           notification.id,
@@ -599,7 +611,7 @@ export class SpaceGoalService {
     const resolution = repo.getPrimaryGoalOwner(goal.id, goal.spaceId);
     if (resolution.action === 'resolved') return [resolution.owner.agentId];
     if (resolution.action === 'coordinator_fallback') return [resolution.coordinatorAgentId];
-    return [repo.ensureCoordinator(goal.spaceId).id];
+    return [coordinatorLongHorizonAgentId(goal.spaceId)];
   }
 
   claimScheduledTask(

@@ -12,6 +12,7 @@ import { SpaceTaskRepository } from '../../../src/storage/repositories/space-tas
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import type { SpaceGoal, SpaceGoalOutcomeNotification, SpaceTask } from '@hyperneo/shared';
 import type { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
+import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('SpaceGoalService.claimOutcomeNotification', () => {
@@ -57,7 +58,6 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
       getPrimaryGoalOwner: mock(() => resolution),
-      ensureCoordinator: mock(() => ({ id: 'coordinator-1' })),
     } as unknown as SpaceGoalServiceDeps['longHorizonAgentRepo'];
     service = new SpaceGoalService({
       goalRepo,
@@ -172,6 +172,22 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     expect(result.notification.status).toBe('acknowledged');
   });
 
+  it('does not run the apply hook on terminal-only claims', () => {
+    let applyCount = 0;
+    const params = claimParams({
+      mutatesGoalState: false,
+      apply: (g) => {
+        applyCount += 1;
+        return goalRepo.update(g.id, { summary: 'should-not-apply' }) as SpaceGoal;
+      },
+    });
+
+    const result = service.claimOutcomeNotification(params);
+
+    expect(result).toMatchObject({ status: 'claimed' });
+    expect(applyCount).toBe(0);
+  });
+
   it('rejects cross-goal identity mixing', () => {
     const result = service.claimOutcomeNotification(claimParams({ claimedGoalId: 'other-goal' }));
 
@@ -186,12 +202,35 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
     expect(result).toMatchObject({ status: 'claimed' });
   });
 
+  it('admits the coordinator identity without provisioning when resolution is degraded', () => {
+    resolution = {
+      action: 'degraded',
+      reason: 'paused',
+      owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
+      conflicts: [],
+    };
+
+    const result = service.claimOutcomeNotification(
+      claimParams({ actorAgentId: coordinatorLongHorizonAgentId(goal.spaceId) })
+    );
+
+    expect(result).toMatchObject({ status: 'claimed' });
+  });
+
   it('rejects an already-applied notification claimed by an unauthorized actor', () => {
     service.claimOutcomeNotification(claimParams());
 
     const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'agent-2' }));
 
     expect(result).toMatchObject({ status: 'denied', reason: 'unauthorized' });
+  });
+
+  it('binds identity on the already-applied retry path', () => {
+    service.claimOutcomeNotification(claimParams());
+
+    const result = service.claimOutcomeNotification(claimParams({ claimedGoalId: 'other-goal' }));
+
+    expect(result).toMatchObject({ status: 'denied', reason: 'identity_mismatch' });
   });
 
   it('returns not_found for a missing notification', () => {
