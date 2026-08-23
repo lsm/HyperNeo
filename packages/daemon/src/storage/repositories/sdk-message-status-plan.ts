@@ -85,6 +85,9 @@ export function applyMessageStatusPlan(
     `UPDATE sdk_messages SET consumed_seq = ?, timestamp = ?
      WHERE id = ? AND send_status IN (${fromList})`
   );
+  const pendingProbeStmt = db.prepare(
+    `SELECT 1 FROM sdk_messages WHERE id = ? AND send_status IN (${fromList}) LIMIT 1`
+  );
   for (const instruction of plan.instructions) {
     switch (instruction.kind) {
       case 'touch-timestamp':
@@ -105,14 +108,16 @@ export function applyMessageStatusPlan(
         promoteStmt.run(base + 1, now, instruction.rowId, ...plan.fromStatuses);
         break;
       }
-      case 'allocate-consumed-seq':
-        seqStmt.run(
-          instruction.providedSeq ?? allocateNextConsumedSeq(),
-          now,
-          instruction.rowId,
-          ...plan.fromStatuses
-        );
+      case 'allocate-consumed-seq': {
+        if (instruction.providedSeq === null) {
+          const stillPending = pendingProbeStmt.get(instruction.rowId, ...plan.fromStatuses);
+          if (!stillPending) break;
+          seqStmt.run(allocateNextConsumedSeq(), now, instruction.rowId, ...plan.fromStatuses);
+        } else {
+          seqStmt.run(instruction.providedSeq, now, instruction.rowId, ...plan.fromStatuses);
+        }
         break;
+      }
     }
   }
   if (plan.plannedRowIds.length > 0) {
