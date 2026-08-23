@@ -207,7 +207,7 @@ describe('useGroupMessages liveQuery lifecycle', () => {
       expect(result.current.messages.map((m) => m.id)).toEqual([1, 2]);
     });
 
-    it('leaves the loaded state intact when the resubscribe after a delta-phase error keeps failing', async () => {
+    it('runs the 500/1500 ladder on the resubscribe after a delta-phase error and leaves the loaded state intact when it keeps failing', async () => {
       vi.useFakeTimers();
       mockRequest.mockResolvedValueOnce({ ok: true }).mockRejectedValue(new Error('down'));
       const { result } = renderHook(() => useGroupMessages('group-1'));
@@ -220,6 +220,8 @@ describe('useGroupMessages liveQuery lifecycle', () => {
           version: 1,
         });
       });
+      expect(subscribeCalls()).toHaveLength(1);
+
       act(() => {
         fireEvent('liveQuery.error', {
           subscriptionId: subId,
@@ -228,13 +230,28 @@ describe('useGroupMessages liveQuery lifecycle', () => {
           phase: 'delta',
         });
       });
+      expect(subscribeCalls()).toHaveLength(2);
       await act(async () => {
-        vi.advanceTimersByTime(5000);
         await Promise.resolve();
       });
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+        await Promise.resolve();
+      });
+      expect(subscribeCalls()).toHaveLength(3);
+      await act(async () => {
+        vi.advanceTimersByTime(1500);
+        await Promise.resolve();
+      });
+      expect(subscribeCalls()).toHaveLength(4);
       expect(result.current.messages.map((m) => m.id)).toEqual([1]);
       expect(result.current.isLoading).toBe(false);
       expect(result.current.isReconnecting).toBe(false);
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+        await Promise.resolve();
+      });
+      expect(subscribeCalls()).toHaveLength(4);
     });
 
     it('releases loading on a snapshot-phase error and still adopts a later snapshot', () => {
