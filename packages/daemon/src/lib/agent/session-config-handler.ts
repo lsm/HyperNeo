@@ -85,6 +85,7 @@ export class SessionConfigHandler {
 
     if (updates.archivedAt !== undefined) session.archivedAt = updates.archivedAt;
     if ('worktree' in updates) session.worktree = updates.worktree;
+    if ('acpSessionId' in updates) session.acpSessionId = updates.acpSessionId;
 
     db.updateSession(session.id, updates);
   }

@@ -27,6 +27,7 @@ import { Logger } from '../../logger';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
 import { decideReportableTerminal } from './reportable-terminal-gates';
+import { decideClaimAdmission, type ClaimAdmissionDenyReason } from './claim-admission-gates';
 
 const log = new Logger('space-goal-service');
 
@@ -55,6 +56,30 @@ export interface SpaceGoalMutationContext {
   note?: string | null;
 }
 
+export interface ClaimOutcomeNotificationParams {
+  notificationId: string;
+  claimedGoalId: string;
+  claimedTaskId: string;
+  actorAgentId: string | null;
+  humanAdmissionAllowed: boolean;
+  mutatesGoalState: boolean;
+  dispositionStatus: 'acknowledged' | 'rejected';
+  isResubmission: boolean;
+  observedGoalRevision?: number | null;
+  apply?: (goal: SpaceGoal) => SpaceGoal;
+}
+
+export type ClaimOutcomeNotificationResult =
+  | { status: 'claimed'; notification: SpaceGoalOutcomeNotification; goal: SpaceGoal }
+  | { status: 'already_applied'; notification: SpaceGoalOutcomeNotification; goal: SpaceGoal }
+  | {
+      status: 'denied';
+      reason: ClaimAdmissionDenyReason;
+      currentGoalRevision: number;
+      goal: SpaceGoal;
+    }
+  | { status: 'not_found' };
+
 export interface SpaceGoalServiceDeps {
   goalRepo: SpaceGoalRepository;
   goalEventRepo?: SpaceGoalEventRepository;
@@ -67,7 +92,10 @@ export interface SpaceGoalServiceDeps {
   };
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
-  longHorizonAgentRepo?: Pick<SpaceLongHorizonAgentRepository, 'assignGoal'>;
+  longHorizonAgentRepo?: Pick<
+    SpaceLongHorizonAgentRepository,
+    'assignGoal' | 'getPrimaryGoalOwner' | 'getCoordinator' | 'getById'
+  >;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
   evolutionScopeService?: Pick<
@@ -506,6 +534,86 @@ export class SpaceGoalService {
     if (!goal.activeTaskId) return { goal, claimable: true };
     const active = this.deps.taskRepo.getTask(goal.activeTaskId);
     return { goal, claimable: !active || !isActiveTaskStatus(active.status) };
+  }
+
+  /** @public */
+  claimOutcomeNotification(params: ClaimOutcomeNotificationParams): ClaimOutcomeNotificationResult {
+    return this.runAtomic(() => {
+      const notification =
+        this.deps.outcomeNotificationRepo?.getById(params.notificationId) ?? null;
+      if (!notification) return { status: 'not_found' };
+      const goal = this.deps.goalRepo.getById(notification.goalId);
+      if (!goal) return { status: 'not_found' };
+      const authorizedAgentIds = this.resolveClaimAuthorizedAgentIds(goal);
+      const isAuthorized =
+        params.actorAgentId === null
+          ? params.humanAdmissionAllowed
+          : authorizedAgentIds.includes(params.actorAgentId);
+      if (notification.status === params.dispositionStatus) {
+        if (!isAuthorized) {
+          return {
+            status: 'denied',
+            reason: 'unauthorized',
+            currentGoalRevision: goal.revision,
+            goal,
+          };
+        }
+        const identityBound =
+          params.claimedGoalId === notification.goalId &&
+          params.claimedTaskId === notification.taskId;
+        if (!identityBound) {
+          return {
+            status: 'denied',
+            reason: 'identity_mismatch',
+            currentGoalRevision: goal.revision,
+            goal,
+          };
+        }
+        return { status: 'already_applied', notification, goal };
+      }
+      const decision = decideClaimAdmission({
+        actorAgentId: params.actorAgentId,
+        authorizedAgentIds,
+        humanAdmissionAllowed: params.humanAdmissionAllowed,
+        notificationStatus: notification.status,
+        notificationGoalId: notification.goalId,
+        notificationTaskId: notification.taskId,
+        notificationGoalRevision: notification.goalRevision,
+        claimedGoalId: params.claimedGoalId,
+        claimedTaskId: params.claimedTaskId,
+        mutatesGoalState: params.mutatesGoalState,
+        isResubmission: params.isResubmission,
+        observedGoalRevision: params.observedGoalRevision ?? null,
+        currentGoalRevision: goal.revision,
+      });
+      if (decision.action === 'deny') {
+        return {
+          status: 'denied',
+          reason: decision.reason,
+          currentGoalRevision: goal.revision,
+          goal,
+        };
+      }
+      const appliedGoal = params.mutatesGoalState && params.apply ? params.apply(goal) : goal;
+      const terminalized =
+        this.deps.outcomeNotificationRepo?.updateStatus(
+          notification.id,
+          params.dispositionStatus
+        ) ?? notification;
+      return { status: 'claimed', notification: terminalized, goal: appliedGoal };
+    });
+  }
+
+  private resolveClaimAuthorizedAgentIds(goal: SpaceGoal): string[] {
+    const repo = this.deps.longHorizonAgentRepo;
+    if (!repo) return [];
+    const resolution = repo.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    if (resolution.action === 'resolved') return [resolution.owner.agentId];
+    const coordinator =
+      resolution.action === 'coordinator_fallback'
+        ? repo.getById(resolution.coordinatorAgentId)
+        : repo.getCoordinator(goal.spaceId);
+    return coordinator?.status === 'active' ? [coordinator.id] : [];
   }
 
   claimScheduledTask(
