@@ -285,7 +285,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             await syncProviderToRegistry(record, creds);
           } else if (record.kind === 'built_in') {
             markBuiltInProviderDisabled(record.providerId);
-            await removeProviderFromRegistry(record.providerId);
+            await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
           }
         } catch (err) {
           providerRepo.deleteProvider(record.id);
@@ -359,7 +359,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               if (record.kind === 'built_in') {
                 markBuiltInProviderDisabled(record.providerId);
               }
-              await removeProviderFromRegistry(record.providerId);
+              await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
             } else {
               const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
               await ensureBuiltInProviderRegistered(record.providerId);
