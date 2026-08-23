@@ -2204,6 +2204,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const task = cancelled[0]!;
         for (const cancelledTask of cancelled) {
           emitTaskUpdated(cancelledTask);
+          try {
+            config.goalService?.handleTaskTerminal(cancelledTask.id, {
+              fromStatus: cancelledTask.status,
+            });
+          } catch (err) {
+            log.warn(
+              `Goal terminal handling threw for cancelled task "${cancelledTask.id}": ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
         }
         const existingRun = task.workflowRunId ? workflowRunRepo.getRun(task.workflowRunId) : null;
         const plan = routeCancelTask({
@@ -2276,6 +2285,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         logAudit('archive_task', { previousStatus: task?.status }, args.task_id);
 
         emitTaskUpdated(updated);
+        try {
+          config.goalService?.handleTaskTerminal(updated.id, {
+            fromStatus: task?.status ?? null,
+          });
+        } catch (err) {
+          log.warn(
+            `Goal terminal handling threw for archived task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
 
         return jsonResult({ success: true, task: updated });
       } catch (err) {

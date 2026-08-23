@@ -1083,4 +1083,27 @@ describe('SpaceGoalService', () => {
     expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
     expect(notificationRepo.countByGoal(goal.id, 'superseded')).toBe(1);
   });
+
+  it('rolls back the terminal write and notification together when notification creation fails', () => {
+    const goal = service.createGoal({ spaceId, title: 'Atomic goal' });
+    const task = service.createImmediateTask(goal.id);
+    expect(task.task).not.toBeNull();
+    taskRepo.updateTask(task.task!.id, { status: 'in_progress' });
+
+    const spy = spyOn(notificationRepo, 'create').mockImplementation(() => {
+      throw new Error('injected notification failure');
+    });
+
+    expect(() =>
+      service.handleTaskTerminal(task.task!.id, {
+        fromStatus: 'in_progress',
+        updates: { status: 'done', result: 'shipped' },
+      })
+    ).toThrow('injected notification failure');
+    spy.mockRestore();
+
+    expect(taskRepo.getTask(task.task!.id)?.status).toBe('in_progress');
+    expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
+    expect(taskRepo.getTask(task.task!.id)?.result).toBeNull();
+  });
 });
