@@ -515,6 +515,12 @@ describe('coder-only workflow template', () => {
       'a dead bot is a reported blocker to escalate, never substituted'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('after EVERY fresh external gate');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'that ONE handoff satisfies both halves together'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      '`both` runs the external gate FIRST and never consumes two Review cycles'
+    );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('route the revalidation back through Review');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       "the Reviewer's backup re-review stands in for that bot's pass"
