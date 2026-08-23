@@ -390,13 +390,22 @@ export function updateProviderModelsInCache(
     return false;
   }
 
-  const hadInFlight = refreshInProgress.has(cacheKey);
   modelsCache.set(cacheKey, [
     ...cachedModels.filter((model) => model.provider !== providerId),
     ...models,
   ]);
-  if (hadInFlight || cacheGeneration.has(cacheKey)) {
-    cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
+  const inFlight = refreshInProgress.get(cacheKey);
+  if (inFlight) {
+    inFlight
+      .then(() => {
+        const current = modelsCache.get(cacheKey);
+        if (!current) return;
+        modelsCache.set(cacheKey, [
+          ...current.filter((model) => model.provider !== providerId),
+          ...models,
+        ]);
+      })
+      .catch(() => {});
   }
   return true;
 }

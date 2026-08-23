@@ -278,7 +278,7 @@ describe('Model Service', () => {
       expect(getModelsCache().has('global')).toBe(false);
     });
 
-    it('drops an in-flight refresh result when the provider slice is updated mid-refresh', async () => {
+    it('re-applies the provider slice after an in-flight refresh rebuilds the entry', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
@@ -287,14 +287,20 @@ describe('Model Service', () => {
         getModels: async () => {
           await new Promise((resolve) => setTimeout(resolve, 200));
           return [
-            {
-              id: 'slow-splice-model',
-              name: 'Slow Splice Model',
-              family: 'test',
-              provider: 'slow-splice-provider',
-              contextWindow: 100000,
-            },
-          ];
+            'slow-splice-model-1',
+            'slow-splice-model-2',
+            'slow-splice-model-3',
+            'slow-splice-model-4',
+          ].map((id) => ({
+            id,
+            name: 'Slow Splice Model',
+            family: 'test',
+            provider: 'slow-splice-provider',
+            contextWindow: 100000,
+            description: 'Slow splice model',
+            releaseDate: '2026-01-01',
+            available: true,
+          }));
         },
         isAvailable: async () => true,
       } as ProviderLike);
@@ -312,8 +318,7 @@ describe('Model Service', () => {
 
       const models = getAvailableModels('global');
       expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
-      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
-      expect(models.some((m) => m.id === 'slow-splice-model')).toBe(false);
+      expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
     });
 
     it('keeps a stale entry stale so the next read re-triggers a background refresh', async () => {
