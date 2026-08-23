@@ -23,9 +23,12 @@ import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/re
 import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { ScheduleService } from '../schedule/schedule-service';
+import { Logger } from '../../logger';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
 import { decideReportableTerminal } from './reportable-terminal-gates';
+
+const log = new Logger('space-goal-service');
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -328,9 +331,15 @@ export class SpaceGoalService {
       let nextTask: SpaceTask | null = null;
       let postBookkeeping: SpaceGoal = fresh;
       if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
-        const created = this.createImmediateTask(fresh.id, { source: 'system' });
-        postBookkeeping = created.goal;
-        nextTask = created.task;
+        try {
+          const created = this.createImmediateTask(fresh.id, { source: 'system' });
+          postBookkeeping = created.goal;
+          nextTask = created.task;
+        } catch (err) {
+          log.warn(
+            `Next goal task creation threw for "${taskId}" after terminal: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       this.recordOutcomeNotification(task, postBookkeeping, terminalGeneration, {
         fromStatus: transition?.fromStatus ?? null,

@@ -163,14 +163,18 @@ export class PostApprovalRouter {
         postApprovalSourceNodeId: null,
       };
       try {
-        this.deps.goalService?.handleTaskTerminal(task.id, {
+        const handled = this.deps.goalService?.handleTaskTerminal(task.id, {
           fromStatus: task.status,
           updates,
         });
+        if (!handled) {
+          this.deps.taskRepo.updateTask(task.id, updates);
+        }
       } catch (err) {
         log.warn(
           `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
         );
+        this.deps.taskRepo.updateTask(task.id, updates);
       }
       try {
         this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });
