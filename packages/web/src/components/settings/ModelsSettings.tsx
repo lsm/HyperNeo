@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
-import { globalSettings } from '../../lib/state.ts';
+import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager';
@@ -447,7 +447,9 @@ export function ModelsSettings() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ message: string; forceRefresh: boolean } | null>(
+    null
+  );
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -467,7 +469,7 @@ export function ModelsSettings() {
   const fetchModels = async (forceRefresh: boolean) => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
-      setLoadError('Not connected to server');
+      setLoadError({ message: 'Not connected to server', forceRefresh });
       return;
     }
 
@@ -489,7 +491,10 @@ export function ModelsSettings() {
       setProviderAuthStatuses(authMap);
       setLoadError(null);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Failed to load models');
+      setLoadError({
+        message: e instanceof Error ? e.message : 'Failed to load models',
+        forceRefresh,
+      });
       throw e;
     }
   };
@@ -534,10 +539,12 @@ export function ModelsSettings() {
     }
   };
 
-  const loadModels = async () => {
+  const isConnected = connectionState.value === 'connected';
+
+  const loadModels = async (forceRefresh: boolean) => {
     setLoading(true);
     try {
-      await fetchModels(false);
+      await fetchModels(forceRefresh);
     } catch {
     } finally {
       setLoading(false);
@@ -545,9 +552,15 @@ export function ModelsSettings() {
   };
 
   useEffect(() => {
-    void loadModels();
+    void loadModels(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!isConnected || !loadError) return;
+    void loadModels(loadError.forceRefresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
   const saveFallbackModels = async (models: FallbackModelEntry[]) => {
     setIsUpdating(true);
@@ -679,8 +692,13 @@ export function ModelsSettings() {
           class="flex items-center justify-between gap-3 rounded-lg border border-red-300/20 px-4 py-3 text-sm text-red-200"
           role="alert"
         >
-          <span>{loadError}</span>
-          <Button variant="ghost" size="xs" onClick={() => void loadModels()}>
+          <span>{loadError.message}</span>
+          <Button
+            variant="ghost"
+            size="xs"
+            loading={loading}
+            onClick={() => void loadModels(loadError.forceRefresh)}
+          >
             Retry
           </Button>
         </div>
