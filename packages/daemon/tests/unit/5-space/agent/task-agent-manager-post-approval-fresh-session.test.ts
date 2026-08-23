@@ -630,6 +630,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
       payload: {
         status: 'idle',
         agentSessionId: null,
+        completedAt: expect.any(Number),
         __cas: ['in_progress'],
       },
     });

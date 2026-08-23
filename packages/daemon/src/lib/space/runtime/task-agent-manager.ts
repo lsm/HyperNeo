@@ -1042,6 +1042,7 @@ export class TaskAgentManager {
                       'idle',
                       {
                         agentSessionId: null,
+                        completedAt: Date.now(),
                       }
                     );
                   }
