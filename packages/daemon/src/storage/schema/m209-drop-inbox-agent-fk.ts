@@ -54,4 +54,12 @@ export function runMigration209(db: BunDatabase): void {
       `ON space_agent_inbox_messages(space_id, target_agent_id, idempotency_key) ` +
       `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_pending_created ` +
+      `ON space_goal_outcome_notifications(status, created_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_space_pending ` +
+      `ON space_goal_outcome_notifications(space_id, status, created_at)`
+  );
 }

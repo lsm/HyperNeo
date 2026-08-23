@@ -514,6 +514,10 @@ export function createSpaceTables(db: BunDatabase): void {
     ON space_goal_outcome_notifications(goal_id, status, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
     ON space_goal_outcome_notifications(task_id, terminal_generation)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_pending_created
+    ON space_goal_outcome_notifications(status, created_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_space_pending
+    ON space_goal_outcome_notifications(space_id, status, created_at)`);
   createWorkflowEventSubscriptionTables(db);
 
   db.exec(`

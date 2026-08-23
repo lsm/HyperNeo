@@ -1009,6 +1009,14 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
       ON space_goal_outcome_notifications(task_id, terminal_generation)`
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_pending_created
+      ON space_goal_outcome_notifications(status, created_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_space_pending
+      ON space_goal_outcome_notifications(space_id, status, created_at)`
+  );
 
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_room_github_mappings_room ON room_github_mappings(room_id)`

@@ -189,7 +189,12 @@ export class SpaceLongHorizonAgentRepository {
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
         )
         .get();
-      if (hasInbox) {
+      const hasSiblingWorker = !!this.db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
+        .get()
+        ? !!this.db.prepare(`SELECT 1 FROM space_agents WHERE id = ?`).get(id)
+        : false;
+      if (hasInbox && !hasSiblingWorker) {
         this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
       }
       this.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(id);
