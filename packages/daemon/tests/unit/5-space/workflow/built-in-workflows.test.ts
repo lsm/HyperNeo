@@ -426,6 +426,16 @@ describe('coder-only workflow template', () => {
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'never joins the gate set, and its reaction can neither pass the gate nor hold it open'
     );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'habitually passes cleanly leaves ONLY reactions'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'do NOT silently substitute the internal fallback'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('request their re-review directly');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'resolving threads does NOT withdraw a `CHANGES_REQUESTED` review'
+    );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('with NOTHING reported is a clean verdict');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('logins that are REVIEW bots');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('are NOT review bots');

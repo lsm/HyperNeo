@@ -820,6 +820,9 @@ describe('createCustomAgentInit', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('NEVER advance your round');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('count only YOUR OWN prior reviews');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'a `> **Task:** #<N>` line matching YOUR task number'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'you are in Round 1 no matter how many other reviews exist'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('OVERRIDE this table');
