@@ -838,6 +838,54 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(boundPriorOwner.status).toBe('in_progress');
   });
 
+  test('a deferred reuse skips the inner flush — the flow flushes once after the outer bind (PR #2770 review)', async () => {
+    const priorBound = makeExecutionRow({
+      id: 'exec-prior-flush',
+      workflowNodeId: 'node-prior',
+      status: 'in_progress',
+    });
+    const flushed: Array<{ runId: string; agentName: string; sessionId: string }> = [];
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: { registerSession: () => {}, getCachedSession: () => undefined },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: {
+        getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'T' }),
+      },
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [priorBound],
+        listByNode: () => [],
+        listByAgentSessionId: () => [priorBound],
+        update: () => null,
+        casExecutionStatus: () => 'won',
+      },
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    } as unknown as TaskAgentManagerConfig);
+    (
+      tam as unknown as {
+        flushPendingMessagesForTarget: (
+          runId: string,
+          agentName: string,
+          sessionId: string
+        ) => Promise<void>;
+      }
+    ).flushPendingMessagesForTarget = async (runId, agentName, sessionId) => {
+      flushed.push({ runId, agentName, sessionId });
+    };
+    seedLiveSession(tam);
+    stubReusePathHelpers(tam);
+
+    const actual = await tam.createSubSession(TASK_ID, 'deferred-reuse-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: 'node-other',
+      deferFreshExecutionBind: true,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(flushed).toEqual([]);
+  });
+
   test('deferFreshExecutionBind leaves the fresh target row to the guarded outer bind: no inner write, session still created (PR #2770 review)', async () => {
     const pendingExec = makeExecutionRow({
       id: 'exec-deferred',

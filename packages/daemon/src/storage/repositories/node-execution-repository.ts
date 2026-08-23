@@ -207,7 +207,8 @@ export class NodeExecutionRepository {
       agentSessionId?: string | null;
       startedAt?: number | null;
       completedAt?: number | null;
-    } = {}
+    } = {},
+    guards: { expectAgentSessionId?: string | null } = {}
   ): 'won' | 'superseded' {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
@@ -226,11 +227,18 @@ export class NodeExecutionRepository {
       sets.push('completed_at = ?');
       values.push(payload.completedAt);
     }
+    let predicate = `id = ? AND status IN (${placeholders})`;
+    if (guards.expectAgentSessionId !== undefined) {
+      predicate += ' AND agent_session_id IS ?';
+    }
     const result = this.db
-      .prepare(
-        `UPDATE node_executions SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
-      )
-      .run(...values, id, ...expectedStatuses);
+      .prepare(`UPDATE node_executions SET ${sets.join(', ')} WHERE ${predicate}`)
+      .run(
+        ...values,
+        id,
+        ...expectedStatuses,
+        ...(guards.expectAgentSessionId !== undefined ? [guards.expectAgentSessionId] : [])
+      );
     if (result.changes === 0) return 'superseded';
     this.notify();
     return 'won';

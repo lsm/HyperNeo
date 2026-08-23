@@ -5,7 +5,6 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
   NodeExecution,
-  NodeExecutionStatus,
   MessageHub,
   McpServerConfig,
   MessageContent,
@@ -55,8 +54,7 @@ export interface SubSessionMemberInfo {
   agentName?: string;
   nodeId?: string;
   deferFreshExecutionBind?: boolean;
-  executionBindObservedStatus?: NodeExecutionStatus;
-  onSessionReused?: (sessionId: string) => void;
+  freshSessionOnly?: boolean;
 }
 
 export interface VerifiedSessionStop {
@@ -640,7 +638,8 @@ export class TaskAgentManager {
     execution: NodeExecution,
     options: SpawnTaskAgentOptions = {}
   ): Promise<string> {
-    const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(), {
+    const spawnState = { reservationHeld: false, reservedExecution: false };
+    const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
       space,
       workflow,
@@ -649,11 +648,15 @@ export class TaskAgentManager {
       kickoff: options.kickoff ?? true,
     });
     if (outcome.status === 'error') {
-      this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
+      if (spawnState.reservedExecution) {
+        this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
+      }
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
-      this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
+      if (spawnState.reservedExecution) {
+        this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
+      }
       throw new SpawnSupersededError(execution.id, outcome.stage ?? null);
     }
     const result = outcome.result;
@@ -748,8 +751,10 @@ export class TaskAgentManager {
     for (const waiter of waiters) waiter(outcome);
   }
 
-  private buildSpawnExecutionFlowDeps(): SpawnExecutionFlowDeps {
-    const spawnState = { reservationHeld: false, reusedSessionIds: new Set<string>() };
+  private buildSpawnExecutionFlowDeps(spawnState: {
+    reservationHeld: boolean;
+    reservedExecution: boolean;
+  }): SpawnExecutionFlowDeps {
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
       getNodeExecution: (executionId) => this.config.nodeExecutionRepo.getById(executionId),
@@ -764,6 +769,7 @@ export class TaskAgentManager {
         return { sessionId: agentSessionId, alive: false };
       },
       reserveExecution: (executionId) => {
+        spawnState.reservedExecution = true;
         this.spawningExecutionIds.add(executionId);
       },
       releaseExecution: (executionId) => {
@@ -783,12 +789,6 @@ export class TaskAgentManager {
         this.config.taskRepo.releaseSpawnReservation(taskId);
       },
       cancelSpawnedSession: (sessionId) => {
-        if (spawnState.reusedSessionIds.has(sessionId)) {
-          log.info(
-            `TaskAgentManager: spawn compensation skipped cancel for reused session ${sessionId} — it remains owned by its prior node`
-          );
-          return;
-        }
         this.cancelBySessionId(sessionId);
       },
       rebindLiveExecution: (execution, sessionId) => {
@@ -897,10 +897,7 @@ export class TaskAgentManager {
             agentName: request.execution.agentName,
             nodeId: request.execution.workflowNodeId,
             deferFreshExecutionBind: true,
-            executionBindObservedStatus: request.execution.status,
-            onSessionReused: (sessionId) => {
-              spawnState.reusedSessionIds.add(sessionId);
-            },
+            freshSessionOnly: true,
           }
         );
 
@@ -912,9 +909,7 @@ export class TaskAgentManager {
       },
       bindExecutionToSession: (execution, sessionId) => {
         const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
-          ? execution.status === 'in_progress'
-            ? (['in_progress'] as const)
-            : ([execution.status, 'in_progress'] as const)
+          ? ([execution.status] as const)
           : ([] as const);
         const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
           execution.id,
@@ -924,7 +919,8 @@ export class TaskAgentManager {
             agentSessionId: sessionId,
             startedAt: Date.now(),
             completedAt: null,
-          }
+          },
+          { expectAgentSessionId: execution.agentSessionId ?? null }
         );
         if (outcome === 'won') {
           this.settleConcurrentSpawnWaiters(execution.id, {
@@ -1048,7 +1044,7 @@ export class TaskAgentManager {
           .listByWorkflowRun(parentTask.workflowRunId)
           .filter((e) => e.agentName === memberInfo.agentName && e.agentSessionId)
           .at(-1);
-        if (prevExec?.agentSessionId) {
+        if (prevExec?.agentSessionId && !memberInfo.freshSessionOnly) {
           const existing =
             this.agentSessionIndex.get(prevExec.agentSessionId) ??
             (await this.rehydrateSubSession(prevExec.agentSessionId));
@@ -1057,8 +1053,6 @@ export class TaskAgentManager {
             log.info(
               `TaskAgentManager: reusing session ${existingSessionId} for agent "${memberInfo.agentName}" (task ${taskId}); skipping new session ${sessionId}`
             );
-
-            memberInfo.onSessionReused?.(existingSessionId);
 
             if (memberInfo.nodeId) {
               const nodeExecs = this.config.nodeExecutionRepo.listByNode(
@@ -1072,9 +1066,8 @@ export class TaskAgentManager {
                     e.agentName === memberInfo.agentName && e.agentSessionId === existingSessionId
                 );
               if (match) {
-                const observed = memberInfo.executionBindObservedStatus ?? match.status;
-                const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(observed)
-                  ? ([observed] as const)
+                const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(match.status)
+                  ? ([match.status] as const)
                   : ([] as const);
                 const outcome = this.config.nodeExecutionRepo.casExecutionStatus(
                   match.id,
@@ -1177,16 +1170,18 @@ export class TaskAgentManager {
               await this.mcpSelfHeal(target, missing);
             };
 
-            const runId = parentTask.workflowRunId;
-            void this.flushPendingMessagesForTarget(
-              runId,
-              memberInfo.agentName,
-              existingSessionId
-            ).catch((err) => {
-              log.warn(
-                `TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${existingSessionId}): ${err instanceof Error ? err.message : String(err)}`
-              );
-            });
+            if (!memberInfo.deferFreshExecutionBind) {
+              const runId = parentTask.workflowRunId;
+              void this.flushPendingMessagesForTarget(
+                runId,
+                memberInfo.agentName,
+                existingSessionId
+              ).catch((err) => {
+                log.warn(
+                  `TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${existingSessionId}): ${err instanceof Error ? err.message : String(err)}`
+                );
+              });
+            }
 
             return existingSessionId;
           }

@@ -491,6 +491,44 @@ describe('NodeExecutionRepository', () => {
       expect(after.agentSessionId).toBe('session-old');
       expect(after.startedAt).toBeNull();
     });
+
+    it('guards on the expected agent session binding, NULL-safe (PR #2770 review)', () => {
+      const exec = createExecution();
+
+      expect(
+        repo.casExecutionStatus(
+          exec.id,
+          'pending',
+          'in_progress',
+          { agentSessionId: 'a' },
+          { expectAgentSessionId: null }
+        )
+      ).toBe('won');
+      expect(repo.getById(exec.id)!.agentSessionId).toBe('a');
+
+      repo.updateStatus(exec.id, 'pending');
+      expect(
+        repo.casExecutionStatus(
+          exec.id,
+          'pending',
+          'in_progress',
+          { agentSessionId: 'b' },
+          { expectAgentSessionId: 'other-session' }
+        )
+      ).toBe('superseded');
+      expect(repo.getById(exec.id)!.agentSessionId).toBe('a');
+
+      expect(
+        repo.casExecutionStatus(
+          exec.id,
+          'pending',
+          'in_progress',
+          { agentSessionId: 'c' },
+          { expectAgentSessionId: 'a' }
+        )
+      ).toBe('won');
+      expect(repo.getById(exec.id)!.agentSessionId).toBe('c');
+    });
   });
 
   describe('updateSessionId', () => {

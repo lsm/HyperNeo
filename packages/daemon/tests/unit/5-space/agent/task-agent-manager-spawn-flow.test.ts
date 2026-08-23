@@ -438,18 +438,49 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     expect(h.reservationReleases).toEqual([TASK_ID]);
   });
 
-  test('a reused session is never cancelled by spawn compensation — it stays owned by its prior node (PR #2770 review)', async () => {
-    const h = makeSpawnFlowHarness({
-      kickoff: false,
-      bindCasOutcome: 'superseded',
-      sessionReused: true,
-    });
-    const spawnPromise = h.spawn();
+  test('the staged flow never transfers a reused session — it always spawns fresh (PR #2770 final-round descope)', async () => {
+    const seenMemberInfo: Array<Record<string, unknown>> = [];
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    const tam = h.tam as unknown as {
+      createSubSession: (...args: unknown[]) => Promise<string>;
+    };
+    const original = tam.createSubSession.bind(tam);
+    tam.createSubSession = async (...args: unknown[]) => {
+      seenMemberInfo.push(args[3] as Record<string, unknown>);
+      return original(...args);
+    };
 
-    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
-    expect(h.cancels).toEqual([]);
-    expect(h.spawningIds().has('exec-1')).toBe(false);
-    expect(h.reservationReleases).toEqual([TASK_ID]);
+    await h.spawn();
+
+    expect(seenMemberInfo).toHaveLength(1);
+    expect(seenMemberInfo[0]?.freshSessionOnly).toBe(true);
+    expect(seenMemberInfo[0]?.deferFreshExecutionBind).toBe(true);
+  });
+
+  test('a task-reservation loser does not fail the winning spawn waiters (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false, taskStatus: 'stopped' });
+    h.spawningIds().add('exec-1');
+    const waitPromise = (
+      h.tam as unknown as {
+        waitForConcurrentSpawnSession: (execution: NodeExecution) => Promise<string>;
+      }
+    ).waitForConcurrentSpawnSession(makeExecution());
+    const settled = waitPromise.then(
+      () => 'settled',
+      (err: unknown) => `rejected:${err instanceof Error ? err.message : String(err)}`
+    );
+    h.spawningIds().delete('exec-1');
+
+    const loser = h.spawn();
+
+    await expect(loser).rejects.toThrow('superseded at stage reserve-task-spawn');
+    expect(
+      (h.tam as unknown as { concurrentSpawnWaiters: Map<string, unknown[]> })
+        .concurrentSpawnWaiters.size
+    ).toBe(1);
+    expect(
+      await Promise.race([settled, new Promise((r) => setTimeout(() => r('pending'), 50))])
+    ).toBe('pending');
   });
 
   test('an admission failure before session creation cancels nothing and reserves nothing', async () => {

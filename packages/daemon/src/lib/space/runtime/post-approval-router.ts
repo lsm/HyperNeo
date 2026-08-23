@@ -244,9 +244,10 @@ export class PostApprovalRouter {
       }));
     } catch (err) {
       if (isSpawnSupersededError(err)) {
-        const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; retrying on a later tick`;
+        const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
         clearPendingCompletionState(this.deps.taskRepo, task.id);
+        this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
         return { mode: 'skipped', reason };
       }
       throw err;

@@ -187,6 +187,7 @@ describe('PostApprovalRouter.route', () => {
       expect(result.reason).toContain('superseded');
     }
     expect(taskRepo.getTask(task.id)?.status).toBe('approved');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('superseded');
   });
 
   test('targetAgent pointing at node agent → spawn sub-session + stamp', async () => {
