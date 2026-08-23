@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
@@ -11,12 +14,14 @@ import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-option
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import {
   AcpQueryRunner,
   convertMcpServersForAcp,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
@@ -51,6 +56,42 @@ function createMockClient() {
     close: mock(() => {}),
     cancel: mock(() => {}),
   };
+}
+
+async function safeFsBackendAvailable(): Promise<boolean> {
+  try {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-probe-'));
+    try {
+      await writeFile(join(root, 'probe.txt'), 'x');
+      await readFileWithinWorkspace(root, ['probe.txt'], { maxBytes: 8 });
+      return true;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  } catch {
+    return false;
+  }
+}
+
+function createHeldPromptClient() {
+  let markPromptStarted: (() => void) | undefined;
+  let releasePrompt: (() => void) | undefined;
+  const promptStarted = new Promise<void>((resolve) => {
+    markPromptStarted = resolve;
+  });
+  const client = createMockClient();
+  client.sendPrompt = mock(async function* (
+    _prompt: unknown,
+    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+  ) {
+    callbacks?.onSubmitted?.();
+    callbacks?.onAccepted?.();
+    markPromptStarted?.();
+    await new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+  });
+  return { client, promptStarted, releasePrompt: () => releasePrompt?.() };
 }
 
 function makeUserMessage(content: string | MessageContent[]): SDKUserMessage {
@@ -792,13 +833,8 @@ describe('AcpQueryRunner', () => {
     expect(constructorOptions[0].args).toEqual(['--stdio']);
   });
 
-  test('maps ACP permission requests through AskUserQuestion approval callback', async () => {
-    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({
-      canUseTool: async (_toolName, _input, _options) => ({
-        behavior: 'allow',
-        updatedInput: { answers: { 'Allow Edit file?': 'Allow once' } },
-      }),
-    });
+  test('auto-allows ACP permission requests without prompting the user', async () => {
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
 
     await runner.start();
     await ctx.queryPromise;
@@ -816,19 +852,231 @@ describe('AcpQueryRunner', () => {
       ],
     });
 
-    expect(canUseTool).toHaveBeenCalledWith(
-      'AskUserQuestion',
-      expect.objectContaining({
-        questions: [
-          expect.objectContaining({
-            question: 'Allow Edit file?',
-            header: 'ACP approval',
-          }),
-        ],
-      }),
-      expect.objectContaining({ toolUseID: 'tool-1' })
-    );
     expect(result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
+    expect(canUseTool).not.toHaveBeenCalled();
+  });
+
+  test('rejects filesystem callbacks that escape the workspace', async () => {
+    if (!(await safeFsBackendAvailable())) return;
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-escape-'));
+    const workspace = join(root, 'workspace');
+    const outside = join(root, 'outside.txt');
+    await mkdir(workspace);
+    await writeFile(outside, 'secret');
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      session: { workspacePath: workspace },
+      queryOptions: { cwd: workspace, mcpServers: {} },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: outside,
+        })
+      ).rejects.toThrow('escapes workspace');
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: '../outside.txt',
+        })
+      ).rejects.toThrow('escapes workspace');
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: workspace,
+        })
+      ).rejects.toThrow('must identify a file');
+      await expect(
+        constructorOptions[0].onFsWrite?.({
+          sessionId: 'acp-session-1',
+          path: '../escaped.txt',
+          content: 'blocked',
+        })
+      ).rejects.toThrow('escapes workspace');
+      expect(await readFile(outside, 'utf-8')).toBe('secret');
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 10000);
+
+  test('confines filesystem callbacks to the workspace and honors read ranges', async () => {
+    if (!(await safeFsBackendAvailable())) return;
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-fs-'));
+    const workspace = join(root, 'workspace');
+    await mkdir(workspace);
+    await writeFile(join(workspace, 'inside.txt'), 'one\ntwo\nthree\nfour');
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      session: { workspacePath: workspace },
+      queryOptions: { cwd: workspace, mcpServers: {} },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: join(workspace, 'inside.txt'),
+          line: 2,
+          limit: 2,
+        })
+      ).resolves.toEqual({ content: 'two\nthree\n' });
+      await expect(
+        constructorOptions[0].onFsRead?.({
+          sessionId: 'acp-session-1',
+          path: join(await realpath(workspace), 'inside.txt'),
+        })
+      ).resolves.toEqual({ content: 'one\ntwo\nthree\nfour' });
+      await constructorOptions[0].onFsWrite?.({
+        sessionId: 'acp-session-1',
+        path: join(workspace, 'nested', 'written.txt'),
+        content: 'written',
+      });
+      expect(await readFile(join(workspace, 'nested', 'written.txt'), 'utf-8')).toBe('written');
+      await constructorOptions[0].onFsWrite?.({
+        sessionId: 'acp-session-1',
+        path: '..hidden/written.txt',
+        content: 'hidden',
+      });
+      expect(await readFile(join(workspace, '..hidden', 'written.txt'), 'utf-8')).toBe('hidden');
+      releasePrompt();
+      await ctx.queryPromise;
+    } finally {
+      releasePrompt();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 10000);
+
+  test('starts workspace-less ACP sessions without host filesystem or terminal callbacks', async () => {
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      session: { workspacePath: undefined },
+      queryOptions: { mcpServers: {} },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(constructorOptions).toHaveLength(1);
+    expect(constructorOptions[0]).toMatchObject({ cwd: process.cwd() });
+    expect(constructorOptions[0].onFsRead).toBeUndefined();
+    expect(constructorOptions[0].onFsWrite).toBeUndefined();
+    expect(constructorOptions[0].onTerminalCreate).toBeUndefined();
+    expect(constructorOptions[0].onTerminalOutput).toBeUndefined();
+    expect(constructorOptions[0].onTerminalWaitForExit).toBeUndefined();
+    expect(constructorOptions[0].onTerminalKill).toBeUndefined();
+    expect(constructorOptions[0].onTerminalRelease).toBeUndefined();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  });
+
+  test('uses an allowlisted environment for ACP terminal commands', async () => {
+    const previousGithubToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = 'github-secret';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      client,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        env: { HTTPS_PROXY: 'http://session-proxy.example:8080' },
+      },
+    });
+
+    try {
+      await runner.start();
+      await promptStarted;
+      const created = await constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: ['-e', 'console.log(JSON.stringify(process.env))'],
+      });
+      if (!created) throw new Error('ACP terminal was not created');
+      await constructorOptions[0].onTerminalWaitForExit?.({
+        sessionId: 'acp-session-1',
+        terminalId: created.terminalId,
+      });
+      let terminalEnv: Record<string, string> | undefined;
+      const outputDeadline = Date.now() + 5000;
+      while (terminalEnv === undefined) {
+        const output = await constructorOptions[0].onTerminalOutput?.({
+          sessionId: 'acp-session-1',
+          terminalId: created.terminalId,
+        });
+        const text = output?.output.trim() ?? '';
+        if (text) {
+          terminalEnv = JSON.parse(text) as Record<string, string>;
+        } else {
+          if (Date.now() > outputDeadline) throw new Error('ACP terminal produced no output');
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+
+      expect(terminalEnv.PATH).toBe(process.env.PATH);
+      expect(terminalEnv.HTTPS_PROXY).toBe('http://session-proxy.example:8080');
+      expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
+      expect(terminalEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    } finally {
+      releasePrompt();
+      await ctx.queryPromise;
+      if (previousGithubToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previousGithubToken;
+    }
+  }, 20000);
+
+  test('rejects terminal cwd and environment overrides', async () => {
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: 'git',
+        args: ['status'],
+        cwd: '/tmp',
+      })
+    ).rejects.toThrow('ACP terminal cwd and environment overrides are not supported');
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: 'git',
+        args: ['status'],
+        env: [{ name: 'PATH', value: '/tmp/bin' }],
+      })
+    ).rejects.toThrow('ACP terminal cwd and environment overrides are not supported');
+    expect(canUseTool).not.toHaveBeenCalled();
+  });
+
+  test('does not create terminals after the query has aborted', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptStarted;
+    ctx.queryAbortController?.abort();
+
+    await expect(
+      constructorOptions[0].onTerminalCreate?.({
+        sessionId: 'acp-session-1',
+        command: process.execPath,
+        args: ['-e', 'process.exit(0)'],
+      })
+    ).rejects.toThrow('ACP terminal command cancelled');
+    releasePrompt();
+    await ctx.queryPromise;
   });
 
   test('persists new ACP session ids', async () => {
@@ -841,7 +1089,128 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('acp-session-1');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'acp-session-1',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+      }),
     });
+  });
+
+  test('creates a new ACP session when the persisted command identity changes', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('other-acp --stdio'),
+          acpInstructionsSent: true,
+          acpContextUsageEstimate: 12000,
+        },
+      } as Partial<Session>,
+      queryOptions: {
+        cwd: '/tmp/acp-session',
+        mcpServers: {},
+        systemPrompt: { type: 'preset', preset: 'none', append: 'Follow current rules.' },
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).not.toHaveBeenCalled();
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    expect(client.createSession).toHaveBeenCalledWith('/tmp/acp-session', []);
+    expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+      acpSessionId: 'acp-session-1',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        acpContextUsageEstimate: undefined,
+      }),
+    });
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
+    }
+    expect(ctx.session.metadata.acpInstructionsSent).toBe(true);
+    expect(client.sendPrompt.mock.calls[0][0]).toEqual([
+      {
+        type: 'text',
+        text: 'HyperNeo session instructions:\n\nFollow current rules.',
+      },
+      { type: 'text', text: 'hello' },
+    ]);
+  });
+
+  test('preserves an existing session whose command identity matches', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    client.loadSession.mockImplementation(async (sessionId: string) => ({
+      sessionId,
+      configOptions: [],
+    }));
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          messageCount: 2,
+          acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(client.loadSession).toHaveBeenCalledWith(
+      'persisted-acp-session',
+      '/tmp/acp-session',
+      []
+    );
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('keeps the old ACP session id when the replacement command fails to start', async () => {
+    const client = createMockClient();
+    client.initialize.mockImplementation(async () => {
+      throw new Error('replacement agent unavailable');
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('other-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
+      expect(call[1]).not.toHaveProperty('metadata');
+    }
+    expect(ctx.session.acpSessionId).toBe(undefined);
+    expect(ctx.session.metadata.acpCommandIdentity).toBe(
+      getAcpCommandIdentityDigest('mock-acp --stdio')
+    );
+  });
+
+  test('persists only a digest of the ACP command identity', async () => {
+    process.env.HYPERNEO_ACP_COMMAND = 'devin acp --token topsecret';
+    const { runner, ctx } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const identity = ctx.session.metadata.acpCommandIdentity as string;
+    expect(identity).toBe(getAcpCommandIdentityDigest('devin acp --token topsecret'));
+    expect(identity).not.toContain('topsecret');
   });
 
   test('loads an existing ACP session instead of creating a new one', async () => {
@@ -912,6 +1281,9 @@ describe('AcpQueryRunner', () => {
     expect(ctx.session.acpSessionId).toBe('resumed-acp-session');
     expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
       acpSessionId: 'resumed-acp-session',
+      metadata: expect.objectContaining({
+        acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+      }),
     });
   });
 
@@ -1374,6 +1746,285 @@ describe('AcpQueryRunner', () => {
     await ctx.queryPromise;
 
     expect(client.sendPrompt).toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('closes the ACP client when the query becomes stale during startup', async () => {
+    const client = createMockClient();
+    let releaseInitialize: (() => void) | undefined;
+    let markInitializeStarted: (() => void) | undefined;
+    const initializeStarted = new Promise<void>((resolve) => {
+      markInitializeStarted = resolve;
+    });
+    const initializeGate = new Promise<void>((resolve) => {
+      releaseInitialize = resolve;
+    });
+    client.initialize.mockImplementation(async () => {
+      markInitializeStarted?.();
+      await initializeGate;
+      return { protocolVersion: 1, agentCapabilities: {}, agentInfo: {} };
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await initializeStarted;
+    ctx.incrementQueryGeneration();
+    releaseInitialize?.();
+    await ctx.queryPromise;
+
+    expect(client.sendPrompt).not.toHaveBeenCalled();
+    expect(client.close).toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  });
+
+  test('delivers an interrupted tool call with its synthesized result', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: { sessionUpdate: 'plan', entries: [] },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-late',
+          title: 'Late tool',
+          rawInput: {},
+        },
+      };
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    const hasToolUse = onSDKMessage.mock.calls.some(
+      ([message]) =>
+        message.type === 'assistant' &&
+        (
+          (message as { message?: { content?: Array<{ type?: string }> } }).message?.content ?? []
+        ).some((block) => block?.type === 'tool_use')
+    );
+    const hasToolResult = onSDKMessage.mock.calls.some(
+      ([message]) =>
+        message.type === 'user' && (message as SDKUserMessage).parent_tool_use_id === 'tc-late'
+    );
+    expect(hasToolUse).toBe(true);
+    expect(hasToolResult).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('aborts stale ACP startup after cleanup begins', async () => {
+    let markBuildStarted: () => void;
+    const buildStarted = new Promise<void>((resolve) => {
+      markBuildStarted = resolve;
+    });
+    let releaseBuild: () => void;
+    const buildGate = new Promise<void>((resolve) => {
+      releaseBuild = resolve;
+    });
+    const { runner, ctx, constructorOptions } = createRunnerFixture({
+      queryOptions: { cwd: '/tmp/acp-session', mcpServers: {} },
+    });
+    ctx.optionsBuilder.build = mock(async () => {
+      markBuildStarted();
+      await buildGate;
+      return { cwd: '/tmp/acp-session', mcpServers: {} };
+    });
+
+    await runner.start();
+    await buildStarted;
+    ctx.isCleaningUp = () => true;
+    releaseBuild!();
+    await ctx.queryPromise;
+
+    expect(constructorOptions).toHaveLength(0);
+    expect(ctx.queryAbortController).toBeNull();
+  });
+
+  test('delivers pending ACP tool results when abort drops the iterator output', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    expect(
+      onSDKMessage.mock.calls.some(
+        ([message]) =>
+          message.type === 'user' &&
+          (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+      )
+    ).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('does not duplicate tool results completed during abort', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-interrupted',
+          status: 'completed',
+        },
+      };
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    const toolResults = onSDKMessage.mock.calls.filter(
+      ([message]) =>
+        message.type === 'user' &&
+        (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+    );
+    expect(toolResults.length).toBe(1);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+
+  test('settles the query when the agent stops responding after abort', async () => {
+    const client = createMockClient();
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      promptBlockedResolve?.();
+      await new Promise<void>(() => {});
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    await ctx.queryPromise;
+
+    expect(
+      onSDKMessage.mock.calls.some(
+        ([message]) =>
+          message.type === 'user' &&
+          (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+      )
+    ).toBe(true);
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 5000);
+
+  test('stops draining a continuing producer after abort', async () => {
+    const client = createMockClient();
+    let releasePrompt: (() => void) | undefined;
+    let promptBlockedResolve: (() => void) | undefined;
+    const promptBlocked = new Promise<void>((resolve) => {
+      promptBlockedResolve = resolve;
+    });
+    client.sendPrompt.mockImplementation(async function* () {
+      yield {
+        sessionId: 'acp-session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-interrupted',
+          title: 'Long tool',
+          rawInput: {},
+        },
+      };
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+        promptBlockedResolve?.();
+      });
+      while (true) {
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'plan', entries: [] },
+        };
+      }
+    });
+    const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptBlocked;
+    ctx.queryAbortController?.abort();
+    releasePrompt?.();
+    await ctx.queryPromise;
+
+    expect(
+      onSDKMessage.mock.calls.some(
+        ([message]) =>
+          message.type === 'user' &&
+          (message as SDKUserMessage).parent_tool_use_id === 'tc-interrupted'
+      )
+    ).toBe(true);
+    expect(
+      onSDKMessage.mock.calls.filter(([message]) => message.type === 'assistant').length
+    ).toBeLessThanOrEqual(2);
+    expect(onSDKMessage.mock.calls.length).toBeLessThanOrEqual(10);
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
 });

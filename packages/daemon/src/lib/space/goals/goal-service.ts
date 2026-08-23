@@ -74,6 +74,10 @@ export interface SpaceGoalServiceDeps {
     import('../evolution-scope-service').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
+  reactiveDb?: Pick<
+    import('../../../storage/reactive-database').ReactiveDatabase,
+    'beginTransaction' | 'commitTransaction' | 'abortTransaction'
+  >;
 }
 
 export class SpaceGoalService {
@@ -241,6 +245,23 @@ export class SpaceGoalService {
     return this.createImmediateTaskInternal(goalId, context);
   }
 
+  retryQueuedRunsForSpace(spaceId: string): number {
+    const goals = this.deps.goalRepo.list({ spaceId, status: 'active' });
+    let created = 0;
+    for (const goal of goals) {
+      if (!goal.autoTriggerNext || !goal.pendingNextRun || goal.activeTaskId) continue;
+      try {
+        this.createImmediateTask(goal.id, { source: 'system' });
+        created += 1;
+      } catch (err) {
+        log.warn(
+          `Retry queued run threw for goal "${goal.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    return created;
+  }
+
   private createImmediateTaskInternal(
     goalId: string,
     context?: SpaceGoalMutationContext,
@@ -305,7 +326,11 @@ export class SpaceGoalService {
 
   handleTaskTerminal(
     taskId: string,
-    transition?: { fromStatus?: SpaceTaskStatus | null; updates?: InternalUpdateSpaceTaskParams }
+    transition?: {
+      fromStatus?: SpaceTaskStatus | null;
+      updates?: InternalUpdateSpaceTaskParams;
+      deferPostCommitEffects?: boolean;
+    }
   ): {
     goal: SpaceGoal;
     nextTask: SpaceTask | null;
@@ -366,17 +391,27 @@ export class SpaceGoalService {
             `Forge evidence capture threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
-        this.deps.goalAutomationService?.onTaskCompleted(taskId);
+        try {
+          this.deps.goalAutomationService?.onTaskCompleted(taskId);
+        } catch (err) {
+          log.warn(
+            `Goal automation onTaskCompleted threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       let nextTask: SpaceTask | null = null;
       let postBookkeeping: SpaceGoal = fresh;
       if (fresh.autoTriggerNext && fresh.pendingNextRun && fresh.status === 'active') {
         try {
-          const created = this.createImmediateTaskInternal(
-            fresh.id,
-            { source: 'system' },
-            { emitTaskCreated: false }
-          );
+          const createInSavepoint = () =>
+            this.createImmediateTaskInternal(
+              fresh.id,
+              { source: 'system' },
+              { emitTaskCreated: false }
+            );
+          const created = this.deps.db
+            ? this.deps.db.transaction(createInSavepoint)()
+            : createInSavepoint();
           postBookkeeping = created.goal;
           nextTask = created.task;
         } catch (err) {
@@ -395,8 +430,23 @@ export class SpaceGoalService {
       );
       return { goal: postBookkeeping, nextTask, terminalGeneration, notification };
     });
-    if (result.nextTask) this.emitTaskCreated(result.nextTask);
-    if (result.notification) this.deps.onOutcomeNotification?.(result.notification);
+    const deliverPostCommit = (): void => {
+      if (result.nextTask) this.emitTaskCreated(result.nextTask);
+      if (result.notification) {
+        try {
+          this.deps.onOutcomeNotification?.(result.notification);
+        } catch (err) {
+          log.warn(
+            `Outcome notification delivery threw for task "${taskId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    };
+    if (transition?.deferPostCommitEffects) {
+      setImmediate(deliverPostCommit);
+    } else {
+      deliverPostCommit();
+    }
     return result;
   }
 
@@ -432,7 +482,11 @@ export class SpaceGoalService {
       terminalGeneration,
       goalRevision: goal.revision,
       payload: {
-        summary: (task.reportedSummary ?? task.result ?? '').slice(0, 400),
+        summary: (
+          [task.reportedSummary, task.result].find(
+            (s) => typeof s === 'string' && s.trim().length > 0
+          ) ?? ''
+        ).slice(0, 400),
         taskStatus: task.status,
         taskTitle: task.title.slice(0, 200),
         goalTitle: goal.title.slice(0, 200),
@@ -513,7 +567,16 @@ export class SpaceGoalService {
 
   private runAtomic<T>(fn: () => T): T {
     if (!this.deps.db) return fn();
-    return this.deps.db.transaction(fn)();
+    const reactive = this.deps.reactiveDb;
+    reactive?.beginTransaction();
+    try {
+      const result = this.deps.db.transaction(fn)();
+      reactive?.commitTransaction();
+      return result;
+    } catch (err) {
+      reactive?.abortTransaction();
+      throw err;
+    }
   }
 
   private pauseLinkedScheduleOrClear(goal: SpaceGoal): void {

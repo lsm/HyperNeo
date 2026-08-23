@@ -137,6 +137,7 @@ import {
   formatMissingAgentReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
+  isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
 } from './workflow-node-execution-validation';
@@ -216,7 +217,7 @@ export interface SpaceRuntimeConfig {
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
   goalService?: Pick<
     import('../goals/goal-service').SpaceGoalService,
-    'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask'
+    'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
@@ -3575,7 +3576,30 @@ export class SpaceRuntime {
     if (previous && params.status !== undefined && params.status !== previous.status) {
       assertValidSpaceTaskTransition(previous.status, params.status);
     }
-    let updated = this.config.taskRepo.updateTask(taskId, params);
+    const isTerminal = (status: SpaceTaskStatus): boolean =>
+      status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived';
+    const reopensFromTerminal =
+      previous &&
+      params.status !== undefined &&
+      isTerminal(previous.status) &&
+      !isTerminal(params.status);
+    let updated: SpaceTask | null;
+    if (reopensFromTerminal) {
+      this.config.reactiveDb?.beginTransaction();
+      try {
+        updated = this.config.db.transaction(() => {
+          const result = this.config.taskRepo.updateTask(taskId, params);
+          this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
+          return result;
+        })();
+        this.config.reactiveDb?.commitTransaction();
+      } catch (err) {
+        this.config.reactiveDb?.abortTransaction();
+        throw err;
+      }
+    } else {
+      updated = this.config.taskRepo.updateTask(taskId, params);
+    }
     if (updated) {
       let emitUpdated = true;
 
@@ -3944,6 +3968,7 @@ export class SpaceRuntime {
 
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
+        this.config.taskRepo.clearAllSpawnReservations();
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
         this.rehydrated = true;
@@ -4162,6 +4187,7 @@ export class SpaceRuntime {
         postApprovalSourceNodeId: null,
         reportedStatus: null,
         reportedSummary: null,
+        ...(targetStatus === 'open' ? { startedAt: null } : {}),
         ...(options.description !== undefined ? { description: options.description } : {}),
       });
       if (!updatedTask) throw new Error(`Failed to update task: ${task.id}`);
@@ -4265,10 +4291,19 @@ export class SpaceRuntime {
         }
       }
 
+      this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
       return { task: updatedTask, run: updatedRun };
     });
 
-    const recovered = recoverTx();
+    this.config.reactiveDb?.beginTransaction();
+    let recovered: { task: SpaceTask; run: SpaceWorkflowRun };
+    try {
+      recovered = recoverTx();
+      this.config.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.config.reactiveDb?.abortTransaction();
+      throw err;
+    }
     await this.ensureExecutorRegistered(recovered.run);
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
@@ -4533,6 +4568,13 @@ export class SpaceRuntime {
   onSpaceResumed(spaceId: string): void {
     const store = this.config.externalEventStore;
     this.pausedSpaceIds.delete(spaceId);
+    try {
+      this.config.goalService?.retryQueuedRunsForSpace(spaceId);
+    } catch (err) {
+      log.warn(
+        `Goal queued-run retry threw for space ${spaceId} on resume: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     if (!store) return;
 
     const reactiveRuns = this.config.workflowRunRepo
@@ -6461,6 +6503,12 @@ export class SpaceRuntime {
             });
           }
         } catch (err) {
+          if (isSpawnSupersededError(err)) {
+            log.info(
+              `SpaceRuntime: spawn for execution ${execution.id} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this tick`
+            );
+            continue;
+          }
           if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
             permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
             continue;
@@ -6519,13 +6567,19 @@ export class SpaceRuntime {
         return;
       }
       if (canonicalTask.status === 'open') {
-        const nowTs = Date.now();
-        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-          status: 'in_progress',
-          startedAt: canonicalTask.startedAt ?? nowTs,
-          completedAt: null,
-          pendingCheckpointType: null,
-        });
+        const outcome = this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress');
+        if (outcome === 'won') {
+          const nowTs = Date.now();
+          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+            startedAt: canonicalTask.startedAt ?? nowTs,
+            completedAt: null,
+            pendingCheckpointType: null,
+          });
+        } else {
+          log.info(
+            `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently during the spawn pass`
+          );
+        }
       }
     }
 
@@ -6810,6 +6864,12 @@ export class SpaceRuntime {
             }
           }
         } catch (err) {
+          if (isSpawnSupersededError(err)) {
+            log.info(
+              `SpaceRuntime: queued handoff spawn for target ${targetAgentName} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this pass`
+            );
+            continue;
+          }
           const errMsg = err instanceof Error ? err.message : String(err);
           if (isPermanentSpawnError(err)) {
             log.warn(
@@ -8310,7 +8370,12 @@ export class SpaceRuntime {
         spaceId,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       );
       this.taskManagers.set(spaceId, manager);
     }

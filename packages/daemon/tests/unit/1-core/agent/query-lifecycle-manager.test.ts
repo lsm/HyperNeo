@@ -168,6 +168,132 @@ describe('QueryLifecycleManager', () => {
       expect(stopSpy).toHaveBeenCalled();
     });
 
+    test('aborts the active query before waiting for it to stop', async () => {
+      const abortController = new AbortController();
+      let observedAbort = false;
+      mockContext.queryAbortController = abortController;
+      mockContext.queryPromise = new Promise((resolve) => {
+        abortController.signal.addEventListener('abort', () => {
+          observedAbort = true;
+          resolve();
+        });
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(observedAbort).toBe(true);
+      expect(abortController.signal.aborted).toBe(true);
+    });
+
+    test('aborts only the query controller captured when stop begins', async () => {
+      const entryController = new AbortController();
+      const newerController = new AbortController();
+      mockContext.queryAbortController = entryController;
+      const originalStop = messageQueue.stop.bind(messageQueue);
+      const stopSpy = spyOn(messageQueue, 'stop');
+      stopSpy.mockImplementation(() => {
+        mockContext.queryAbortController = newerController;
+        mockContext.queryPromise = Promise.resolve();
+        originalStop();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(entryController.signal.aborted).toBe(true);
+      expect(newerController.signal.aborted).toBe(false);
+    });
+
+    test('preserves replacement query references installed during stop', async () => {
+      const entryController = new AbortController();
+      const newerController = new AbortController();
+      const newerQueryObject = { interrupt: mock(async () => {}) };
+      const newerPromise = Promise.resolve();
+      mockContext.queryAbortController = entryController;
+      mockContext.queryPromise = new Promise(() => {});
+      const originalStop = messageQueue.stop.bind(messageQueue);
+      spyOn(messageQueue, 'stop').mockImplementation(() => {
+        mockContext.queryAbortController = newerController;
+        mockContext.queryObject = newerQueryObject as never;
+        mockContext.queryPromise = newerPromise;
+        originalStop();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop({ timeoutMs: 50 });
+
+      expect(newerController.signal.aborted).toBe(false);
+      expect(mockContext.queryAbortController).toBe(newerController);
+      expect(mockContext.queryObject).toBe(newerQueryObject);
+      expect(mockContext.queryPromise).toBe(newerPromise);
+    });
+
+    test('preserves a replacement startup timer installed during stop', async () => {
+      const entryTimer = setTimeout(() => {}, 10_000);
+      const newerTimer = setTimeout(() => {}, 10_000);
+      mockContext.startupTimeoutTimer = entryTimer;
+      const originalStop = messageQueue.stop.bind(messageQueue);
+      spyOn(messageQueue, 'stop').mockImplementation(() => {
+        mockContext.startupTimeoutTimer = newerTimer;
+        mockContext.queryPromise = Promise.resolve();
+        originalStop();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(mockContext.startupTimeoutTimer).toBe(newerTimer);
+      clearTimeout(newerTimer);
+    });
+
+    test('terminates agent processes discovered during the stop window', async () => {
+      const lateProcess = { pid: 4242, kill: mock(() => {}) } as never;
+      let call = 0;
+      snapshotTrackedAgentProcessesSpy.mockImplementation(() => {
+        call++;
+        return call === 1 ? [] : ([[4242, lateProcess]] as never);
+      });
+
+      manager = new QueryLifecycleManager(mockContext);
+      await manager.stop();
+
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(2);
+      expect(terminateTrackedAgentProcessesSpy.mock.calls[1][0]).toEqual({
+        forceDelayMs: expect.any(Number),
+        processes: [[4242, lateProcess]],
+        noPidProcesses: [],
+      });
+    });
+
+    test('aborts a controller installed by the stopped query during the stop window', async () => {
+      const lateController = new AbortController();
+      mockContext.queryPromise = new Promise(() => {});
+      manager = new QueryLifecycleManager(mockContext);
+
+      const stopping = manager.stop({ timeoutMs: 50 });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      mockContext.queryAbortController = lateController;
+      await stopping;
+
+      expect(lateController.signal.aborted).toBe(true);
+      expect(mockContext.queryAbortController).toBeNull();
+    });
+
+    test('does not abort a newer query controller installed during the stop window', async () => {
+      const newerController = new AbortController();
+      mockContext.queryPromise = new Promise(() => {});
+      manager = new QueryLifecycleManager(mockContext);
+
+      const stopping = manager.stop({ timeoutMs: 50 });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      mockContext.queryAbortController = newerController;
+      mockContext.queryPromise = Promise.resolve();
+      await stopping;
+
+      expect(newerController.signal.aborted).toBe(false);
+    });
+
     test('interrupts query when transport is ready', async () => {
       let interruptCalled = false;
       mockContext.queryObject = {
@@ -595,7 +721,10 @@ describe('QueryLifecycleManager', () => {
     test('clears ACP resume state on reset when no query is running', async () => {
       mockContext.session.config.provider = 'acp';
       mockContext.session.acpSessionId = 'stale-acp-session';
-      mockContext.session.metadata = { acpInstructionsSent: true } as Session['metadata'];
+      mockContext.session.metadata = {
+        acpInstructionsSent: true,
+        acpContextUsageEstimate: 12000,
+      } as Session['metadata'];
       manager = new QueryLifecycleManager(mockContext);
 
       const result = await manager.reset();
@@ -603,11 +732,15 @@ describe('QueryLifecycleManager', () => {
       expect(result.success).toBe(true);
       expect(mockContext.session.acpSessionId).toBeUndefined();
       expect(mockContext.session.metadata.acpInstructionsSent).toBeUndefined();
+      expect(mockContext.session.metadata.acpContextUsageEstimate).toBeUndefined();
       expect(updateSessionSpy).toHaveBeenCalledWith(
         'test-session',
         expect.objectContaining({
           acpSessionId: undefined,
-          metadata: expect.objectContaining({ acpInstructionsSent: undefined }),
+          metadata: expect.objectContaining({
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          }),
         })
       );
     });
@@ -619,7 +752,10 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryPromise = Promise.resolve();
       mockContext.session.config.provider = 'acp';
       mockContext.session.acpSessionId = 'stale-acp-session';
-      mockContext.session.metadata = { acpInstructionsSent: true } as Session['metadata'];
+      mockContext.session.metadata = {
+        acpInstructionsSent: true,
+        acpContextUsageEstimate: 12000,
+      } as Session['metadata'];
       manager = new QueryLifecycleManager(mockContext);
 
       const result = await manager.reset({ restartAfter: true });
@@ -627,11 +763,15 @@ describe('QueryLifecycleManager', () => {
       expect(result.success).toBe(true);
       expect(mockContext.session.acpSessionId).toBeUndefined();
       expect(mockContext.session.metadata.acpInstructionsSent).toBeUndefined();
+      expect(mockContext.session.metadata.acpContextUsageEstimate).toBeUndefined();
       expect(updateSessionSpy).toHaveBeenCalledWith(
         'test-session',
         expect.objectContaining({
           acpSessionId: undefined,
-          metadata: expect.objectContaining({ acpInstructionsSent: undefined }),
+          metadata: expect.objectContaining({
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          }),
         })
       );
       expect(startStreamingCalled).toBe(true);

@@ -432,7 +432,7 @@ describe('NodeExecutionRepository', () => {
       expect(repo.getById(other.id)).toEqual(otherBefore);
     });
 
-    it('stamps no timestamps and emits no reactive notification', () => {
+    it('stamps updated_at and emits a reactive notification only on a win', () => {
       const calls: Array<{ table: string; scope?: unknown }> = [];
       const reactiveDb = {
         notifyChange: (table: string, scope?: unknown) => calls.push({ table, scope }),
@@ -442,13 +442,92 @@ describe('NodeExecutionRepository', () => {
         reactiveDb as unknown as Parameters<typeof NodeExecutionRepository.prototype.constructor>[1]
       );
       const exec = createExecution();
+      repo.updateStatus(exec.id, 'in_progress');
 
-      expect(reactiveRepo.casExecutionStatus(exec.id, 'pending', 'blocked')).toBe('won');
+      expect(reactiveRepo.casExecutionStatus(exec.id, 'pending', 'blocked')).toBe('superseded');
+      expect(calls).toEqual([]);
+
+      expect(reactiveRepo.casExecutionStatus(exec.id, 'in_progress', 'blocked')).toBe('won');
 
       const after = repo.getById(exec.id)!;
-      expect(after.startedAt).toBeNull();
+      expect(after.status).toBe('blocked');
+      expect(after.updatedAt).toBeGreaterThanOrEqual(after.createdAt);
+      expect(calls).toEqual([{ table: 'node_executions', scope: undefined }]);
+    });
+
+    it('applies the bind payload atomically with the winning status transition', () => {
+      const exec = createExecution();
+      const before = repo.getById(exec.id)!;
+      expect(before.startedAt).toBeNull();
+
+      const outcome = repo.casExecutionStatus(exec.id, 'pending', 'in_progress', {
+        agentSessionId: 'session-1',
+        startedAt: 1234,
+        completedAt: null,
+      });
+
+      expect(outcome).toBe('won');
+      const after = repo.getById(exec.id)!;
+      expect(after.status).toBe('in_progress');
+      expect(after.agentSessionId).toBe('session-1');
+      expect(after.startedAt).toBe(1234);
       expect(after.completedAt).toBeNull();
-      expect(calls).toEqual([]);
+    });
+
+    it('applies no payload when the CAS loses', () => {
+      const exec = createExecution();
+      repo.update(exec.id, { agentSessionId: 'session-old' });
+      repo.updateStatus(exec.id, 'cancelled');
+
+      const outcome = repo.casExecutionStatus(exec.id, 'pending', 'in_progress', {
+        agentSessionId: 'session-1',
+        startedAt: 1234,
+        completedAt: null,
+      });
+
+      expect(outcome).toBe('superseded');
+      const after = repo.getById(exec.id)!;
+      expect(after.status).toBe('cancelled');
+      expect(after.agentSessionId).toBe('session-old');
+      expect(after.startedAt).toBeNull();
+    });
+
+    it('guards on the expected agent session binding, NULL-safe (PR #2770 review)', () => {
+      const exec = createExecution();
+
+      expect(
+        repo.casExecutionStatus(
+          exec.id,
+          'pending',
+          'in_progress',
+          { agentSessionId: 'a' },
+          { expectAgentSessionId: null }
+        )
+      ).toBe('won');
+      expect(repo.getById(exec.id)!.agentSessionId).toBe('a');
+
+      repo.updateStatus(exec.id, 'pending');
+      expect(
+        repo.casExecutionStatus(
+          exec.id,
+          'pending',
+          'in_progress',
+          { agentSessionId: 'b' },
+          { expectAgentSessionId: 'other-session' }
+        )
+      ).toBe('superseded');
+      expect(repo.getById(exec.id)!.agentSessionId).toBe('a');
+
+      expect(
+        repo.casExecutionStatus(
+          exec.id,
+          'pending',
+          'in_progress',
+          { agentSessionId: 'c' },
+          { expectAgentSessionId: 'a' }
+        )
+      ).toBe('won');
+      expect(repo.getById(exec.id)!.agentSessionId).toBe('c');
     });
   });
 

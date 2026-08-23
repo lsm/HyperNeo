@@ -227,7 +227,7 @@ so the extraction does not widen these windows.
 | --- | --- | --- |
 | `message-delivery.ts` | 496 | `deliverMessage` role arbiter :97–139; `deliverBatchAndMarkQueued` :160–201; **production-dead module-level `reconcileStrandedDeliveries` :207–242**; consumption waiters :334–413; `withSessionLock` :438–466; `deliverAndMarkQueued` :468–496 |
 | `message-delivery-outbox.ts` | 82 | `persistAndEnqueueDelivery` :36–82 — user row + job in one tx, UNIQUE→steer fallback |
-| `message-queue.ts` | 358 | in-memory pending/claimed/yielded + generation fence; timeout policy :105–128 |
+| `message-queue.ts` | 358 | in-memory pending/claimed/yielded + generation fence; timeout policy `armQueueTimeout()` :118–146 (call site :105) |
 | `delivery-turn-stall-watchdog.ts` | 55 | timer owner; defers while outstanding tool / paused |
 | `message-delivery-metrics.ts` | 168 | in-memory LRU metrics singleton |
 | `job-handlers/message-delivery.handler.ts` | 189 | **outside the layer but part of the flow**: skip ladder :68–85, park budgets, promote-with-UNIQUE-fallback :175–187 |
@@ -247,7 +247,7 @@ message-ownership-gates.ts:89–101 is **wired nowhere** — `deliverMessage`
 re-implements it imperatively), the handler outcome→action mapping,
 `feedDeliverySteer`'s status ladder (agent-session.ts:1696–1721),
 `driveDeliveryTurn`'s admission cascade (agent-session.ts:1338–1497),
-MessageQueue timeout policy (:105–128), `rebuildBatchDeliveryContent`
+MessageQueue timeout policy (`armQueueTimeout()` :118–146), `rebuildBatchDeliveryContent`
 (agent-session.ts:1901–1931).
 
 ### (c) agent-session.ts facade (~2,226 ln)
@@ -816,13 +816,14 @@ note.
      `ctx.queryObject` (`:839–843`), resets the process-exit promise, and
      recurses (`:858`); lifecycle is revalidated after each retry await and
      before those shared mutations/recursion, with a
-     replacement-during-ACP-retry pin. The **adapter's unconditional
-     `finally`** (`:701–704`) — a stopped adapter exiting after the
+     replacement-during-ACP-retry pin. The **runner's post-yield
+     finalizer** (`acp-query-runner` :724–728 — `finally` :724, gated
+     `if (!accepted)` :725, call :726) — a stopped attempt exiting after the
      replacement re-enqueued the same UUID runs `markACPDeliveryFailed`,
      transitioning the *current* `enqueued`/`deferred`/`submitted` row to
      `failed` (sdk-message-repository.ts:1686–1697) even with every pre-yield
      callback rejected; the finalizer is generation/claim-fenced, with an
-     adapter-exit-after-replacement pin. And **every await inside the leased
+     attempt-exit-after-replacement pin. And **every await inside the leased
      setup window** — `ensureRequiredMcpServersForAcp()` and
      `proxyBridge.start()` block after lease acquisition, a replacement can
      bump the generation there, and a stale spawn at `:539–548` lands *after*
@@ -840,17 +841,20 @@ note.
      fields, and the detached continuation binds to the old run owner. And
      the **outer prompt generator is fenced at
      its own boundary**: a stale continuation awaiting `onModelsFetched()`
-     can still enter `messageQueue.messageGenerator` (`:603–606`), and
-     because the generator snapshots its generation only when iteration
-     begins (`message-queue.ts:272–283`) it snapshots the *replacement's*
-     generation, claims the replacement's prompt, and mutates processing
-     state (`:610–615`) — later callback fencing cannot return that prompt
+     can still enter `messageQueue.messageGenerator` (the awaited
+     workflow-MCP self-heal region, query-runner :600–608), and because the
+     generator snapshots its generation only when iteration begins
+     (`messageGenerator` at message-queue :293, literal snapshot :297) it
+     snapshots the *replacement's* generation, claims the replacement's
+     prompt, and mutates processing state (`setProcessing` at query-runner
+     :1526, inside `createMessageGeneratorWrapper` :1507, invoked :738) — later callback fencing cannot return that prompt
      from `yielded`; ownership is checked before entering and immediately
      after each yield of the outer prompt generator, stale claims are
      requeued, and the same ownership binding applies to late pulls of
      QueryRunner's `createMessageGeneratorWrapper` — **and to the pre-yield
      consumption callback**: `messageGenerator` invokes `onMessageYielded`
-     *before* yielding (message-queue.ts:316–323), and that callback marks
+     *before* yielding (declared message-queue :51, invoked :343 inside the
+     try at :337–349), and that callback marks
      the durable message consumed and publishes it through
      `handleMessageYielded`, so a stale generator blocked in
      `waitForNextMessage` performs those effects before any post-yield
@@ -1122,7 +1126,9 @@ note.
      rows can share immediate actions yet need different next flag state — e.g.
      a non-idle session-state event sets the idle expectation while a suppressed
      result clears `suppressIdleOnNextResult`) — `finishTurn` publishes
-     `query.trigger` only outside `manual` mode, sdk-message-handler.ts:943–950,
+     `query.trigger` only outside `manual` mode (the publish sits at :1251 inside
+     `finishTurn` :1234; B5f's awaited-publication revalidation owns the
+     fencing and C1a pins the behavior),
      so manual sessions with identical flags must not replay deferred messages;
      the queryMode gate may alternatively stay in the shell with the core
      contract narrowed accordingly), incl. the known fragilities as
@@ -1244,7 +1250,7 @@ note.
   `admitWithId` leaves no durable record to deduplicate or reconcile a
   replay);
   `reconcileStrandedDeliveries` stale-submitted sweep (:1977–1997); MessageQueue
-  timeout policy (:105–128) as plain transform. Includes removing the
+  timeout policy (`armQueueTimeout()` :118–146) as plain transform. Includes removing the
   production-dead module-level `reconcileStrandedDeliveries`
   (message-delivery.ts:207–242) and dead `markMessageSubmissionFailed`
   (sdk-message-handler.ts:466–478).
@@ -1312,7 +1318,7 @@ note.
   3. **PR 3 (apply ladders):** interpret at agent-session.ts:1696–1721, handler
      :31–189, message-delivery.ts:97–139 + outbox; wire the sweep at
      agent-session.ts:1977–1997 and the timeout policy at
-     message-queue.ts:105–128.
+     `armQueueTimeout()` (message-queue.ts:118–146; call site :105).
   4. **PR 4 (stagedRun):** `driveDeliveryTurn` admission as a staged
      sub-pipeline; **the turn-end race/rearm loop stays in the shell**, which
      invokes one bounded staged pass per iteration — embedding the repeated
@@ -1527,6 +1533,13 @@ refresh can publish after teardown (:794).
 
 ## Recommendation
 
+**Task-sizing update (2026-08-23, §8):** every PR below is decomposed into
+sub-PRs at a two-tier review budget — 16 tracked PRs → **57 PR-sized tasks**
+(PR 0 → 0a–0g, chains per §8). Gates moved since the survey: **#2661 merged**
+(Chain B apply PRs unblocked), **#2543 still open** (Chain A held), and the
+watchdog owner's stream is active (#2772 pins, #2779 open extraction) so B5d
+coordinates with it. §8 anchors are current dev (`c7638c276`).
+
 **Prerequisite PR 0 — provider-environment coordinator.** The daemon-wide
 credential isolation this proposal requires (§1(a)) is delivered by no chain
 PR and must not ride along implicitly: one dedicated PR implements the
@@ -1539,7 +1552,12 @@ synchronously spawns `AcpClient` at `:539–548`, but restores only in the
 finalizer (`:760–764`), so a full-lifetime lease would block every other
 session indefinitely; the ACP lease spans only through the transport's
 process-environment snapshot/spawn, then restores and releases before the
-handshake/message loop, with a concurrent-session pin. Bounded use-time leases
+handshake/message loop, with a concurrent-session pin — and the lease
+**begins before the ambient reads**: `isAvailable()` and
+`optionsBuilder.build()` run ahead of the apply and capture ambient
+credentials/routing into `queryOptions.env` that the later refresh
+preserves, so starting at the apply snapshot alone would let an overlapping
+session's window contaminate the launch. Bounded use-time leases
 apply only to direct SDK paths that do not snapshot an environment), enrolls
 every owner and reader in the inventory — both
 runners, the four ProviderService services, the Anthropic model loader, the
@@ -1581,7 +1599,9 @@ user-supplied condition expressions via `Bun.spawn(['sh','-c',…])`
 (workflow-executor.ts:32–37, :127–137) — inherit the active session's API
 keys, tokens, and routing variables during the lease window; every such spawn
 is enrolled, sanitized, or the ambient reads move to an immutable baseline so
-the mutation window can no longer span awaits.
+the mutation window can no longer span awaits — §8.1's 0f/0g split carries
+the repo-wide inventory and its mechanical application (the sweep there finds
+ten-plus sites beyond the workflow executor and github agents).
 
 Create chain B first (sequence its apply PRs after #2661 merges), chain C in
 parallel once #2661/#2543 clear, chain A as the wave-2 capstone after #2543
@@ -1590,3 +1610,177 @@ start once #2543 lands and the facade is free of another chain's in-flight
 edits). Add `output-limiter-hook.ts` to the policy-core pilot series. Hold
 model-switch/rewind/question-handler extractions until ACP 8/10 settles (#2548
 part 2 has landed as #2696).
+
+## 8. Sub-PR decomposition — two-tier review budget (2026-08-23)
+
+Task-size review pass over the 16 tracked PRs above (prerequisite PR 0 + 15
+chain PRs: B1–B6, C1–C4, A1–A5; 17 counting the `output-limiter-hook.ts`
+policy-core addition, which stays a single small task in that series).
+Question answered: is each PR the smallest unit that fits a focused review?
+Verdict: **only 4 were already at budget (B4, B6, C4, A5); the other 12
+decompose into 53 slices — 57 PR-sized tasks in all** — PR 0 → 7, B1 → 5,
+B2 → 2, B3 → 4, B5 → 12, C1 → 3, C2 → 4, C3 → 3, A1 → 4, A2 → 4, A3 → 3,
+A4 → 2, plus the 4 unsplit parents (58 tasks counting the separate
+output-limiter addition).
+
+Budget rule per sub-PR, stated as the headline rather than a footnote:
+**two-tier** — production Δ ≲100 lines (hard cap ~150 only for
+types-dominated additive cores) + prose/ADR Δ ≲150 for every slice, and
+additionally test Δ ≲350 for pins slices, whose rows are mechanical and split
+by dimension family, never by truncation. A pins PR is therefore a test-table
+unit of up to ~350 rows, not a ≤200-line diff; **this is the flagged
+assumption resolved by decision: tests are counted separately from production
+code**, and the alternative (tests inside the 200-line total) is costed in the
+next paragraph rather than left open. If tests must also fit inside the
+200-line total, the pins PRs split another 2–3× by dimension family, and any
+additive-core/enrollment slice whose prod+test estimate exceeds ~200 splits
+its full table suite into a companion pins PR that immediately follows —
+under the current table estimates that is 0a (~245), 0b (~300), 0c (~230),
+A4b (~220), B5e (~210), and B5f (~205); every other core/apply/cleanup slice already fits as-is.
+
+Sub-PR IDs are letter suffixes on the reviewed parent (B5a = first slice of
+B5), so §5's reviewed scope carries over unchanged. **Namespace task titles
+with an `agent-layer` prefix** (e.g. "agent-layer B5a"): dev commit titles now
+carry `chain A/B/C PR n/5` labels from the parallel space/session-layer
+surveys (#2766/#2767/#2771), which collide with bare letter IDs.
+
+### 8.0 Land-state delta since the survey (dev `c7638c276`)
+
+§1–§7 anchors are as-of-survey; §8 anchors are current dev:
+
+- **#2661 merged** (limit-error pipeline; #2664 added the LLM classification
+  tier) → Chain B apply PRs (B3\*) are **unblocked**. The tier introduced
+  `limit-error-llm-classifier.ts`, a new env-merging reader — enrolled in 0d.
+- **#2543 still open** → Chain A remains gated as before.
+- **#2728** (Pilot 4 PR 8) moved the delivery job handler to
+  `job-handlers/message-delivery.handler.ts` (194 ln) — Chain A's
+  `message-delivery.handler.ts` anchors in §5 refer to that file.
+- **Watchdog stream active**: #2772 pins the trip/reset decision table, #2779
+  (open) extracts the trip/reset core as pure gates → B5d's fencing lands on
+  those gates; coordinate with that owner. If #2779 lands first, B5d shrinks
+  to gate interpretation at the call site.
+- Size drift: query-runner.ts 1,645→1,692; agent-session.ts 2,226→2,388;
+  processing-state-manager.ts →387; sdk-message-handler.ts →1,474. Shifted
+  anchors used below — query-runner: runQuery :455, env copy :688, catch
+  :864, arms :969/:1013/:1069–1230, finalizer :1315–1360. ACP: preCleanupAuth
+  :459, acpEnv :530–544, spawn :551, beginTerminalIdle :938, setIdle :953.
+  PSM: releaseIdleWaiters :79, beginTerminalIdle :86, setIdle :143. SMH: ack
+  :392, handleMessageYielded :639, result/limit :886–891, trailing-idle
+  :1158–1273, finishTurn :1234, cost :1071. Agent-session: driveDeliveryTurn
+  :1434, feedDeliverySteer :1847, reconcile :2112.
+
+### 8.1 Prerequisite PR 0 → seven sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| 0a | `provider-env-coordinator.ts` additive core: lease token, acquire/release, owner/reader registry — unwired; **acquisition is reentrant or token-propagating**: a runner holding the outer setup lease calls enrolled readers (`provider.isAvailable()`), which must re-enter the coordinator without deadlock — the holder's token propagates into the enrolled read (prod ~115 exceeds the ≲100 band as a noted exception, like A4b: the lease token, registry, and reentrancy semantics are one primitive — splitting them would separate acquisition from its deadlock rule) | ~115 | ~130 |
+| 0b | QueryRunner enrollment: lease spans the complete reads-through-copy region — `isAvailable()` :486 → `optionsBuilder.build()` :543 → `applyEnvVarsToProcessForSession()` :684 → immutable copy :688–695; full lifecycle resnapshot after every awaited setup op between those anchors; **at early release the restore also neutralizes `ctx.originalEnvVars` (cleared or transferred), because the existing finalizer backstop re-runs `restoreEnvVars(ctx.originalEnvVars)` at :1344–1351 — an un-neutralized snapshot lets session A's late finalizer overwrite session B's active credentials after B acquired the lease** | ~90 | ~210 |
+| 0c | ACP enrollment: **lease begins before the ambient reads** — `isAvailable()` (:424) and `optionsBuilder.build()` (:448) run before the `:459–462` preCleanupAuth snapshot, and build() captures ambient credentials/routing into `queryOptions.env` which the `:530` refresh then preserves, so a lease starting at the snapshot can still launch ACP with another session's credentials; lease spans reads → apply → acpEnv (:530–544) → spawn (:551), restore+release before handshake, **with the same `ctx.originalEnvVars` neutralization at early release (the ACP finalizer re-restores at :783–786)**; cross-session contamination-at-build + replacement-during-lease + late-finalizer-double-restore pins | ~85 | ~145 |
+| 0d | ProviderService services: restore/release immediately after `mergeProviderEnvVars` at the five readers — session-lifecycle :1085, evolution-episode :774, evolution-conversation-analysis, llm-workflow-selector, limit-error-llm-classifier (new since survey) | ~60 | ~80 |
+| 0e | Ambient readers + Anthropic model loader enrollment (isAvailable/AuthManager/EnvManager/logout), **incl. the Anthropic Copilot provider's credential reader — its constructor retains `process.env` by live reference (:193) and token discovery reads `COPILOT_GITHUB_TOKEN`/`GH_TOKEN` through it (:467–469), so an overlapping lease selects that session's token directly; the read moves to an immutable baseline snapshot** | ~50 | ~50 |
+| 0f | Env-less spawn **inventory** as the reviewable artifact + the enroll/sanitize/immutable-baseline decision — the Recommendation names workflow-executor :33/:127 and the github agents, but a current-dev sweep finds env-inheriting launches in at least: dialog-handlers :70, hook-executor :301, sdk-cli-resolver curl :205/:228, copilot bun-node-wrapper :13, worktree-manager :544, space-worktree-manager (10 execFileSync sites), artifact-git-ops :35, space-manager exec, process-watchdog, credential-discovery :4, connector spawner seams (github-connector :18, presets :19/:62), **pr-ready-validator's default `spawnImpl` (Bun.spawn, :57/:116/:135/:188)**, **credential-store's `security` CLI execFile/spawn sites (:29–164)**, and **the Copilot provider's env-less `gh auth token` execFile (:500)**, **credential-store's GUI `security unlock-keychain` spawn (:416)**, and **sdk-cli-resolver's `which rg` execSync (:382)** | ~25 | ~30 |
+| 0g | Mechanical application of 0f's decision across every inventoried site (sanitized env or immutable baseline); query-runner's SDK `nodeSpawn` and the ACP transport spawn are explicitly env'd and get verification rows, not changes | ~90 | ~60 |
+
+Order: 0a → 0e → (0f → 0g) → then (0b ∥ 0c ∥ 0d) — **the ambient-reader and spawn protections land before any lease owner activates the mutation window**, so no intermediate land state mutates process.env while readers/subprocesses are still unenrolled (or 0b–0d wait and land atomically with 0e/0g). 0b/0c carry the Recommendation's
+post-acquisition revalidation passes (including the ACP setup-window
+revalidation that closes the stale-spawn-never-closed gap); 0d–0g are
+independent leaves. **0c holds the ACP split 8/10 coordination gate** (the split owns `acp-query-runner.ts` around the same snapshot/apply region; §Recommendation), and 0b's region gate (#2661) has merged.
+
+### 8.2 Chain B → twenty-five sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| B1a | pins: startup-arm decision rows — attempt-zero × processing status × abort-controller × cleaning-up × prompt redeliverability (:969–1013) | 0 | ~300 |
+| B1b | pins: transient/provider rows — attempt × cap exhaustion × provider family (Anthropic SYSTEM vs PROVIDER_UNAVAILABLE) × billing-429 (:1069–1230), **× error class/subtype incl. terminal-text precedence — text-only rate limit, mixed `429 service unavailable`, and terminal `503 due to quota limits` each get rows distinct from retryable 5xx**, plus the unmatched-AbortError `aborted_noop(clear_queue)` row (queue cleared, no terminal handling, no spurious error display) | 0 | ~260 |
+| B1e | pins: lifecycle-dimension cross rows — processing status × abort-controller signal × cleaning-up across **every** arm family incl. the transient/provider gates and their backoff revalidation (:1145–1158) and `aborted_noop` — an aborted controller that blocks a transient retry vs the otherwise identical non-aborted case is a row, **as are the `recoveryState`/superseded dimensions — an otherwise identical error routes differently when cooldown recovery is already scheduled or the run superseded, and B2b's mapping must match those pinned rows, not re-choose** (split from B1b to honor the ~350 test cap) | 0 | ~180 |
+| B1c | pins: 429-handoff suppression contract (`rateLimitCooldownScheduled` ⇒ no errorManager/setIdle) + per-arm teardown-liturgy inventory | 0 | ~250 |
+| B1d | pins: unfenced-window map — guard placement pinned as-is, not assumed complete | 0 | ~150 |
+| B2a | `query-retry-routing.ts` classifier core + types, unwired | ~110 | ~60 |
+| B2b | decisionRun composition + recoveryState/supersede → arm mapping | ~50 | ~60 |
+| B3a | apply startup arms (:969, :1013) — arms become interpreters, each with the route-specific lifecycle/queue-running resnapshot immediately after its awaited `setIdle`, before re-enqueue, shared mutation, or recursion — **and again immediately before every recursion**: the startup-timeout arm awaits `displayErrorAsAssistantMessage` (:983–989) and then recurses (:991), so a replacement or cleanup during that publication must not launch another attempt | ~55 | ~50 |
+| B3b | apply provider/transient arms (:1069–1230), incl. the unmatched-AbortError `aborted_noop(clear_queue)` route — clears the queue and skips the entire terminal path via the `!isAbortError` gate (:1158–1291 region), a distinct classifier route that neither the startup nor provider arms cover — the transient arm's resnapshot lands before `_lastConsumedUserMessage` can be re-read and re-enqueued into the successor's queue, ahead of the existing later guard — **and a second full ownership/lifecycle check runs after the arms' later `displayErrorAsAssistantMessage` awaits (:1061/:1115) and before the shared `ctx.queryObject` close (:1068/:1124) or recursion (:1087)**, mirroring B3a's pre-recursion rule: a replacement during that publication must not let the predecessor close the successor's query | ~90 | ~65 |
+| B3c | finalizer post-await guards (:1315–1360): generation/identity **plus the route-appropriate processing-status, cleanup, and abort-controller checks immediately before the finalizer's `setIdle`** — an interrupt changes processing status and clears the abort controller without touching the generation, so identity guards alone let the old finalizer idle over a still-cancelling interruption; closes B1d's pinned window in production | ~50 | ~70 |
+| B3d | apply the terminal & handoff routes the classifier emits beyond the retry arms — `api_validation`, the scheduled/declined/thrown rate-limit handoff (the B1c suppression contract's production side), `terminal(category, message_hint)`, and the cleanup/superseded routes — one interpreter branch per route with each route's post-effect ownership handling left as the B5 fence seam | ~70 | ~60 |
+| B4 | teardown-liturgy dedup: one parameterized helper, four call sites (unsplit) | ~90 | ~40 |
+| B5a | attempt-token primitive: invalidated before retry recursion (:1150); PreToolUse hook binds to it (:518 region) | ~70 | ~90 |
+| B5b | owned-terminal-fence cancellation: query-runner terminal/validation/handoff routes (beginTerminalIdle owners :1185/:1267), plus finalizer revalidation after the idle await before clearing shared fields and owner-binding the detached `processExitSnapshot.then(...)` continuation that can publish `query.trigger` for the successor, **and the interrupt-handler's detached deferred-trigger continuation** (`interrupt-handler` :186–191, `void Promise.all([oldQuerySettled, processExitSnapshot]).then(...)` publishing via `publishDeferredQueueTrigger` :246–251) — its deferredReplaySuppressed/idle-status/manual-mode guards do not distinguish owners, so the run-owner check joins them before the publish (the third and last `query.trigger` publisher; the acp runner's :796–805 is B5b's above and finishTurn's is C's under B5f) | ~75 | ~95 |
+| B5c | ACP terminal: full lifecycle resnapshot before beginTerminalIdle (:938) + post-effect resnapshot/fence-cancel before setIdle (:953); **the owned fence is also cancelled from the rejection path** — when `errorManager.handleError()` itself rejects after ownership changed, execution never reaches the post-effect resnapshot, so the rejection/finally path cancels the fence (the leak-only-in-rejection-interleaving case; consumes B5b's cancellation primitive) | ~60 | ~75 |
+| B5d | **all** post-await watchdog-write fencing at the watchdog boundary — the post-await `retryCount` write inside `scheduleRetry` (:132 fn; write at :233–237, before its generation check), `triedKeys`/`chain` :149–176, the detached `fireImmediateFallback` finally (:456 fn; unfenced finally ~:476–480), **and `fireCooldownRetry()`'s finalizer (:381–388 — unconditionally clears the shared `retryCallbackInFlight` flag, so a predecessor's pending callback can clear the successor's flag mid-retry and make `isRecoveryPending()` report false)** — `scheduleCooldown` itself (:323, called :244/:295) is already generation-checked and is the control, not the gap — lands on #2779's pure gates; owner coordination, excluded-module rule holds | ~30 | ~55 |
+| B5e | owner-scoped idle in PSM: beginTerminalIdle owner filter (:86), setIdle waiter-consume scoping (:143) incl. the post-publication `onIdleCallback` invocation block (:161–170), releaseIdleWaiters episode filter (:79); waiter admission carries **all three owner filters — query, rate-limit-episode, and turn/delivery** (a successor delivery on the same live query has a new turn owner but the same query owner; the handler revalidates the turn owner after its awaits); replacement-during-publish + same-query-successor pins; **the detached `reconcileStrandedDeliveries` continuation the idle callback starts carries the query/turn owner and revalidates inside each locked mutation section**, so a stale reconciliation cannot re-enqueue or fail the successor's durable deliveries | ~95 | ~115 |
+| B5f | ownership-fenced SDK dispatch **for both runners**: generation/owner token propagated through `handleSDKMessage` into the shared handler context and validated before its fence; `isCleaningUp()` joins dispatch-entry validation (cleanup-without-replacement); ACP's generationless dispatch (:925–929 region) fenced identically; **the output iterator's pre-dispatch bookkeeping is fenced at each yield** — the stale iterator clears `ctx.startupTimeoutTimer` and sets `ctx.firstMessageReceived` (query-runner) and ACP additionally records receipt, persists `acpInstructionsSent`, and has its own timer-clear path, all before the dispatch boundary; the shared handler **retains the query/turn/attempt owner and revalidates after each awaited effect — publication, metadata, acknowledgements — cancelling its owned fence before a stale return** (the same-query-successor case: generation unchanged, turn owner changed); late old-generation result + stale-iterator-bookkeeping pins; **a rejected stale dispatch returns a distinct stale outcome, and both runner wrappers skip their post-handler success bookkeeping on it** (`onMarkApiSuccess`, watchdog reset) so a late predecessor message cannot cancel the successor's active cooldown; **detached handler continuations launched with `void` — `refreshContextUsage()` — capture the query/turn/attempt owner at launch and revalidate before updating the context tracker, publishing `context.updated`, or enqueueing `/compact`** (late-after-retry pin) | ~90 | ~115 |
+| B5g | ACP adapter + handshake-continuation generation binding: `onAccepted`/`onConfigOptionsUpdate` pre-yield callbacks (acp-query-adapter :53–68) **and the likewise pre-yield `onSubmitted`/`onContextUsageUpdate` callbacks (acp-query-runner :650–657 — `markMessageSubmitted()` + `onSent()`, which transition the successor's re-enqueued UUID and batch members to `submitted` before any iterator-yield guard runs)**, `onMessageEnqueued` wrapper install in **acp-query-runner** (:493–524; queue-side hook message-queue.ts :53/:112) + its startup-timer (:497–503 region) close only the owned query object; the stale handshake continuation that overwrites `_lastConsumedUserMessage`, creates/assigns the adapter to the replacement-owned `ctx.queryObject`, and installs a startup timer is revalidated after each await and before those shared writes; the runner's post-yield finalizer (`acp-query-runner` :724–728 — `finally` :724, `if (!accepted)` :725, `markACPDeliveryFailed` call :726) is generation/claim-fenced so a stopped attempt cannot mark the replacement's re-enqueued row failed; enqueue-during-stale-handshake + adapter-exit-after-replacement pins; the binding is **B5a's attempt token, not the generation alone** — ACP retries preserve `queryGeneration`, so the adapter/handshake callbacks and iterators validate the per-attempt token exactly as B5f/B5l do, closing the retry-teardown-timeout interleaving | ~75 | ~95 |
+| B5h | ACP retry-arm revalidation: entry check (:802–804 region) stale after awaited setIdle/process-exit — revalidate after each retry await and before the re-enqueue/queryObject-close/process-exit-reset/recursion (:839–858); replacement-during-ACP-retry pin | ~50 | ~70 |
+| B5i | whole-catch ownership fencing in both runners: revalidate before the entire catch — QueryRunner `errorManager.handleError` (:838 region) and ACP's own catch (:679–693) with its unscoped drain; `drainDeliveryWaitersOnTerminalSDKMessage` (:804–812) skips or owner-scopes when the emitter no longer owns the session — the guard consumes **B5a's attempt token, not the generation alone** (retry recursion preserves `queryGeneration`), with a late-catch-after-retry pin; **exceptional handler exits cancel their fence**: when `sdk.message` publication or a later awaited handler effect rejects while cleanup skips the runner's idle drain, the rejection/finally path cancels the handler-owned terminal fence so `terminalIdleInFlight` cannot stay set (delivery reclaim reporting a completed turn as live); **the route owner propagates into `errorManager.broadcastError`**, revalidated after its `updateApiConnectionStatus` await and before publishing `session.error` (B3d's seam); stale-handler-publishes-nothing pin | ~75 | ~95 |
+| B5j | notice-publication fallback: error-display helpers that return false on a failed persist (save ignored, emit-only path) publish a non-persisted `session.error` fallback — the `api_validation` route skips `errorManager` by design, so a gated save failure must not silence the session; returned-false pins for both callers; **`handleCircuitBreakerTrip` binds to its query/turn owner and revalidates after its `session.errorClear` await** before inspecting the shared query object, stopping the lifecycle, idling, or publishing reset errors; **the detached `routeRecoveryMessage` enqueue is fenced immediately before its `messageQueue.enqueue`** — it admits synchronously, before any outer handler ownership check could run, so without the fence an old turn's recovery prompt enters the replacement's queue (interleaving pin) | ~45 | ~60 |
+| B5k | prompt-generator boundary fencing at the message-queue seam: ownership checked before entering `messageQueue.messageGenerator` and immediately after each yield (a stale continuation awaiting `onModelsFetched()` — ahead of the workflow-MCP region at query-runner :600–608 — snapshots the *replacement's* generation at iteration start (message-queue `messageGenerator` :293, snapshot :297), claims its prompt, and mutates processing state via `setProcessing` (query-runner :1526, inside `createMessageGeneratorWrapper` :1507, invoked :738)); stale claims requeued; late pulls of `createMessageGeneratorWrapper` bound identically; the pre-yield `onMessageYielded` consumption callback (declared message-queue :51, invoked :343, try :337–349) validates the run owner — passed into `MessageQueue` — before marking the durable message consumed/published, or is suppressed until after the wrapper's check; iterators bind to B5a's attempt token; **model/slash-command discovery helpers (`supportedModels()`, `supportedCommands()`) write shared caches inside their awaits before the generator resumes — the owner/attempt token propagates into both and is validated immediately before their cache and DB writes**, so a stale attempt cannot overwrite the successor's models/commands or suppress its refresh | ~90 | ~110 |
+| B5l | permission-callback fencing in both runners: the generationless `createCanUseToolCallback` installs (query-runner :517–519, acp :438) bind to the run generation/attempt token and reject stale requests — ACP permission notifications invoke it out-of-band (:547 → :281–298) and a late request from a stopped process can supersede the replacement's pending question (:164–185) without passing the SDK-message guard; **the answer path is fenced end-to-end** — lifecycle/turn ownership is revalidated when the question promise resolves and before the response/cancel mutations and the `question.asked` publication, so a stale ask cannot persist resolved-question history or drive `setProcessing` against the replacement; late-callback replacement + stale-answer pins (the PreToolUse-hook half of this binding is B5a's) | ~60 | ~80 |
+| B6 | cleanup + ADR note | ~15 | doc ~40 |
+
+Order: B1\* → B2a → B2b (the composition consumes the classifier core's types — same explicitness as C2d) → B3\* (B3c is region-independent of B3a/b and can lead);
+B4 after B3; **B5a ∥ B5e first (primitives), then B5b (owned-fence
+cancellation primitive — PSM today exposes only `beginTerminalIdle()` and
+fence consumption via `setIdle()`, so nothing downstream can cancel a fence
+until this lands), then B5f and B5c (both consume B5b's primitive; B5f also
+consumes B5a's token), then B5g, B5h, B5i, B5k, B5l in parallel; B5d coordinates
+with #2779; B5j is an independent leaf behind the #2543 gate and sequences
+after B5f's handler-context owner primitive**. The B5 slices that edit `sdk-message-handler.ts` or `acp-query-runner.ts` (B5f–B5i, B5k, B5l — **and B5j**, whose circuit-breaker callback edits the same handler) hold §5's coordination gate on open #2543 alongside the #2779 coordination for B5d. B5's setup-window revalidation
+(stale ACP spawn after `stop()`'s snapshot) is owned by 0c, not duplicated
+here. Chain C apply PRs follow the **complete B5 series (B5a–B5l)** — C's
+exceptional-exit contract consumes the dispatch/catch fencing of B5f/B5i,
+not only B5e's owner-scoped idle (§5).
+
+### 8.3 Chain C → eleven sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| C1a | pins: flag-machine truth table — suppress × mode × expectsIdle × lastResultWasSuccess × result kind × top-level-result bit × queryMode × **current session-state event kind/state (idle event calls finishTurn/replay/flag-reset; non-idle only arms the expectation; no-event rows too — or the §5 shell-retention alternative, stated explicitly)**, **phase and failure-path boundaries are dimensions** — the terminal fence fires before `sdk.message` publication while direct idle follows it; `lastResultWasSuccess` updates before later awaited metadata/error-clear effects and suppression clears after them; rows where the publication or a later effect fails assert the intermediate flag state they leave; `next_flags` asserted on every row; **thinking-token reset action (`resetThinkingTokenTracking` on top-level results and on session-state idle) is a matrix action or explicitly retained in the shell**; manual-mode no-replay gate (:1234) | 0 | ~350 |
+| C1b | pins: ack-selection table — sendStatus × durable ownership × yielded/claimed × pending-in-memory × active-message equality (:392–440, :639) | 0 | ~250 |
+| C1c | pins: cost-reset table (:1071–1150) + legacy-fragility characterization (terminal-fence + double-setIdle; stale lastResultWasSuccess window) | 0 | ~150 |
+| C2a | `turn-end-routing.ts` pure core (flag machine + finish/replay gates) | ~90 | ~60 |
+| C2b | `usage-accounting.ts` pure core | ~70 | ~60 |
+| C2c | `ack-selection.ts` pure core — the plain sendStatus × ownership × yielded/claimed × pending × active-equality selector C1b pins and C3b applies (no additive slice previously created it) | ~40 | ~50 |
+| C2d | pipeline composition over the three cores (decisionRun/stagedRun wiring, unwired from the dispatch sites) — the parent PR 2's composition step, without which C3 would introduce structure instead of applying it | ~30 | ~30 |
+| C3a | apply turn-end routing at :886–891 and :1158–1273; the extraction **preserves B5i's exceptional-exit fence cancellation** — the rejection/finally cleanup that keeps `terminalIdleInFlight` from surviving a failed turn-end is pinned as a characterization row so the rewiring cannot drop it (B5i owns the mechanism) | ~60 | ~50 |
+| C3b | apply ack selection at :392–440/:639, applying **C2c's** selector with per-row ownership revalidation in the turn-end fallback-ack loop immediately before every acknowledgement (the loop is snapshot-then-await-consume, so a later row can gain a durable owner mid-loop — Phase 0 guarded transition) | ~55 | ~50 |
+| C3c | apply usage accounting at :1071–1150 | ~40 | ~30 |
+| C4 | cleanup + ADR note | ~10 | doc ~35 |
+
+Order: C1\* → C2\* → C3\*; C2a ∥ C2b ∥ C2c, then C2d composes them; **C3 apply after the complete B5
+series (B5a–B5l)**, whose dispatch/catch fencing the exceptional-exit
+contract consumes — owner-scoped idle (B5e) alone does not stop a stale
+handler resuming after an awaited publish (§8.2); **and C3 remains gated on
+#2543** — the §5 contract sequences Chain C after both #2661 and #2543
+(sdk-message-handler overlap, §3), and only #2661 has merged.
+
+### 8.4 Chain A → fourteen sub-PRs
+
+| sub-PR | scope (current anchor) | prod Δ | test Δ |
+|---|---|---|---|
+| A1a | pins: transcript parity harness — driveDeliveryTurn (:1434) + feedDeliverySteer (:1847) **+ the delivery job handler (`job-handlers/message-delivery.handler.ts` — its ordered DB marks, job requeue/settle mutations, and interactions with the instrumented queue operations; A1d's outcome tables alone do not characterize the real call site)**, queue admit **and removal** instrumentation (removal-triggered ack resolution) | 0 | ~350 |
+| A1b | pins: role-arbitration call-site characterization — deliverMessage reuse/propagate (message-delivery.ts:97–139) vs outbox in-transaction steer conversion | 0 | ~180 |
+| A1c | pins: steer-ladder decision table — status × queryPromise × provider type × claim-current × delivery validity × queue ownership (:1847 region, claimGuard :1858) | 0 | ~300 |
+| A1d | pins: handler-outcome tables — preflight gates (:34–85), outcome→mutation map (:104–188), park budgets + waiting-for-input asymmetry | 0 | ~280 |
+| A2a | `delivery-turn-routing.ts` — steer ladder + role-arbitration composition over `resolveDeliveryRole` | ~85 | ~60 |
+| A2b | handler outcome routing module (post-preflight table) | ~70 | ~60 |
+| A2c | `reconciler-sweep.ts` (stale-submitted selection) | ~40 | ~40 |
+| A2d | `message-queue-timeout-policy.ts` (pending/claimed/yielded × durable timeout decision) | ~45 | ~40 |
+| A3a | wire steer ladder at :1847 + handler outcome interpretation, plus the steer-continuation hardening: `feedDeliverySteer` **and `driveDeliveryTurn`** each recheck lifecycle and claim ownership after their acknowledgement awaits — `MessageQueue.clear()` resolves rather than rejects a cleared entry's acknowledgement, so `feedDeliverySteer`'s resume can mark a steer consumed and `driveDeliveryTurn`'s `started.acknowledgment` resume can mark the batch consumed and signal completion for a cleared or successor-owned delivery | ~75 | ~50 |
+| A3b | wire role arbitration at message-delivery.ts:97–139 + outbox, **preceded by the Phase 0 transactional ownership creation** — the deferred→enqueued status change and delivery-job insert commit together (the outbox path's existing shape) or carry an explicit compensating transition on enqueue failure, so routing through `resolveDeliveryRole` cannot leave an ownerless durable row (§5 Chain A Phase 0 note) | ~70 | ~65 |
+| A3c | wire sweep at :2112 + timeout policy at `armQueueTimeout()` (message-queue :118–146; call site :105) | ~35 | ~30 |
+| A4a | claim-fenced batch-update primitive (additive; covers the two unfenced batch writes §5 named) **plus the UUID/claim-keyed admission reservation for `admitWithId`** — idempotent admission with durable intent, so a retry under the same live claim cannot append a UUID twice and a crash after admission leaves a durable record replay can deduplicate against; A4b's staged pass consumes this reservation as its external-effect prerequisite; **both batch writes register compensations** so a later stage's failure after a valid partial write restores narrowed/submitted rows | ~80 | ~95 |
+| A4b | stagedRun admission pass for driveDeliveryTurn (rearm loop stays in the shell); `ensureQueryStarted` inside the pass gets a **durable conditional startup intent plus idempotent/compensated spawn** (retry or crash after spawning leaves a durable record, not a duplicate or unowned query) — or startup moves ahead of the pass, decision pinned; a **full lifecycle / delivery-ownership / query-identity resnapshot runs immediately after the `ensureQueryStarted` await on both the `alreadyConsumed` and fresh/existing-entry paths** (cleanup, claim supersession, or replacement during startup must not install an observer or return `driving` for the wrong query; deterministic cleanup-during-startup pin); **claim and query-identity validation also runs at both final effect boundaries — immediately before `admitWithId` and immediately before returning an existing entry** — later async stages open a window after the post-startup check; **later-stage failure runs cleanup compensations for the installed `deliveryResponseObserver`/idle waiter, and `reclaimTurnAlreadySucceeded`'s `clearDeliveryTurnEnd` is a guarded compensable operation** (a crash-recovery marker erased by a failed pass is restored — failure-path pins for both); and the submitted-status publication uses deferred/transactional or versioned ordering so subscribers never observe a submitted state that admission may still unwind (prod ~115 exceeds the ≲100 band as a noted exception: the pass, its startup resnapshot, and its effect-boundary validations are one invariant — splitting them from the pass would separate checks from their only consumer) | ~115 | ~105 |
+| A5 | cleanup: dead-code removal + ADR pilot note | ~10 | doc ~35 |
+
+Order: A1\* → A2\* (A2c/A2d ∥ A2a/A2b) → A3\* → A4a → A4b → A5. All gated on
+#2543 (§3) **and on the shared `agent-session.ts` facade being free of
+in-flight B/C apply edits** — §4's one-chain-at-a-time constraint and the
+Recommendation's "facade is free" condition survive #2543 merging.
+
+### 8.5 Split discipline for the orchestrator
+
+When a sub-PR still grows past budget mid-implementation, split by the same
+axes used here — pins: by dimension family; cores: by exported module; apply:
+by call-site region; hardening: by fenced invariant — not by arbitrary line
+counts. A sub-PR that cannot fit ~150 production lines without dropping an
+edge case is mis-scoped upstream: bring the edge case back as a table row or
+a named invariant in the parent's scope, rather than widening the diff.

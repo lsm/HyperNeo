@@ -893,7 +893,12 @@ export class SpaceRuntimeService {
         space.id,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1395,7 +1400,12 @@ export class SpaceRuntimeService {
         space.id,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1567,7 +1577,12 @@ export class SpaceRuntimeService {
         space.id,
         this.config.reactiveDb,
         this.config.evolutionScopeService,
-        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId)
+        (taskId) => this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId),
+        (taskId, fromStatus) =>
+          this.config.goalService?.handleTaskTerminal(taskId, {
+            fromStatus,
+            deferPostCommitEffects: true,
+          })
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1824,7 +1839,6 @@ export class SpaceRuntimeService {
       targetStatus,
       options
     );
-    this.config.goalService?.supersedeOutcomeNotificationsForTask(taskId);
     return recovered.task;
   }
 

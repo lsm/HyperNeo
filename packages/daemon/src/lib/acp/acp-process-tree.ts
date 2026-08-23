@@ -18,6 +18,18 @@ export const basicAcpProcessTreeOwner: AcpProcessTreeOwner = (child) => ({
   },
 });
 
+export function acpProcessGroupAlive(
+  pid: number,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  try {
+    process.kill(platform === 'win32' ? pid : -pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
 export function getAcpProcessTreeOwner(): Promise<AcpProcessTreeOwner> {
   return Promise.resolve(basicAcpProcessTreeOwner);
 }

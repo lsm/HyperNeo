@@ -827,6 +827,21 @@ describe('SpaceTaskRepository', () => {
       expect(after?.status).toBe('in_progress');
       expect(notifiedTables).toEqual([]);
     });
+
+    it('clearAllSpawnReservations drops every held token so a fresh process can reserve again', () => {
+      const held = repo.createTask({ spaceId, title: 'Held', description: '' });
+      const running = repo.createTask({ spaceId, title: 'Running', description: '' });
+      repo.updateTask(held.id, { status: 'in_progress' });
+      repo.updateTask(running.id, { status: 'in_progress' });
+      expect(repo.reserveSpawnForTick(held.id, runningStatuses)).toBe('won');
+      expect(repo.reserveSpawnForTick(running.id, runningStatuses)).toBe('won');
+      expect(repo.reserveSpawnForTick(held.id, runningStatuses)).toBe('superseded');
+
+      repo.clearAllSpawnReservations();
+
+      expect(repo.reserveSpawnForTick(held.id, runningStatuses)).toBe('won');
+      expect(repo.reserveSpawnForTick(running.id, runningStatuses)).toBe('won');
+    });
   });
 
   describe('getTaskBySessionId', () => {

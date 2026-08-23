@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type {
   NodeExecution,
   Space,
@@ -11,6 +11,7 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
@@ -95,6 +96,18 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
+export interface CasCall {
+  id: string;
+  expected: string[];
+  next: string;
+  payload?: {
+    agentSessionId?: string | null;
+    startedAt?: number | null;
+    completedAt?: number | null;
+  };
+  guards?: { expectAgentSessionId?: string | null };
+}
+
 interface SpawnFlowHarnessOptions {
   taskStatus?: string;
   callerTask?: SpaceTask;
@@ -103,27 +116,35 @@ interface SpawnFlowHarnessOptions {
   workflow?: SpaceWorkflow | null;
   kickoff?: boolean;
   worktreeGate?: Promise<{ path: string }>;
+  kickoffGate?: Promise<void>;
   failEnsure?: boolean;
+  bindCasOutcome?: 'won' | 'superseded';
 }
 
 interface SpawnFlowHarness {
   tam: TaskAgentManager;
   updates: Array<{ id: string; patch: Record<string, unknown> }>;
+  casCalls: CasCall[];
   order: string[];
   cancels: string[];
-  setReadback: (row: NodeExecution | null) => void;
+  reservations: string[];
+  reservationReleases: string[];
   spawningIds: () => Set<string>;
+  setExecutionSessionId: (sessionId: string | null) => void;
   spawn: () => Promise<string>;
 }
 
 function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowHarness {
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+  const casCalls: CasCall[] = [];
   const order: string[] = [];
   const cancels: string[] = [];
+  const reservations: string[] = [];
+  const reservationReleases: string[] = [];
   const row = options.execution ?? makeExecution();
   const dbRow: NodeExecution = { ...row };
   const taskStatus = options.taskStatus ?? 'in_progress';
-  let readback: NodeExecution | null | undefined;
+  const heldReservations = new Set<string>();
 
   const tam = new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
@@ -132,6 +153,17 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     taskRepo: {
       getTask: (id: string) =>
         options.taskMissing || id !== TASK_ID ? undefined : makeTask(taskStatus),
+      reserveSpawnForTick: (taskId: string, allowed: readonly string[]): 'won' | 'superseded' => {
+        reservations.push(taskId);
+        if (heldReservations.has(taskId)) return 'superseded';
+        if (!allowed.includes(taskStatus)) return 'superseded';
+        heldReservations.add(taskId);
+        return 'won';
+      },
+      releaseSpawnReservation: (taskId: string) => {
+        reservationReleases.push(taskId);
+        heldReservations.delete(taskId);
+      },
     },
     nodeExecutionRepo: {
       getById: (id: string) => (id === row.id ? dbRow : undefined),
@@ -140,12 +172,36 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
         runId === RUN_ID && nodeId === row.workflowNodeId ? [row] : [],
       update: (id: string, patch: Record<string, unknown>) => {
         updates.push({ id, patch });
-        if (patch.status === 'in_progress' && patch.agentSessionId === SPAWNED_SESSION_ID) {
+        if (id === row.id) Object.assign(dbRow, patch);
+        return { ...dbRow };
+      },
+      casExecutionStatus: (
+        id: string,
+        expected: readonly string[] | string,
+        next: string,
+        payload?: CasCall['payload'],
+        guards?: { expectAgentSessionId?: string | null }
+      ): 'won' | 'superseded' => {
+        const expectedList = Array.isArray(expected) ? [...expected] : [expected];
+        casCalls.push({ id, expected: expectedList, next, payload, guards });
+        if (options.bindCasOutcome && next === 'in_progress' && payload?.agentSessionId) {
+          return options.bindCasOutcome;
+        }
+        if (
+          guards?.expectAgentSessionId !== undefined &&
+          dbRow.agentSessionId !== guards.expectAgentSessionId
+        ) {
+          return 'superseded';
+        }
+        if (id !== row.id || !expectedList.includes(dbRow.status)) return 'superseded';
+        dbRow.status = next as NodeExecution['status'];
+        if (payload?.agentSessionId !== undefined) dbRow.agentSessionId = payload.agentSessionId;
+        if (payload?.startedAt !== undefined) dbRow.startedAt = payload.startedAt;
+        if (payload?.completedAt !== undefined) dbRow.completedAt = payload.completedAt;
+        if (next === 'in_progress' && payload?.agentSessionId === SPAWNED_SESSION_ID) {
           order.push('execution-bind');
         }
-        if (id === row.id) Object.assign(dbRow, patch);
-        if (readback !== undefined) return readback;
-        return { ...dbRow };
+        return 'won';
       },
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
@@ -181,6 +237,7 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     order.push('registerCompletionCallback');
   };
   internal.injectMessageIntoSession = async () => {
+    if (options.kickoffGate) await options.kickoffGate;
     order.push('kickoff-inject');
     return 'msg-id';
   };
@@ -200,14 +257,17 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
   return {
     tam,
     updates,
+    casCalls,
     order,
     cancels,
-    setReadback: (value) => {
-      readback = value;
-    },
+    reservations,
+    reservationReleases,
     spawningIds: () => internal.spawningExecutionIds,
+    setExecutionSessionId: (sessionId) => {
+      dbRow.agentSessionId = sessionId;
+    },
     spawn: () =>
-      tam.spawnWorkflowNodeAgentForExecutionViaFlow(
+      tam.spawnWorkflowNodeAgentForExecution(
         task,
         space,
         (options.workflow === undefined ? makeWorkflow() : options.workflow) as SpaceWorkflow,
@@ -229,8 +289,23 @@ function seedIndexedSession(
   );
 }
 
-describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parity', () => {
-  test('ordering: createSubSession, execution bind, ensureNodeAgentAttached, completion callback, kickoff inject', async () => {
+function fireLongTimersImmediately(): () => void {
+  const originalSetTimeout = globalThis.setTimeout;
+  const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((
+    callback: () => void,
+    delay?: number
+  ) => {
+    const effective = typeof delay === 'number' ? delay : 0;
+    if (effective >= 30_000) {
+      return originalSetTimeout(callback, 0);
+    }
+    return originalSetTimeout(callback, effective);
+  }) as unknown as typeof setTimeout);
+  return () => spy.mockRestore();
+}
+
+describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () => {
+  test('ordering: createSubSession, CAS bind, ensureNodeAgentAttached, completion callback, kickoff inject, reservation released', async () => {
     const h = makeSpawnFlowHarness();
 
     const result = await h.spawn();
@@ -244,6 +319,8 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
       'kickoff-inject',
     ]);
     expect(h.spawningIds().has('exec-1')).toBe(false);
+    expect(h.reservations).toEqual([TASK_ID]);
+    expect(h.reservationReleases).toEqual([TASK_ID]);
   });
 
   test('kickoff inject runs only when options.kickoff allows it', async () => {
@@ -256,7 +333,7 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
     expect(h.spawningIds().has('exec-1')).toBe(false);
   });
 
-  test('indexed live session is reused: rebinds the execution and returns the id without spawning', async () => {
+  test('indexed live session is reused: rebinds the execution via CAS and returns the id without spawning or reserving', async () => {
     const h = makeSpawnFlowHarness({
       execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
     });
@@ -265,16 +342,18 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
     const result = await h.spawn();
 
     expect(result).toBe('live-session');
-    expect(h.updates[0]).toEqual({
+    expect(h.casCalls[0]).toEqual({
       id: 'exec-1',
-      patch: {
-        status: 'in_progress',
+      expected: ['idle'],
+      next: 'in_progress',
+      payload: {
         agentSessionId: 'live-session',
         startedAt: expect.any(Number),
         completedAt: null,
       },
     });
     expect(h.order).toEqual([]);
+    expect(h.reservations).toEqual([]);
   });
 
   test('reuse_live clears no reservation: a concurrent peer keeps its in-flight spawn guard', async () => {
@@ -343,23 +422,40 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
     expect(h.cancels).toEqual([]);
   });
 
-  test('readback returning null blocks the execution, cancels the session, and throws corruption', async () => {
-    const h = makeSpawnFlowHarness({ kickoff: false });
-    h.setReadback(null);
+  test('a bind the CAS loses (concurrent writer) skips for this call: no blocked write, spawned session compensated, no resurrection (AFTER picture)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false, bindCasOutcome: 'superseded' });
+    const spawnPromise = h.spawn();
 
-    await expect(h.spawn()).rejects.toThrow('Execution state corruption after spawn for exec-1');
+    await expect(spawnPromise).rejects.toBeInstanceOf(SpawnSupersededError);
+    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
 
-    expect(h.updates[1]).toEqual({
-      id: 'exec-1',
-      patch: {
-        status: 'blocked',
-        result: 'Execution state corruption after spawn',
-        completedAt: expect.any(Number),
-      },
-    });
+    expect(h.updates).toEqual([]);
     expect(h.order).not.toContain('ensureNodeAgentAttached');
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
     expect(h.spawningIds().has('exec-1')).toBe(false);
+    expect(h.reservationReleases).toEqual([TASK_ID]);
+  });
+
+  test('a foreign session binding landing mid-spawn fails the bind identity guard: no overwrite, session compensated, foreign binding survives (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    const internal = h.tam as unknown as {
+      createSubSession: (...args: unknown[]) => Promise<string>;
+    };
+    const originalCreate = internal.createSubSession.bind(internal);
+    internal.createSubSession = async (...args: unknown[]) => {
+      const sessionId = await originalCreate(...args);
+      h.setExecutionSessionId('foreign-direct-session');
+      return sessionId;
+    };
+
+    const spawnPromise = h.spawn();
+
+    await expect(spawnPromise).rejects.toThrow('superseded at stage bind-execution-session');
+    expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
+    expect(h.order).not.toContain('ensureNodeAgentAttached');
+    expect(h.casCalls.some((c) => c.payload?.agentSessionId === 'foreign-direct-session')).toBe(
+      false
+    );
   });
 
   test('a failure after session creation cancels the spawned session, releases the reservation, and rethrows', async () => {
@@ -368,17 +464,76 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
     await expect(h.spawn()).rejects.toThrow('attach boom');
     expect(h.cancels).toEqual([SPAWNED_SESSION_ID]);
     expect(h.spawningIds().has('exec-1')).toBe(false);
+    expect(h.reservationReleases).toEqual([TASK_ID]);
   });
 
-  test('an admission failure before session creation cancels nothing', async () => {
+  test('the staged flow never transfers a reused session — it always spawns fresh (PR #2770 final-round descope)', async () => {
+    const seenMemberInfo: Array<Record<string, unknown>> = [];
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    const tam = h.tam as unknown as {
+      createSubSession: (...args: unknown[]) => Promise<string>;
+    };
+    const original = tam.createSubSession.bind(tam);
+    tam.createSubSession = async (...args: unknown[]) => {
+      seenMemberInfo.push(args[3] as Record<string, unknown>);
+      return original(...args);
+    };
+
+    await h.spawn();
+
+    expect(seenMemberInfo).toHaveLength(1);
+    expect(seenMemberInfo[0]?.freshSessionOnly).toBe(true);
+    expect(seenMemberInfo[0]?.deferFreshExecutionBind).toBe(true);
+  });
+
+  test('a task-reservation loser does not fail the winning spawn waiters (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false, taskStatus: 'stopped' });
+    h.spawningIds().add('exec-1');
+    const waitPromise = (
+      h.tam as unknown as {
+        waitForConcurrentSpawnSession: (execution: NodeExecution) => Promise<string>;
+      }
+    ).waitForConcurrentSpawnSession(makeExecution());
+    const settled = waitPromise.then(
+      () => 'settled',
+      (err: unknown) => `rejected:${err instanceof Error ? err.message : String(err)}`
+    );
+    h.spawningIds().delete('exec-1');
+
+    const loser = h.spawn();
+
+    await expect(loser).rejects.toThrow('superseded at stage reserve-task-spawn');
+    expect(
+      (h.tam as unknown as { concurrentSpawnWaiters: Map<string, unknown[]> })
+        .concurrentSpawnWaiters.size
+    ).toBe(1);
+    expect(
+      await Promise.race([settled, new Promise((r) => setTimeout(() => r('pending'), 50))])
+    ).toBe('pending');
+  });
+
+  test('an admission failure before session creation cancels nothing and reserves nothing', async () => {
     const h = makeSpawnFlowHarness({ taskStatus: 'archived' });
 
     await expect(h.spawn()).rejects.toBeInstanceOf(PermanentSpawnError);
     expect(h.cancels).toEqual([]);
     expect(h.spawningIds().has('exec-1')).toBe(false);
+    expect(h.reservations).toEqual([]);
   });
 
-  test('a second call waits on the in-flight peer through the shell wait loop', async () => {
+  test('a parked (stopped) task fails the spawn reservation into superseded instead of spawning (AFTER picture)', async () => {
+    const h = makeSpawnFlowHarness({ taskStatus: 'stopped', kickoff: false });
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(SpawnSupersededError);
+    await expect(h.spawn()).rejects.toThrow('superseded at stage reserve-task-spawn');
+    expect(h.order).toEqual([]);
+    expect(h.casCalls).toEqual([]);
+    expect(h.cancels).toEqual([]);
+    expect(h.spawningIds().has('exec-1')).toBe(false);
+    expect(h.reservationReleases).toEqual([]);
+  });
+
+  test('a second call waits on the in-flight peer through the promise handoff', async () => {
     const gate = deferred<{ path: string }>();
     const h = makeSpawnFlowHarness({ kickoff: false, worktreeGate: gate.promise });
 
@@ -389,6 +544,74 @@ describe('spawnWorkflowNodeAgentForExecutionViaFlow — staged composition parit
     expect(await second).toBe(SPAWNED_SESSION_ID);
     expect(await first).toBe(SPAWNED_SESSION_ID);
     expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(1);
-    expect(h.updates.some((u) => u.patch.agentSessionId === SPAWNED_SESSION_ID)).toBe(true);
+    expect(h.casCalls.some((c) => c.payload?.agentSessionId === SPAWNED_SESSION_ID)).toBe(true);
+  });
+
+  test('waiters settle at the winning bind, not after kickoff: a slow attach/kickoff cannot time out a waiting peer (PR #2770 review)', async () => {
+    const gate = deferred<{ path: string }>();
+    const kickoffGate = deferred<void>();
+    const h = makeSpawnFlowHarness({
+      worktreeGate: gate.promise,
+      kickoffGate: kickoffGate.promise,
+    });
+
+    const first = h.spawn();
+    const second = h.spawn();
+    gate.resolve({ path: '/tmp/wt-1240' });
+
+    expect(await second).toBe(SPAWNED_SESSION_ID);
+    expect(h.order).toContain('execution-bind');
+    expect(h.order).not.toContain('kickoff-inject');
+    expect(
+      (h.tam as unknown as { concurrentSpawnWaiters: Map<string, unknown[]> })
+        .concurrentSpawnWaiters.size
+    ).toBe(0);
+
+    kickoffGate.resolve();
+    expect(await first).toBe(SPAWNED_SESSION_ID);
+    expect(h.order).toContain('kickoff-inject');
+  });
+
+  test('a timed-out waiter removes itself from the waiter map (PR #2770 review)', async () => {
+    const restoreTimers = fireLongTimersImmediately();
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    h.spawningIds().add('exec-1');
+    const waiters = (h.tam as unknown as { concurrentSpawnWaiters: Map<string, unknown[]> })
+      .concurrentSpawnWaiters;
+
+    const waitPromise = (
+      h.tam as unknown as {
+        waitForConcurrentSpawnSession: (execution: NodeExecution) => Promise<string>;
+      }
+    ).waitForConcurrentSpawnSession(makeExecution());
+    const message = waitPromise.then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
+
+    expect(await message).toBe('Concurrent spawn for execution exec-1 timed out after 30000ms');
+    expect(waiters.size).toBe(0);
+    restoreTimers();
+  });
+
+  test('cleanupAll settles pending waiters as failed (PR #2770 review)', async () => {
+    const h = makeSpawnFlowHarness({ kickoff: false });
+    h.spawningIds().add('exec-1');
+
+    const waitPromise = (
+      h.tam as unknown as {
+        waitForConcurrentSpawnSession: (execution: NodeExecution) => Promise<string>;
+      }
+    ).waitForConcurrentSpawnSession(makeExecution());
+    const message = waitPromise.then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : String(err))
+    );
+
+    await h.tam.cleanupAll();
+
+    expect(await message).toBe(
+      'Concurrent spawn for execution exec-1 failed before session was created'
+    );
   });
 });

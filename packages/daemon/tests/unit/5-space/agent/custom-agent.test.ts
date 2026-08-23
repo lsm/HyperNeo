@@ -807,6 +807,27 @@ describe('createCustomAgentInit', () => {
     expect(init.promptProvenance?.source).toBe('workflow_node_replaced_prompt');
   });
 
+  it('REVIEWER_SYSTEM_CONTRACT dispatches by review depth with fixed coverage', () => {
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('Dispatch by review depth');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'coverage is invariant — every dimension is covered on every non-trivial change'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'Folding lenses together is acceptable ONLY at this depth'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'dispatch dedicated Task general-purpose sub-agents'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'a second independent sub-agent pass on the highest-risk dimension'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'Delta rounds (3+) under `auto` triage run one tier lighter'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('never overrides an explicit depth');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('the latest explicit instruction wins');
+  });
+
   it('injects Coding workflow coder-owned handoff guidance into system prompt', () => {
     const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const codingSlot = codingNode.agents[0];

@@ -59,8 +59,10 @@ export interface SpawnExecutionFlowDeps {
   inspectIndexedSession(agentSessionId: string | null): IndexedSessionInspection;
   reserveExecution(executionId: string): void;
   releaseExecution(executionId: string): void;
+  reserveTaskSpawn(taskId: string): 'won' | 'superseded';
+  releaseTaskSpawn(taskId: string): void;
   cancelSpawnedSession(sessionId: string): void;
-  rebindLiveExecution(execution: NodeExecution, sessionId: string): void;
+  rebindLiveExecution(execution: NodeExecution, sessionId: string): 'won' | 'superseded';
   raiseSpawnRejection(
     freshTask: SpaceTask,
     execution: NodeExecution,
@@ -69,7 +71,8 @@ export interface SpawnExecutionFlowDeps {
   resolveSpawnSessionId(space: Space, task: SpaceTask, execution: NodeExecution): string;
   resolveWorkspacePath(task: SpaceTask, space: Space): Promise<string>;
   createSpawnedSession(request: SpawnSessionRequest): Promise<string>;
-  bindExecutionToSession(execution: NodeExecution, sessionId: string): void;
+  bindExecutionToSession(execution: NodeExecution, sessionId: string): 'won' | 'superseded';
+  flushPendingMessagesForTarget(workflowRunId: string, agentName: string, sessionId: string): void;
   attachNodeAgent(request: AttachNodeAgentRequest): Promise<void>;
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
@@ -177,12 +180,11 @@ export function runSpawnExecutionFlow(
         when: 'reuseLive',
         reads: ['execution'],
         writes: [],
-        run: (view) => {
+        run: (view) =>
           deps.rebindLiveExecution(
             view.execution,
             (view.reuseLive as { sessionId: string }).sessionId
-          );
-        },
+          ),
       }),
       s.halt({
         name: 'return-live-session',
@@ -203,6 +205,17 @@ export function runSpawnExecutionFlow(
         reads: ['freshTask', 'execution', 'workflow'],
         run: (view) => {
           deps.raiseSpawnRejection(view.freshTask, view.execution, view.workflow);
+        },
+      }),
+      s.effect({
+        name: 'reserve-task-spawn',
+        when: 'proceedFresh',
+        reads: ['task'],
+        writes: [],
+        run: (view) => deps.reserveTaskSpawn(view.task.id),
+        compensate: (view, result) => {
+          if (result === 'superseded') return;
+          deps.releaseTaskSpawn(view.task.id);
         },
       }),
       s.effect({
@@ -260,9 +273,7 @@ export function runSpawnExecutionFlow(
         when: 'proceedFresh',
         reads: ['execution', 'spawnedSessionId'],
         writes: ['execution'],
-        run: (view) => {
-          deps.bindExecutionToSession(view.execution, view.spawnedSessionId);
-        },
+        run: (view) => deps.bindExecutionToSession(view.execution, view.spawnedSessionId),
       }),
       s.resnapshot({
         name: 'read-bound-execution',
@@ -274,6 +285,15 @@ export function runSpawnExecutionFlow(
             throw new Error(`Spawn flow cannot re-read execution ${executionId} after binding`);
           }
           return { execution: bound };
+        },
+      }),
+      s.effect({
+        name: 'release-task-spawn',
+        when: 'proceedFresh',
+        reads: ['task'],
+        writes: [],
+        run: (view) => {
+          deps.releaseTaskSpawn(view.task.id);
         },
       }),
       s.effect({
@@ -327,6 +347,19 @@ export function runSpawnExecutionFlow(
             workspacePath: view.workspacePath,
           });
           await deps.injectKickoffMessage(view.spawnedSessionId, message);
+        },
+      }),
+      s.effect({
+        name: 'flush-pending-messages',
+        when: 'proceedFresh',
+        reads: ['workflowRun', 'execution', 'spawnedSessionId'],
+        writes: [],
+        run: (view) => {
+          deps.flushPendingMessagesForTarget(
+            view.workflowRun.id,
+            view.execution.agentName,
+            view.spawnedSessionId
+          );
         },
       }),
       s.halt({

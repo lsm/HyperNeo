@@ -1,6 +1,6 @@
 import type { UUID } from 'crypto';
 import { fileURLToPath } from 'node:url';
-import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
   THINKING_LEVEL_TOKENS,
@@ -10,9 +10,18 @@ import {
 import type {
   AcpConfigOption,
   AcpContentBlock,
+  AcpFsReadParams,
+  AcpFsReadResult,
+  AcpFsWriteParams,
+  AcpFsWriteResult,
   AcpMcpServerConfig,
   AcpPermissionRequest,
   AcpPermissionResponseResult,
+  AcpTerminalCreateParams,
+  AcpTerminalKillParams,
+  AcpTerminalOutputParams,
+  AcpTerminalReleaseParams,
+  AcpTerminalWaitForExitParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ErrorCategory } from '../error-manager';
@@ -33,13 +42,24 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { parseAcpCommand } from './acp-command';
+import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
+import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
+import {
+  isSafeFsSupported,
+  readFileWithinWorkspace,
+  writeFileWithinWorkspace,
+} from './acp-safe-fs';
+import { AcpTerminalManager } from './acp-terminal-manager';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
+const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
+const MAX_POST_ABORT_DRAIN_MESSAGES = 256;
+const POST_ABORT_DRAIN_TIMEOUT_MS = 1000;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -251,68 +271,51 @@ export function convertMcpServersForAcp(
   });
 }
 
-function getAcpWorkspacePath(session: Session, queryOptions: Options): string {
-  return (
-    queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? process.cwd()
-  );
+function getAcpWorkspacePath(session: Session, queryOptions: Options): string | undefined {
+  return queryOptions.cwd ?? session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
 }
 
-function acpPermissionQuestion(params: AcpPermissionRequest): string {
-  return params.toolCall.title
-    ? `Allow ${params.toolCall.title}?`
-    : `Allow ACP tool ${params.toolCall.toolCallId}?`;
-}
-
-function acpPermissionQuestionInput(params: AcpPermissionRequest): Record<string, unknown> {
-  const question = acpPermissionQuestion(params);
+function normalizeAcpTerminalCreate(params: AcpTerminalCreateParams): AcpTerminalCreateParams {
+  if (params.cwd != null || (params.env?.length ?? 0) > 0) {
+    throw new Error('ACP terminal cwd and environment overrides are not supported');
+  }
+  const parsed =
+    params.args === undefined
+      ? parseAcpCommand(params.command)
+      : { command: params.command, args: params.args };
   return {
-    questions: [
-      {
-        question,
-        header: 'ACP approval',
-        options: params.options.map((option) => ({
-          label: option.name,
-          description: option.kind.replaceAll('_', ' '),
-        })),
-        multiSelect: false,
-      },
-    ],
+    ...params,
+    command: parsed.command,
+    args: parsed.args,
+    cwd: undefined,
+    env: undefined,
   };
 }
 
-async function handleAcpPermissionRequest(
-  params: AcpPermissionRequest,
-  canUseTool: CanUseTool
+async function allowAcpPermissionRequest(
+  params: AcpPermissionRequest
 ): Promise<AcpPermissionResponseResult> {
-  if (params.options.length === 0) {
-    return { outcome: { outcome: 'cancelled' } };
-  }
+  const option =
+    params.options.find((candidate) => candidate.kind.startsWith('allow')) ?? params.options[0];
+  if (!option) return { outcome: { outcome: 'cancelled' } };
+  return { outcome: { outcome: 'selected', optionId: option.optionId } };
+}
 
-  const controller = new AbortController();
-  const question = acpPermissionQuestion(params);
-  const result = await canUseTool('AskUserQuestion', acpPermissionQuestionInput(params), {
-    signal: controller.signal,
-    toolUseID: params.toolCall.toolCallId,
-    title: question,
-    displayName: params.toolCall.title ?? params.toolCall.kind ?? 'ACP tool',
-    description: params.toolCall.kind,
-    requestId: generateUUID(),
-  });
+function isAcpToolResultMessage(message: SDKMessage): boolean {
+  return message.type === 'user' && (message as SDKUserMessage).parent_tool_use_id != null;
+}
 
-  if (!result || result.behavior === 'deny') {
-    return { outcome: { outcome: 'cancelled' } };
-  }
+function isAcpToolUseMessage(message: SDKMessage): boolean {
+  if (message.type !== 'assistant') return false;
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  return (
+    Array.isArray(content) &&
+    content.some((block) => (block as { type?: string } | null)?.type === 'tool_use')
+  );
+}
 
-  const answers = (result.updatedInput as { answers?: Record<string, string> } | undefined)
-    ?.answers;
-  const selectedName = answers?.[question] ?? Object.values(answers ?? {})[0];
-  const selectedOption = params.options.find((option) => option.name === selectedName);
-
-  if (selectedOption) {
-    return { outcome: { outcome: 'selected', optionId: selectedOption.optionId } };
-  }
-
-  return { outcome: { outcome: 'cancelled' } };
+function isAcpPostAbortRelevantMessage(message: SDKMessage): boolean {
+  return isAcpToolResultMessage(message) || isAcpToolUseMessage(message);
 }
 
 function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
@@ -352,6 +355,8 @@ function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
 type AcpClientFactory = (options: AcpClientOptions) => AcpClient;
 
 export class AcpQueryRunner {
+  private pendingAcpIdentityMetadata = false;
+
   private _lastConsumedUserMessage: {
     uuid: string;
     content: string | MessageContent[];
@@ -401,6 +406,17 @@ export class AcpQueryRunner {
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const assertActiveAcpStartup = () => {
+      if (
+        this.ctx.isCleaningUp() ||
+        this.ctx.getQueryGeneration() !== queryGeneration ||
+        stateManager.getState().status === 'interrupted'
+      ) {
+        const error = new Error('ACP query aborted during startup');
+        error.name = 'AbortError';
+        throw error;
+      }
+    };
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
@@ -408,6 +424,7 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
+    let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
@@ -456,6 +473,23 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
+      const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
+      const storedIdentity = session.metadata?.acpCommandIdentity;
+      if (storedIdentity !== commandIdentity) {
+        if (session.acpSessionId && storedIdentity !== undefined) {
+          session.acpSessionId = undefined;
+          session.metadata = {
+            ...session.metadata,
+            acpInstructionsSent: undefined,
+            acpContextUsageEstimate: undefined,
+          };
+        }
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+        };
+        this.pendingAcpIdentityMetadata = true;
+      }
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -477,8 +511,10 @@ export class AcpQueryRunner {
         (message) => logger.warn(message),
         proxyBridge
       );
-      const cwd = getAcpWorkspacePath(session, queryOptions);
+      const workspace = getAcpWorkspacePath(session, queryOptions);
+      const cwd = workspace ?? process.cwd();
       const startupTimeoutMs = getStartupTimeoutMs();
+      assertActiveAcpStartup();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
       runAbortController = abortController;
@@ -506,6 +542,12 @@ export class AcpQueryRunner {
                 `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
             );
             abortController.abort();
+            try {
+              client?.cancel();
+              if (client?.canCloseSession()) {
+                client.closeSession().catch(() => {});
+              }
+            } catch {}
             this.ctx.queryObject?.close();
             client?.close();
           }
@@ -544,16 +586,52 @@ export class AcpQueryRunner {
         acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
+      const processTreeOwner = await getAcpProcessTreeOwner();
+      const hostCallbacks = workspace
+        ? (() => {
+            const manager = new AcpTerminalManager(
+              buildAcpSafeEnv(acpEnv),
+              workspace,
+              processTreeOwner
+            );
+            terminalManager = manager;
+            return {
+              onTerminalCreate: async (params: AcpTerminalCreateParams) => {
+                const normalized = normalizeAcpTerminalCreate(params);
+                if (abortController.signal.aborted) {
+                  throw new Error('ACP terminal command cancelled');
+                }
+                return manager.create(normalized);
+              },
+              onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
+              onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
+                manager.waitForExit(params),
+              onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
+              onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
+              ...(isSafeFsSupported()
+                ? {
+                    onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
+                    onFsWrite: (params: AcpFsWriteParams) =>
+                      this.handleFsWrite(params, workspace, abortController.signal),
+                  }
+                : {}),
+            };
+          })()
+        : {};
+      assertActiveAcpStartup();
       client = this.createAcpClient({
         command,
         args,
         cwd,
         env: acpEnv as Record<string, string> | undefined,
+        processTreeOwner,
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
         onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-        onPermissionRequest: (params) => handleAcpPermissionRequest(params, canUseTool),
+        onPermissionRequest: allowAcpPermissionRequest,
+        ...hostCallbacks,
       });
+      assertActiveAcpStartup();
 
       if (messageQueue.size() > 0) {
         startStartupTimer(() => false);
@@ -561,6 +639,7 @@ export class AcpQueryRunner {
 
       await client.initialize();
       await client.authenticate();
+      assertActiveAcpStartup();
       const existingAcpSessionId = session.acpSessionId;
       if (existingAcpSessionId) {
         if (!client.canLoadSession()) {
@@ -608,6 +687,7 @@ export class AcpQueryRunner {
       await this.ctx.onModelsFetched().catch((error) => {
         logger.warn('Background fetch of models failed:', error);
       });
+      assertActiveAcpStartup();
 
       for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
         suppressPreYieldCallback: true,
@@ -735,6 +815,8 @@ export class AcpQueryRunner {
         !runAbortController?.signal.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
+      terminalManager?.dispose();
+      terminalManager = null;
       const effectiveError =
         startupTimeoutReached && !this.ctx.firstMessageReceived
           ? new Error('ACP startup timeout - query aborted')
@@ -754,10 +836,16 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
+      terminalManager?.dispose();
       await proxyBridge?.close();
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
+      if (isStaleQuery && client) {
+        try {
+          client.close();
+        } catch {}
+      }
       if (!isStaleQuery) {
         this.clearStartupTimer();
 
@@ -805,6 +893,7 @@ export class AcpQueryRunner {
           });
         }
 
+        this._lastConsumedUserMessage = null;
         this.ctx.queryPromise = null;
       }
     }
@@ -855,7 +944,7 @@ export class AcpQueryRunner {
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
-        this.persistAcpSessionId(undefined);
+        this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
@@ -955,6 +1044,54 @@ export class AcpQueryRunner {
     }
   }
 
+  private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    return {
+      content: await readFileWithinWorkspace(workspacePath, segments, {
+        startLine: Math.max(0, (params.line ?? 1) - 1),
+        lineLimit: params.limit ?? undefined,
+        maxBytes: MAX_FS_READ_BYTES,
+      }),
+    };
+  }
+
+  private async handleFsWrite(
+    params: AcpFsWriteParams,
+    workspace: string,
+    signal: AbortSignal
+  ): Promise<AcpFsWriteResult> {
+    if (signal.aborted) throw new Error('ACP filesystem write cancelled');
+    const { workspacePath, segments } = await this.resolveWorkspaceSegments(params.path, workspace);
+    await writeFileWithinWorkspace(workspacePath, segments, params.content, signal);
+    return {};
+  }
+
+  private async resolveWorkspaceSegments(
+    path: string,
+    workspace: string
+  ): Promise<{ workspacePath: string; segments: string[] }> {
+    const { realpath } = await import('node:fs/promises');
+    const workspacePath = await realpath(workspace);
+    const lexicalWorkspace = resolve(workspace);
+    const requestedPath = isAbsolute(path) ? resolve(path) : resolve(lexicalWorkspace, path);
+    let relativePath = relative(lexicalWorkspace, requestedPath);
+    try {
+      this.assertWorkspacePath(requestedPath, lexicalWorkspace, path);
+    } catch {
+      this.assertWorkspacePath(requestedPath, workspacePath, path);
+      relativePath = relative(workspacePath, requestedPath);
+    }
+    if (!relativePath) throw new Error(`ACP filesystem path must identify a file: ${path}`);
+    return { workspacePath, segments: relativePath.split(sep) };
+  }
+
+  private assertWorkspacePath(path: string, workspace: string, requestedPath: string): void {
+    const relativePath = relative(workspace, path);
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new Error(`ACP filesystem path escapes workspace: ${requestedPath}`);
+    }
+  }
+
   private async handleSDKMessage(message: SDKMessage): Promise<void> {
     await this.ctx.onSDKMessage(message);
     await this.ctx.onMarkApiSuccess(message);
@@ -1043,11 +1180,30 @@ export class AcpQueryRunner {
     }
   }
 
-  private persistAcpSessionId(acpSessionId: string | undefined): void {
+  private persistAcpSessionId(acpSessionId: string): void {
     const { session, db } = this.ctx;
-    if (session.acpSessionId === acpSessionId) return;
+    if (session.acpSessionId === acpSessionId && !this.pendingAcpIdentityMetadata) return;
     session.acpSessionId = acpSessionId;
+    if (this.pendingAcpIdentityMetadata) {
+      this.pendingAcpIdentityMetadata = false;
+      db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
+      return;
+    }
     db.updateSession(session.id, { acpSessionId });
+  }
+
+  private clearAcpSessionState(): void {
+    const { session, db } = this.ctx;
+    session.acpSessionId = undefined;
+    session.metadata = {
+      ...session.metadata,
+      acpInstructionsSent: undefined,
+      acpContextUsageEstimate: undefined,
+    };
+    db.updateSession(session.id, {
+      acpSessionId: undefined,
+      metadata: session.metadata,
+    });
   }
 
   private persistAcpInstructionsSent(): void {
@@ -1171,6 +1327,8 @@ export class AcpQueryRunner {
       resolveAbort = resolve;
     });
     const onAbort = () => resolveAbort(abortResult);
+    let messageDelivered = false;
+    let pendingNext: Promise<IteratorResult<SDKMessage>> | null = null;
 
     try {
       if (signal.aborted) {
@@ -1180,23 +1338,89 @@ export class AcpQueryRunner {
       signal.addEventListener('abort', onAbort, { once: true });
 
       while (!signal.aborted) {
-        const result = await Promise.race([iterator.next(), abortPromise]);
+        pendingNext = iterator.next();
+        const result = await Promise.race([pendingNext, abortPromise]);
 
-        if ('aborted' in result || signal.aborted) {
+        if ('aborted' in result) {
           break;
         }
+
+        pendingNext = null;
 
         if (result.done) {
           break;
         }
 
+        messageDelivered = true;
         yield result.value;
       }
     } finally {
       signal.removeEventListener('abort', onAbort);
-      try {
-        await iterator.return?.();
-      } catch {}
+      pendingNext?.catch(() => {});
+      if (signal.aborted && messageDelivered) {
+        const drainDeadline = { expired: true } as const;
+        let clearDrainTimer: (() => void) | undefined;
+        const drainTimeout = new Promise<typeof drainDeadline>((resolve) => {
+          const timer = setTimeout(() => resolve(drainDeadline), POST_ABORT_DRAIN_TIMEOUT_MS);
+          timer.unref?.();
+          clearDrainTimer = () => {
+            clearTimeout(timer);
+            resolve(drainDeadline);
+          };
+        });
+        if (pendingNext) {
+          const inFlight = pendingNext;
+          inFlight.catch(() => {});
+          let result: IteratorResult<SDKMessage> | typeof drainDeadline;
+          try {
+            result = await Promise.race([inFlight, drainTimeout]);
+          } catch {
+            result = drainDeadline;
+          }
+          if (
+            !('expired' in result) &&
+            !result.done &&
+            isAcpPostAbortRelevantMessage(result.value)
+          ) {
+            yield result.value;
+          }
+          pendingNext = null;
+        }
+        for (const msg of queryObj.flushPendingMessages()) {
+          yield msg;
+        }
+        let drained = 0;
+        while (drained < MAX_POST_ABORT_DRAIN_MESSAGES) {
+          const next = iterator.next();
+          next.catch(() => {});
+          let result: IteratorResult<SDKMessage> | typeof drainDeadline;
+          try {
+            result = await Promise.race([next, drainTimeout]);
+          } catch {
+            break;
+          }
+          if ('expired' in result) break;
+          if (result.done) break;
+          drained++;
+          if (isAcpPostAbortRelevantMessage(result.value)) {
+            yield result.value;
+          }
+        }
+        clearDrainTimer?.();
+      }
+      if (signal.aborted) {
+        try {
+          const settled = new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, POST_ABORT_DRAIN_TIMEOUT_MS);
+            timer.unref?.();
+          });
+          await Promise.race([Promise.resolve(iterator.return?.()), settled]);
+        } catch {}
+      } else {
+        try {
+          await iterator.return?.();
+        } catch {}
+      }
     }
   }
 

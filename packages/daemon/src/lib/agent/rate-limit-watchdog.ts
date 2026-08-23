@@ -6,12 +6,19 @@ import {
   classifyLimitKind,
   computeCooldown,
   entryKey,
-  MAX_RESET_HORIZON_MS,
   selectNextFallback,
 } from './fallback-recovery';
-import { cooldownFromReset, normalizeEpochMs, type LimitRetryHint } from './limit-error-classifier';
+import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
 import type { LlmLimitAssessment } from './limit-error-llm-classifier';
 import type { ProcessingStateManager } from './processing-state-manager';
+import {
+  canRetryNow,
+  decideRateLimitTrip,
+  manualRecoveryPause,
+  type RateLimitWatchdogStatus,
+  refinedResetAtMs,
+  resolveWatchdogStatus,
+} from './rate-limit-watchdog-gates';
 
 export interface RateLimitWatchdogConfig {
   cooldownMs: number;
@@ -25,8 +32,6 @@ const DEFAULT_CONFIG: RateLimitWatchdogConfig = {
 
 const STARTUP_RETRY_DELAY_MS = 60 * 1000;
 const MAX_STARTUP_RETRIES = 3;
-
-export type RateLimitWatchdogStatus = 'idle' | 'cooldown' | 'fallback-pending';
 
 export interface RateLimitWatchdogState {
   status: RateLimitWatchdogStatus;
@@ -113,11 +118,10 @@ export class RateLimitWatchdog {
     const retryAt = this.cooldownTimer !== null ? Date.now() + this.getRemainingMs() : null;
 
     return {
-      status: this.fallbackPending
-        ? 'fallback-pending'
-        : this.cooldownTimer !== null
-          ? 'cooldown'
-          : 'idle',
+      status: resolveWatchdogStatus({
+        fallbackPending: this.fallbackPending,
+        cooldownActive: this.cooldownTimer !== null,
+      }),
       retryCount: this.retryCount,
       maxRetries: this.config.maxAutoRetries,
       retryAt,
@@ -204,33 +208,28 @@ export class RateLimitWatchdog {
       );
     }
 
-    if (this.lastHint?.billingTerminal) {
+    const trip = decideRateLimitTrip({
+      hint: this.lastHint,
+      errorMessage,
+      retryCount: this.retryCount,
+      maxAutoRetries: this.config.maxAutoRetries,
+      now: Date.now(),
+    });
+    if (trip.action === 'surface-billing') {
       this.logger.warn(
         `Billing-cycle limit with no available fallback; surfacing instead of cooling down. ` +
           `Error: ${errorMessage}`
       );
       return false;
     }
-
-    const now = Date.now();
-    const hintedReset = this.lastHint?.resetAtMs ?? null;
-    const usableHintedReset =
-      hintedReset !== null && hintedReset > now && hintedReset <= now + MAX_RESET_HORIZON_MS
-        ? hintedReset
-        : null;
-    const decision =
-      usableHintedReset !== null
-        ? cooldownFromReset(usableHintedReset, now)
-        : computeCooldown(errorMessage, this.retryCount, now);
-
-    if (!decision.freeWait && this.retryCount >= this.config.maxAutoRetries) {
+    if (trip.action === 'give-up') {
       this.logger.warn(
         `Max auto-retries (${this.config.maxAutoRetries}) exceeded for 429 error. Giving up. ` +
           `Error: ${errorMessage}`
       );
       return false;
     }
-    if (!decision.freeWait) {
+    if (trip.charge) {
       this.retryCount++;
     }
 
@@ -241,15 +240,15 @@ export class RateLimitWatchdog {
       return true;
     }
 
-    const armed = await this.scheduleCooldown(errorMessage, decision, entryGeneration);
+    const armed = await this.scheduleCooldown(errorMessage, trip.decision, entryGeneration);
 
     if (
       armed &&
-      decision.reason === 'backoff-ladder' &&
+      trip.decision.reason === 'backoff-ladder' &&
       this.deps.classifyUnknownLimit &&
       entryGeneration === this.generation
     ) {
-      this.fireLlmRefinement(errorMessage, entryGeneration, !decision.freeWait);
+      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge);
     }
     return true;
   }
@@ -265,13 +264,10 @@ export class RateLimitWatchdog {
     void classify(errorMessage)
       .then(async (result) => {
         if (entryGeneration !== this.generation || this.cooldownTimer !== timerAtFire) return;
-        if (!result || result.notALimit) return;
-        const resetMs =
-          typeof result.resetAtMs === 'number' && Number.isFinite(result.resetAtMs)
-            ? normalizeEpochMs(result.resetAtMs)
-            : null;
+        if (!result) return;
         const now = Date.now();
-        if (resetMs === null || resetMs <= now || resetMs > now + MAX_RESET_HORIZON_MS) return;
+        const resetMs = refinedResetAtMs(result, now);
+        if (resetMs === null) return;
         this.logger.info(
           `LLM limit refinement: retry at ${new Date(resetMs).toISOString()} ` +
             `(was backoff ladder) for error: ${errorMessage}`
@@ -614,10 +610,13 @@ export class RateLimitWatchdog {
   }
 
   retryNow(): boolean {
-    if (this.fallbackPending) {
-      return false;
-    }
-    if (this.cooldownTimer === null && !this.startupExhausted) {
+    if (
+      !canRetryNow({
+        fallbackPending: this.fallbackPending,
+        cooldownActive: this.cooldownTimer !== null,
+        startupExhausted: this.startupExhausted,
+      })
+    ) {
       return false;
     }
 
@@ -677,12 +676,13 @@ export class RateLimitWatchdog {
   }
 
   isManualRecoveryPause(): boolean {
-    return (
-      this.cooldownTimer === null &&
-      !this.fallbackPending &&
-      !this.retryCallbackInFlight &&
-      (this.startupExhausted || this.billingPauseSurfaced)
-    );
+    return manualRecoveryPause({
+      cooldownActive: this.cooldownTimer !== null,
+      fallbackPending: this.fallbackPending,
+      retryCallbackInFlight: this.retryCallbackInFlight,
+      startupExhausted: this.startupExhausted,
+      billingPauseSurfaced: this.billingPauseSurfaced,
+    });
   }
 
   isRateLimitBannerCancelled(): boolean {
