@@ -75,6 +75,15 @@ delivery-row steps and v1/v2 branch moved to a steps module. See
 retirement, and the remaining mini-pilot shelf for
 `task-agent-manager.ts`.
 
+Validated further by pilot 12 (2026-08-23, first web-side pilot — the UI
+chain's own "pilot 6", renumbered here to keep the ADR sequence unambiguous):
+the four hand-rolled LiveQuery subscription hook lifecycles pinned then
+migrated onto one pure machine, `live-query-lifecycle.ts` — composition stayed
+a plain function under the earn-the-layer rule, so the pilot validates the
+reduceRun shape (reducer + effects-executing facade) without yet promoting the
+combinator; see "Pilot 12" below for the rule-of-three count and the recorded
+config drift.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -1836,6 +1845,100 @@ per the pilot-3 non-goal discipline):
   `rehydrateSubSession` wrapper's dedup + restore-lock is shell, but the
   ladder is extraction material once pinned.
 
+## Pilot 12 — web live-query subscription lifecycle (2026-08-23)
+
+Pilot 12 (the UI-side pilot 6) carried the pattern out of the daemon into
+`packages/web`: the four hand-rolled LiveQuery subscription lifecycles —
+`useSpaceTaskMessages`, `useActorMessageProjections`, `useTaskMilestones`,
+`useGroupMessages` — each a drifted copy of the same
+subscribe/snapshot/delta/error/reconnect machinery, were characterized with pin
+files written green against the pre-migration hooks, then migrated one PR at a
+time onto a single pure machine, `packages/web/src/lib/live-query-lifecycle.ts`
+(224 lines): five statuses (`subscribing`/`awaiting-snapshot`/`live`/
+`error-retry`/`disposed`), six events, and a pure
+`(state, event) → { state, effects[] }` transition that only declares effects
+(`re-snapshot`, `retry-with-backoff`, `emit-to-store`, `schedule-cleanup`),
+never executes them. Stale-generation events are dropped structurally;
+snapshot-retry delay/budget/enabled are config so drifted copies adopt the
+machine without forks (`snapshotRetryEnabled: false` arrived as an optional
+flag for exactly that). The hooks keep the shell role — subscription handles,
+timers, row stores, and effect execution; the sandwich is the same, the
+"class" is a Preact effect.
+
+**Composition status: plain function, no superpipe.** The machine is a single
+switch decider with no staged effects, so a pipeline layer would not earn its
+place (Decision item on blessed idioms; the call was made in PR 3 of the chain
+and held). Consequence, reconciled by the closing sweep: the web `superpipe`
+dependency added for the pilot "functional cores" is unused and was removed
+(only daemon modules import it, and daemon declares its own) — re-add it when a
+superpipe-based combinator actually lands in web. The pilot therefore validates
+the *shape* `reduceRun` is meant to own — a per-event reducer plus a
+facade/executor that interprets its effects — without promoting the combinator.
+
+**Rule-of-three count for `reduceRun`.** The executor half of the shape
+(dispatch → transition → interpret effects, plus timer cleanup) is hand-rolled
+four times today, once per facade, ~30–40 structurally identical lines each:
+4 real uses, at the promotion threshold. The next consumer is already scouted,
+not speculative: the pilot-12 closing report's store assessment finds
+`app-mcp-store`, `space-mcp-store`, and `skills-store` fit the machine as-is
+(single fixed subscription, snapshot/delta listeners, reconnect resubscribe;
+needs `snapshotRetryEnabled: false`, an async bridge for awaited-and-throwing
+subscribes, and a fresh-machine-per-subscribe adapter since `disposed` is
+terminal), with `space-store` (four near-identical blocks, highest payoff) and
+`global-store` (dynamic params) behind small decisions. What blocks promotion
+is not the count but drift: the four executors differ in config and policy —
+snapshot watchdog on/off, subscribe-rejection retry ladder, error surfacing,
+reconnect mechanism — consolidated in the closing report's drift table with
+proposed (not applied) unification PRs. Unify first and the combinator falls
+out with structural differences; promote now and the drift calcifies inside it.
+
+**Costs:** production +385 web lines — the machine (+224) against four facades
+914 → 1,075 (+161 of interpretation wiring; no hook shrank, and none was
+expected: the pilots deduplicate *decisions*, and the per-hook row stores,
+sorters, and side channels remain hook-owned by design). Tests +2,118: the
+machine contract suite (496 lines, including a full status×event
+transition-table pin) plus four `.lifecycle.test.ts` characterization files
+(584 + 352 + 272 + 414). Pins-first discipline held: every pre-existing suite
+passed unchanged except one pinned expectation that moved 12 → 14 subscribe
+calls — the old inline code let a superseded generation's subscribe resolution
+consume retry budget where the machine's generation guard drops it, restoring
+the full budget on reconnect.
+
+**The closing sweep found the migrations clean.** Diffed against their
+pre-migration bodies, the hooks retain no inline lifecycle remnants (the
+watchdog consts, retry ladders, and generation counters are all gone); knip
+(files/dependencies/exports), oxlint, and `tsc --noEmit` are clean on web. The
+one find was the unused `superpipe` dependency above. Recorded, not removed:
+the `'full'` query variant of `useSpaceTaskMessages` has no production caller
+in web (daemon still registers the named query); `LiveQueryEmission`/
+`LiveQueryLifecycleTransition` are exported contract types with no external
+importer. Full drift table, store-variant assessment, and unification
+proposals U1–U6 (watchdog everywhere, one reconnect mechanism, shared
+executor, store adoptions, milestones error listener, `'full'` retirement —
+each with risk): `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`,
+owner decides.
+
+**Follow-on candidates this unblocks.**
+
+- **`requestRun` is already at threshold on the same evidence.** The
+  version-guarded fetch idiom (`requestVersion` ref, guard every apply) recurs
+  in ≥6 web production sites: `SpaceForge.tsx` alone hosts five guarded fetch
+  closures (~27 guard checks), plus `ScopeDetailPanel`, `GitHubHealthPanel`
+  (refresh generation), `SpaceTaskPane`, and `space-store`. A stale response
+  structurally cannot apply is the same discipline the lifecycle machine gives
+  subscriptions via generations — the combinator would give it to fetches.
+- **The `components/space` bucket is the next web surface.** 32.4k non-test
+  source lines across 85 files at pilot close, unchanged from pilot start
+  (32.2k) — 21.5k at the top level, `visual-editor/` 7.3k, `thread/` 3.4k; the
+  ~27k plan figure undercounts it. Its subscriptions ride the six stores
+  assessed above; its panels hold the `requestRun` sites. The Phase 5 line
+  ("web functional cores — P1: `useTurnBlocks`, message projections,
+  model-switcher projections") should be executed in the machine+facade shape
+  this pilot established.
+
+UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
+#2788, plus this closing PR (drift report + dead-code sweep + this note).
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1888,6 +1991,11 @@ per the pilot-3 non-goal discipline):
   task-tool handlers onto the Pilot 5 routing cores, the
   `rehydrateSubSession` failure-cleanup asymmetry, the rehydrate admission
   gates).
+- **Done (pilot 12, web):** the four LiveQuery hook lifecycles onto the pure
+  `live-query-lifecycle` machine, plain-function composition (no superpipe —
+  earn-the-layer held); the `reduceRun` executor shape is at 4 real uses with
+  three store consumers scouted — see "Pilot 12" above and the closing drift
+  report for the unification path.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1940,8 +2048,10 @@ per the pilot-3 non-goal discipline):
   structurally cannot apply — SpaceForge/ScopeDetail fetches, GitHubHealthPanel
   refresh, every version-guarded panel fetch); `transactionalRun` (P7/Phase 4 —
   effects run only after commit); `reduceRun` (P6/Phase 3 — per-event reducer
-  bodies; the web subscription-lifecycle machines decompose into this shape plus
-  a facade). See "Library surface vs. blessed idioms" for the promotion rule.
+  bodies; the web subscription-lifecycle machine plus its four facades, extracted
+  by pilot 12, decompose into this shape, and the executor half already recurs
+  4× — promotion rides the store adoptions). See "Library surface vs. blessed
+  idioms" for the promotion rule.
 - **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
 
 ## References
@@ -2019,5 +2129,13 @@ per the pilot-3 non-goal discipline):
   in
   `packages/daemon/tests/unit/5-space/runtime/{task-agent-manager-pending-drain,reset-context-per-turn,pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.test.ts`.
   Pilot 8 PRs: #2799, #2809, #2817, #2829, #2840, plus this closing sweep.
+- Pilot 12 (UI pilot 6) files: `packages/web/src/lib/live-query-lifecycle.ts`
+  (machine, with its contract suite alongside); facades in
+  `packages/web/src/hooks/{useSpaceTaskMessages,useActorMessageProjections,
+  useTaskMilestones,useGroupMessages}.ts`, pins in
+  `hooks/__tests__/*.lifecycle.test.ts`. Closing drift report (config-drift
+  table, store-variant assessment, unification proposals U1–U6):
+  `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`. UI pilot 6 PRs:
+  #2714, #2716, #2718, #2724, #2756, #2788, plus the closing PR.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
