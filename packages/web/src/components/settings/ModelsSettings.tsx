@@ -451,6 +451,7 @@ export function ModelsSettings() {
     null
   );
   const autoRetriedErrorRef = useRef<string | null>(null);
+  const fetchInFlightRef = useRef(false);
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -468,12 +469,14 @@ export function ModelsSettings() {
   }, [settings]);
 
   const fetchModels = async (forceRefresh: boolean) => {
+    if (fetchInFlightRef.current) return;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       setLoadError({ message: 'Not connected to server', forceRefresh });
       return;
     }
 
+    fetchInFlightRef.current = true;
     try {
       const [modelsResponse, authResponse] = await Promise.all([
         hub.request(
@@ -497,6 +500,8 @@ export function ModelsSettings() {
         forceRefresh,
       });
       throw e;
+    } finally {
+      fetchInFlightRef.current = false;
     }
   };
 
@@ -558,7 +563,11 @@ export function ModelsSettings() {
   }, []);
 
   useEffect(() => {
-    if (!isConnected || !loadError) return;
+    if (!loadError) {
+      autoRetriedErrorRef.current = null;
+      return;
+    }
+    if (!isConnected) return;
     if (autoRetriedErrorRef.current === loadError.message) return;
     autoRetriedErrorRef.current = loadError.message;
     void loadModels(loadError.forceRefresh);

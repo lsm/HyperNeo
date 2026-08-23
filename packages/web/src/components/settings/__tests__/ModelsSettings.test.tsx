@@ -225,4 +225,75 @@ describe('ModelsSettings — load failure surfacing', () => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
   });
+
+  it('re-auto-retries a recurring error after a successful recovery', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockRejectedValue(new Error('boom'));
+
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(2);
+    });
+
+    mockRequest.mockResolvedValueOnce({ models: [] });
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    const refresh = screen.getByRole('button', { name: 'Refresh models' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(refresh.disabled).toBe(false);
+    });
+    mockRequest.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({ models: [] });
+    fireEvent.click(refresh);
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(5);
+    });
+    expect(mockRequest).toHaveBeenLastCalledWith('models.list', { forceRefresh: true });
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  it('does not start another load while one is already in flight', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockRejectedValue(new Error('boom'));
+
+    render(<ModelsSettings />);
+    await screen.findByRole('alert');
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(2);
+    });
+
+    let resolveRequest: (value: { models: unknown[] }) => void = () => {};
+    mockRequest.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRequest = resolve;
+      })
+    );
+
+    const retry = screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(retry.disabled).toBe(false);
+    });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledTimes(3);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save OpenRouter allowlist' }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockRequest).toHaveBeenCalledTimes(3);
+
+    resolveRequest({ models: [] });
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
 });
