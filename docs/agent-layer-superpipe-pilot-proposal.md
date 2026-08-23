@@ -1728,7 +1728,7 @@ not only B5e's owner-scoped idle (§5).
 | C4 | cleanup + ADR note | ~10 | doc ~35 |
 
 Order: C1\* → C2\* → C3\*; C2a ∥ C2b; **C3 apply after the complete B5
-series (B5a–B5j)**, whose dispatch/catch fencing the exceptional-exit
+series (B5a–B5l)**, whose dispatch/catch fencing the exceptional-exit
 contract consumes — owner-scoped idle (B5e) alone does not stop a stale
 handler resuming after an awaited publish (§8.2).
 
