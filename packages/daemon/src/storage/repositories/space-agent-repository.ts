@@ -170,18 +170,25 @@ export class SpaceAgentRepository {
 
   delete(id: string): void {
     this.db.transaction(() => {
+      const row = this.db.prepare(`SELECT space_id FROM space_agents WHERE id = ?`).get(id) as {
+        space_id: string;
+      } | null;
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
         )
         .get();
-      const hasSiblingLhAgent = !!this.db
-        .prepare(
-          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
-        )
-        .get()
-        ? !!this.db.prepare(`SELECT 1 FROM space_long_horizon_agents WHERE id = ?`).get(id)
-        : false;
+      const hasSiblingLhAgent =
+        row != null &&
+        !!this.db
+          .prepare(
+            `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
+          )
+          .get()
+          ? !!this.db
+              .prepare(`SELECT 1 FROM space_long_horizon_agents WHERE id = ? AND space_id = ?`)
+              .get(id, row.space_id)
+          : false;
       if (hasInbox && !hasSiblingLhAgent) {
         this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
       }

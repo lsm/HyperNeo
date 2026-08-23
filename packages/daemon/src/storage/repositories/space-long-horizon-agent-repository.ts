@@ -184,16 +184,23 @@ export class SpaceLongHorizonAgentRepository {
 
   delete(id: string): void {
     this.db.transaction(() => {
+      const row = this.db
+        .prepare(`SELECT space_id FROM space_long_horizon_agents WHERE id = ?`)
+        .get(id) as { space_id: string } | null;
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
         )
         .get();
-      const hasSiblingWorker = !!this.db
-        .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
-        .get()
-        ? !!this.db.prepare(`SELECT 1 FROM space_agents WHERE id = ?`).get(id)
-        : false;
+      const hasSiblingWorker =
+        row != null &&
+        !!this.db
+          .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
+          .get()
+          ? !!this.db
+              .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
+              .get(id, row.space_id)
+          : false;
       if (hasInbox && !hasSiblingWorker) {
         this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
       }
