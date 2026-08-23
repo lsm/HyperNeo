@@ -708,6 +708,56 @@ describe('SessionRepository', () => {
       expect(session?.acpSessionId).toBeUndefined();
     });
 
+    it('should clear persisted ACP session ids only for ACP providers', () => {
+      repository.createSession(
+        createDefaultSession({
+          id: 'acp-session',
+          config: { ...createDefaultSession().config, provider: 'acp' },
+          acpSessionId: 'remote-acp-session',
+          metadata: { acpContextUsageEstimate: 12000, preserved: true },
+        })
+      );
+      repository.createSession(
+        createDefaultSession({
+          id: 'other-session',
+          config: { ...createDefaultSession().config, provider: 'anthropic' },
+          acpSessionId: 'unrelated-session',
+        })
+      );
+
+      repository.clearAcpSessionIds();
+
+      expect(repository.getSession('acp-session')).toMatchObject({
+        acpSessionId: undefined,
+        metadata: { preserved: true },
+      });
+      expect(repository.getSession('other-session')?.acpSessionId).toBe('unrelated-session');
+    });
+
+    it('clears ACP session ids even when another row has malformed metadata', () => {
+      repository.createSession(
+        createDefaultSession({
+          id: 'acp-session',
+          config: { ...createDefaultSession().config, provider: 'acp' },
+          acpSessionId: 'remote-acp-session',
+          metadata: { acpContextUsageEstimate: 12000, preserved: true },
+        })
+      );
+      db.prepare(
+        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, acp_session_id)
+         VALUES ('malformed', 'Malformed', '/workspace', 't', 't', 'active', ?, 'not-json', 'malformed-acp')`
+      ).run(JSON.stringify({ ...createDefaultSession().config, provider: 'acp' }));
+
+      repository.clearAcpSessionIds();
+
+      expect(repository.getSession('acp-session')).toMatchObject({ acpSessionId: undefined });
+      const malformed = db
+        .prepare(`SELECT metadata, acp_session_id FROM sessions WHERE id = 'malformed'`)
+        .get() as { metadata: string; acp_session_id: string | null };
+      expect(malformed.metadata).toBe('not-json');
+      expect(malformed.acp_session_id).toBeNull();
+    });
+
     it('should update availableCommands', () => {
       repository.createSession(createDefaultSession());
 

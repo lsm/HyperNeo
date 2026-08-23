@@ -318,6 +318,7 @@ export interface SessionMetadata {
   refusalRewindTargetUuid?: string | null;
   acpInstructionsSent?: boolean;
   acpCommandIdentity?: string;
+  acpSessionCommand?: string;
   pastSdkSessionIds?: string[];
   acpContextUsageEstimate?: number;
   worktreeChoice?: {
