@@ -1316,11 +1316,11 @@ the chain's close, 1,867 after dev's interleaved extractions — chain A PRs
 4–5 and the rewind-operator dedup — landed beside it; chains A and B account
 for the rest of the shrink from the survey's 2,199-line base),
 `session-repository.ts` +38 for the vocabulary interpolation and
-parameterized cutoffs. Tests +1,648:
+parameterized cutoffs. Tests +1,672:
 C1's pins +585 net (window matrix, turn-end batch semantics, flush boundary),
-the admission suite +69 net over its 212-line C2 landing (this closing
-sweep's identity pins plus their review-round expectation fix, 281 lines
-now), the routing suite +98, the parity matrix +684 —
+the admission suite +93 net over its 212-line C2 landing (this closing
+sweep's identity pins plus their two review-round reworks, 305 lines now),
+the routing suite +98, the parity matrix +684 —
 again the value is testability, and here the parity matrix paid for itself by
 surfacing the five rebuild divergences on identical rows.
 
