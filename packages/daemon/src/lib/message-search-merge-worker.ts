@@ -1,4 +1,7 @@
 import { Database as BunDatabase } from '../storage/sqlite-compat';
+import { withBusyRetry } from '../storage/busy-retry';
+
+const FTS_MERGE_RANK = 1024;
 
 type MergeWorkerRequest = {
   dbPath: string;
@@ -22,7 +25,11 @@ worker.onmessage = (event) => {
   try {
     db = new BunDatabase(dbPath);
     db.exec(`PRAGMA busy_timeout = 5000`);
-    db.exec(`INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', 4096)`);
+    withBusyRetry(() => {
+      db?.exec(
+        `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('merge', ${FTS_MERGE_RANK})`
+      );
+    });
     worker.postMessage({ ok: true });
   } catch (error) {
     worker.postMessage({

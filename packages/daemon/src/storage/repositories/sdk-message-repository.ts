@@ -9,6 +9,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { Logger } from '../../lib/logger';
+import { withBusyRetry } from '../busy-retry';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -318,10 +319,12 @@ export class SDKMessageRepository {
     let processed = 0;
     for (const { message_id } of pending) {
       try {
-        this.db.transaction(() => {
-          this.upsertMessageSearchRow(message_id, Date.now());
-          deletePendingStmt.run(message_id);
-        })();
+        withBusyRetry(() => {
+          this.db.transaction(() => {
+            this.upsertMessageSearchRow(message_id, Date.now());
+            deletePendingStmt.run(message_id);
+          })();
+        });
       } catch (err) {
         this.logger.warn('message search index flush failed, will retry next flush:', err);
       }
@@ -433,7 +436,7 @@ export class SDKMessageRepository {
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       );
 
-      this.db.transaction(() => {
+      const saveTransaction = this.db.transaction(() => {
         const conversationTurnIndex = this.resolveConversationTurnIndex(
           taskId,
           sessionId,
@@ -464,7 +467,8 @@ export class SDKMessageRepository {
         this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
         this.scheduleMessageSearchIndex(id);
         this.applyBadgeUpdate(sessionId, badgeUpdate);
-      })();
+      });
+      withBusyRetry(() => saveTransaction());
       try {
         if (badgeUpdate.kind === 'delta') this.notifySessionsChanged(sessionId);
         this.deleteSupersededMessageSearchRows(sessionId, message);
@@ -890,9 +894,9 @@ export class SDKMessageRepository {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): string {
-    const core = this.db.transaction(() =>
-      this.saveUserMessageCore(sessionId, message, sendStatus, origin)
-    )();
+    const core = withBusyRetry(() =>
+      this.db.transaction(() => this.saveUserMessageCore(sessionId, message, sendStatus, origin))()
+    );
     this.runPostSaveSideEffects(sessionId, core.id, core.countsTowardsBadge);
     return core.id;
   }
@@ -1112,7 +1116,7 @@ export class SDKMessageRepository {
     );
     const changedSessions: string[] = [];
     const badgeUpdate = planBadgeRecompute();
-    this.db.transaction(() => {
+    const statusTransaction = this.db.transaction(() => {
       stmt.run(newStatus, ...messageIds);
 
       if (pending.length > 0) {
@@ -1156,7 +1160,8 @@ export class SDKMessageRepository {
       for (const { sid } of affectedSessions) {
         if (this.applyBadgeUpdate(sid, badgeUpdate)) changedSessions.push(sid);
       }
-    })();
+    });
+    withBusyRetry(() => statusTransaction());
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
     for (const messageId of messageIds) this.scheduleMessageSearchIndex(messageId);
   }

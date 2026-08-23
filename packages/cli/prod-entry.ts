@@ -12,16 +12,8 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
       import('./package.json'),
     ]);
 
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('[Fatal] Unhandled Promise Rejection:', reason);
-    console.error('Promise:', promise);
-    process.exit(1);
-  });
-
-  process.on('uncaughtException', (error) => {
-    console.error('[Fatal] Uncaught Exception:', error);
-    process.exit(1);
-  });
+  const { installProcessFatalLogging } = await import('@hyperneo/daemon/lib/process-fatal-logger');
+  installProcessFatalLogging();
 
   const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 

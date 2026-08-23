@@ -398,7 +398,7 @@ describe('DatabaseCore', () => {
       }
     });
 
-    it('should copy the WAL sidecar when the checkpoint is blocked by a concurrent reader', async () => {
+    it('should copy the WAL sidecar when the checkpoint is capped by a concurrent reader', async () => {
       const raw = new RawDatabase(dbPath);
       seedWalData(raw);
       raw.exec('BEGIN');

@@ -60,6 +60,7 @@ import {
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
+import { installProcessFatalLogging } from './lib/process-fatal-logger';
 import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
@@ -224,12 +225,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     ? subscribeToStructuredLogs((event) => structuredLogSink.capture(event))
     : () => {};
   const restoreConsoleCapture = installConsoleLogCapture();
+  const disposeProcessFatalLogging =
+    process.env.NODE_ENV === 'test'
+      ? null
+      : installProcessFatalLogging({
+          flush: () => structuredLogSink?.flush() ?? Promise.resolve(),
+        });
   let fileLogCaptureClosed = false;
   const closeFileLogCapture = async (): Promise<void> => {
     if (fileLogCaptureClosed) return;
     fileLogCaptureClosed = true;
     unsubscribeFileLogs();
     restoreConsoleCapture();
+    disposeProcessFatalLogging?.();
     await structuredLogSink?.close();
   };
   let __startupStep = 0;

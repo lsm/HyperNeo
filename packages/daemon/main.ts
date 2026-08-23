@@ -1,9 +1,9 @@
 import { getConfig } from './src/config';
 import { createDaemonApp } from './src/app';
 import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger';
+import { installProcessFatalLogging } from './src/lib/process-fatal-logger';
 
 let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
-let fatalExitStarted = false;
 
 async function flushFatalLogs(): Promise<void> {
   await Promise.race([
@@ -12,37 +12,7 @@ async function flushFatalLogs(): Promise<void> {
   ]).catch(() => {});
 }
 
-process.on('uncaughtException', async (error) => {
-  if (fatalExitStarted) return;
-  fatalExitStarted = true;
-  emitStructuredLogEvent({
-    level: 'fatal',
-    args: ['[Daemon] Uncaught exception:', error],
-    source: 'process',
-    module: 'daemon:main',
-    metadata: { processEvent: 'uncaughtException' },
-  });
-  withConsoleLogCaptureSuppressed(() => console.error('[Daemon] Uncaught exception:', error));
-  await flushFatalLogs();
-  process.exit(1);
-});
-
-process.on('unhandledRejection', async (reason) => {
-  if (fatalExitStarted) return;
-  fatalExitStarted = true;
-  emitStructuredLogEvent({
-    level: 'fatal',
-    args: ['[Daemon] Unhandled promise rejection:', reason],
-    source: 'process',
-    module: 'daemon:main',
-    metadata: { processEvent: 'unhandledRejection' },
-  });
-  withConsoleLogCaptureSuppressed(() =>
-    console.error('[Daemon] Unhandled promise rejection:', reason)
-  );
-  await flushFatalLogs();
-  process.exit(1);
-});
+installProcessFatalLogging({ flush: flushFatalLogs });
 
 const config = getConfig();
 
