@@ -169,6 +169,7 @@ export class SpaceAgentRepository {
   }
 
   delete(id: string): void {
+    this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
     this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
   }
 
