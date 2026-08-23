@@ -1176,7 +1176,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
       ).length;
     }
 
-    it('caches the miss for the instance lifetime: a later-appearing ~/.hyperneo/auth.json is never re-read', async () => {
+    function fastForwardNegativeCacheTtl(): () => void {
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 5 * 60 * 1000 + 1;
+      return () => {
+        Date.now = originalNow;
+      };
+    }
+
+    it('caches the miss until the TTL expires, then picks up a later-appearing ~/.hyperneo/auth.json', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
 
@@ -1191,10 +1199,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(await p.isAvailable()).toBe(false);
       expect(authJsonReadCount()).toBe(readsBefore);
 
+      const restoreNow = fastForwardNegativeCacheTtl();
+      try {
+        expect(await p.getApiKey()).toBe('late-hyperneo-token');
+        expect(await p.isAvailable()).toBe(true);
+      } finally {
+        restoreNow();
+      }
+
       p.stopAllBridgeServers();
     });
 
-    it('caches the miss for the instance lifetime: a later-appearing ~/.codex/auth.json is never re-read', async () => {
+    it('caches the miss until the TTL expires, then picks up a later-appearing ~/.codex/auth.json', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
 
@@ -1206,10 +1222,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(await p.getApiKey()).toBeUndefined();
       expect(await p.isAvailable()).toBe(false);
 
+      const restoreNow = fastForwardNegativeCacheTtl();
+      try {
+        expect(await p.getApiKey()).toBe('late-codex-key');
+        expect(await p.isAvailable()).toBe(true);
+      } finally {
+        restoreNow();
+      }
+
       p.stopAllBridgeServers();
     });
 
-    it('treats unusable credential files like absent ones when caching the miss', async () => {
+    it('treats unusable credential files like absent ones until the TTL expires, then re-checks them', async () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
       mkdirSync(hyperneoDir, { recursive: true });
@@ -1222,6 +1246,59 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'late-usable-token' });
       expect(await p.getApiKey()).toBeUndefined();
+
+      const restoreNow = fastForwardNegativeCacheTtl();
+      try {
+        expect(await p.getApiKey()).toBe('late-usable-token');
+        expect(await p.isAvailable()).toBe(true);
+      } finally {
+        restoreNow();
+      }
+
+      p.stopAllBridgeServers();
+    });
+
+    it('re-arms a fresh miss window when the TTL re-check still finds no credentials', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBeUndefined();
+
+      const restoreNow = fastForwardNegativeCacheTtl();
+      let readsAfterExpiredRecheck = 0;
+      try {
+        const readsBeforeRecheck = authJsonReadCount();
+        expect(await p.getApiKey()).toBeUndefined();
+        readsAfterExpiredRecheck = authJsonReadCount();
+        expect(readsAfterExpiredRecheck).toBeGreaterThan(readsBeforeRecheck);
+        expect(await p.isAvailable()).toBe(false);
+      } finally {
+        restoreNow();
+      }
+      expect(authJsonReadCount()).toBe(readsAfterExpiredRecheck);
+
+      writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'late-hyperneo-token' });
+      expect(await p.getApiKey()).toBeUndefined();
+
+      p.stopAllBridgeServers();
+    });
+
+    it('does not expire a resolved auth result after the TTL', async () => {
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
+      writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'hyperneo-token' });
+
+      const p = makeProvider({}, hyperneoDir, codexDir);
+      expect(await p.getApiKey()).toBe('hyperneo-token');
+
+      const restoreNow = fastForwardNegativeCacheTtl();
+      try {
+        expect(await p.getApiKey()).toBe('hyperneo-token');
+        expect(await p.isAvailable()).toBe(true);
+      } finally {
+        restoreNow();
+      }
 
       p.stopAllBridgeServers();
     });
