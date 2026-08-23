@@ -26,6 +26,11 @@ import {
   withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
+import {
+  DEFERRED_EXTERNAL_EVENT_ROW_CAP,
+  foldDeferredExternalEventOverflow,
+  parseDeferredExternalEventText,
+} from '../../../lib/external-events/deferred-event-digest';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -3387,7 +3392,7 @@ export class TaskAgentManager {
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
-      return settleDeliveryRowStatus(deliveryRows, {
+      const deferredDbId = settleDeliveryRowStatus(deliveryRows, {
         sessionId,
         message: sdkUserMessage,
         messageId,
@@ -3395,6 +3400,8 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
+      await this.enforceDeferredExternalEventCap(sessionId, message);
+      return deferredDbId;
     }
     if (
       outcome.decision.action === 'clear_before_deliver' &&
@@ -3485,6 +3492,43 @@ export class TaskAgentManager {
         origin,
       }
     );
+  }
+
+  private async enforceDeferredExternalEventCap(
+    sessionId: string,
+    deferredMessageText: string
+  ): Promise<void> {
+    if (!parseDeferredExternalEventText(deferredMessageText)) return;
+    const { messages } = this.config.db.getUserMessagesByStatus(sessionId, 'deferred');
+    const foldedRows = await foldDeferredExternalEventOverflow({
+      sessionId,
+      rows: messages,
+      cap: DEFERRED_EXTERNAL_EVENT_ROW_CAP,
+      ops: {
+        saveRow: async (message, sendStatus) => {
+          const dbId = this.config.db.saveUserMessage(sessionId, message, sendStatus);
+          await this.publishMessageStatusChanged(sessionId, dbId, sendStatus);
+          return dbId;
+        },
+        markSuperseded: async (dbIds) => {
+          this.config.db.updateMessageStatus(dbIds, 'consumed');
+          await this.config.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: dbIds,
+              status: 'consumed',
+            })
+            .catch(() => {});
+        },
+      },
+    });
+    if (foldedRows > 0) {
+      log.warn(
+        `TaskAgentManager: deferred external-event backlog exceeded ` +
+          `${DEFERRED_EXTERNAL_EVENT_ROW_CAP} for session ${sessionId}; folded ` +
+          `${foldedRows} oldest rows into an early digest`
+      );
+    }
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {

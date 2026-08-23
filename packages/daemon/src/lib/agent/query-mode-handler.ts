@@ -2,6 +2,7 @@ import type { MessageContent, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
+import { foldDeferredExternalEventsAtFlush } from '../external-events/deferred-event-digest';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
 import { ClearConversationCancelledError } from './agent-session';
@@ -51,13 +52,15 @@ export class QueryModeHandler {
 
     const runFlush = async (): Promise<number> => {
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
-      const deferredMessages = options?.excludeMessageUuid
+      const backlog = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
         : allDeferred;
 
-      if (deferredMessages.length === 0) {
+      if (backlog.length === 0) {
         return 0;
       }
+
+      const deferredMessages = await this.foldDeferredExternalEvents(backlog);
 
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
@@ -105,6 +108,41 @@ export class QueryModeHandler {
       logger.error('Failed to trigger query:', error);
       return { success: false, messageCount: 0, error: errorMessage };
     }
+  }
+
+  private async foldDeferredExternalEvents(
+    rows: Array<SDKUserMessage & { dbId: string; timestamp: number }>
+  ): Promise<Array<SDKUserMessage & { dbId: string; timestamp: number }>> {
+    const sessionId = this.ctx.session.id;
+    const result = await foldDeferredExternalEventsAtFlush({
+      sessionId,
+      rows,
+      ops: {
+        saveRow: async (message, sendStatus) => {
+          const dbId = this.ctx.db.saveUserMessage(sessionId, message, sendStatus);
+          await this.ctx.internalEventBus.publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbId],
+            status: sendStatus,
+          });
+          return dbId;
+        },
+        markSuperseded: async (dbIds) => {
+          this.ctx.db.updateMessageStatus(dbIds, 'consumed');
+          await this.ctx.internalEventBus.publish('messages.statusChanged', {
+            sessionId,
+            messageIds: dbIds,
+            status: 'consumed',
+          });
+        },
+      },
+    });
+    if (!result.digestRow) return rows;
+    this.ctx.logger.info(
+      `turn-end flush folded ${result.foldedCount} deferred external events into one digest ` +
+        `for session ${sessionId}`
+    );
+    return [...result.remainder, result.digestRow];
   }
 
   private flushClearBlockedByLiveWork(): boolean {
