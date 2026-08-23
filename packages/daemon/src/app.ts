@@ -53,6 +53,10 @@ import { ProviderCredentialManager } from './lib/credentials/provider-credential
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
 import {
+  clearProviderFailureRecords,
+  subscribeProviderFailureChanges,
+} from './lib/providers/provider-failure-store.js';
+import {
   backfillDeepSeekProvider,
   migrateProvidersIfNeeded,
   refreshGlmDisplayName,
@@ -209,9 +213,18 @@ export interface DaemonAppContext {
   cleanup: () => Promise<void>;
 }
 
+async function invalidateInFlightModelLoads(): Promise<void> {
+  try {
+    const { clearModelsCache } = await import('./lib/model-service');
+    clearModelsCache();
+    clearProviderFailureRecords();
+  } catch {}
+}
+
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  let unsubscribeProviderFailureChanges: (() => void) | null = null;
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -442,6 +455,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
+    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
+      internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+    });
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
 
@@ -1120,6 +1136,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
+        unsubscribeProviderFailureChanges?.();
+        await invalidateInFlightModelLoads();
 
         db.close();
 
@@ -1128,6 +1146,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('Error during cleanup:', error);
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
+        unsubscribeProviderFailureChanges?.();
+        await invalidateInFlightModelLoads();
         throw error;
       } finally {
         await closeFileLogCapture();
@@ -1169,6 +1189,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupLogCaptureCleanup?.();
+    unsubscribeProviderFailureChanges?.();
+    await invalidateInFlightModelLoads();
     abortAgentMemoryEmbeddingModelPrefetch();
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;

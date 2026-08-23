@@ -359,16 +359,43 @@ export class QueryRunner {
 
   constructor(private ctx: QueryRunnerContext) {}
 
+  private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
+
+  private hasLiveQuery(): boolean {
+    const queryPromise = this.ctx.queryPromise;
+    if (!queryPromise) return false;
+    const tracked = this.queryLiveness;
+    if (tracked && tracked.promise === queryPromise) return tracked.isLive();
+    return true;
+  }
+
   async start(): Promise<void> {
     const { messageQueue, logger } = this.ctx;
 
     if (messageQueue.isRunning()) {
+      if (this.hasLiveQuery()) {
+        logger.warn(
+          `QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
+            `skipping start (generation=${messageQueue.getGeneration()}, ` +
+            `queryPromise=active)`
+        );
+        return;
+      }
+      const orphanedProcesses = this.ctx.snapshotTrackedAgentProcesses();
+      const stalePids = orphanedProcesses.map(([pid]) => pid).join(',');
       logger.warn(
-        `QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
-          `skipping start (generation=${messageQueue.getGeneration()}, ` +
-          `queryPromise=${this.ctx.queryPromise ? 'active' : 'null'})`
+        `QueryRunner.start(): stale running messageQueue for session ${this.ctx.session.id} ` +
+          `(generation=${messageQueue.getGeneration()}, queryPromise=${
+            this.ctx.queryPromise ? 'settled' : 'null'
+          }, trackedPids=[${stalePids}] queueSize=${messageQueue.size()}) — ` +
+          `no live query behind it; force-stopping the queue and starting a fresh query`
       );
-      return;
+      messageQueue.stop();
+      this.ctx.queryObject = null;
+      this.ctx.terminateTrackedAgentProcesses({
+        forceDelayMs: 2000,
+        processes: orphanedProcesses,
+      });
     }
 
     logger.debug(
@@ -381,7 +408,18 @@ export class QueryRunner {
 
     this.ctx.firstMessageReceived = false;
 
-    this.ctx.queryPromise = this.runQuery(currentGeneration);
+    const queryPromise = this.runQuery(currentGeneration);
+    let queryLive = true;
+    queryPromise.then(
+      () => {
+        queryLive = false;
+      },
+      () => {
+        queryLive = false;
+      }
+    );
+    this.queryLiveness = { promise: queryPromise, isLive: () => queryLive };
+    this.ctx.queryPromise = queryPromise;
   }
 
   private async applyDeferredPermissionMode(

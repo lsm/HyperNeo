@@ -1347,17 +1347,23 @@ export class TaskAgentManager {
     repo.enforceRetention({ runId: workflowRunId });
     repo.expireStale(workflowRunId);
 
-    const pending = repo
-      .listPendingForTarget(workflowRunId, 'space-agent')
-      .filter((r) => r.targetKind === 'space_agent');
-    if (pending.length === 0) return;
+    const drain = decidePendingDrainAdmission({
+      listings: [
+        {
+          targetName: 'space-agent',
+          rows: repo.listPendingForTarget(workflowRunId, 'space-agent'),
+        },
+      ],
+      admission: { executionPresent: true, targetKind: 'space_agent' },
+    });
+    if (drain.action === 'skip') return;
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
     log.info(
-      `TaskAgentManager: flushing ${pending.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
+      `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
     );
 
-    for (const row of pending) {
+    for (const row of drain.rows) {
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const registry = this.config.replyRoutingRegistry;

@@ -39,6 +39,8 @@ export interface ProviderSessionConfig {
   [key: string]: unknown;
 }
 
+export type ProviderFailureErrorKind = 'transient' | 'credential';
+
 export interface ProviderAuthStatusInfo {
   isAuthenticated: boolean;
   method?: 'api_key' | 'oauth';
@@ -49,6 +51,7 @@ export interface ProviderAuthStatusInfo {
     name?: string;
   };
   error?: string;
+  errorKind?: ProviderFailureErrorKind;
 }
 
 export interface ProviderOAuthFlowData {
@@ -64,6 +67,12 @@ export interface CuratedModel {
   name?: string;
 }
 
+export interface ListRemoteModelsOptions {
+  force?: boolean;
+  command?: string;
+  baseUrl?: string;
+}
+
 export interface Provider {
   readonly id: ProviderId;
 
@@ -76,6 +85,8 @@ export interface Provider {
   getModels(): Promise<ModelInfo[]>;
 
   getCachedModels?(): ModelInfo[] | null;
+
+  listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
 
   ownsModel(modelId: string): boolean;
 
