@@ -47,7 +47,11 @@ import { AcpClient, type AcpClientOptions } from './acp-client';
 import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
 import { getAcpProcessTreeOwner } from './acp-process-tree';
 import { AcpQueryAdapter } from './acp-query-adapter';
-import { isSafeFsSupported, readFileWithinWorkspace, writeFileWithinWorkspace } from './acp-safe-fs';
+import {
+  isSafeFsSupported,
+  readFileWithinWorkspace,
+  writeFileWithinWorkspace,
+} from './acp-safe-fs';
 import { AcpTerminalManager } from './acp-terminal-manager';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
@@ -294,7 +298,6 @@ async function allowAcpPermissionRequest(
   if (!option) return { outcome: { outcome: 'cancelled' } };
   return { outcome: { outcome: 'selected', optionId: option.optionId } };
 }
-
 
 function systemPromptText(systemPrompt: Options['systemPrompt']): string[] {
   if (!systemPrompt) return [];

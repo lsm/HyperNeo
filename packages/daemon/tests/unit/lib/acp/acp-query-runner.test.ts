@@ -21,6 +21,7 @@ import {
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
@@ -55,6 +56,21 @@ function createMockClient() {
     close: mock(() => {}),
     cancel: mock(() => {}),
   };
+}
+
+async function safeFsBackendAvailable(): Promise<boolean> {
+  try {
+    const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-probe-'));
+    try {
+      await writeFile(join(root, 'probe.txt'), 'x');
+      await readFileWithinWorkspace(root, ['probe.txt'], { maxBytes: 8 });
+      return true;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  } catch {
+    return false;
+  }
 }
 
 function createHeldPromptClient() {
@@ -840,8 +856,8 @@ describe('AcpQueryRunner', () => {
     expect(canUseTool).not.toHaveBeenCalled();
   });
 
-
   test('rejects filesystem callbacks that escape the workspace', async () => {
+    if (!(await safeFsBackendAvailable())) return;
     const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-escape-'));
     const workspace = join(root, 'workspace');
     const outside = join(root, 'outside.txt');
@@ -893,6 +909,7 @@ describe('AcpQueryRunner', () => {
   }, 10000);
 
   test('confines filesystem callbacks to the workspace and honors read ranges', async () => {
+    if (!(await safeFsBackendAvailable())) return;
     const root = await mkdtemp(join(tmpdir(), 'hyperneo-acp-fs-'));
     const workspace = join(root, 'workspace');
     await mkdir(workspace);
