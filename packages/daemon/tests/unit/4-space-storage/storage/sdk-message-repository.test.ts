@@ -5351,7 +5351,12 @@ describe('SDKMessageRepository', () => {
           prepare: (sql: string, ...args: unknown[]) => unknown;
         }
       ).prepare = (sql: string, ...args: unknown[]) => {
-        if (sql.includes('sqlite_master') || sql.includes('PRAGMA table_info')) count++;
+        if (
+          sql.includes('sqlite_master') ||
+          sql.includes('PRAGMA table_info') ||
+          sql.includes('PRAGMA table_xinfo')
+        )
+          count++;
         return originalPrepare(sql, ...args);
       };
       return {

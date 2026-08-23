@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageContent,
   MessageDeliveryStatus,
@@ -12,6 +12,15 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 import {
+  inflatePersistedMessage,
+  projectBackgroundTaskMessageRow,
+  projectSubagentMessageRow,
+  projectTopLevelMessageRow,
+  type BackgroundTaskMessageRow,
+  type PaginationMessageRow,
+  type SubagentMessageRow,
+} from './sdk-message-projections';
+import {
   buildFtsQuery,
   extractVisibleSearchText,
   isBroadMessageSearchQuery,
@@ -20,9 +29,23 @@ import {
   type MessageSearchResult,
 } from '../message-search';
 import type { SQLiteValue } from '../types';
+import {
+  decideMessageAdmission,
+  extractReplacementEdges,
+  normalizeMessageAdmissionInput,
+  type SDKMessageReplacementEdge,
+  type SendStatus,
+} from './sdk-message-admission';
 import { decideMessageSearchAdmission } from './message-search-admission';
 
-export type SendStatus = 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
+export {
+  computeIsRenderable,
+  computeIsTerminal,
+  extractParentToolUseId,
+  extractSdkUuid,
+  extractReplacementEdges,
+} from './sdk-message-admission';
+export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
 
 const RENDERABLE_TEXT_MESSAGE_BATCH_SIZE = 50;
 const RENDERABLE_TEXT_MESSAGE_MAX_SCAN = 250;
@@ -55,104 +78,6 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   'thinking_tokens',
   'model_refusal_fallback',
 ]);
-
-const BADGE_HIDDEN_SUBTYPES = new Set<string>([...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']);
-
-function isVisibleBadgeRow(opts: {
-  parentToolUseId: string | null;
-  messageType: string;
-  messageSubtype: string | null;
-  sendStatus: SendStatus | null;
-}): boolean {
-  if (opts.parentToolUseId !== null) return false;
-  if (BADGE_HIDDEN_SUBTYPES.has(opts.messageSubtype ?? '')) return false;
-  if (opts.messageType === 'user') {
-    const status = opts.sendStatus ?? 'consumed';
-    return status === 'consumed' || status === 'failed';
-  }
-  return true;
-}
-
-export function computeIsRenderable(message: SDKMessage): 0 | 1 {
-  const messageType = message.type;
-  const content = (message as { message?: { content?: unknown } }).message?.content;
-  if (!Array.isArray(content)) {
-    return 1;
-  }
-
-  if (messageType === 'user') {
-    const hasToolResult = content.some(
-      (block) =>
-        typeof block === 'object' &&
-        block !== null &&
-        (block as { type?: unknown }).type === 'tool_result'
-    );
-    return hasToolResult ? 0 : 1;
-  }
-
-  if (messageType === 'assistant') {
-    const hasRenderable = content.some((block) => {
-      if (typeof block !== 'object' || block === null) return false;
-      const blockObj = block as { type?: unknown; text?: unknown; thinking?: unknown };
-      if (blockObj.type === 'tool_use') return true;
-      if (blockObj.type === 'text') {
-        const text = typeof blockObj.text === 'string' ? blockObj.text : '';
-        return text.trim().length > 0;
-      }
-      if (blockObj.type === 'thinking') {
-        const thinking = typeof blockObj.thinking === 'string' ? blockObj.thinking : '';
-        return thinking.trim().length > 0;
-      }
-      return false;
-    });
-    return hasRenderable ? 1 : 0;
-  }
-
-  return 1;
-}
-
-export function computeIsTerminal(message: SDKMessage): 0 | 1 {
-  return message.type === 'result' ? 1 : 0;
-}
-
-export function extractParentToolUseId(message: SDKMessage): string | null {
-  const candidate = (message as { parent_tool_use_id?: unknown }).parent_tool_use_id;
-  return typeof candidate === 'string' ? candidate : null;
-}
-
-export function extractSdkUuid(message: SDKMessage): string | null {
-  const candidate = (message as { uuid?: unknown }).uuid;
-  return typeof candidate === 'string' && candidate.length > 0 ? candidate : null;
-}
-
-export interface SDKMessageReplacementEdge {
-  targetUuid: string;
-  kind: 'superseded' | 'retracted';
-}
-
-export function extractReplacementEdges(message: SDKMessage): SDKMessageReplacementEdge[] {
-  const replacementMessage = message as SDKMessage & {
-    supersedes?: unknown;
-    retracted_message_uuids?: unknown;
-  };
-  const edges: SDKMessageReplacementEdge[] = [];
-  const seen = new Set<string>();
-  const append = (values: unknown, kind: SDKMessageReplacementEdge['kind']) => {
-    if (!Array.isArray(values)) return;
-    for (const value of values) {
-      if (typeof value !== 'string' || value.length === 0) continue;
-      const key = `${kind}\0${value}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push({ targetUuid: value, kind });
-    }
-  };
-  append(replacementMessage.supersedes, 'superseded');
-  if ('subtype' in replacementMessage && replacementMessage.subtype === 'model_refusal_fallback') {
-    append(replacementMessage.retracted_message_uuids, 'retracted');
-  }
-  return edges;
-}
 
 export class SDKMessageRepository {
   private logger = new Logger('Database');
@@ -208,9 +133,8 @@ export class SDKMessageRepository {
     sourceMessageId: string,
     sessionId: string,
     taskId: string | null,
-    message: SDKMessage
+    edges: SDKMessageReplacementEdge[]
   ): void {
-    const edges = extractReplacementEdges(message);
     if (edges.length === 0) return;
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO sdk_message_replacements (
@@ -474,20 +398,15 @@ export class SDKMessageRepository {
   saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
     try {
       const id = generateUUID();
+      const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+        variant: 'sdk',
+        sendStatus: null,
+        origin,
+      });
       const messageType = message.type;
       const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
       const timestamp = new Date().toISOString();
       const taskId = this.resolveTaskIdForSession(sessionId);
-      const isRenderable = computeIsRenderable(message);
-      const isTerminal = computeIsTerminal(message);
-      const isConversationAnchor = isRenderable === 1 && messageType === 'user';
-      const parentToolUseId = extractParentToolUseId(message);
-      const countsTowardsBadge = isVisibleBadgeRow({
-        parentToolUseId,
-        messageType,
-        messageSubtype,
-        sendStatus: null,
-      });
 
       const stmt = this.db.prepare(
         `INSERT INTO sdk_messages (
@@ -501,7 +420,7 @@ export class SDKMessageRepository {
         const conversationTurnIndex = this.resolveConversationTurnIndex(
           taskId,
           sessionId,
-          isConversationAnchor
+          admission.isConversationAnchor
         );
         const values = [
           id,
@@ -511,13 +430,13 @@ export class SDKMessageRepository {
           JSON.stringify(message),
           timestamp,
           origin ?? null,
-          isRenderable,
-          isTerminal,
-          parentToolUseId,
+          admission.isRenderable,
+          admission.isTerminal,
+          admission.parentToolUseId,
           taskId,
         ];
-        stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
-        if (isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
+        stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+        if (admission.isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
           const resultSeq = this.nextConsumedSeq();
           if (resultSeq !== null) {
             this.db
@@ -525,12 +444,12 @@ export class SDKMessageRepository {
               .run(resultSeq, id);
           }
         }
-        this.saveReplacementEdges(id, sessionId, taskId, message);
+        this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
         this.scheduleMessageSearchIndex(id);
-        if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+        if (admission.countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
       try {
-        if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
+        if (admission.countsTowardsBadge) this.notifySessionsChanged(sessionId);
         this.deleteSupersededMessageSearchRows(sessionId, message);
       } catch (error) {
         this.logger.error('[Database] Post-commit side effects failed for SDK message:', error);
@@ -705,30 +624,11 @@ export class SDKMessageRepository {
     params.push(limit);
 
     const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params) as Record<string, unknown>[];
+    const rows = stmt.all(...params) as Array<PaginationMessageRow>;
 
     const messages: Array<SDKMessage & { timestamp: number }> = [];
     for (const r of rows) {
-      let sdkMessage: SDKMessage;
-      try {
-        sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-      } catch {
-        sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
-      }
-      const timestamp = new Date(r.timestamp as string).getTime();
-      const extra: Record<string, unknown> = {
-        id: r.id,
-        timestamp,
-        rowid: typeof r.rowid === 'number' ? r.rowid : Number(r.rowid ?? 0),
-        origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
-      };
-      if (sdkMessage.type === 'user') {
-        const deliveryStatus = sendStatusToDeliveryStatus(
-          r.send_status as string | null | undefined
-        );
-        if (deliveryStatus) extra.deliveryStatus = deliveryStatus;
-      }
-      messages.push({ ...sdkMessage, ...extra } as SDKMessage & { timestamp: number });
+      messages.push(projectTopLevelMessageRow(r));
       if (messages.length >= limit) break;
     }
 
@@ -762,27 +662,9 @@ export class SDKMessageRepository {
       const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 
       const subagentStmt = this.db.prepare(subagentQuery);
-      const subagentRows = subagentStmt.all(...subagentParams) as Record<string, unknown>[];
+      const subagentRows = subagentStmt.all(...subagentParams) as Array<SubagentMessageRow>;
 
-      subagentMessages = subagentRows.flatMap((r) => {
-        let sdkMessage: SDKMessage;
-        try {
-          sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
-        } catch {
-          sdkMessage = { type: 'unknown', rawContent: r.sdk_message } as unknown as SDKMessage;
-        }
-        const timestamp = new Date(r.timestamp as string).getTime();
-        return [
-          {
-            ...sdkMessage,
-            id: r.id,
-            timestamp,
-            origin: undefined,
-          } as unknown as SDKMessage & {
-            timestamp: number;
-          },
-        ];
-      });
+      subagentMessages = subagentRows.map((r) => projectSubagentMessageRow(r));
     }
 
     return {
@@ -891,29 +773,14 @@ export class SDKMessageRepository {
          )
          ORDER BY timestamp DESC, rowid DESC`
       )
-      .all(sessionId, BACKGROUND_TASK_METADATA_BATCH_SIZE, sessionId, sessionId) as Array<{
-      id: string;
-      sdk_message: string;
-      timestamp: string;
-      origin: MessageOrigin | null;
-    }>;
+      .all(
+        sessionId,
+        BACKGROUND_TASK_METADATA_BATCH_SIZE,
+        sessionId,
+        sessionId
+      ) as Array<BackgroundTaskMessageRow>;
 
-    return rows
-      .map((row) => {
-        let sdkMessage: SDKMessage;
-        try {
-          sdkMessage = JSON.parse(row.sdk_message) as SDKMessage;
-        } catch {
-          sdkMessage = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
-        }
-        return {
-          ...sdkMessage,
-          id: row.id,
-          timestamp: new Date(row.timestamp).getTime(),
-          origin: row.origin ?? undefined,
-        } as unknown as ChatMessage & { timestamp: number };
-      })
-      .reverse();
+    return rows.map((row) => projectBackgroundTaskMessageRow(row)).reverse();
   }
 
   getSDKMessagesByType(
@@ -954,7 +821,7 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     } | null;
-    return row ? this.inflatePersistedMessage(row) : null;
+    return row ? inflatePersistedMessage(row) : null;
   }
 
   getSDKMessageCount(sessionId: string): number {
@@ -1031,23 +898,15 @@ export class SDKMessageRepository {
     origin?: MessageOrigin
   ): { id: string; countsTowardsBadge: boolean } {
     const id = generateUUID();
+    const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+      variant: 'user',
+      sendStatus,
+      origin,
+    });
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
-    const isRenderable = computeIsRenderable(message);
-    const isTerminal = computeIsTerminal(message);
-    const isConversationAnchor =
-      isRenderable === 1 &&
-      messageType === 'user' &&
-      (sendStatus === 'consumed' || sendStatus === 'failed');
-    const parentToolUseId = extractParentToolUseId(message);
-    const countsTowardsBadge = isVisibleBadgeRow({
-      parentToolUseId,
-      messageType,
-      messageSubtype,
-      sendStatus,
-    });
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
@@ -1060,7 +919,7 @@ export class SDKMessageRepository {
     const conversationTurnIndex = this.resolveConversationTurnIndex(
       taskId,
       sessionId,
-      isConversationAnchor
+      admission.isConversationAnchor
     );
     const values = [
       id,
@@ -1071,16 +930,16 @@ export class SDKMessageRepository {
       timestamp,
       sendStatus,
       origin ?? null,
-      isRenderable,
-      isTerminal,
-      parentToolUseId,
+      admission.isRenderable,
+      admission.isTerminal,
+      admission.parentToolUseId,
       taskId,
     ];
-    stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
-    this.saveReplacementEdges(id, sessionId, taskId, message);
+    stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+    this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
     this.scheduleMessageSearchIndex(id);
-    if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
-    return { id, countsTowardsBadge };
+    if (admission.countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+    return { id, countsTowardsBadge: admission.countsTowardsBadge };
   }
 
   runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void {
@@ -1134,7 +993,7 @@ export class SDKMessageRepository {
       for (const row of rows) {
         messagesByRowId.set(
           row.row_id,
-          this.inflatePersistedMessage(row) as SDKUserMessage & {
+          inflatePersistedMessage(row) as SDKUserMessage & {
             dbId: string;
             timestamp: number;
           }
@@ -1167,7 +1026,7 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     } | null;
-    return row ? this.inflatePersistedMessage(row) : null;
+    return row ? inflatePersistedMessage(row) : null;
   }
 
   getMessageByStatusAndDbId(
@@ -1186,7 +1045,7 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     } | null;
-    return row ? this.inflatePersistedMessage(row) : null;
+    return row ? inflatePersistedMessage(row) : null;
   }
 
   getUserMessageIdsByStatus(
@@ -1209,24 +1068,6 @@ export class SDKMessageRepository {
       uuid: row.sdk_uuid ?? undefined,
       timestamp: new Date(row.timestamp).getTime(),
     }));
-  }
-
-  private inflatePersistedMessage(row: {
-    id: string;
-    sdk_message: string;
-    timestamp: string;
-  }): SDKMessage & { dbId: string; timestamp: number } {
-    let message: SDKMessage;
-    try {
-      message = JSON.parse(row.sdk_message) as SDKMessage;
-    } catch {
-      message = { type: 'unknown', rawContent: row.sdk_message } as unknown as SDKMessage;
-    }
-    return {
-      ...message,
-      dbId: row.id,
-      timestamp: new Date(row.timestamp).getTime(),
-    } as SDKMessage & { dbId: string; timestamp: number };
   }
 
   updateMessageStatus(
@@ -1955,14 +1796,16 @@ export class SDKMessageRepository {
   saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
     const id = generateUUID();
     const timestamp = new Date(message.timestamp).toISOString();
-    const taskId = this.resolveTaskIdForSession(sessionId);
-    const conversationTurnIndex = this.resolveConversationTurnIndex(taskId, sessionId, false);
-    const countsTowardsBadge = isVisibleBadgeRow({
-      parentToolUseId: null,
-      messageType: 'hyperneo_action',
-      messageSubtype: message.action,
+    const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+      variant: 'hyperneo_action',
       sendStatus: null,
     });
+    const taskId = this.resolveTaskIdForSession(sessionId);
+    const conversationTurnIndex = this.resolveConversationTurnIndex(
+      taskId,
+      sessionId,
+      admission.isConversationAnchor
+    );
 
     const values = [
       id,
@@ -1982,10 +1825,10 @@ export class SDKMessageRepository {
     );
 
     this.db.transaction(() => {
-      insertStmt.run(...values, conversationTurnIndex, message.uuid);
-      if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+      insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+      if (admission.countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
     })();
-    if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
+    if (admission.countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.scheduleMessageSearchIndex(id);
     return id;
   }
