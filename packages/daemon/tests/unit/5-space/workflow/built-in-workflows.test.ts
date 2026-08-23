@@ -484,6 +484,12 @@ describe('coder-only workflow template', () => {
       'for a `both`-source run confirm BOTH gate artifacts'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'its recorded base_oid equals the current baseRefOid'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the merged commit never passed the current policy'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
@@ -517,10 +523,13 @@ describe('coder-only workflow template', () => {
       'Retargeting a PR changes the reviewed diff WITHOUT changing'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'the `base_ref` and `head_oid` recorded in your `review-base` note artifact (key "base")'
+      'the `base_ref`, `base_oid`, and `head_oid` recorded in your `review-base` note artifact (key "base")'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'a mismatch in EITHER value invalidates the gate'
+      'compare the current `baseRefName` AND `baseRefOid` AND `$HEAD_OID`'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a mismatch in ANY value invalidates the gate'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'a note still in its dispatch-time `pending` state is NOT proof'
@@ -554,7 +563,13 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       'Only a "verified" note is proof of the base the Reviewer last inspected'
     );
-    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('(`Reviewed base: <name>`');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('(`Reviewed base: <name>@<baseRefOid>`');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('base_oid: "<baseRefOid>"');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('base_oid: "<baseRefOid>"');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'the same branch name can advance underneath the gate'
+    );
+    expect(CODER_ONLY_PROMPT).toContain('depth: "<light|standard|deep|auto>", reason:');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'a dead bot is a reported blocker to escalate, never substituted'
@@ -596,12 +611,16 @@ describe('coder-only workflow template', () => {
   });
 
   test('gate captures the base before reviewers run and verifies the recorded PR link', () => {
-    expect(CODER_ONLY_PROMPT).toContain('Capture the baseRefName when you START the external gate');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'Capture the baseRefName AND baseRefOid (`gh pr view <pr_url> --json baseRefName,baseRefOid`) when you START the external gate'
+    );
     expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the new base');
     expect(CODER_ONLY_PROMPT).toContain('headRefName,isCrossRepository,headRepository,url');
     expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
     expect(CODER_ONLY_PROMPT).toContain('the fork case');
-    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('`base_ref` equals the final baseRefName');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      '`base_ref`/`base_oid` equal the final baseRefName/baseRefOid'
+    );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       '--force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID"'
     );
