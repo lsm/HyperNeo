@@ -139,13 +139,13 @@ describe('provider config sync', () => {
 
     await syncProviderToRegistry(recordFor(JSON.stringify({ models: [{ id: 'glm-5' }] })));
     expect(setCuratedModels).toHaveBeenCalledTimes(1);
-    expect(setCuratedModels.mockCalls[0][0]).toEqual([{ id: 'glm-5' }]);
+    expect(setCuratedModels).toHaveBeenCalledWith([{ id: 'glm-5' }]);
 
     await syncProviderToRegistry(recordFor(JSON.stringify({ models: [] })));
-    expect(setCuratedModels.mockCalls[1][0]).toEqual([]);
+    expect(setCuratedModels).toHaveBeenCalledWith([]);
 
     await syncProviderToRegistry(recordFor(undefined));
-    expect(setCuratedModels.mockCalls[2][0]).toBeUndefined();
+    expect(setCuratedModels).toHaveBeenCalledWith(undefined);
   });
 });
 
