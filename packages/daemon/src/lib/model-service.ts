@@ -165,16 +165,21 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
         cacheTimestamps.set(cacheKey, Date.now());
       }
       /* v8 ignore next 2 */
-    } catch {
-    } finally {
-      refreshInProgress.delete(cacheKey);
-      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-        cacheGeneration.delete(cacheKey);
-      }
-    }
+    } catch {}
   })();
 
   refreshInProgress.set(cacheKey, refreshPromise);
+  void refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
+}
+
+function releaseRefreshState(cacheKey: string, refreshPromise: Promise<void>): void {
+  if (refreshInProgress.get(cacheKey) !== refreshPromise) {
+    return;
+  }
+  refreshInProgress.delete(cacheKey);
+  if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+    cacheGeneration.delete(cacheKey);
+  }
 }
 
 function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boolean {
@@ -297,16 +302,11 @@ export async function initializeModels(): Promise<void> {
       const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
       modelsCache.set(cacheKey, filteredFallbacks);
       cacheTimestamps.set(cacheKey, Date.now());
-    } finally {
-      refreshInProgress.delete(cacheKey);
-      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-        cacheGeneration.delete(cacheKey);
-      }
     }
   })();
 
   refreshInProgress.set(cacheKey, refreshPromise);
-  await refreshPromise;
+  await refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
 }
 
 function clearProviderModelCaches(): void {
@@ -372,41 +372,34 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
   clearProviderModelCaches();
 
   const refreshPromise = (async () => {
-    try {
-      if (signal?.aborted) {
+    if (signal?.aborted) {
+      return;
+    }
+    const result = await loadModelsFromProviders();
+    if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+      return;
+    }
+    applyProviderLoadOutcome(result);
+    const { models } = result;
+    if (models.length > 0) {
+      const mergedModels = mergeWithFallbackModels(models);
+      if (previousModels && previousModels.length > mergedModels.length) {
+        modelsCache.set(cacheKey, previousModels);
+        cacheTimestamps.set(cacheKey, Date.now());
         return;
       }
-      const result = await loadModelsFromProviders();
-      if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
-        return;
-      }
-      applyProviderLoadOutcome(result);
-      const { models } = result;
-      if (models.length > 0) {
-        const mergedModels = mergeWithFallbackModels(models);
-        if (previousModels && previousModels.length > mergedModels.length) {
-          modelsCache.set(cacheKey, previousModels);
-          cacheTimestamps.set(cacheKey, Date.now());
-          return;
-        }
-        modelsCache.set(cacheKey, mergedModels);
-        cacheTimestamps.set(cacheKey, Date.now());
-      } else if (!previousModels || previousModels.length === 0) {
-        const registry = getProviderRegistry();
-        const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-        modelsCache.set(cacheKey, filteredFallbacks);
-        cacheTimestamps.set(cacheKey, Date.now());
-      }
-    } finally {
-      refreshInProgress.delete(cacheKey);
-      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-        cacheGeneration.delete(cacheKey);
-      }
+      modelsCache.set(cacheKey, mergedModels);
+      cacheTimestamps.set(cacheKey, Date.now());
+    } else if (!previousModels || previousModels.length === 0) {
+      const registry = getProviderRegistry();
+      const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+      modelsCache.set(cacheKey, filteredFallbacks);
+      cacheTimestamps.set(cacheKey, Date.now());
     }
   })();
 
   refreshInProgress.set(cacheKey, refreshPromise);
-  await refreshPromise;
+  await refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
 }
 
 /** @public */

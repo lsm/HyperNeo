@@ -1412,6 +1412,26 @@ describe('Model Service', () => {
       expect(getProviderFailure('stub-failing-provider')).toBeUndefined();
     });
 
+    it('preserves replacement refresh state when a superseded initialization settles', async () => {
+      const { initializeProviders } = await import('../../../../src/lib/providers/factory');
+      initializeProviders();
+      await registerProvider('stub-failing-provider', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+      });
+
+      const { initializeModels, refreshModels } = await import('../../../../src/lib/model-service');
+      const initialization = initializeModels();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      clearModelsCache();
+      const replacement = refreshModels();
+      await initialization;
+      await replacement;
+
+      expect(getProviderFailure('stub-failing-provider')?.errorKind).toBe('credential');
+    });
+
     it('drops failure records for providers no longer in the registry', async () => {
       await registerProvider('glm', {
         error: new Error('Z.ai probe failed (HTTP 503)'),
