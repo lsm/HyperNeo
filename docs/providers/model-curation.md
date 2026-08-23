@@ -13,7 +13,9 @@ The list uses the `CuratedModel` shape (`{ id, name? }`, exported from
 `@hyperneo/shared/provider`). Any writer may add provider-specific fields
 next to `models` (ACP stores `command`, Kimi stores `region`) — writers must
 MERGE their field into the parsed object instead of replacing `config_json`
-wholesale, or they silently erase a stored curation.
+wholesale, or they silently erase a stored curation. The Kimi region editor
+and the ACP editor both merge on save; a nonempty `models` array whose
+entries are all invalid parses as absent (no curation), never as `[]`.
 
 ## Storage semantics: empty ≠ absent
 

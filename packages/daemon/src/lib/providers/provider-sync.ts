@@ -18,8 +18,12 @@ export function parseProviderConfig(configJson: string | undefined): {
   try {
     const parsed = JSON.parse(configJson) as { command?: unknown; models?: unknown };
     const command = typeof parsed.command === 'string' ? parsed.command : undefined;
-    const models = Array.isArray(parsed.models)
-      ? parsed.models
+    let models: CuratedModel[] | undefined;
+    if (Array.isArray(parsed.models)) {
+      if (parsed.models.length === 0) {
+        models = [];
+      } else {
+        const valid = parsed.models
           .filter(
             (model: unknown): model is CuratedModel =>
               !!model && typeof model === 'object' && typeof (model as CuratedModel).id === 'string'
@@ -27,8 +31,10 @@ export function parseProviderConfig(configJson: string | undefined): {
           .map((model) => ({
             id: model.id,
             name: typeof model.name === 'string' ? model.name : undefined,
-          }))
-      : undefined;
+          }));
+        models = valid.length > 0 ? valid : undefined;
+      }
+    }
     return { command, models };
   } catch {
     return {};

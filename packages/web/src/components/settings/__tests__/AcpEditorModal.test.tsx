@@ -264,6 +264,60 @@ describe('AcpEditorModal', () => {
     });
   });
 
+  it('preserves sibling config fields and drops the stale command on save', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="old acp"
+        models={[{ id: 'old-model' }]}
+        configJson={JSON.stringify({ command: 'old acp', models: [{ id: 'old-model' }], note: 7 })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.input(screen.getByDisplayValue('old acp'), { target: { value: 'new acp' } });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ note: 7, command: 'new acp' }),
+      });
+    });
+  });
+
+  it('preserves sibling config fields when clearing the stored command', async () => {
+    mockUpdateProvider.mockResolvedValue({ success: true });
+
+    render(
+      <AcpEditorModal
+        providerId="acp-1"
+        providerName="ACP Agent"
+        command="devin acp"
+        models={[{ id: 'old-model' }]}
+        configJson={JSON.stringify({
+          command: 'devin acp',
+          models: [{ id: 'old-model' }],
+          note: 7,
+        })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />
+    );
+
+    fireEvent.input(screen.getByDisplayValue('devin acp'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith('acp-1', {
+        configJson: JSON.stringify({ note: 7 }),
+      });
+    });
+  });
+
   it('persists models fetched and selected for a changed command', async () => {
     mockFetchAcpModels.mockResolvedValue({
       models: [{ id: 'new-model', name: 'New Model' }],

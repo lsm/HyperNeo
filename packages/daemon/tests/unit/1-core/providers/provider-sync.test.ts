@@ -66,6 +66,11 @@ describe('provider config sync', () => {
     expect(parseProviderConfig(undefined)).toEqual({});
   });
 
+  it('treats a nonempty models array with no valid entries as absent', () => {
+    expect(parseProviderConfig(JSON.stringify({ models: [null] }))).toEqual({});
+    expect(parseProviderConfig(JSON.stringify({ models: [{ name: 'missing id' }] }))).toEqual({});
+  });
+
   it('falls back to empty configuration for malformed JSON', () => {
     expect(parseProviderConfig('{invalid')).toEqual({});
   });

@@ -108,6 +108,7 @@ export function ProvidersSettings() {
     command: string;
     models?: AcpConfiguredModel[];
     envBacked?: boolean;
+    configJson?: string;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
@@ -773,6 +774,7 @@ export function ProvidersSettings() {
                                     command: readAcpCommand(provider),
                                     models: readAcpModels(provider),
                                     envBacked: !readAcpCommand(provider),
+                                    configJson: provider.configJson,
                                   })
                                 }
                                 disabled={isPending}
@@ -895,6 +897,7 @@ export function ProvidersSettings() {
           command={acpEditor.command}
           models={acpEditor.models}
           envBacked={acpEditor.envBacked}
+          configJson={acpEditor.configJson}
           onClose={() => setAcpEditor(null)}
           onSaved={() => {
             setAcpEditor(null);

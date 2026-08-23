@@ -16,6 +16,7 @@ interface AcpEditorModalProps {
   command: string;
   models?: AcpConfiguredModel[];
   envBacked?: boolean;
+  configJson?: string;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -28,12 +29,27 @@ function acpCommandsEquivalent(left: string, right: string): boolean {
   }
 }
 
+function readSiblingConfig(configJson: string | undefined): Record<string, unknown> {
+  if (!configJson) return {};
+  try {
+    const parsed: unknown = JSON.parse(configJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const siblings = { ...(parsed as Record<string, unknown>) };
+    delete siblings.command;
+    delete siblings.models;
+    return siblings;
+  } catch {
+    return {};
+  }
+}
+
 export function AcpEditorModal({
   providerId,
   providerName,
   command: initialCommand,
   models: initialModels,
   envBacked = false,
+  configJson,
   onClose,
   onSaved,
 }: AcpEditorModalProps) {
@@ -114,6 +130,7 @@ export function AcpEditorModal({
     try {
       await updateProvider(providerId, {
         configJson: JSON.stringify({
+          ...readSiblingConfig(configJson),
           ...(trimmedCommand ? { command: trimmedCommand } : {}),
           ...(persistedModels?.length || persistEmptySelection ? { models: persistedModels } : {}),
         }),
