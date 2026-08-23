@@ -11,11 +11,31 @@ const SECRET_HEADER_NAME_PATTERN =
 
 const SHELL_COMMAND_NAMES = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 const CURL_COMMAND_NAMES = new Set(['curl']);
+const CURL_VALUE_TAKING_SHORT = new Set([
+  'a',
+  'b',
+  'c',
+  'd',
+  'e',
+  'f',
+  'k',
+  'm',
+  'o',
+  'p',
+  'q',
+  'r',
+  't',
+  'w',
+  'x',
+  'y',
+  'z',
+]);
 const ENV_COMMAND_NAMES = new Set(['env', 'export']);
 const SHELL_OPERATORS = new Set(['&&', '||', ';', '|', '&', '(', ')']);
 
 function commandBaseName(command: string): string {
-  return (command.split('/').pop() ?? command).toLowerCase();
+  const base = command.split(/[\\/]/).pop() ?? command;
+  return base.replace(/\.exe$/i, '').toLowerCase();
 }
 
 function isSecretArgName(name: string): boolean {
@@ -34,7 +54,7 @@ function isHeaderArgName(name: string): boolean {
 
 function isUserArgName(name: string): boolean {
   const stripped = name.replace(/^-+/, '');
-  return /^u$/i.test(stripped) || /^user$/i.test(stripped);
+  return /^u$/i.test(stripped) || /^user$/i.test(stripped) || /^proxy-user$/i.test(stripped);
 }
 
 function isSecretEnvAssignment(arg: string): boolean {
@@ -53,7 +73,7 @@ function displayQuote(token: string): string {
   return shellQuote(token);
 }
 
-const URL_USERINFO_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^:/@\s]+:)([^@/\s]+)(@.+)$/;
+const URL_USERINFO_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^:/@\s]*:)([^@/\s]+)(@.+)$/;
 
 function redactUrlUserinfo(value: string): string {
   const match = URL_USERINFO_PATTERN.exec(value);
@@ -61,12 +81,25 @@ function redactUrlUserinfo(value: string): string {
 }
 
 const SCRIPT_SENSITIVITY_PATTERN =
-  /(^|\s)--?[^\s'"]*(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)|(^|\s)-[hu]\b/i;
+  /(^|\s)--?[^\s'"]*(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)|(^|\s)-[hu]\b|(^|\s)[A-Za-z_][\w-]*(?:token|secret|password|passphrase|credential|api[-_]?key|bearer)[\w-]*=|:\/\/[^:/@\s]*:[^@\s]+@/i;
 
-function redactShellCommand(script: string, depth: number): string {
-  if (depth <= 0) {
-    return SCRIPT_SENSITIVITY_PATTERN.test(script) ? '[redacted script]' : script;
+function splitShellScriptSegments(script: string): string[] {
+  const lines = script.split('\n');
+  const segments: string[] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    current.push(line);
+    const trailing = /\\+$/.exec(line)?.[0]?.length ?? 0;
+    if (trailing % 2 === 0) {
+      segments.push(current.join('\n'));
+      current = [];
+    }
   }
+  if (current.length > 0) segments.push(current.join('\n'));
+  return segments;
+}
+
+function redactShellCommandTokens(script: string, depth: number): string {
   try {
     const parsed = parseAcpCommandWithSpans(script);
     const tokens = [parsed.command, ...parsed.args];
@@ -106,8 +139,20 @@ function redactShellCommand(script: string, depth: number): string {
     }
     return script;
   } catch {
-    return script;
+    return SCRIPT_SENSITIVITY_PATTERN.test(script) ? '[redacted script]' : script;
   }
+}
+
+function redactShellCommand(script: string, depth: number): string {
+  if (depth <= 0) {
+    return SCRIPT_SENSITIVITY_PATTERN.test(script) ? '[redacted script]' : script;
+  }
+  if (script.includes('\n')) {
+    return splitShellScriptSegments(script)
+      .map((segment) => redactShellCommandTokens(segment, depth))
+      .join('\n');
+  }
+  return redactShellCommandTokens(script, depth);
 }
 
 export function redactCommandSecrets(
@@ -121,7 +166,7 @@ export function redactCommandSecrets(
   let inLeadingAssignments =
     options.shellScript === true ? command.indexOf('=') > 0 || isEnv : true;
   let currentCommand = command;
-  let awaitingCommandWord = options.shellScript === true || isEnv;
+  let awaitingCommandWord = isEnv || (options.shellScript === true && command.indexOf('=') > 0);
   let endOfOptions = false;
   const redacted: string[] = [];
   for (let index = 0; index < args.length; index++) {
@@ -168,7 +213,14 @@ export function redactCommandSecrets(
             awaitingCommandWord = false;
           }
         }
-        redacted.push(redactUrlUserinfo(arg));
+        if (isAssignmentShaped && !looksLikeUrl) {
+          const at = arg.indexOf('=');
+          const value = arg.slice(at + 1);
+          const redactedValue = redactUrlUserinfo(value);
+          redacted.push(redactedValue === value ? arg : `${arg.slice(0, at + 1)}${redactedValue}`);
+        } else {
+          redacted.push(redactUrlUserinfo(arg));
+        }
       }
       continue;
     }
@@ -182,7 +234,7 @@ export function redactCommandSecrets(
       if (
         (valueFlag === 'h' || valueFlag === 'u') &&
         next !== undefined &&
-        !next.startsWith('--')
+        (valueFlag === 'u' || !next.startsWith('--'))
       ) {
         if (valueFlag === 'u' || isSecretHeaderValue(next)) {
           redacted.push(arg, '[redacted]');
@@ -203,6 +255,7 @@ export function redactCommandSecrets(
           break;
         }
         if (!/[a-z]/i.test(ch)) break;
+        if (CURL_VALUE_TAKING_SHORT.has(ch)) break;
       }
       if (carrierIndex > 0) {
         const value = arg.slice(carrierIndex + 1);
@@ -256,7 +309,7 @@ export function redactCommandSecrets(
       index++;
       continue;
     }
-    if (tokenCurl && isUserArgName(arg) && next !== undefined && !next.startsWith('--')) {
+    if (tokenCurl && isUserArgName(arg) && next !== undefined) {
       redacted.push(arg, '[redacted]');
       index++;
       continue;

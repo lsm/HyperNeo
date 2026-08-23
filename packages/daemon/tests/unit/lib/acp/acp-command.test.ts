@@ -329,6 +329,96 @@ describe('redactCommandSecrets', () => {
     ]);
   });
 
+  test('keeps the parsed command when a nested script starts with it', () => {
+    expect(
+      redactCommandSecrets('sh', ['-c', `curl https://api -H "Authorization: Bearer topsecret"`])
+    ).toEqual(['-c', `curl https://api -H "[redacted]"`]);
+  });
+
+  test('redacts sensitive scripts that fail to parse', () => {
+    expect(redactCommandSecrets('sh', ['-c', `curl --token topsecret '`])).toEqual([
+      '-c',
+      '[redacted script]',
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', 'echo "unclosed'])).toEqual(['-c', 'echo "unclosed']);
+  });
+
+  test('redacts env and url credentials at the recursion cutoff', () => {
+    expect(redactCommandSecrets('sh', ['-c', 'API_TOKEN=topsecret curl /a'], 0)).toEqual([
+      '-c',
+      '[redacted script]',
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', 'curl https://user:topsecret@h/a'], 0)).toEqual([
+      '-c',
+      '[redacted script]',
+    ]);
+    expect(redactCommandSecrets('sh', ['-c', 'echo hi'], 0)).toEqual(['-c', 'echo hi']);
+  });
+
+  test('normalizes windows executable names', () => {
+    expect(
+      redactCommandSecrets('C:\\Windows\\System32\\curl.exe', [
+        '-H',
+        'Authorization: Bearer topsecret',
+        'https://api',
+      ])
+    ).toEqual(['-H', '[redacted]', 'https://api']);
+    expect(redactCommandSecrets('bash.exe', ['-c', 'curl --token topsecret'])).toEqual([
+      '-c',
+      'curl --token [redacted]',
+    ]);
+  });
+
+  test('redacts url userinfo inside environment assignments', () => {
+    expect(
+      redactCommandSecrets('env', ['DATABASE_URL=postgresql://alice:topsecret@db/app', 'agent'])
+    ).toEqual(['DATABASE_URL=postgresql://alice:[redacted]@db/app', 'agent']);
+  });
+
+  test('treats newlines as command boundaries in shell scripts', () => {
+    expect(
+      redactCommandSecrets('sh', ['-c', "echo ok\ncurl -H 'Authorization: Bearer topsecret' https://api"])
+    ).toEqual(['-c', "echo ok\ncurl -H '[redacted]' https://api"]);
+    expect(
+      redactCommandSecrets('sh', ['-c', "echo safe\\\ncurl --token topsecret"])
+    ).toEqual(['-c', 'echo safe\\\ncurl --token [redacted]']);
+  });
+
+  test('does not treat curl data values as credential flags', () => {
+    expect(redactCommandSecrets('curl', ['-duser=delete-all', '/a'])).toEqual([
+      '-duser=delete-all',
+      '/a',
+    ]);
+    expect(getAcpCommandIdentityDigest('curl -duser=delete-all /a')).not.toBe(
+      getAcpCommandIdentityDigest('curl -duser=other /a')
+    );
+  });
+
+  test('redacts curl proxy-user credentials', () => {
+    expect(redactCommandSecrets('curl', ['--proxy-user', 'alice:topsecret', 'https://api'])).toEqual([
+      '--proxy-user',
+      '[redacted]',
+      'https://api',
+    ]);
+    expect(getAcpCommandIdentityDigest('curl --proxy-user alice:topsecret https://api')).toBe(
+      getAcpCommandIdentityDigest('curl --proxy-user other:safe https://api')
+    );
+  });
+
+  test('consumes dash-prefixed curl user values', () => {
+    expect(redactCommandSecrets('curl', ['-u', '--topsecret:', 'https://api'])).toEqual([
+      '-u',
+      '[redacted]',
+      'https://api',
+    ]);
+  });
+
+  test('redacts url passwords with empty usernames', () => {
+    expect(redactCommandSecrets('curl', ['https://:topsecret@example.test/a'])).toEqual([
+      'https://:[redacted]@example.test/a',
+    ]);
+  });
+
   test('treats tokens after -- as positional data', () => {
     expect(getAcpCommandIdentityDigest(`rm -- --password file-a`)).not.toBe(
       getAcpCommandIdentityDigest(`rm -- --password file-b`)
