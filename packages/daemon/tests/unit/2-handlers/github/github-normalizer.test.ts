@@ -422,6 +422,16 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(normalized.nodeId).toBe('PRR_kwAAA_review');
     });
 
+    test('review payloads use uppercase state casing shared with the polling path', () => {
+      const normalized = normalizeGitHubWebhook(
+        'pull_request_review',
+        'delivery-1',
+        reviewWebhook()
+      )!;
+      expect(normalized.payload).toMatchObject({ state: 'APPROVED', reviewer: 'dev' });
+      expect(normalized.dedupeKey).toBe('acme/widgets:review:555:submitted');
+    });
+
     test('pull_request yields no comment id but the PR node_id', () => {
       const normalized = normalizeGitHubWebhook(
         'pull_request',
@@ -790,15 +800,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         user: { login: 'dev', type: 'User' },
       })!;
       expect(normalized.payload).toMatchObject({ state: 'APPROVED' });
-    });
-
-    test('webhook review payloads use the same uppercase state casing', () => {
-      const normalized = normalizeGitHubWebhook('pull_request_review', 'delivery-1', {
-        ...reviewWebhook(),
-        review: { ...(reviewWebhook() as { review: Record<string, unknown> }).review },
-      })!;
-      expect(normalized.payload).toMatchObject({ state: 'APPROVED', reviewer: 'dev' });
-      expect(normalized.dedupeKey).toBe('acme/widgets:review:555:submitted');
     });
   });
 
