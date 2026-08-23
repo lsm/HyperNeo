@@ -22,6 +22,23 @@ if (isBun) {
       return statement;
     }
 
+    // @ts-expect-error — narrowed return type drops the deferred/immediate/exclusive variants
+    override transaction<TArgs extends unknown[], TReturn>(
+      fn: (...args: TArgs) => TReturn,
+      mode: 'deferred' | 'immediate' | 'exclusive' = 'deferred'
+    ): (...args: TArgs) => TReturn {
+      const txn = super.transaction(fn) as unknown as {
+        immediate?: (...args: TArgs) => TReturn;
+        exclusive?: (...args: TArgs) => TReturn;
+      } & ((...args: TArgs) => TReturn);
+      if (mode === 'deferred') return txn;
+      const variant = mode === 'immediate' ? txn.immediate : txn.exclusive;
+      if (!variant) {
+        throw new Error(`bun:sqlite transaction does not expose the ${mode}() variant`);
+      }
+      return (...args: TArgs) => variant(...args);
+    }
+
     override close(): void {
       this.statementCache.clear();
       super.close();
