@@ -24,7 +24,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
   let task: SpaceTask;
   let notification: SpaceGoalOutcomeNotification;
   let resolution: GoalOwnerResolutionDecision;
-  let coordinatorAgent: { id: string; handle: string } | null;
+  let coordinatorAgent: { id: string; handle: string; status: string } | null;
 
   function claimParams(
     overrides: Partial<ClaimOutcomeNotificationParams> = {}
@@ -55,11 +55,14 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
       conflicts: [],
     };
-    coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator' };
+    coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'active' };
     const longHorizonAgentRepo = {
       assignGoal: mock(() => null),
       getPrimaryGoalOwner: mock(() => resolution),
       getCoordinator: mock(() => coordinatorAgent),
+      getById: mock((id: string) =>
+        coordinatorAgent && id === coordinatorAgent.id ? coordinatorAgent : null
+      ),
     } as unknown as SpaceGoalServiceDeps['longHorizonAgentRepo'];
     service = new SpaceGoalService({
       goalRepo,
@@ -225,6 +228,20 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       conflicts: [],
     };
     coordinatorAgent = null;
+
+    const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
+
+    expect(result).toMatchObject({ status: 'denied', reason: 'unauthorized' });
+  });
+
+  it('denies a degraded-owner claim when the coordinator is inactive', () => {
+    resolution = {
+      action: 'degraded',
+      reason: 'paused',
+      owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
+      conflicts: [],
+    };
+    coordinatorAgent = { id: 'coordinator-1', handle: 'coordinator', status: 'paused' };
 
     const result = service.claimOutcomeNotification(claimParams({ actorAgentId: 'coordinator-1' }));
 
