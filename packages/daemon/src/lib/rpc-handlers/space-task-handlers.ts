@@ -564,7 +564,9 @@ export function setupSpaceTaskHandlers(
 
     if (handleGoalTerminal && spaceGoalService && TERMINAL_TASK_STATUSES.has(task.status)) {
       try {
-        spaceGoalService.handleTaskTerminal(task.id);
+        spaceGoalService.handleTaskTerminal(task.id, {
+          fromStatus: currentTaskForOverrides.status,
+        });
       } catch (err) {
         log.warn(
           `Goal terminal handling threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`

@@ -201,6 +201,7 @@ export interface SpaceRuntimeConfig {
     spaceId: string;
     task: SpaceTask;
     archiveSource?: 'user' | 'system_reconcile';
+    fromStatus?: SpaceTaskStatus | null;
   }) => Promise<void> | void;
   onWorkflowRunCreated?: (payload: {
     spaceId: string;
@@ -3234,12 +3235,17 @@ export class SpaceRuntime {
   private async safeOnTaskUpdated(
     spaceId: string,
     task: SpaceTask,
-    opts?: { archiveSource?: 'user' | 'system_reconcile' }
+    opts?: { archiveSource?: 'user' | 'system_reconcile'; fromStatus?: SpaceTaskStatus | null }
   ): Promise<void> {
     const handler = this.config.onTaskUpdated;
     if (!handler) return;
     try {
-      await handler({ spaceId, task, archiveSource: opts?.archiveSource });
+      await handler({
+        spaceId,
+        task,
+        archiveSource: opts?.archiveSource,
+        fromStatus: opts?.fromStatus,
+      });
     } catch (err) {
       log.warn(
         `[SpaceRuntime] onTaskUpdated threw for task "${task.id}": ${err instanceof Error ? err.message : String(err)}`
@@ -3617,7 +3623,10 @@ export class SpaceRuntime {
         }
       }
       if (emitUpdated) {
-        await this.safeOnTaskUpdated(spaceId, updated, opts);
+        await this.safeOnTaskUpdated(spaceId, updated, {
+          ...opts,
+          fromStatus: previous?.status ?? null,
+        });
       }
     }
     return updated;

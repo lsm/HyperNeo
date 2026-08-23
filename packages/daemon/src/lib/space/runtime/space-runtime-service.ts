@@ -181,9 +181,9 @@ export class SpaceRuntimeService {
       queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
-      onTaskUpdated: async ({ spaceId, task, archiveSource }) => {
+      onTaskUpdated: async ({ spaceId, task, archiveSource, fromStatus }) => {
         try {
-          this.config.goalService?.handleTaskTerminal(task.id);
+          this.config.goalService?.handleTaskTerminal(task.id, { fromStatus: fromStatus ?? null });
         } catch (err) {
           log.warn(`goal terminal handling failed for task ${task.id}:`, err);
         }
