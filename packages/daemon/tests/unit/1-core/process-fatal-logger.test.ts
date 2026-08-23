@@ -104,4 +104,57 @@ describe('installProcessFatalLogging', () => {
     expect(process.listenerCount('uncaughtException')).toBe(before.uncaught);
     expect(process.listenerCount('unhandledRejection')).toBe(before.rejection);
   });
+
+  it('shares one listener set across installs with the latest registration active', async () => {
+    const exitsFirst: number[] = [];
+    const exitsSecond: number[] = [];
+    const before = process.listenerCount('uncaughtException');
+    const disposeFirst = installProcessFatalLogging({
+      flush: () => Promise.resolve(),
+      exit: (code) => exitsFirst.push(code),
+    });
+    const disposeSecond = installProcessFatalLogging({
+      flush: () => Promise.resolve(),
+      exit: (code) => exitsSecond.push(code),
+    });
+
+    try {
+      expect(process.listenerCount('uncaughtException')).toBe(before + 1);
+
+      process.emit('uncaughtException', new Error('latest-wins'));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(exitsSecond).toEqual([1]);
+      expect(exitsFirst).toEqual([]);
+    } finally {
+      disposeSecond();
+      disposeFirst();
+    }
+
+    expect(process.listenerCount('uncaughtException')).toBe(before);
+  });
+
+  it('falls back to the earlier registration after the latest is disposed', async () => {
+    const exitsFirst: number[] = [];
+    const exitsSecond: number[] = [];
+    const disposeFirst = installProcessFatalLogging({
+      flush: () => Promise.resolve(),
+      exit: (code) => exitsFirst.push(code),
+    });
+    const disposeSecond = installProcessFatalLogging({
+      flush: () => Promise.resolve(),
+      exit: (code) => exitsSecond.push(code),
+    });
+    disposeSecond();
+
+    try {
+      process.emit('unhandledRejection', 'fallback-reason', Promise.resolve());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(exitsFirst).toEqual([1]);
+      expect(exitsSecond).toEqual([]);
+    } finally {
+      disposeFirst();
+    }
+  });
 });
