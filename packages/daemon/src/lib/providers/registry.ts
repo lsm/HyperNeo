@@ -61,7 +61,7 @@ export class ProviderRegistry {
   async getProviderInfo(): Promise<ProviderInfo[]> {
     const providers = this.getAll();
 
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       providers.map(async (provider) => {
         const available = await Promise.resolve(provider.isAvailable()).catch(() => false);
         const models = await Promise.resolve(provider.getModels()).catch(() => []);
@@ -76,7 +76,17 @@ export class ProviderRegistry {
       })
     );
 
-    return results;
+    return results.map((result, index) =>
+      result.status === 'fulfilled'
+        ? result.value
+        : {
+            id: providers[index].id,
+            name: providers[index].displayName,
+            available: false,
+            capabilities: providers[index].capabilities,
+            models: [],
+          }
+    );
   }
 
   async getDefaultProvider(): Promise<Provider> {

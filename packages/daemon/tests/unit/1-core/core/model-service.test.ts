@@ -18,6 +18,9 @@ import {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
+import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/models';
+import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 
 describe('Model Service', () => {
   const mockModels: ModelInfo[] = [
@@ -392,6 +395,172 @@ describe('Model Service', () => {
       expect(await isValidModel('deepseek-pro', 'global', 'deepseek')).toBe(false);
       expect(await isValidModel('deepseek-pro', 'global', 'deepseek', 'session-key')).toBe(true);
       expect(await isValidModel('unknown-deepseek', 'global', 'deepseek', 'session-key')).toBe(
+        false
+      );
+    });
+  });
+
+  describe('static model metadata seam', () => {
+    it('serves every MinimaxProvider.MODELS entry from the static seam', async () => {
+      clearModelsCache();
+
+      expect(MinimaxProvider.MODELS).toHaveLength(4);
+
+      for (const entry of MinimaxProvider.MODELS) {
+        const model = await getModelInfo(entry.id, 'global', 'minimax');
+        expect(model).not.toBeNull();
+        expect(model?.id).toBe(entry.id);
+        expect(model?.provider).toBe('minimax');
+        expect(model?.contextWindow).toBe(entry.contextWindow);
+      }
+    });
+
+    it('resolves Minimax aliases to static metadata', async () => {
+      clearModelsCache();
+
+      expect(await getModelInfo('minimax', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.5',
+      });
+      expect(await getModelInfo('minimax-fast', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.5-highspeed',
+      });
+      expect(await getModelInfo('minimax-m27', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.7',
+      });
+      expect(await getModelInfo('minimax-m27-fast', 'global', 'minimax')).toMatchObject({
+        id: 'MiniMax-M2.7-highspeed',
+      });
+    });
+
+    it('does not resolve Minimax static metadata for other providers', async () => {
+      clearModelsCache();
+
+      expect(await getModelInfo('MiniMax-M2.7', 'global', 'glm')).toBeNull();
+      expect(await getModelInfo('MiniMax-M2.7', 'global', 'anthropic-copilot')).toBeNull();
+    });
+
+    it('serves every COPILOT_ANTHROPIC_MODELS entry from the static seam', async () => {
+      clearModelsCache();
+
+      expect(COPILOT_ANTHROPIC_MODELS).toHaveLength(7);
+
+      for (const entry of COPILOT_ANTHROPIC_MODELS) {
+        const model = await getModelInfo(entry.id, 'global', 'anthropic-copilot');
+        expect(model).not.toBeNull();
+        expect(model?.id).toBe(entry.id);
+        expect(model?.provider).toBe('anthropic-copilot');
+        expect(model?.contextWindow).toBe(entry.contextWindow);
+      }
+    });
+
+    it('resolves Copilot aliases to static metadata', async () => {
+      clearModelsCache();
+
+      expect(
+        await getModelInfo('copilot-anthropic-opus', 'global', 'anthropic-copilot')
+      ).toMatchObject({
+        id: 'claude-opus-4.6',
+        contextWindow: 200000,
+      });
+      expect(
+        await getModelInfo('copilot-anthropic-codex', 'global', 'anthropic-copilot')
+      ).toMatchObject({
+        id: 'gpt-5.3-codex',
+        contextWindow: 272000,
+      });
+      expect(
+        await getModelInfo('copilot-anthropic-mini', 'global', 'anthropic-copilot')
+      ).toMatchObject({
+        id: 'gpt-5-mini',
+        contextWindow: 128000,
+      });
+    });
+
+    it('does not leak Copilot static metadata to anthropic-only requests', async () => {
+      clearModelsCache();
+
+      expect(await getModelInfo('claude-opus-4.6', 'global', 'anthropic')).toBeNull();
+      expect(await getModelInfo('gpt-5.5', 'global', 'anthropic')).toBeNull();
+    });
+
+    it('overlays Codex context-window preferences on Copilot static hits', async () => {
+      clearModelsCache();
+
+      for (const id of ['gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']) {
+        const model = await getModelInfo(id, 'global', 'anthropic-copilot');
+        expect(model?.contextWindow).toBe(272000);
+        expect(model?.preferContextWindowMetadata).toBe(true);
+      }
+    });
+
+    it('returns non-Codex Copilot static metadata without the overlay', async () => {
+      clearModelsCache();
+
+      const claude = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+      expect(claude?.contextWindow).toBe(200000);
+      expect(claude?.preferContextWindowMetadata).toBeUndefined();
+
+      const gemini = await getModelInfo('gemini-3.1-pro-preview', 'global', 'anthropic-copilot');
+      expect(gemini?.contextWindow).toBe(128000);
+      expect(gemini?.preferContextWindowMetadata).toBeUndefined();
+    });
+
+    it('gates Minimax static validation on provider availability', async () => {
+      clearModelsCache();
+
+      expect(await isValidModel('MiniMax-M2.7', 'global', 'minimax')).toBe(false);
+      expect(await isValidModel('MiniMax-M2.7', 'global', 'minimax', 'session-key')).toBe(true);
+      expect(await isValidModel('unknown-minimax', 'global', 'minimax', 'session-key')).toBe(false);
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'minimax',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      expect(await isValidModel('MiniMax-M2.7', 'global', 'minimax')).toBe(true);
+    });
+
+    it('gates Copilot static validation on provider availability', async () => {
+      clearModelsCache();
+
+      expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(false);
+      expect(
+        await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot', 'session-key')
+      ).toBe(false);
+      expect(
+        await isValidModel('unknown-copilot-model', 'global', 'anthropic-copilot', 'session-key')
+      ).toBe(false);
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-copilot',
+        getModels: async () => [],
+        isAvailable: async () => false,
+      } as ProviderLike);
+      expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(false);
+    });
+
+    it('validates Copilot static metadata when the provider is available', async () => {
+      clearModelsCache();
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic-copilot',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      expect(await isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot')).toBe(true);
+      expect(await isValidModel('copilot-anthropic-opus', 'global', 'anthropic-copilot')).toBe(
+        true
+      );
+      expect(await isValidModel('unknown-copilot-model', 'global', 'anthropic-copilot')).toBe(
         false
       );
     });
@@ -1190,7 +1359,7 @@ describe('Model Service', () => {
       } as ProviderLike);
 
       const testCache = new Map<string, ModelInfo[]>();
-      testCache.set(cacheKey, mockModels);
+      testCache.set(cacheKey, [mockModels[0]]);
       setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
 
       getAvailableModels(cacheKey);
@@ -1203,6 +1372,41 @@ describe('Model Service', () => {
       const models = getAvailableModels(cacheKey);
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
+    });
+
+    it('should retain previous models when background refresh returns fewer models', async () => {
+      const cacheKey = 'bg-shrink-test';
+
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const getModels = mock(async () => [
+        {
+          id: 'bg-model-3',
+          name: 'BG Model 3',
+          family: 'test',
+          provider: 'test-provider-bg3',
+          contextWindow: 100000,
+        },
+      ]);
+      registry.register({
+        id: 'test-provider-bg3',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const testCache = new Map<string, ModelInfo[]>();
+      testCache.set(cacheKey, mockModels);
+      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
+
+      getAvailableModels(cacheKey);
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      expect(getModels).toHaveBeenCalled();
+      const models = getAvailableModels(cacheKey);
+      expect(models).toEqual(mockModels);
+      expect(models.some((m) => m.id === 'bg-model-3')).toBe(false);
     });
 
     it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {
@@ -1238,6 +1442,58 @@ describe('Model Service', () => {
       await refreshPromise;
 
       expect(getAvailableModels('global')).toEqual([]);
+    });
+  });
+
+  describe('probe-based provider failures (characterization)', () => {
+    it('omits a provider whose getModels probe rejects from the cache built by refreshModels', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [mockModels[0]],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      const rejectingFetch = (async () =>
+        new Response(null, { status: 401 })) as unknown as typeof fetch;
+      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, rejectingFetch));
+
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'anthropic')).toBe(true);
+      expect(models.some((m) => m.provider === 'glm')).toBe(false);
+    });
+
+    it('admits the provider again once its probe succeeds on a later refreshModels', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+      let upstreamAccepts = false;
+      const mutableFetch = (async () =>
+        new Response(null, { status: upstreamAccepts ? 200 : 401 })) as unknown as typeof fetch;
+
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [mockModels[0]],
+        isAvailable: async () => true,
+      } as ProviderLike);
+      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, mutableFetch));
+
+      await refreshModels();
+      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
+
+      upstreamAccepts = true;
+      await refreshModels();
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(true);
     });
   });
 });

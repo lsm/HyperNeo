@@ -3020,12 +3020,30 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       notification_id?: string;
       disposition?: 'acknowledge' | 'reject' | 'supersede';
       observed_goal_revision?: number | null;
+      summary?: string;
+      next_steps?: string[];
+      metrics?: Record<string, string | number | boolean | null>;
+      observations?: Array<{ key: string; value: number }>;
+      progress?: number;
     }): Promise<ToolResult> {
       try {
         const goalService = requireGoalService();
         const callerAgentId = myAgentId ?? null;
         const humanAdmissionAllowed = false;
+        const hasGoalUpdate =
+          args.summary !== undefined ||
+          args.next_steps !== undefined ||
+          args.metrics !== undefined ||
+          args.observations !== undefined ||
+          args.progress !== undefined;
         if (!args.notification_id) {
+          if (hasGoalUpdate) {
+            return jsonResult({
+              success: false,
+              error:
+                'goal-state updates require notification_id; call without update fields to discover pending notifications',
+            });
+          }
           const notifications = goalService.listClaimableOutcomeNotifications({
             spaceId,
             callerAgentId,
@@ -3034,11 +3052,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
           return jsonResult({ success: true, discovery: true, notifications });
         }
-        if (!args.disposition) {
+        if (!args.disposition && !hasGoalUpdate) {
           return jsonResult({
             success: false,
             error:
-              'disposition (acknowledge, reject, or supersede) is required when notification_id is provided',
+              'disposition (acknowledge, reject, or supersede) or a goal-state update is required when notification_id is provided',
+          });
+        }
+        if (args.disposition && args.disposition !== 'acknowledge' && hasGoalUpdate) {
+          return jsonResult({
+            success: false,
+            error: 'goal-state updates require the acknowledge disposition',
           });
         }
         if (!args.goal_id || !args.task_id) {
@@ -3048,21 +3072,36 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
         requireGoalInSpace(args.goal_id);
+        const dispositionStatus = hasGoalUpdate
+          ? 'acknowledged'
+          : args.disposition === 'reject'
+            ? 'rejected'
+            : args.disposition === 'supersede'
+              ? 'superseded'
+              : 'acknowledged';
         const result = goalService.claimOutcomeNotification({
           notificationId: args.notification_id,
           claimedGoalId: args.goal_id,
           claimedTaskId: args.task_id,
           actorAgentId: callerAgentId,
           humanAdmissionAllowed,
-          mutatesGoalState: false,
-          dispositionStatus:
-            args.disposition === 'acknowledge'
-              ? 'acknowledged'
-              : args.disposition === 'reject'
-                ? 'rejected'
-                : 'superseded',
+          mutatesGoalState: hasGoalUpdate,
+          dispositionStatus,
           isResubmission: args.observed_goal_revision != null,
           observedGoalRevision: args.observed_goal_revision ?? null,
+          apply: hasGoalUpdate
+            ? (goal) =>
+                goalService.applyOutcomeGoalUpdate({
+                  goalId: goal.id,
+                  summary: args.summary,
+                  nextSteps: args.next_steps,
+                  metrics: args.metrics,
+                  observations: args.observations,
+                  progress: args.progress,
+                  sourceTaskId: args.task_id,
+                  sourceSessionId: mySessionId ?? null,
+                })
+            : undefined,
         });
         if (result.status === 'claimed' || result.status === 'already_applied') {
           logAudit(
@@ -3070,7 +3109,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             {
               notification_id: args.notification_id,
               goal_id: args.goal_id,
-              disposition: args.disposition,
+              disposition: dispositionStatus,
+              has_goal_update: hasGoalUpdate,
               status: result.status,
             },
             args.task_id
@@ -3079,6 +3119,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             success: true,
             status: result.status,
             notification: result.notification,
+            goal: result.goal,
           });
         }
         if (result.status === 'denied') {
@@ -5158,7 +5199,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     tools.push(
       tool(
         'review_goal_outcome',
-        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id, and a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without mutating goal state.',
+        'Review a terminal goal-outcome notification. Call without notification_id to discover pending notifications you own or are the authorized fallback for; call with notification_id, goal_id, task_id and either a disposition (acknowledge, reject, or supersede) to terminalize a pending outcome without goal mutation, or goal-state updates (summary, next_steps, metrics, observations, progress) to acknowledge the outcome while persisting your review to the goal.',
         {
           goal_id: z
             .string()
@@ -5186,6 +5227,19 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             .describe(
               'Goal revision observed by the caller; set when resubmitting after a stale denial'
             ),
+          summary: z.string().optional().describe('Replace the goal rolling summary'),
+          next_steps: z.array(z.string()).optional().describe('Replace the goal next steps'),
+          metrics: goalMetricsSchema.optional().describe('Replace the given goal metric values'),
+          observations: z
+            .array(
+              z.object({
+                key: z.string().describe('Metric key'),
+                value: z.number().describe('Delta added to the current metric value'),
+              })
+            )
+            .optional()
+            .describe('Accumulate metric observations as numeric deltas'),
+          progress: z.number().int().min(0).max(100).optional().describe('Set goal progress 0-100'),
         },
         (args) => handlers.review_goal_outcome(args)
       )

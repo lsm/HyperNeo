@@ -5,6 +5,7 @@ import {
   collectToolUseIds,
   composeMessagePage,
   extractFirstTextBlockContent,
+  extractTextBlockContents,
   extractToolCallNames,
   extractVisibleText,
   inflatePersistedMessage,
@@ -400,6 +401,55 @@ describe('composeMessagePage', () => {
     });
 
     expect(fetchedIds).toEqual([['tu-b']]);
+  });
+});
+
+describe('extractTextBlockContents — policy-parameterized block walk', () => {
+  const msg = {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'First' },
+        { type: 'tool_use', id: 'tu-1', name: 'Read' },
+        { type: 'text', text: 'Second' },
+        { type: 'text', text: 'Third' },
+      ],
+    },
+  };
+
+  test("policy 'join-all' collects every text block in content order", () => {
+    expect(extractTextBlockContents(msg, 'join-all')).toEqual(['First', 'Second', 'Third']);
+  });
+
+  test("policy 'first-block-only' stops at the first text block", () => {
+    expect(extractTextBlockContents(msg, 'first-block-only')).toEqual(['First']);
+  });
+
+  test('returns string content as a single element under both policies', () => {
+    const stringContent = { type: 'user', message: { role: 'user', content: 'Plain' } };
+    expect(extractTextBlockContents(stringContent, 'join-all')).toEqual(['Plain']);
+    expect(extractTextBlockContents(stringContent, 'first-block-only')).toEqual(['Plain']);
+  });
+
+  test('returns an empty array for missing, null, or text-free content under both policies', () => {
+    for (const policy of ['first-block-only', 'join-all'] as const) {
+      expect(extractTextBlockContents({ type: 'user' }, policy)).toEqual([]);
+      expect(
+        extractTextBlockContents({ type: 'user', message: { content: null } }, policy)
+      ).toEqual([]);
+      expect(
+        extractTextBlockContents(
+          { type: 'user', message: { content: [{ type: 'tool_use', id: 'tu-1' }] } },
+          policy
+        )
+      ).toEqual([]);
+    }
+  });
+
+  test('both shapers delegate to the shared walk with their pinned policies', () => {
+    expect(extractVisibleText(msg)).toBe('First\n\nSecond\n\nThird');
+    expect(extractFirstTextBlockContent(msg as unknown as SDKMessage)).toBe('First');
   });
 });
 

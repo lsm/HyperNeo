@@ -393,6 +393,12 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('the internal fallback applies ONLY under `auto`');
     expect(CODER_ONLY_PROMPT).toContain('escalate saying the repository has no external reviewer');
     expect(CODER_ONLY_PROMPT).toContain('the merge cannot proceed under the selected source');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'Capture `headRefOid`, `baseRefName`, and `baseRefOid` BEFORE starting the fallback review'
+    );
+    expect(CODER_ONLY_PROMPT).toContain(
+      'so the merge procedure reads the gate that actually covers the current head'
+    );
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
     expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
@@ -401,6 +407,8 @@ describe('coder-only workflow template', () => {
     );
     expect(CODER_ONLY_PROMPT).toContain('an emptied gate set there is a blocker');
     expect(CODER_ONLY_PROMPT).not.toContain('there is no internal backstop');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('internal fallback review');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('BOTH gates must re-run');
   });
 
   test('shared review policy vocabulary and external bot gate reach every consumer', () => {
@@ -460,6 +468,60 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT.indexOf('Do this once per PR')).toBe(
       CODER_ONLY_PROMPT.lastIndexOf('Do this once per PR')
     );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal fallback review is the gate');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the two gates are separate records under separate keys, and `both` requires both of them'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'external under "gate", internal under "internal" — never overwrite one with the other'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the internal artifact IS the gate of record');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'Under `both` OR explicit `external` an empty gate set is NOT an internal run'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      're-run the gate cycle under the CURRENT source'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'in MEANING — `internal-fallback` recorded for a run whose instructions selected `internal`'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('the review ran at the wrong depth');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'for a `both`-source run confirm BOTH gate artifacts'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'its recorded base_oid equals the current baseRefOid'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the merged commit never passed the current policy'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never as an external pass');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'Accept `MERGED` as verified ONLY when that first parent equals the `base_oid` recorded in your gate artifact'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'Accept `MERGED` as verified ONLY when that first parent equals the `base_oid` recorded in your gate artifact'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'the live baseRefOid has advanced past the merge and must not be compared'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'equals the merge commit' + "'" + 's first parent'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'proceed without a new review round and without asking for fresh sign-off'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      're-runs ONLY the internal fallback review (never a bot loop'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('report the gate that actually ran');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'the single fresh human sign-off covers both halves'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('validate ONLY that internal artifact');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'a re-triggered bot that engages but produces no verdict within its window'
+    );
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(REVIEW_POLICY_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('always send the gated PR handoff');
@@ -467,10 +529,102 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
       "the Reviewer's backup role covers exactly this failure"
     );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('kind: "review-base", key: "base"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'the post-approval merge runs in a separate session that never sees that handoff'
+    );
     expect(CODER_OWNED_MERGE_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(CODING_WORKFLOW.nodes[0]!.agents[0]!.customPrompt!.value).toBe(CODER_OWNED_MERGE_PROMPT);
     expect(RESEARCH_PROMPT).toContain(CODER_EXTERNAL_GATE_BLOCK);
     expect(RESEARCH_PROMPT).toContain('always send the gated PR handoff to Review');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('never substitutes for the review source');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'Retargeting a PR changes the reviewed diff WITHOUT changing'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'the `base_ref`, `base_oid`, and `head_oid` recorded in your `review-base` note artifact (key "base")'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'compare the current `baseRefName` AND `baseRefOid` AND `$HEAD_OID`'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a mismatch in ANY value invalidates the gate'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a note still in its dispatch-time `pending` state is NOT proof'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'revalidate it BEFORE requesting any re-approval'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'treat the note as stale and re-send the gated PR handoff under the current source'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'review-source or review-depth instruction is newer than that note'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a merge must never proceed under a policy the verified note predates'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'do NOT call mark_complete: report the mismatch'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('source: "<external|internal|both|auto>"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('depth: "<light|standard|deep|auto>"');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'A review-DEPTH switch stales the gate the same way'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'WAIT for your confirmation that the note is `verified` before its terminal action'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'a source switch itself triggers that next handoff'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'treats the note as stale and refreshes it the same way'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'PENDING state only — a dispatch-time snapshot proves nothing'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      'Only a "verified" note is proof of the base the Reviewer last inspected'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain(
+      '(`Reviewed head <headRefOid> on base <name>@<baseRefOid>`'
+    );
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('or the head moved and returned');
+    expect(CODER_EXTERNAL_GATE_BLOCK).toContain('base_oid: "<baseRefOid>"');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('base_oid: "<baseRefOid>"');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'the same branch name can advance underneath the gate'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'poll all three on every wait cycle while the gate is live'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
+      'a reverted head excursion still passes the trigger-anchored freshness checks'
+    );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('even a change that later reverts');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'AND the current baseRefOid (its recorded `base_oid`)'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
+    expect(CODER_ONLY_PROMPT).toContain('depth: "<light|standard|deep|auto>", reason:');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'a dead bot is a reported blocker to escalate, never substituted'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('after EVERY fresh external gate');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'that ONE handoff satisfies both halves together'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      '`both` runs the external gate FIRST and never consumes two Review cycles'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('route the revalidation back through Review');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      "the Reviewer's backup re-review stands in for that bot's pass"
+    );
   });
 
   test('merge instructions sync fork PRs from the base repository remote', () => {
@@ -497,12 +651,16 @@ describe('coder-only workflow template', () => {
   });
 
   test('gate captures the base before reviewers run and verifies the recorded PR link', () => {
-    expect(CODER_ONLY_PROMPT).toContain('Capture the baseRefName when you START the external gate');
-    expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the new base');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'Capture the baseRefName, baseRefOid, AND headRefOid (`gh pr view <pr_url> --json baseRefName,baseRefOid,headRefOid`) when you START the external gate'
+    );
+    expect(CODER_ONLY_PROMPT).toContain('re-run the whole gate under the current base');
     expect(CODER_ONLY_PROMPT).toContain('headRefName,isCrossRepository,headRepository,url');
     expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
     expect(CODER_ONLY_PROMPT).toContain('the fork case');
-    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('`base_ref` equals the final baseRefName');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      "its `base_oid` equals the merge commit's first parent"
+    );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       '--force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID"'
     );
