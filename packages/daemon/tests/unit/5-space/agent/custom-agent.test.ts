@@ -818,6 +818,12 @@ describe('createCustomAgentInit', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('BOTH gates must pass');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('does NOT apply in `both` mode');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('NEVER advance your round');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('count only YOUR OWN prior reviews');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'you are in Round 1 no matter how many other reviews exist'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('OVERRIDE this table');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('no sub-agent dispatch except the `deep` tier');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('your own pass at the review depth in effect');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('No-implementer workflows');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain("outside the Reviewer's permitted commands");

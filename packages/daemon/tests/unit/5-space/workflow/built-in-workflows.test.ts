@@ -388,6 +388,8 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain(
       'the artifact store upserts on the key, so writing the internal result there would destroy a recorded external gate'
     );
+    expect(CODER_ONLY_PROMPT).toContain('ONLY when no external gate was recorded for this run');
+    expect(CODER_ONLY_PROMPT).toContain('the merge cannot proceed under the selected source');
     expect(CODER_ONLY_PROMPT).toContain('treat that bot as failed');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
     expect(CODER_ONLY_PROMPT).toContain('switch to the internal fallback review above');
