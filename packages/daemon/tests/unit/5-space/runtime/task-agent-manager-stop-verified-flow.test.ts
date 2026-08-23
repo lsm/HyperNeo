@@ -1,6 +1,7 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import type { VerifiedSessionStop } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 interface FakeInterruptOptions {
@@ -148,14 +149,22 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
+function stopVerified(manager: TaskAgentManager, sessionId: string): Promise<VerifiedSessionStop> {
+  return (
+    manager as unknown as {
+      stopSessionVerified(sessionId: string): Promise<VerifiedSessionStop>;
+    }
+  ).stopSessionVerified(sessionId);
+}
+
+describe('TaskAgentManager.stopSessionVerified stagedRun interpreter', () => {
   test('happy path: interrupts once, verifies down, detaches, and unregisters', async () => {
     const sessionManager = makeSessionManager();
     const manager = makeManager(sessionManager);
     const fake = makeFakeSession({ statusSequence: ['processing', 'idle'] });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.interrupts).toBe(1);
     expect(fake.calls.cleanups).toBeGreaterThanOrEqual(1);
@@ -174,7 +183,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const sessionManager = makeSessionManager();
     const manager = makeManager(sessionManager);
 
-    const result = await manager.stopSessionVerifiedViaFlow('ghost-session');
+    const result = await stopVerified(manager, 'ghost-session');
 
     expect(result).toEqual({
       sessionId: 'ghost-session',
@@ -188,7 +197,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const sessionManager = makeSessionManager({ failUnregisterFor: ['ghost'] });
     const manager = makeManager(sessionManager);
 
-    const result = await manager.stopSessionVerifiedViaFlow('ghost');
+    const result = await stopVerified(manager, 'ghost');
 
     expect(result).toEqual({
       sessionId: 'ghost',
@@ -203,7 +212,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ statusSequence: ['processing', 'processing', 'idle'] });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.interrupts).toBe(2);
     expect(fake.calls.terminations).toBe(0);
@@ -223,7 +232,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.interrupts).toBe(2);
     expect(result.stopped).toBe(true);
@@ -238,7 +247,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ statusSequence: ['processing'] });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.interrupts).toBe(2);
     expect(fake.calls.terminations).toBe(1);
@@ -265,7 +274,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.terminations).toBe(1);
     expect(result.stopped).toBe(true);
@@ -281,7 +290,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.interrupts).toBe(2);
     expect(fake.calls.terminations).toBe(1);
@@ -295,7 +304,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ statusSequence: ['processing', 'idle'] });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(result).toEqual({
       sessionId: 'sess-1',
@@ -314,7 +323,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     internals.sessionListeners.set('sess-1', () => events.push('listener-unsub'));
     internals.completionCallbacks.set('sess-1', () => {});
 
-    await manager.stopSessionVerifiedViaFlow('sess-1');
+    await stopVerified(manager, 'sess-1');
 
     expect(events).toEqual(['listener-unsub', 'unregister']);
     expect(internals.sessionListeners.has('sess-1')).toBe(false);
@@ -330,7 +339,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ statusSequence: ['processing', 'idle'], interruptGate: gate });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const promise = manager.stopSessionVerifiedViaFlow('sess-1');
+    const promise = stopVerified(manager, 'sess-1');
     await Promise.resolve();
     await Promise.resolve();
     expect(internalsOf(manager).cancellingSessions.has('sess-1')).toBe(true);
@@ -350,7 +359,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ statusSequence: ['processing', 'idle'], interruptGate: gate });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const promise = manager.stopSessionVerifiedViaFlow('sess-1');
+    const promise = stopVerified(manager, 'sess-1');
     await Promise.resolve();
     await Promise.resolve();
     const internals = internalsOf(manager);
@@ -376,7 +385,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
     let settled = false;
-    const promise = manager.stopSessionVerifiedViaFlow('sess-1').then((result) => {
+    const promise = stopVerified(manager, 'sess-1').then((result) => {
       settled = true;
       return result;
     });
@@ -398,7 +407,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ processingStateError: new Error('status blew up') });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    await expect(manager.stopSessionVerifiedViaFlow('sess-1')).rejects.toThrow('status blew up');
+    await expect(stopVerified(manager, 'sess-1')).rejects.toThrow('status blew up');
     expect(fake.calls.interrupts).toBe(1);
     expect(internalsOf(manager).cancellingSessions.has('sess-1')).toBe(false);
   });
@@ -409,7 +418,7 @@ describe('TaskAgentManager.stopSessionVerifiedViaFlow', () => {
     const fake = makeFakeSession({ statusSequence: ['interrupted'] });
     registerSession(manager, 'task-1', 'sess-1', fake.session);
 
-    const result = await manager.stopSessionVerifiedViaFlow('sess-1');
+    const result = await stopVerified(manager, 'sess-1');
 
     expect(fake.calls.interrupts).toBe(1);
     expect(fake.calls.terminations).toBe(0);

@@ -92,13 +92,6 @@ import {
   resolveSpawnWorkspace,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution';
-import {
-  assembleVerifiedStopResult,
-  decideStopVerification,
-  isStopDownProcessingStatus,
-  type StopVerificationDecision,
-  type StopVerificationSnapshot,
-} from './stop-verification-gates';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
 import { ChannelResolver } from './channel-resolver';
@@ -2506,96 +2499,13 @@ export class TaskAgentManager {
   private async stopSessionVerified(sessionId: string): Promise<VerifiedSessionStop> {
     this.cancellingSessions.add(sessionId);
     try {
-      const session =
-        this.agentSessionIndex.get(sessionId) ??
-        this.config.sessionManager?.getCachedSession(sessionId) ??
-        null;
-      this.agentSessionIndex.delete(sessionId);
-
-      if (!session) {
-        try {
-          await this.config.sessionManager?.unregisterSession?.(sessionId);
-        } catch (err) {
-          log.warn(
-            `TaskAgentManager.stopSessionsVerified: failed to unregister missing session ${sessionId}:`,
-            err
-          );
-        }
-        return { sessionId, stopped: true, detail: 'no in-memory session; unregistered' };
-      }
-
-      const notes: string[] = [];
-      let interruptAttemptsSoFar = 0;
-      let escalationDone = false;
-
-      const attemptInterrupt = async (failureNote: string): Promise<void> => {
-        try {
-          await this.stopSessionPreserveDb(sessionId, session, { strict: true });
-        } catch (err) {
-          notes.push(`${failureNote}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        interruptAttemptsSoFar += 1;
-      };
-
-      const decideNextStopAction = async (): Promise<StopVerificationDecision> =>
-        decideStopVerification(
-          await this.gatherStopVerificationSnapshot(session, interruptAttemptsSoFar, escalationDone)
-        );
-
-      await attemptInterrupt('interrupt failed');
-
-      let decision = await decideNextStopAction();
-      while (decision.action === 'retry_interrupt' || decision.action === 'escalate_terminate') {
-        if (decision.action === 'retry_interrupt') {
-          log.warn(
-            `TaskAgentManager.stopSessionsVerified: session ${sessionId} still alive after interrupt (${decision.reason}); retrying once`
-          );
-          await attemptInterrupt('retry interrupt failed');
-          decision = await decideNextStopAction();
-          if (decision.action === 'down') {
-            notes.push('first interrupt did not land; stopped on retry');
-          }
-          continue;
-        }
-        log.warn(
-          `TaskAgentManager.stopSessionsVerified: session ${sessionId} survived interrupt retry (${decision.reason}); escalating to tracked process termination`
-        );
-        notes.push(`escalated after verification failure (${decision.reason})`);
-        try {
-          session.terminateTrackedAgentProcesses({
-            forceDelayMs: VERIFIED_STOP_ESCALATION_FORCE_KILL_MS,
-          });
-        } catch (err) {
-          notes.push(`escalation failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-        escalationDone = true;
-        decision = await decideNextStopAction();
-      }
-
-      this.detachSessionBookkeeping(sessionId);
-
-      try {
-        await this.config.sessionManager?.unregisterSession?.(sessionId);
-      } catch (err) {
-        notes.push(`unregister failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      return assembleVerifiedStopResult({ sessionId, notes, decision });
-    } finally {
-      this.cancellingSessions.delete(sessionId);
-    }
-  }
-
-  async stopSessionVerifiedViaFlow(sessionId: string): Promise<VerifiedSessionStop> {
-    this.cancellingSessions.add(sessionId);
-    try {
       const outcome = await runVerifiedStopFlow(this.buildVerifiedStopFlowDeps(), sessionId);
       if (outcome.status === 'error') {
         throw outcome.error;
       }
       if (outcome.status === 'superseded') {
         throw new Error(
-          `TaskAgentManager.stopSessionVerifiedViaFlow: verified stop for session ${sessionId} superseded at stage ${outcome.stage ?? 'unknown'}`
+          `TaskAgentManager.stopSessionVerified: verified stop for session ${sessionId} superseded at stage ${outcome.stage ?? 'unknown'}`
         );
       }
       return outcome.result as VerifiedSessionStop;
@@ -2637,33 +2547,6 @@ export class TaskAgentManager {
         log.warn(message, err);
       },
     };
-  }
-
-  private async gatherStopVerificationSnapshot(
-    session: AgentSession,
-    interruptAttemptsSoFar: number,
-    escalationDone: boolean
-  ): Promise<StopVerificationSnapshot> {
-    const processingStatus = session.getProcessingState().status;
-    const interruptInProgress =
-      isStopDownProcessingStatus(processingStatus) && session.isInterruptInProgress();
-    const livePids =
-      isStopDownProcessingStatus(processingStatus) && !interruptInProgress
-        ? await this.readLivePidsAfterSettle(session)
-        : [];
-    return {
-      sessionPresent: true,
-      processingStatus,
-      interruptInProgress,
-      livePids,
-      interruptAttemptsSoFar,
-      escalationDone,
-    };
-  }
-
-  private async readLivePidsAfterSettle(session: AgentSession): Promise<number[]> {
-    await this.awaitSessionProcessExit(session, VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS);
-    return session.getTrackedAgentRootPidsSplit().live;
   }
 
   private async awaitSessionProcessExit(session: AgentSession, timeoutMs: number): Promise<void> {
