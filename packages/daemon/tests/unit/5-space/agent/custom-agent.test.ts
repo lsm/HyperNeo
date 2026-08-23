@@ -20,7 +20,11 @@ import {
 } from '../../../../src/lib/space/agents/custom-agent';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
-import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import {
+  CODING_WORKFLOW,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  REVIEW_POLICY_GUIDANCE,
+} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
   return {
@@ -807,16 +811,24 @@ describe('createCustomAgentInit', () => {
     expect(init.promptProvenance?.source).toBe('workflow_node_replaced_prompt');
   });
 
-  it('REVIEWER_SYSTEM_CONTRACT dispatches by review depth with fixed coverage', () => {
+  it('REVIEWER_SYSTEM_CONTRACT selects role by review source and dispatch by review depth', () => {
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('Your role by review source');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are THE gate');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('you are the verifier and the backup');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('BOTH gates must pass');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('does NOT apply in `both` mode');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('NEVER advance your round');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('your own pass at the review depth in effect');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('No-implementer workflows');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain("outside the Reviewer's permitted commands");
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('treat it as a pointer, not proof');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('unresolved bot findings are your findings too');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('you become the gate');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('Dispatch by review depth');
-    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'coverage is invariant — every dimension is covered on every non-trivial change'
-    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('no sub-agents at this depth');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain('coverage is invariant');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'Folding lenses together is acceptable ONLY at this depth'
-    );
-    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'dispatch dedicated Task general-purpose sub-agents'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'a second independent sub-agent pass on the highest-risk dimension'
@@ -826,6 +838,14 @@ describe('createCustomAgentInit', () => {
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('never overrides an explicit depth');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('the latest explicit instruction wins');
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(REVIEW_POLICY_GUIDANCE);
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(EXTERNAL_REVIEW_BOTS_GUIDANCE);
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'You do not trigger external review bots — the implementer does'
+    );
+    expect(REVIEWER_SYSTEM_CONTRACT).toContain(
+      'only the `light` review depth folds them into a single pass'
+    );
   });
 
   it('injects Coding workflow coder-owned handoff guidance into system prompt', () => {
