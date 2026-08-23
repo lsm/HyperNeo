@@ -29,6 +29,7 @@ export function runMigration206(db: BunDatabase): void {
     !tableHasColumn(db, 'space_agents', 'name') ||
     !tableHasColumn(db, 'space_agents', 'custom_prompt') ||
     !tableHasColumn(db, 'space_agents', 'description') ||
+    !tableHasColumn(db, 'space_agents', 'tools') ||
     !tableHasColumn(db, 'space_agents', 'template_hash')
   ) {
     return;
@@ -40,23 +41,36 @@ export function runMigration206(db: BunDatabase): void {
 
   const rows = db
     .prepare(
-      `SELECT id, custom_prompt, description
+      `SELECT id, custom_prompt, description, tools
        FROM space_agents
        WHERE template_name = 'Reviewer' OR (template_name IS NULL AND name = 'Reviewer')`
     )
-    .all() as Array<{ id: string; custom_prompt: string | null; description: string | null }>;
+    .all() as Array<{
+    id: string;
+    custom_prompt: string | null;
+    description: string | null;
+    tools: string | null;
+  }>;
 
   const update = db.prepare(
     `UPDATE space_agents
-     SET custom_prompt = ?, template_hash = ?
+     SET custom_prompt = ?, template_name = 'Reviewer', template_hash = ?
      WHERE id = ?`
   );
   let updated = 0;
 
   for (const row of rows) {
+    let storedTools: string[] = [];
+    try {
+      const parsed = row.tools ? JSON.parse(row.tools) : [];
+      storedTools = Array.isArray(parsed) ? parsed.map((t) => String(t)) : [];
+    } catch {
+      continue;
+    }
     const pristine =
       row.custom_prompt === OLD_REVIEWER_PROMPT_PRE_DEPTH_TIERS &&
-      row.description === reviewer.description;
+      row.description === reviewer.description &&
+      JSON.stringify(storedTools) === JSON.stringify(reviewer.tools);
     if (!pristine) continue;
 
     update.run(reviewer.customPrompt, computeAgentTemplateHash(reviewer), row.id);

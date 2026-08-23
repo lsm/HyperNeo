@@ -35,6 +35,7 @@ function insertAgent(
     name: string;
     customPrompt?: string | null;
     description?: string | null;
+    tools?: string | null;
     templateName?: string | null;
     templateHash?: string | null;
   }
@@ -49,7 +50,7 @@ function insertAgent(
     opts.spaceId,
     opts.name,
     opts.name.toLowerCase(),
-    '[]',
+    opts.tools ?? JSON.stringify(REVIEWER_PRESET.tools ?? []),
     opts.customPrompt ?? null,
     opts.description ?? null,
     opts.templateName ?? null,
@@ -126,7 +127,27 @@ describe('migration 206 — reviewer depth-tiers contract restamp', () => {
 
     const row = getAgentRow(db, 'agent-orphan');
     expect(row.custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
+    expect(row.template_name).toBe('Reviewer');
     expect(row.template_hash).toBe(computeAgentTemplateHash(REVIEWER_PRESET));
+  });
+
+  test('leaves a Reviewer row with customized tools untouched', () => {
+    const spaceId = 'space-m206-e';
+    insertSpace(db, spaceId);
+    insertAgent(db, {
+      id: 'agent-tools-custom',
+      spaceId,
+      name: 'Reviewer',
+      customPrompt: OLD_REVIEWER_PROMPT_PRE_DEPTH_TIERS,
+      description: REVIEWER_PRESET.description,
+      tools: JSON.stringify([...(REVIEWER_PRESET.tools ?? []), 'Bash(git log:*)']),
+    });
+
+    runMigration206(db);
+
+    const row = getAgentRow(db, 'agent-tools-custom');
+    expect(row.custom_prompt).toBe(OLD_REVIEWER_PROMPT_PRE_DEPTH_TIERS);
+    expect(row.template_name).toBeNull();
   });
 
   test('leaves a customized Reviewer row untouched', () => {
