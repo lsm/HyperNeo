@@ -3,7 +3,6 @@ import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
 
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
-/* @public - consumed by ACP provider sync in a later stack PR */
 export function getAcpCommandIdentityDigest(commandLine: string): string {
   return createHash('sha256').update(getAcpCommandIdentity(commandLine)).digest('hex');
 }

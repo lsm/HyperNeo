@@ -34,7 +34,7 @@ import {
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy';
 import { AcpClient, type AcpClientOptions } from './acp-client';
-import { parseAcpCommand } from './acp-command';
+import { getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
@@ -456,6 +456,27 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
+      const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
+      const storedIdentity = session.metadata?.acpCommandIdentity;
+      if (session.acpSessionId && storedIdentity !== undefined && storedIdentity !== commandIdentity) {
+        session.acpSessionId = undefined;
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+          acpInstructionsSent: undefined,
+          acpContextUsageEstimate: undefined,
+        };
+        this.ctx.db.updateSession(session.id, {
+          acpSessionId: undefined,
+          metadata: session.metadata,
+        });
+      } else if (storedIdentity !== commandIdentity) {
+        session.metadata = {
+          ...session.metadata,
+          acpCommandIdentity: commandIdentity,
+        };
+        this.ctx.db.updateSession(session.id, { metadata: session.metadata });
+      }
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
