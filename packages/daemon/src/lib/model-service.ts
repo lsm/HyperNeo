@@ -121,7 +121,6 @@ function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): Mode
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
     merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
-    pendingProviderSlices.delete(key);
   }
   return merged;
 }
@@ -390,14 +389,17 @@ export function updateProviderModelsInCache(
     return false;
   }
 
+  pendingProviderSlices.delete(pendingSliceKey(cacheKey, providerId));
   modelsCache.set(cacheKey, [
     ...cachedModels.filter((model) => model.provider !== providerId),
     ...models,
   ]);
+  const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
   const inFlight = refreshInProgress.get(cacheKey);
   if (inFlight) {
     inFlight
       .then(() => {
+        if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtUpdate) return;
         const current = modelsCache.get(cacheKey);
         if (!current) return;
         modelsCache.set(cacheKey, [

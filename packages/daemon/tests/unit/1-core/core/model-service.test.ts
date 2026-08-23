@@ -247,6 +247,59 @@ describe('Model Service', () => {
       expect(getAvailableModels('global')).toEqual([]);
     });
 
+    it('keeps a retained provider slice across repeated rebuilds until superseded', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const providerModel: ModelInfo = { ...acpModels[0], id: 'acp-from-provider' };
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [providerModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+
+      const supersedingModels: ModelInfo[] = [{ ...acpModels[0], id: 'newer-acp-model' }];
+      expect(updateProviderModelsInCache('acp', supersedingModels)).toBe(true);
+
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([providerModel]);
+    });
+
+    it('skips the post-refresh re-apply when the cache is cleared mid-refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'slow-reapply-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [{ ...acpModels[0], id: 'acp-default', provider: 'slow-reapply-provider' }];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+      clearModelsCache();
+
+      await refreshPromise;
+
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
     it('leaves other cache keys untouched', () => {
       seedCache(
         {
