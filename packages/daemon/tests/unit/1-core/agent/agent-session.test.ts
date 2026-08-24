@@ -17,6 +17,7 @@ import {
   waitForDeliveryConsumption,
   withSessionResetCoordination,
 } from '../../../../src/lib/agent/message-delivery';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
@@ -5695,6 +5696,285 @@ describe('AgentSession', () => {
       const outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
       expect(outcome).toEqual({ outcome: 'turn_terminated' });
       expect(ensure).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('feedDeliverySteer — steer-ladder decision table (A1c)', () => {
+    const steerUuid = 'steer-msg-uuid';
+    const steerContent = 'steer-content';
+    const sessionId = 'sess-steer-a1c';
+
+    type SteerRow = {
+      name: string;
+      status: 'idle' | 'queued' | 'processing';
+      delivery: 'enqueued' | 'consumed' | 'missing';
+      queryPromise: 'present' | 'absent';
+      provider: 'acp' | 'anthropic';
+      pending: boolean;
+      claimGuard: 'held' | 'superseded';
+      expected: 'aborted' | 'park' | 'promote' | 'awaiting_acceptance' | 'consumed';
+    };
+
+    async function settleFeedAck(
+      steerPromise: Promise<unknown>,
+      queue: MessageQueue
+    ): Promise<void> {
+      for (let i = 0; i < 200; i++) {
+        const done = await Promise.race([
+          steerPromise.then(
+            () => true,
+            () => true
+          ),
+          Promise.resolve().then(() => queue.remove(steerUuid) || false),
+        ]);
+        if (done) return;
+      }
+    }
+
+    async function runSteerRow(
+      row: Omit<SteerRow, 'name'>
+    ): Promise<{ db: Database; queue: MessageQueue; outcome: unknown }> {
+      const db = await createTestDb();
+      const session = createTestSession(sessionId);
+      if (row.provider === 'acp') session.config.provider = 'acp';
+      db.createSession(session);
+      const repo = db.getSDKMessageRepo();
+      if (row.delivery !== 'missing') {
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        if (row.delivery === 'consumed') {
+          repo.markDeliveryConsumedByUuid(sessionId, steerUuid);
+        }
+      }
+      const bus = await createTestInternalEventBus();
+      const agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key'),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoReplayPendingMessages: false }
+      );
+      if (row.status === 'processing') {
+        await agentSession.stateManager.setProcessing(steerUuid);
+      } else if (row.status === 'queued') {
+        await agentSession.stateManager.setQueued(steerUuid);
+      }
+      const queue = agentSession.messageQueue;
+      (queue as unknown as { hasPendingOrInFlight: (id: string) => boolean }).hasPendingOrInFlight =
+        mock(() => row.pending);
+      if (row.queryPromise === 'present') {
+        agentSession.queryPromise = new Promise<void>(() => {});
+      }
+      const claimGuard = row.claimGuard === 'held' ? () => true : () => false;
+      const steerPromise = agentSession.feedDeliverySteer(
+        steerUuid,
+        steerContent,
+        null,
+        claimGuard
+      );
+      await settleFeedAck(steerPromise, queue);
+      const outcome = await steerPromise;
+      return { db, queue, outcome };
+    }
+
+    const rows: SteerRow[] = [
+      {
+        name: 'superseded claim aborts at processing before the status ladder',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: true,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
+        name: 'superseded claim aborts at queued before the status ladder',
+        status: 'queued',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
+        name: 'superseded claim aborts at idle before the status ladder',
+        status: 'idle',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
+        name: 'queued parks regardless of delivery validity, live query, ACP provider, and pending steer',
+        status: 'queued',
+        delivery: 'consumed',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'park',
+      },
+      {
+        name: 'idle promotes regardless of delivery validity and absent query',
+        status: 'idle',
+        delivery: 'consumed',
+        queryPromise: 'absent',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'processing aborts on a consumed delivery row',
+        status: 'processing',
+        delivery: 'consumed',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'aborted',
+      },
+      {
+        name: 'processing aborts on a missing delivery row',
+        status: 'processing',
+        delivery: 'missing',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'aborted',
+      },
+      {
+        name: 'processing promotes when no query is live',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'absent',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'ACP with an already-pending steer returns awaiting_acceptance without admitting a fresh feed',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'awaiting_acceptance',
+      },
+      {
+        name: 'non-ACP with an already-pending steer still admits a feed (ownership does not gate admission)',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'consumed',
+      },
+      {
+        name: 'ACP with a fresh steer admits and returns awaiting_acceptance after the SDK ack',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'awaiting_acceptance',
+      },
+      {
+        name: 'non-ACP with a fresh steer admits and returns consumed after the SDK ack',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'consumed',
+      },
+    ];
+
+    for (const row of rows) {
+      it(row.name, async () => {
+        const { db, queue, outcome } = await runSteerRow(row);
+        try {
+          expect(outcome).toEqual({ outcome: row.expected });
+          if (row.expected === 'consumed') {
+            expect(
+              db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
+            ).toBe('consumed');
+          } else if (row.expected === 'awaiting_acceptance' && row.provider === 'acp') {
+            expect(
+              db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
+            ).toBe('enqueued');
+          }
+          if (row.expected === 'awaiting_acceptance' && row.pending) {
+            expect(queue.size()).toBe(0);
+          }
+        } finally {
+          db.close();
+        }
+      });
+    }
+
+    it('pins: a live query ending before the SDK consumes the steer reopens the delivery and throws', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing(steerUuid);
+        agentSession.queryPromise = Promise.resolve();
+        await expect(
+          agentSession.feedDeliverySteer(steerUuid, steerContent, null, () => true)
+        ).rejects.toThrow('Steer target query ended before the SDK consumed the steer');
+        expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe(
+          'enqueued'
+        );
+        expect(agentSession.messageQueue.size()).toBe(1);
+      } finally {
+        db.close();
+      }
     });
   });
 });
