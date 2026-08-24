@@ -1468,10 +1468,12 @@ describe('QueryRunner', () => {
         abortController.signal
       );
 
-      await expect(async () => {
-        for await (const _msg of generator) {
-        }
-      }).rejects.toThrow('Some SDK error');
+      await expect(
+        (async () => {
+          for await (const _msg of generator) {
+          }
+        })()
+      ).rejects.toThrow('Some SDK error');
     });
   });
 
