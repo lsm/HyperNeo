@@ -169,7 +169,35 @@ export class SpaceAgentRepository {
   }
 
   delete(id: string): void {
-    this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
+    this.db.transaction(() => {
+      const row = this.db.prepare(`SELECT space_id FROM space_agents WHERE id = ?`).get(id) as {
+        space_id: string;
+      } | null;
+      const hasInbox = !!this.db
+        .prepare(
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
+        )
+        .get();
+      const hasSiblingLhAgent =
+        row != null &&
+        !!this.db
+          .prepare(
+            `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
+          )
+          .get()
+          ? !!this.db
+              .prepare(`SELECT 1 FROM space_long_horizon_agents WHERE id = ? AND space_id = ?`)
+              .get(id, row.space_id)
+          : false;
+      if (hasInbox && !hasSiblingLhAgent && row != null) {
+        this.db
+          .prepare(
+            `DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ? AND space_id = ?`
+          )
+          .run(id, row.space_id);
+      }
+      this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
+    })();
   }
 
   isAgentReferenced(agentId: string): { referenced: boolean; workflowNames: string[] } {

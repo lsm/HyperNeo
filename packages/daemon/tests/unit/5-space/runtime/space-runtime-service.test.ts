@@ -1,35 +1,16 @@
 import {
-  describe,
-  test,
-  expect,
-  beforeEach,
+  afterAll,
   afterEach,
   beforeAll,
-  afterAll,
-  mock,
+  beforeEach,
+  describe,
+  expect,
   type Mock,
+  mock,
+  test,
 } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import {
-  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
-  LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { SessionManager } from '../../../../src/lib/session-manager.ts';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
-import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type {
   McpServerConfig,
   ModelInfo,
@@ -39,23 +20,42 @@ import type {
   SpaceLongHorizonAgent,
   SpaceWorkerAgent,
 } from '@hyperneo/shared';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import type { Provider } from '@hyperneo/shared/provider';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
   getProviderRegistry,
   resetProviderRegistry,
 } from '../../../../src/lib/providers/registry.ts';
-import type { Provider } from '@hyperneo/shared/provider';
-import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/repositories/space-task-repository.ts';
+import type { SessionManager } from '../../../../src/lib/session-manager.ts';
+import {
+  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
+import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
 
 const NOW = Date.now();
@@ -1964,6 +1964,169 @@ describe('SpaceRuntimeService', () => {
       await svc.deliverGoalOutcomeWake(notification);
 
       expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
+    });
+
+    function makeWakeSession(sessionId: string): AgentSession {
+      return {
+        setRuntimeMcpServers: mock(() => {}),
+        mergeRuntimeMcpServers: mock(() => {}),
+        setRuntimeSystemPrompt: mock(() => {}),
+        updateConfig: mock(async () => {}),
+        resetQuery: mock(async () => ({ success: true })),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} }) as Session),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+    }
+
+    function makeWakeSessionManager(
+      sessions: Map<string, AgentSession>,
+      createdIds?: string[]
+    ): SessionManager {
+      return {
+        getSessionAsync: mock(async (sessionId: string) => sessions.get(sessionId) ?? null),
+        createSession: mock(async (...args: unknown[]) => {
+          const sessionId =
+            (args[0] as { sessionId?: string })?.sessionId ?? createdIds?.shift() ?? 'session-1';
+          sessions.set(sessionId, makeWakeSession(sessionId));
+          return sessionId;
+        }),
+        listSessions: mock(() => [] as Session[]),
+        registerSessionResetSubscriber: mock(() => () => {}),
+      } as unknown as SessionManager;
+    }
+
+    function buildDurableDeliveryReactiveDb(): {
+      reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
+      saveUserMessage: ReturnType<typeof mock>;
+    } {
+      const saveUserMessage = mock(() => 'db-msg');
+      const reactiveDb = {
+        db: {
+          saveUserMessage,
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => null,
+            markDeliveryFailedByUuid: () => null,
+            reopenDeliveryByUuid: () => null,
+          }),
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+              const uuid = args?.payload?.messageUuid;
+              if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+              return { id: 'job-1' };
+            },
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+      return { reactiveDb, saveUserMessage };
+    }
+
+    test('reroutes a wake rejected mid-provisioning to the new owner', async () => {
+      const ownerA = { action: 'resolved', owner: { agentId: 'agent-a' } };
+      const ownerB = { action: 'resolved', owner: { agentId: 'agent-b' } };
+      let ownerCalls = 0;
+      const sessions = new Map<string, AgentSession>();
+      const sessionManager = makeWakeSessionManager(sessions);
+      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
+      const longHorizonAgentRepo = {
+        getPrimaryGoalOwner: mock(() => {
+          ownerCalls += 1;
+          return ownerCalls >= 3 ? ownerB : ownerA;
+        }),
+        getById: mock((id: string) => buildLongHorizonAgent({ id, handle: id, displayName: id })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const goalService = {
+        getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
+      } as unknown as SpaceRuntimeServiceConfig['goalService'];
+      const outcomeNotificationRepo = {
+        getById: mock(() => ({
+          id: notification.id,
+          goalId: notification.goalId,
+          spaceId: notification.spaceId,
+          status: 'pending',
+        })),
+      } as unknown as SpaceGoalOutcomeNotificationRepository;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
+        enableGoalOutcomeWake: true,
+        reactiveDb,
+        longHorizonAgentRepo,
+        goalService,
+        outcomeNotificationRepo,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      await svc.deliverGoalOutcomeWake(notification);
+
+      expect(saveUserMessage).toHaveBeenCalledTimes(1);
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        longTermAgentSessionId(mockSpace.id, 'agent-b'),
+        expect.objectContaining({ type: 'user' }),
+        'enqueued'
+      );
+      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
+    });
+
+    test('leaves a wake pending without queueing when it goes stale mid-provisioning', async () => {
+      let notificationCalls = 0;
+      const sessions = new Map<string, AgentSession>();
+      const sessionManager = makeWakeSessionManager(sessions, [
+        longTermAgentSessionId(mockSpace.id, 'lh-agent-1'),
+      ]);
+      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
+      const longHorizonAgentRepo = {
+        getPrimaryGoalOwner: mock(() => ({
+          action: 'resolved',
+          owner: { agentId: 'lh-agent-1' },
+        })),
+        getById: mock(() => buildLongHorizonAgent()),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const goalService = {
+        getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
+      } as unknown as SpaceRuntimeServiceConfig['goalService'];
+      const outcomeNotificationRepo = {
+        getById: mock(() => {
+          notificationCalls += 1;
+          const status = notificationCalls >= 3 ? 'acknowledged' : 'pending';
+          return {
+            id: notification.id,
+            goalId: notification.goalId,
+            spaceId: notification.spaceId,
+            status,
+          };
+        }),
+      } as unknown as SpaceGoalOutcomeNotificationRepository;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
+        enableGoalOutcomeWake: true,
+        reactiveDb,
+        longHorizonAgentRepo,
+        goalService,
+        outcomeNotificationRepo,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      await svc.deliverGoalOutcomeWake(notification);
+
+      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
+      expect(saveUserMessage).not.toHaveBeenCalled();
     });
   });
 
