@@ -476,6 +476,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
         await handler.handleMessage(sessionState('idle'));
         expect(setIdleSpy).toHaveBeenCalledTimes(1);
+        expect(setIdleSpy.mock.calls[0]).toEqual([]);
         expect(replayCount()).toBe(row.expectedReplay);
         expect(readFlags(handler)).toEqual(resetFlags);
       });
@@ -518,6 +519,45 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(setIdleSpy.mock.calls[0]).toEqual([]);
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('consecutive non-idle events keep the expectation armed with no turn-end action', async () => {
+      await handler.handleMessage(sessionState('running'));
+      const armedFlags = {
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+      };
+      expect(readFlags(handler)).toEqual(armedFlags);
+
+      await handler.handleMessage(sessionState('requires_action'));
+      expect(readFlags(handler)).toEqual(armedFlags);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+    });
+
+    it('a suppressed result-less idle event uses the suppressed transition and retains the clear', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        suppressDeliveryWaiters: true,
+        suppressIdlePublish: true,
+        suppressIdleCallback: true,
+      });
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
     });
 
     it('a suppressed confirmed result under session-state mode holds the shell retention row until idle', async () => {
@@ -1026,11 +1066,15 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     it('a failed save with a primed mode and verdict leaves them untouched and still blocks replay', async () => {
       await handler.handleMessage(errorResult('save-fail-prime-error'));
       await handler.handleMessage(sessionState('running'));
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('save-fail-prime-stamp'));
       const primedFlags = {
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
         expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: false,
+        currentThinkingTokensEstimate: 120,
+        lastStampedThinkingTokensEstimate: 120,
       };
       expect(readFlags(handler)).toEqual(primedFlags);
       setIdleSpy.mockClear();
