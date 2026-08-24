@@ -1,5 +1,5 @@
-import { composeGitHubSubscriptionPattern } from './github-subscription-pattern';
-import { KNOWN_SOURCES } from './topic-validator';
+import { composeGitHubSubscriptionPattern } from './github-subscription-pattern.ts';
+import { KNOWN_SOURCES } from './topic-validator.ts';
 
 export function composeLongHorizonSubscriptionPattern(source: string, topic: string): string {
   const trimmedSource = source.trim();

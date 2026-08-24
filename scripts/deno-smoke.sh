@@ -49,7 +49,7 @@ echo "[deno-smoke] port=$PORT db=$DB_PATH"
 
 cd "$REPO_ROOT/packages/daemon"
 HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
-	deno run -A --unstable-sloppy-imports main.ts > "$LOG_FILE" 2>&1 &
+	deno run -A main.ts > "$LOG_FILE" 2>&1 &
 DAEMON_PID=$!
 
 CODE="000"

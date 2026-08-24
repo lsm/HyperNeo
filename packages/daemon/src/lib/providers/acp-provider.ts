@@ -8,8 +8,8 @@ import type {
   CuratedModel,
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
-import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
-import { AcpClient } from '../acp/acp-client';
+import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.ts';
+import { AcpClient } from '../acp/acp-client.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;

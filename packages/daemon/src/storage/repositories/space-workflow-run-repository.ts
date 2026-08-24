@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
@@ -7,11 +7,11 @@ import type {
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version';
-import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository';
-import type { SQLiteValue } from '../types';
-import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
-import { Logger } from '../../lib/logger';
+import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
+import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
+import type { SQLiteValue } from '../types.ts';
+import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine.ts';
+import { Logger } from '../../lib/logger.ts';
 
 const log = new Logger('space-workflow-run-repository');
 

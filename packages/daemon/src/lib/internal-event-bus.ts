@@ -1,5 +1,5 @@
 import type { GlobalSettings } from '@hyperneo/shared';
-import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
+import type { ExternalEventPublishedPayload } from './external-events/external-event-service.ts';
 
 export interface HandlerFailure {
   subscriberName: string;

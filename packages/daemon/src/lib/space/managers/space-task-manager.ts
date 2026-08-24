@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type {
   InternalCreateSpaceTaskParams,
   SpaceApprovalSource,
@@ -8,12 +8,12 @@ import type {
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import { Logger } from '../../logger';
-import type { EvolutionScopeService } from '../evolution-scope-service';
-import { arraysEqual } from '../../utils/array-utils';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { Logger } from '../../logger.ts';
+import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import { arraysEqual } from '../../utils/array-utils.ts';
 
 const log = new Logger('space-task-manager');
 

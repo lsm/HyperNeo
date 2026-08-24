@@ -1,6 +1,6 @@
-import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers';
-import { parsePrUrl } from '../parse-pr-url';
-import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector';
+import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers.ts';
+import { parsePrUrl } from '../parse-pr-url.ts';
+import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector.ts';
 
 const GITHUB_CONNECTOR_ID = 'github';
 

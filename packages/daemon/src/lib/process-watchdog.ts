@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Logger } from './logger';
+import { Logger } from './logger.ts';
 
 const execFileAsync = promisify(execFile);
 const logger = new Logger('ProcessWatchdog');

@@ -1,5 +1,5 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
-import type { QueryLike } from './agent/query-like';
+import type { QueryLike } from './agent/query-like.ts';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import {

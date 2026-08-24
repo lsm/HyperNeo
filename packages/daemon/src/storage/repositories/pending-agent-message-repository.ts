@@ -1,6 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 
 export type PendingMessageTargetKind = 'node_agent' | 'space_agent';
 export type PendingMessageStatus = 'pending' | 'delivered' | 'expired' | 'failed';

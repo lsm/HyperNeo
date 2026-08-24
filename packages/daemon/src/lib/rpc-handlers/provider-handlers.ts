@@ -1,9 +1,9 @@
 import type { MessageHub } from '@hyperneo/shared';
-import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
+import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
 import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
-import type { ProviderRepository } from '../../storage/repositories/provider-repository';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
@@ -19,8 +19,8 @@ import { AcpProvider } from '../providers/acp-provider.js';
 import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('provider-handlers');
 

@@ -8,8 +8,8 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { Logger } from '../../lib/logger';
-import { withBusyRetry } from '../busy-retry';
+import { Logger } from '../../lib/logger.ts';
+import { withBusyRetry } from '../busy-retry.ts';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -17,24 +17,24 @@ import {
   type MessageSearchParams,
   type MessageSearchResponse,
   type MessageSearchResult,
-} from '../message-search';
-import type { ReactiveDatabase } from '../reactive-database';
-import type { Database as BunDatabase } from '../sqlite-compat';
-import type { SQLiteValue } from '../types';
+} from '../message-search.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { SQLiteValue } from '../types.ts';
 import {
   type DeliveryTransitionAction,
   deliveryTransitionRule,
   routeDeliveryTransition,
-} from './delivery-status-routing';
-import { decideMessageSearchAdmission } from './message-search-admission';
-import type { MessageSearchEligibilityRow } from './message-search-admission';
+} from './delivery-status-routing.ts';
+import { decideMessageSearchAdmission } from './message-search-admission.ts';
+import type { MessageSearchEligibilityRow } from './message-search-admission.ts';
 import {
   decideMessageAdmission,
   extractReplacementEdges,
   normalizeMessageAdmissionInput,
   type SDKMessageReplacementEdge,
   type SendStatus,
-} from './sdk-message-admission';
+} from './sdk-message-admission.ts';
 import {
   RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
   buildRowIdHydrationBatches,
@@ -52,26 +52,26 @@ import {
   type RenderableTextMessage,
   type RenderableTextMessageRow,
   type SubagentMessageRow,
-} from './sdk-message-projections';
+} from './sdk-message-projections.ts';
 import {
   planAdmissionBadgeUpdate,
   planBadgeRecompute,
   type BadgeUpdateInstruction,
-} from './sdk-message-badge';
+} from './sdk-message-badge.ts';
 import {
   applyMessageStatusPlan,
   PENDING_ROW_FROM_STATUSES,
   planMessageStatusApplication,
-} from './sdk-message-status-plan';
+} from './sdk-message-status-plan.ts';
 
-export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
+export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission.ts';
 export {
   computeIsRenderable,
   computeIsTerminal,
   extractParentToolUseId,
   extractReplacementEdges,
   extractSdkUuid,
-} from './sdk-message-admission';
+} from './sdk-message-admission.ts';
 
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
   AND json_valid(sdk_message)

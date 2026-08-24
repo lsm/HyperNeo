@@ -1,8 +1,8 @@
-import { Logger } from '../../logger';
-import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
-import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../runtime/workflow-hook-engine';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import { Logger } from '../../logger.ts';
+import type { WorkflowArtifactProfile } from '../runtime/artifact-profile.ts';
+import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../runtime/workflow-hook-engine.ts';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 
 const log = new Logger('coding-artifact-profile');
 

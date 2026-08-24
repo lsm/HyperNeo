@@ -1,12 +1,12 @@
-import type { Database as NodeDatabase } from './sqlite-node';
+import type { Database as NodeDatabase } from './sqlite-node.ts';
 import {
   createObservedStatementProxy,
   observeExecExecution,
   SQLiteQueryObserver,
   type SQLiteQueryObservabilityOptions,
-} from './sqlite-query-observability';
-import { createSQLiteQueryDescriptor } from './sqlite-query-normalization';
-import { STATEMENT_CACHE_CAPACITY, StatementCache } from './statement-cache';
+} from './sqlite-query-observability.ts';
+import { createSQLiteQueryDescriptor } from './sqlite-query-normalization.ts';
+import { STATEMENT_CACHE_CAPACITY, StatementCache } from './statement-cache.ts';
 
 const isBun = typeof Bun !== 'undefined';
 
@@ -117,4 +117,4 @@ if (isBun) {
 export { Database };
 export type Database = NodeDatabase;
 
-export type { DatabaseSync, Statement, SqliteDatabase } from './sqlite-node';
+export type { DatabaseSync, Statement, SqliteDatabase } from './sqlite-node.ts';

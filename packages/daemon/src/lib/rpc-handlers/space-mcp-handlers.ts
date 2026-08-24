@@ -11,11 +11,11 @@ import type {
   McpImportsRefreshResponse,
 } from '@hyperneo/shared';
 import { homedir } from 'node:os';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import type { SpaceManager } from '../space/managers/space-manager';
-import { buildMcpJsonPaths, scanMcpImports } from '../mcp/import-scanner';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import { buildMcpJsonPaths, scanMcpImports } from '../mcp/import-scanner.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-mcp-handlers');
 

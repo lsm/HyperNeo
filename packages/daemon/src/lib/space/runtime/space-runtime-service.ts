@@ -13,87 +13,87 @@ import type {
 import { generateUUID, isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
-import type { SessionRepository } from '../../../storage/repositories/session-repository';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import type {
   SpaceAgentInboxMessageRecord,
   SpaceAgentInboxRepository,
-} from '../../../storage/repositories/space-agent-inbox-repository';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
-import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
+} from '../../../storage/repositories/space-agent-inbox-repository.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   coordinatorSessionId,
   type SpaceLongHorizonAgentRepository,
-} from '../../../storage/repositories/space-long-horizon-agent-repository';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import type { AgentSession } from '../../agent/agent-session';
+} from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { AgentSession } from '../../agent/agent-session.ts';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
-} from '../../agent/message-delivery';
-import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
-import type { ExternalEventService } from '../../external-events/external-event-service';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
+} from '../../agent/message-delivery.ts';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
+import type { ExternalEventService } from '../../external-events/external-event-service.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import {
   ExternalEventQueueMetrics,
   type QueueHealthSnapshot,
-} from '../../external-events/queue-health-metrics';
-import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import { Logger } from '../../logger';
-import { findInModels, getAvailableModels } from '../../model-service';
-import { inferPersistableProviderForModel } from '../../providers/registry';
-import type { SessionManager } from '../../session-manager';
-import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
-import { resolveCustomAgentPrompt } from '../agents/custom-agent';
+} from '../../external-events/queue-health-metrics.ts';
+import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
+import { findInModels, getAvailableModels } from '../../model-service.ts';
+import { inferPersistableProviderForModel } from '../../providers/registry.ts';
+import type { SessionManager } from '../../session-manager.ts';
+import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
 import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from '../agents/long-horizon-agent-tools';
-import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
-import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
-import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceManager } from '../managers/space-manager';
-import { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import { SpaceMessageResolver } from '../messaging-adapter';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
-import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
-import type { WorkflowArtifactProfile } from './artifact-profile';
-import { ChannelRouter } from './channel-router';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
+} from '../agents/long-horizon-agent-tools.ts';
+import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
+import { deriveWorkerDisallowedTools } from '../agents/tool-policy.ts';
+import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import { SpaceMessageResolver } from '../messaging-adapter.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { createSpaceAgentMcpServer } from '../tools/space-agent-tools.ts';
+import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import { ChannelRouter } from './channel-router.ts';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
+import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
+import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import {
   SpaceAgentNotificationService,
   type SpaceAgentNotificationServiceConfig,
-} from './space-agent-notification-service';
+} from './space-agent-notification-service.ts';
 import {
   resolveSpaceMcpSessionPolicy,
   type SpaceMcpSessionPolicy,
-} from './space-mcp-session-policy';
-import { SpaceRuntime } from './space-runtime';
-import type { TaskAgentManager } from './task-agent-manager';
-import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
+} from './space-mcp-session-policy.ts';
+import { SpaceRuntime } from './space-runtime.ts';
+import type { TaskAgentManager } from './task-agent-manager.ts';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
 
@@ -138,7 +138,7 @@ export interface SpaceRuntimeServiceConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  scheduleService?: import('../schedule/schedule-service').ScheduleService;
+  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
@@ -157,9 +157,9 @@ export interface SpaceRuntimeServiceConfig {
     pendingMessageRepo?: PendingAgentMessageRepository;
   };
   spaceAgentInboxRepo?: SpaceAgentInboxRepository;
-  goalService?: import('../goals/goal-service').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
-  evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
+  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
 }

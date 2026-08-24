@@ -16,7 +16,7 @@ import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 import {
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from './long-horizon-agent-tools';
+} from './long-horizon-agent-tools.ts';
 
 export interface WorkflowSummary {
   id: string;

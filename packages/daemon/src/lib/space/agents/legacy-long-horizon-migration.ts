@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 
 export interface LegacyLongHorizonMigrationReport {
   backfilledAgents: number;

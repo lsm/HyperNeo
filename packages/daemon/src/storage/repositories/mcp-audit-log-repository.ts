@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 
 export interface McpAuditLogEntry {

@@ -1,5 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
-import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search';
+import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search.ts';
 
 const DEFAULT_MESSAGE_SEARCH_TIMEOUT_MS = 2_000;
 

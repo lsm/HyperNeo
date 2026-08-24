@@ -1,4 +1,4 @@
-import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
+import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 
 export type GoalOwnershipAdmissionDecision =
   | { action: 'allow' }

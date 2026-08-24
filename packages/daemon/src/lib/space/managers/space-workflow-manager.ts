@@ -8,19 +8,19 @@ import type {
   WorkflowHook,
 } from '@hyperneo/shared';
 import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
-import { validateWorkflowHooks } from '../workflow-hook-validation';
+import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
 import { generateUUID } from '@hyperneo/shared';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
-import { Logger } from '../../logger';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import { Logger } from '../../logger.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
-} from '../workflows/post-approval-validator';
-import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
-import '../runtime/connectors/production';
-import { slugify, validateSlug } from '../slug';
+} from '../workflows/post-approval-validator.ts';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
+import '../runtime/connectors/production.ts';
+import { slugify, validateSlug } from '../slug.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
