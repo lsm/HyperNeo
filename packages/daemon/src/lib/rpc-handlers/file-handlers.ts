@@ -1,7 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
+import type { SessionManager } from '../session-manager.ts';
 import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@hyperneo/shared';
-import { FileManager } from '../file-manager';
+import { FileManager } from '../file-manager.ts';
 
 export function setupFileHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
   const getBoundWorkspacePath = (targetSessionId: string): string => {

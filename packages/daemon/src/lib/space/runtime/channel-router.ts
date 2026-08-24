@@ -1,34 +1,34 @@
 import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import {
   DEAD_LOOP_THRESHOLD,
   DEAD_LOOP_WINDOW_MS,
-} from '../../../storage/repositories/channel-cycle-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+} from '../../../storage/repositories/channel-cycle-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../managers/space-workflow-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
+} from '../managers/space-workflow-manager.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
 import type {
   InternalEventBus,
   DaemonInternalEventMap,
   InternalEventPayload,
-} from '../../internal-event-bus';
-import { Logger } from '../../logger';
+} from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
 import {
   MissingWorkflowAgentError,
   PermanentSpawnError,
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
   validateExecutionAgainstWorkflow,
-} from './workflow-node-execution-validation';
+} from './workflow-node-execution-validation.ts';
 
 const log = new Logger('channel-router');
 

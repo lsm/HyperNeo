@@ -16,14 +16,14 @@ import {
   sendStatusToDeliveryStatus,
 } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
-import type { TableChangeScope } from '../../storage/reactive-database';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters';
-import { Logger } from '../logger';
-import { mapActiveTurnEntryRow } from './activity-preview';
+import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
+import type { TableChangeScope } from '../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters.ts';
+import { Logger } from '../logger.ts';
+import { mapActiveTurnEntryRow } from './activity-preview.ts';
 
-export { buildActiveTurnSummariesFromRows } from './activity-preview';
+export { buildActiveTurnSummariesFromRows } from './activity-preview.ts';
 
 export interface NamedQuery {
   sql: string;

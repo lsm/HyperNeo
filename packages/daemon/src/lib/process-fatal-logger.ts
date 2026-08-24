@@ -1,4 +1,4 @@
-import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './logger';
+import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './logger.ts';
 
 const FLUSH_TIMEOUT_MS = 2000;
 

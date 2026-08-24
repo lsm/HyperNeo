@@ -11,14 +11,14 @@ import type {
   AcpTerminalWaitForExitParams,
   AcpTerminalWaitForExitResult,
 } from '@hyperneo/shared';
-import { Logger } from '../logger';
-import { parseAcpCommand } from './acp-command';
+import { Logger } from '../logger.ts';
+import { parseAcpCommand } from './acp-command.ts';
 import {
   acpProcessGroupAlive,
   type AcpProcessTree,
   type AcpProcessTreeOwner,
   getAcpProcessTreeOwner,
-} from './acp-process-tree';
+} from './acp-process-tree.ts';
 
 const logger = new Logger('AcpTerminalManager');
 const DEFAULT_OUTPUT_BYTE_LIMIT = 1024 * 1024;

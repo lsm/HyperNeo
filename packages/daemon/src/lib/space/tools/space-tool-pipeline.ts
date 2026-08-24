@@ -1,8 +1,8 @@
-import { decisionRun } from '../runtime/decision-pipeline';
-import type { TaskUpdateRouting, TaskUpdateRoutingInput } from './task-transition-routing';
-import { routeTaskUpdate } from './task-transition-routing';
-import type { AutonomyAdmissionDecision } from './tool-admission-gates';
-import { decideAutonomyAdmission, getToolAutonomyRequirement } from './tool-admission-gates';
+import { decisionRun } from '../runtime/decision-pipeline.ts';
+import type { TaskUpdateRouting, TaskUpdateRoutingInput } from './task-transition-routing.ts';
+import { routeTaskUpdate } from './task-transition-routing.ts';
+import type { AutonomyAdmissionDecision } from './tool-admission-gates.ts';
+import { decideAutonomyAdmission, getToolAutonomyRequirement } from './tool-admission-gates.ts';
 
 export type SpaceToolDecision =
   | Extract<AutonomyAdmissionDecision, { action: 'deny' }>

@@ -1,15 +1,15 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import type { SpawnFn } from '../../runtime-spawn';
-import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils';
+import type { SpawnFn } from '../../runtime-spawn/index.ts';
+import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils.ts';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,
   isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
-} from './rate-limit-detector';
-import type { ConnectorOutcome } from './connectors/connector';
+} from './rate-limit-detector.ts';
+import type { ConnectorOutcome } from './connectors/connector.ts';
 
 export const DEFAULT_GH_LOOKUP_TIMEOUT_MS = 30_000;
 

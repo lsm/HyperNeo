@@ -17,22 +17,22 @@ import type {
   EvolutionEvidenceListResponse,
   EvolutionPreflightTaskSummary,
 } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
-import type { SpaceRepository } from '../../storage/repositories/space-repository';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type {
   WorkflowRunArtifactRecord,
   WorkflowRunArtifactRepository,
-} from '../../storage/repositories/workflow-run-artifact-repository';
-import { Logger } from '../logger';
-import { SPACE_CONVERSATION_FRICTION_ANALYZE } from '../job-queue-constants';
+} from '../../storage/repositories/workflow-run-artifact-repository.ts';
+import { Logger } from '../logger.ts';
+import { SPACE_CONVERSATION_FRICTION_ANALYZE } from '../job-queue-constants.ts';
 import type {
   EvolutionTraceEvidenceService,
   TraceEvidenceDiagnostic,
-} from './evolution-trace-evidence-service';
+} from './evolution-trace-evidence-service.ts';
 
 const MAX_PREFLIGHT_ARTIFACTS_PER_RUN = 8;
 const MAX_PREFLIGHT_ARTIFACT_TEXT = 500;

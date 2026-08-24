@@ -1,13 +1,13 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { HookExecutorContext } from '../hook-executor';
-import { spawnProcess, type SpawnFn } from '../../../runtime-spawn';
-import { getConnector, registerConnector } from './connector';
+import type { HookExecutorContext } from '../hook-executor.ts';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { getConnector, registerConnector } from './connector.ts';
 import {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
-} from './external-state-validator';
-import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
-import type { Predicate } from './predicate';
+} from './external-state-validator.ts';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector.ts';
+import type { Predicate } from './predicate.ts';
 
 const PR_READY_LABEL = 'PR is not ready for Review';
 const PR_MERGED_LABEL = 'PR is not merged';

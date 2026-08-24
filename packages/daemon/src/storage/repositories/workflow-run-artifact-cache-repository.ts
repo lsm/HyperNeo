@@ -1,6 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
-import { Logger } from '../../lib/logger';
+import { Logger } from '../../lib/logger.ts';
 
 const log = new Logger('workflow-run-artifact-cache-repo');
 

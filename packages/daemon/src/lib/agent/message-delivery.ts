@@ -1,9 +1,9 @@
 import type { MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import { MESSAGE_DELIVERY } from '../job-queue-constants';
-import { selectStrandedDeliveries } from './turn-outcome-classification';
+import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
+import { selectStrandedDeliveries } from './turn-outcome-classification.ts';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
   stateManager: { setIdle(): Promise<void> },

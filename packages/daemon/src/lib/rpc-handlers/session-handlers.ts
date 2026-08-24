@@ -13,9 +13,9 @@ import type {
   RuntimeMcpServerEntry,
 } from '@hyperneo/shared';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { composeDraftWhole, generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
+import type { SessionManager } from '../session-manager.ts';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import {
@@ -29,16 +29,16 @@ import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
-} from '../agent/message-delivery';
+} from '../agent/message-delivery.ts';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
   scanSDKSessionFiles,
   identifyOrphanedSDKFiles,
-} from '../sdk-session-file-manager';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { Logger } from '../logger';
+} from '../sdk-session-file-manager.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('session-handlers');
 
@@ -510,7 +510,7 @@ export function setupSessionHandlers(
     const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
     if (session.worktree) {
-      const { WorktreeManager } = await import('../worktree-manager');
+      const { WorktreeManager } = await import('../worktree-manager.ts');
       const worktreeManager = new WorktreeManager();
       const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
 

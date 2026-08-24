@@ -1,15 +1,15 @@
 import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
-import type { SQLiteQueryObservabilityOptions } from './storage/sqlite-query-observability';
+import type { SQLiteQueryObservabilityOptions } from './storage/sqlite-query-observability.ts';
 import {
   DEFAULT_SQL_QUERY_MAX_QUERY_GROUPS,
   DEFAULT_SQL_QUERY_SLOW_THRESHOLD_MS,
   DEFAULT_SQL_QUERY_SUMMARY_INTERVAL_MS,
   DEFAULT_SQL_QUERY_SUMMARY_LIMIT,
-} from './storage/sqlite-query-observability';
-import { getDataDir } from './lib/data-dir';
+} from './storage/sqlite-query-observability.ts';
+import { getDataDir } from './lib/data-dir.ts';
 
-import { discoverCredentials } from './lib/credential-discovery';
+import { discoverCredentials } from './lib/credential-discovery.ts';
 
 discoverCredentials();
 

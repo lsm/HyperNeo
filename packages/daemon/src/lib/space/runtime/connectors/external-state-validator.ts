@@ -1,8 +1,8 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { HookExecutorContext } from '../hook-executor';
-import { getConnector } from './connector';
-import type { Predicate } from './predicate';
-import { evaluatePredicate } from './predicate';
+import type { HookExecutorContext } from '../hook-executor.ts';
+import { getConnector } from './connector.ts';
+import type { Predicate } from './predicate.ts';
+import { evaluatePredicate } from './predicate.ts';
 
 const DEFAULT_PENDING_RETRY_MS = 30_000;
 

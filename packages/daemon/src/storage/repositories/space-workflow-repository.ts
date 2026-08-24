@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
@@ -14,16 +14,16 @@ import type {
   PostApprovalRoute,
   UpdateSpaceWorkflowParams,
 } from '@hyperneo/shared';
-import { Logger } from '../../lib/logger';
+import { Logger } from '../../lib/logger.ts';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version';
+} from '../../lib/space/workflows/definition-version.ts';
 import {
   SpaceWorkflowDefinitionVersionRepository,
   type DefinitionVersionSource,
-} from './space-workflow-definition-version-repository';
+} from './space-workflow-definition-version-repository.ts';
 
 const log = new Logger('space-workflow-repository');
 

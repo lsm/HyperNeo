@@ -37,9 +37,9 @@ import type {
   AcpContentBlock,
   AcpStopReason,
 } from '@hyperneo/shared';
-import type { AcpProcessTreeOwner } from './acp-process-tree';
-import { AcpTransport } from './acp-transport';
-import type { AcpTransportCallbacks } from './acp-transport';
+import type { AcpProcessTreeOwner } from './acp-process-tree.ts';
+import { AcpTransport } from './acp-transport.ts';
+import type { AcpTransportCallbacks } from './acp-transport.ts';
 
 export interface AcpClientCallbacks {
   onFsRead?(params: AcpFsReadParams): Promise<AcpFsReadResult>;

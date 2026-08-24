@@ -1,4 +1,4 @@
-import type { Database } from '../../storage/sqlite-compat';
+import type { Database } from '../../storage/sqlite-compat.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
 import { validateSql } from './sql-validator.ts';
 

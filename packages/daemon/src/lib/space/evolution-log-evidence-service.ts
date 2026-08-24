@@ -4,9 +4,9 @@ import type {
   StructuredLogEvent,
   StructuredLogLevel,
 } from '@hyperneo/shared';
-import { isSqliteBusyError } from '../../storage/busy-retry';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
-import type { SpaceRepository } from '../../storage/repositories/space-repository';
+import { isSqliteBusyError } from '../../storage/busy-retry.ts';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 
 export const PRODUCT_FORGE_SCOPE_ID = 'f4ace1c5-f1b5-4fa7-88b4-6717ab70cfe0';
 

@@ -1,10 +1,10 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
   type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution';
+} from '../../lib/space/goals/goal-owner-resolution.ts';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
@@ -19,8 +19,8 @@ import type {
   SpaceLongHorizonAgentStatus,
   UpdateSpaceLongHorizonAgentParams,
 } from '@hyperneo/shared';
-import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates';
-import type { SQLiteValue } from '../types';
+import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import type { SQLiteValue } from '../types.ts';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
 

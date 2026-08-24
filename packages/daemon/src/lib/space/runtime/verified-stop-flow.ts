@@ -1,13 +1,13 @@
 import type { AgentProcessingState } from '@hyperneo/shared';
-import type { AgentSession } from '../../../lib/agent/agent-session';
+import type { AgentSession } from '../../../lib/agent/agent-session.ts';
 import {
   assembleVerifiedStopResult,
   decideStopVerification,
   isStopDownProcessingStatus,
   type SessionLivenessSnapshot,
   type StopVerificationDecision,
-} from './stop-verification-gates';
-import { stagedRun, type StagedRunOutcome } from './staged-run';
+} from './stop-verification-gates.ts';
+import { stagedRun, type StagedRunOutcome } from './staged-run.ts';
 
 export interface VerifiedStopFlowDeps {
   claimSession(sessionId: string): AgentSession | null;

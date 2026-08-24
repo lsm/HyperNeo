@@ -12,18 +12,18 @@ import type {
   SpaceTask,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { SessionManager } from '../session-manager';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { seedPresetAgents } from '../space/agents/seed-agents';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import type { SessionManager } from '../session-manager.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { seedPresetAgents } from '../space/agents/seed-agents.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-handlers');
 const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];

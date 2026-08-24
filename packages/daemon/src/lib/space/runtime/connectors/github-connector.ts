@@ -1,7 +1,7 @@
-import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers';
-import { parsePrUrl } from '../parse-pr-url';
-import { spawnProcess, type SpawnFn } from '../../../runtime-spawn';
-import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector';
+import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers.ts';
+import { parsePrUrl } from '../parse-pr-url.ts';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector.ts';
 
 const GITHUB_CONNECTOR_ID = 'github';
 

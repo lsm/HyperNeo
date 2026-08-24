@@ -2006,6 +2006,334 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('startup retry arm decision table', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    async function runStartupArmRow(row: {
+      attempt: number;
+      status: 'idle' | 'processing' | 'interrupted';
+      abort: boolean;
+      cleaning: boolean;
+      redeliver: 'none' | 'queue' | 'consumed';
+    }) {
+      if (row.status !== 'idle') {
+        getStateSpy.mockReturnValue({ status: row.status });
+      }
+
+      if (row.redeliver === 'queue') {
+        sizeSpy.mockReturnValue(1);
+      }
+
+      const abortController = new AbortController();
+      if (row.abort) {
+        abortController.abort();
+      }
+
+      const ctx = createContext({
+        isCleaningUp: () => row.cleaning,
+        queryAbortController: row.abort ? abortController : null,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as { _consumedUserMessages: Map<number, unknown[]> };
+
+      if (row.redeliver === 'consumed') {
+        runnerPrivate._consumedUserMessages.set(1, [
+          { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+        ]);
+      }
+
+      if (row.attempt === 0) {
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+      } else {
+        ctx.incrementQueryGeneration();
+        await (
+          runner as unknown as {
+            runQuery: (
+              queryGeneration: number,
+              retryAttempt: number,
+              recoveryState: { rateLimitCooldownScheduled: boolean }
+            ) => Promise<void>;
+          }
+        ).runQuery(1, 1, { rateLimitCooldownScheduled: false });
+      }
+    }
+
+    function assertStartupArmOutcome(row: {
+      attempt: number;
+      status: 'idle' | 'processing' | 'interrupted';
+      abort: boolean;
+      cleaning: boolean;
+      redeliver: 'none' | 'queue' | 'consumed';
+    }) {
+      const shouldRetry =
+        row.attempt === 0 &&
+        !row.cleaning &&
+        row.status !== 'interrupted' &&
+        row.redeliver !== 'none';
+      const shouldHandleError = !row.cleaning;
+      const buildCalls = shouldRetry ? 2 : 1;
+      const saveSDKMessageCalls = shouldRetry ? 1 : 0;
+      const terminateCalls = shouldRetry ? 1 : 0;
+      const clearCalls = shouldHandleError ? 1 : 0;
+      const enqueueCalls = shouldRetry && row.redeliver === 'consumed' ? 1 : 0;
+
+      expect(buildSpy).toHaveBeenCalledTimes(buildCalls);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(shouldHandleError ? 1 : 0);
+      expect(saveSDKMessageSpy).toHaveBeenCalledTimes(saveSDKMessageCalls);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(terminateCalls);
+      expect(clearSpy).toHaveBeenCalledTimes(clearCalls);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(enqueueCalls);
+
+      if (shouldRetry) {
+        expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+              content: expect.arrayContaining([
+                expect.objectContaining({
+                  text: expect.stringContaining('Retrying once'),
+                }),
+              ]),
+            }),
+          })
+        );
+
+        if (row.redeliver === 'consumed') {
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+            'consumed-uuid',
+            expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+            false,
+            { prepend: true }
+          );
+        }
+      }
+
+      if (shouldHandleError) {
+        expect(handleErrorSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.any(Error),
+          ErrorCategory.TIMEOUT,
+          expect.anything(),
+          expect.anything(),
+          expect.anything()
+        );
+      }
+    }
+
+    const attempts = [0, 1] as const;
+    const statuses = ['idle', 'processing', 'interrupted'] as const;
+    const aborts = [false, true] as const;
+    const cleanings = [false, true] as const;
+    const redelivers = ['none', 'queue', 'consumed'] as const;
+
+    for (const attempt of attempts) {
+      for (const status of statuses) {
+        for (const abort of aborts) {
+          for (const cleaning of cleanings) {
+            for (const redeliver of redelivers) {
+              const name = `attempt=${attempt} status=${status} abort=${abort} cleaning=${cleaning} redeliver=${redeliver}`;
+              it(name, async () => {
+                await runStartupArmRow({ attempt, status, abort, cleaning, redeliver });
+                assertStartupArmOutcome({ attempt, status, abort, cleaning, redeliver });
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
+  describe('unfenced-window map (B1d)', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    function gateSetIdle() {
+      let markCalled!: () => void;
+      const called = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      setIdleSpy.mockImplementation(() => {
+        markCalled();
+        return gate;
+      });
+      return { waitCalled: () => called, release: () => release() };
+    }
+
+    it('pins: startup arm awaits setIdle before its first staleness guard', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.incrementQueryGeneration();
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm awaits setIdle after consuming the resume pointer, before its first staleness guard', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      const ctx = createContext({ consumePendingResumeSessionAt: consumeSpy });
+      runner = new QueryRunner(ctx);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.incrementQueryGeneration();
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: transient arm re-enqueues lastConsumedUserMessage ahead of its post-await guard (unfenced)', async () => {
+      const consumedUuid = 'stale-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'OLD' }];
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.incrementQueryGeneration();
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('The connection was interrupted'),
+              }),
+            ]),
+          }),
+        })
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(
+        (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
+      ).toBeNull();
+    });
+
+    it('pins: message-not-found resume-pointer consumption is NOT an unfenced window (stale generation reaches it with no intervening await)', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let gen = 0;
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => 2,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm recurses after the publication await with no intervening guard (reachable window)', async () => {
+      buildSpy
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+        .mockRejectedValueOnce(new Error('stop after retry'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      ctx.incrementQueryGeneration();
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+        'consumed-uuid',
+        expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+        false,
+        { prepend: true }
+      );
+    });
+  });
+
   describe('auto-recovery removal regression guards (Task 2.3)', () => {
     it('should not have onStartupTimeoutAutoRecover in QueryRunnerContext', () => {
       const ctx = createContext();

@@ -6,9 +6,9 @@ import type {
   RewindFilesResult,
 } from '@hyperneo/shared/sdk';
 import type { AcpConfigOption, AcpContentBlock } from '@hyperneo/shared';
-import { AcpClient } from './acp-client';
-import { AcpMessageTranslator } from './acp-message-translator';
-import type { QueryLike } from '../agent/query-like';
+import { AcpClient } from './acp-client.ts';
+import { AcpMessageTranslator } from './acp-message-translator.ts';
+import type { QueryLike } from '../agent/query-like.ts';
 
 export class AcpQueryAdapter implements QueryLike {
   private client: AcpClient;

@@ -6,8 +6,8 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
-import type { AgentSessionInit } from '../../agent/agent-session';
-import type { SlotOverrides } from '../agents/custom-agent';
+import type { AgentSessionInit } from '../../agent/agent-session.ts';
+import type { SlotOverrides } from '../agents/custom-agent.ts';
 
 export interface WorkflowNodeSlotResolution {
   node: WorkflowNode;

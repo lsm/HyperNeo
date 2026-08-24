@@ -1,5 +1,5 @@
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { getDataDir } from '../data-dir';
+import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -27,40 +27,40 @@ import {
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
-import type { Database } from '../../storage/database';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
-import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
-import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
-import { Logger } from '../logger';
-import { getSessionModelInfo, isModelExcludedByCuration } from '../model-service';
+import type { Database } from '../../storage/database.ts';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
+import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { Logger } from '../logger.ts';
+import { getSessionModelInfo, isModelExcludedByCuration } from '../model-service.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service';
-import type { SettingsManager } from '../settings-manager';
-import type { SkillsManager } from '../skills-manager';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import type { SettingsManager } from '../settings-manager.ts';
+import type { SkillsManager } from '../skills-manager.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
-} from './builtin-skill-plugin-wrapper';
-import { getCoordinatorAgents } from './coordinator-agents';
-import { createLoopDetectorHooks } from './loop-detector-hook';
-import { isMessageDeliveryV2Enabled } from './message-delivery';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention';
+} from './builtin-skill-plugin-wrapper.ts';
+import { getCoordinatorAgents } from './coordinator-agents.ts';
+import { createLoopDetectorHooks } from './loop-detector-hook.ts';
+import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
-} from './output-limiter-hook';
+} from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 

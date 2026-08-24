@@ -1,4 +1,4 @@
-import type { MessageDeliveryPayload } from '../agent/message-delivery';
+import type { MessageDeliveryPayload } from '../agent/message-delivery.ts';
 
 export interface MessageDeliveryDeadLetterSettlement {
   markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null;

@@ -8,8 +8,8 @@ describe('main.ts import order', () => {
       fileURLToPath(new URL('../../../../main.ts', import.meta.url)),
       'utf8'
     );
-    const configImport = source.indexOf(`from './src/config'`);
-    const appImport = source.indexOf(`from './src/app'`);
+    const configImport = source.indexOf(`from './src/config.ts'`);
+    const appImport = source.indexOf(`from './src/app.ts'`);
     expect(configImport).toBeGreaterThanOrEqual(0);
     expect(appImport).toBeGreaterThanOrEqual(0);
     expect(configImport).toBeLessThan(appImport);

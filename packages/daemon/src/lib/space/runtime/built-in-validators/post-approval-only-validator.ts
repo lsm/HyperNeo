@@ -1,5 +1,5 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { HookExecutorContext } from '../hook-executor';
+import type { HookExecutorContext } from '../hook-executor.ts';
 
 const POST_APPROVAL_MERGE_REASONS = new Set(['merge_blocked', 'merge_fix_pushed']);
 

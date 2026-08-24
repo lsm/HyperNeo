@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   CreateEvolutionEpisodeParams,
   CreateEvolutionLessonParams,
@@ -26,24 +26,24 @@ import type {
   UpdateTaskProposalParams,
 } from '@hyperneo/shared';
 import { generateUUID, scoreEvolutionEvidenceQuality } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
-import type { SpaceRepository } from '../../storage/repositories/space-repository';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type {
   WorkflowRunArtifactRecord,
   WorkflowRunArtifactRepository,
-} from '../../storage/repositories/workflow-run-artifact-repository';
-import type { SpaceGoalService } from './goals/goal-service';
-import type { WorkflowArtifactProfile } from './runtime/artifact-profile';
-import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
-import { Logger } from '../logger';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service';
-import { normalizeMeaningfulTaskResult } from './task-result-utils';
+} from '../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { SpaceGoalService } from './goals/goal-service.ts';
+import type { WorkflowArtifactProfile } from './runtime/artifact-profile.ts';
+import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
+import { Logger } from '../logger.ts';
+import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { normalizeMeaningfulTaskResult } from './task-result-utils.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { getAvailableModels } from '../model-service';
-import { inferProviderForModel } from '../providers/registry';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import { getAvailableModels } from '../model-service.ts';
+import { inferProviderForModel } from '../providers/registry.ts';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 
 const log = new Logger('evolution-episode-service');
 

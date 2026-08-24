@@ -1,17 +1,17 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
-import { Logger } from '../../logger';
-import { isRateLimitError } from '../../space/runtime/rate-limit-detector';
+import { Logger } from '../../logger.ts';
+import { isRateLimitError } from '../../space/runtime/rate-limit-detector.ts';
 import { type CredentialStore } from '../../credentials/credential-store.js';
-import { verifySignature } from '../../github/webhook-handler';
+import { verifySignature } from '../../github/webhook-handler.ts';
 import type {
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
   RpcExternalEventExtension,
-} from '../types';
-import { ExternalEventStore } from '../external-event-store';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
+} from '../types.ts';
+import { ExternalEventStore } from '../external-event-store.ts';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import {
   checkRunAppKeyFrom,
   checkRunConclusionFrom,
@@ -19,7 +19,7 @@ import {
   checkRunNameFrom,
   checkRunOccurredAt,
   checkRunTopicAction,
-} from './github-check-run-fields';
+} from './github-check-run-fields.ts';
 import {
   gitHubRepoPath,
   headRefKey,
@@ -28,13 +28,13 @@ import {
   parseHeadRefKey,
   pickPrNumbersByHeadSha,
   pullRequestNumberFrom,
-} from './github-pr-head-ref';
+} from './github-pr-head-ref.ts';
 import {
   addPullRequestNumberByHeadRef,
   removePullRequestNumberByHeadRef,
-} from './github-pr-head-ref-index';
-import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state';
-import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields';
+} from './github-pr-head-ref-index.ts';
+import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
+import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -48,12 +48,12 @@ import {
   repoFromPayload,
   toExternalEvent,
   type GitHubPollingRepo,
-} from './github-normalizer';
+} from './github-normalizer.ts';
 import {
   GitHubEventExtensionRepository,
   type GitHubWatchedRepo,
   type PollCursor,
-} from './github-repository';
+} from './github-repository.ts';
 
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 120_000;
@@ -1733,7 +1733,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private async publishEvent(
     spaceId: string,
-    event: import('./github-normalizer').NormalizedGitHubEvent,
+    event: import('./github-normalizer.ts').NormalizedGitHubEvent,
     context: ExternalEventExtensionContext
   ): Promise<void> {
     await context.publisher.publish(toExternalEvent(spaceId, event));

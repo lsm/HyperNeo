@@ -1,7 +1,7 @@
 import type { AuthStatus } from '@hyperneo/shared';
-import type { Config } from '../config';
-import type { Database } from '../storage/database';
-import { EnvManager } from './env-manager';
+import type { Config } from '../config.ts';
+import type { Database } from '../storage/database.ts';
+import { EnvManager } from './env-manager.ts';
 
 export class AuthManager {
   private envManager: EnvManager;

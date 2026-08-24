@@ -1,16 +1,16 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { TaskSchedule } from '@hyperneo/shared';
-import { TASK_SCHEDULE_FIRE } from '../job-queue-constants';
-import { readSelfNagScheduleScopeId } from '../rpc-handlers';
-import { Logger } from '../logger';
-import { getNextRunAt } from '../space/schedule/cron-utils';
-import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository';
-import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository';
-import type { SpaceRepository } from '../../storage/repositories/space-repository';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { SpaceGoalService } from '../space/goals/goal-service';
-import type { GoalAutomationService } from '../space/goals/goal-automation-service';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
+import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
+import { readSelfNagScheduleScopeId } from '../rpc-handlers/index.ts';
+import { Logger } from '../logger.ts';
+import { getNextRunAt } from '../space/schedule/cron-utils.ts';
+import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
+import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceGoalService } from '../space/goals/goal-service.ts';
+import type { GoalAutomationService } from '../space/goals/goal-automation-service.ts';
+import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
 
 const log = new Logger('task-schedule-fire-handler');
 

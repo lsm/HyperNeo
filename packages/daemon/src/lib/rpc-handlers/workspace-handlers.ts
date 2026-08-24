@@ -1,10 +1,10 @@
 import { join } from 'path';
 import type { MessageHub } from '@hyperneo/shared';
-import type { McpImportService } from '../mcp';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import { validateWorkspaceDirectory } from '../workspace-path';
-import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository';
+import type { McpImportService } from '../mcp/index.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { validateWorkspaceDirectory } from '../workspace-path.ts';
+import type { WorkspaceHistoryRepository } from '../../storage/repositories/workspace-history-repository.ts';
 
 const log = new Logger('workspace-handlers');
 

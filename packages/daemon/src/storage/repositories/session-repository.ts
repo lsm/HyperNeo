@@ -1,13 +1,13 @@
 import type { Session, SessionContext, SessionType } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../sqlite-compat';
-import type { SQLiteValue } from '../types';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { SQLiteValue } from '../types.ts';
 import {
   MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
   ROOM_SESSION_PREFIXES,
   ROOM_SESSION_TYPES,
   SEARCHABLE_MESSAGE_TYPES,
   TERMINAL_SPACE_TASK_STATUSES,
-} from './message-search-admission';
+} from './message-search-admission.ts';
 
 function toSqlStringList(values: readonly string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(', ');

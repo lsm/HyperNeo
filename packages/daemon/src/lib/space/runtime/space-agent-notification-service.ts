@@ -1,7 +1,7 @@
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
-import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
-import { Logger } from '../../logger';
-import type { SessionFactory } from './types';
+import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
+import type { SessionFactory } from './types.ts';
 
 const log = new Logger('space-agent-notification-service');
 
@@ -98,9 +98,10 @@ export class SpaceAgentNotificationService {
       ),
       this.internalEventBus.subscribe(
         'space.workflowRun.needsAttention',
-        (event) => {
+        async (event) => {
           if (event.spaceId !== this.spaceId) return;
-          void this.notify(formatWorkflowRunNeedsAttention(event, this.autonomyLevel));
+          await this.notifyStrict(formatWorkflowRunNeedsAttention(event, this.autonomyLevel));
+          event.handledBySpaceService = true;
         },
         {
           subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.needsAttention`,
