@@ -862,7 +862,11 @@ pool, per the endpoint rule below):
   NOT merge — they are different accounts per the digest rule, and merging
   them would let one customer's limit block another's traffic.
 
-Endpoint/region fields therefore do NOT join the key at all; what the
+Endpoint/region fields therefore do NOT join the key **for built-in
+provider endpoint variants** (the family-namespace rule above already
+carries a custom endpoint's `baseUrl` IN the key — that is the authority
+exception, not a contradiction: for custom endpoints the baseUrl IS the
+issuer); what the
 provider normalizer routes by matters for *calls*, while what bills matters
 for *limits*. **Credentialless providers** (a supported configuration:
 `AcpProvider` is available from `HYPERNEO_ACP_COMMAND` with no
@@ -914,8 +918,22 @@ when closure armed and kept current by the rotation hooks; a restart
 reconstructing a closed account with no waiter could not build the daily
 health probe's request from a digest alone, and without the persisted
 reference the account would stay closed until manual Retry or a
-credential change — written on arm, updated on refine, cleared on
-clear, so restart reconstruction re-enters saturation or the closed state
+credential change — written on arm, updated on refine, **and not
+deleted at clear: a clear transitions the row to a probing record**
+(`kind: 'probing'`, the grant's bound identity serialized — `null` for a
+pending/empty-backlog grant — plus the lease deadline), because the
+`probeGrant` is in-memory and the holder's queue marker clears at
+prompt yield: a restart while an empty-backlog pending grant exists, or
+while the final granted probe is running, would otherwise find neither
+a saturation row nor a remaining marker and open the account — several
+new sends could start concurrently before one reports another 429,
+recreating the post-reset herd the pending grant exists to prevent.
+The row is deleted only when the probe resolves clean (open) and
+rewritten when its 429 re-arms; reconstruction of a probing row
+re-enters probing and re-mints the grant — re-bound to the serialized
+identity when it is a durable kind still registered, else re-minted
+pending (an ephemeral holder died with the process) — so restart
+reconstruction re-enters saturation, closure, or probing
 instead of an open registry; caveat 1). None of these exist in the current
 schema — the PR3 plan's migration scope names all of them.
 
@@ -1483,6 +1501,18 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   run ahead of them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
   registered rows for the session, on terminal row status, and on session destroy.
+  **Every deregistration path resolves a bound unconsumed grant atomically
+  with the removal**: user defer, `removePending` row deletion, archive,
+  session destroy, and provider-change migration all check `probeGrant` —
+  if it is bound (unconsumed) to the deregistered identity, the removal
+  revokes it and immediately re-binds and wakes the next eligible FIFO
+  identity (the same selection a mint uses); a CONSUMED grant is
+  untouched (owned by its running turn, resolved at that turn's
+  termination). Without this rule the grant would sit bound to an
+  identity that can neither claim nor terminate it, and the lease-expiry
+  path — which assumes the holder is merely slow and returns it to the
+  lane — would be the only recovery, invalid after deletion or migration
+  (a migrated row is no longer eligible under the old key at all).
   Registrations are idempotent insertion-ordered sets, so a parked job
   re-consulting every probe tick cannot accumulate duplicates. Bounded memory by
   construction.
@@ -1526,7 +1556,8 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
    alive across turns. Every report is keyed by the **canonical account
    key** of State ownership — the effective **family-namespaced credential
    digest** (endpoint
-   and region never join the key; every stored credential contributes its
+   and region never join the key for built-in endpoint variants — a custom
+   endpoint's `baseUrl` is part of its key authority; every stored credential contributes its
    digest, so rotation changes it; the family namespace keeps identical
    literal keys on different upstreams separate) — never the bare
    `resolvedProviderId`,
@@ -1709,8 +1740,10 @@ by pre-existing suites):
    clean-completion flag derived from turn classification, not iteration
    fulfillment; **keying** — **credential-centric**: distinct effective
    credential digests produce distinct keys; endpoint/region differences do
-   NOT (same credential through endpoints X and Y shares one key — X's limit
-   gates Y, per the keying contract); absent `providerConfig` ≡
+   NOT for built-in endpoint variants (same credential through a built-in
+   provider's endpoints X and Y shares one key — X's limit
+   gates Y, per the keying contract — while custom endpoints carry their
+   `baseUrl` in the key); absent `providerConfig` ≡
    effectively-default; stored-credential rotation changes the key; the
    same literal key on two different provider families produces TWO keys
    (the upstream namespace — one upstream's limit never gates the other);
@@ -1720,7 +1753,11 @@ by pre-existing suites):
    distinct; **idempotent registration** — a parked job
    re-consulting every probe tick never duplicates its uuid, grant identity is
    the composite `(sessionId, messageUuid)`, drain order is global arrival
-   order (cross-session FIFO: A1, B1, A2), scan-past-manual never lets a
+   order (cross-session FIFO: A1, B1, A2), deregistration of a bound
+   unconsumed grant's holder revokes and re-binds/wakes the next eligible
+   identity atomically (defer, removePending, archive, destroy, and
+   provider-change migration alike; a consumed grant stays with its
+   running turn), scan-past-manual never lets a
    retained row consume a wake, user defer AND row removal (`removePending`)
    both deregister atomically, and the enqueued wake arm requeues the existing
    job to `retryAt = now`; reconstruction excludes archived sessions and
@@ -1856,7 +1893,12 @@ by pre-existing suites):
    persisted marker row reconstructs the saturated (or closed) state, the
    first post-restart send queues instead of passing, and the eventual
    probe's 429 re-arms at the persisted charge (the caveat-1 pin: no
-   post-restart herd, no ladder restart). An ACP variant pins the
+   post-restart herd, no ladder restart). A probing-row variant:
+   restart while an empty-backlog pending grant exists, or mid-probe —
+   the persisted probing record reconstructs `probing` (not open),
+   re-mints the grant bound to the serialized durable identity or
+   pending, and the first post-restart consult queues at the tick
+   instead of admitting concurrently. An ACP variant pins the
    symmetric lifecycle wiring: saturation armed from an ACP limit clears and the
    ACP probe's completion is reported (no permanently-probing ACP provider).
 10. **No-regression:** the pre-existing agent-session / delivery / inject suites
@@ -1877,9 +1919,12 @@ by pre-existing suites):
    `configRef` snapshot
    alongside the closed kind — the restart's daily health probe needs a
    buildable request, which a digest alone cannot provide — written on
-   arm, updated on refine,
-   cleared on clear; part of the PR3 migration family), and
-   reconstruction re-enters saturation/probing from it. What stays
+   arm, updated on refine, transitioned to a probing
+   record at clear (deleted only on the probe's clean resolution —
+   reconstructed probing re-mints the grant, bound to the serialized
+   identity if durable-and-registered, else pending; part of the PR3
+   migration family), and
+   reconstruction re-enters saturation/closure/probing from it. What stays
    in-memory-only is the fine-grained grant/registration state; the
    episode's deadline was already durable information the moment it was
    computed, and one row per limited account is the whole cost.
@@ -1900,8 +1945,10 @@ by pre-existing suites):
 5. **The account key is still coarser than model-level, and coarser than
    endpoints by design.** The fingerprint distinguishes **effective
    credentials only** (an `apiKey` override is a different account;
-   `baseUrl`/region overrides are NOT — the same credential through X and Y
-   is one pool per the keying contract), and per-model caps under one
+   `baseUrl`/region overrides are NOT key components for built-in endpoint
+   variants — the same credential through a built-in provider's X and Y
+   is one pool per the keying contract, while a custom endpoint's
+   `baseUrl` IS its key authority, per the family-namespace rule), and per-model caps under one
    account share a saturation record. Every registry method takes the same
    effective account key (computed once per query beside `resolvedProviderId`),
    so no caller can mix bare-provider and account-scoped records.
