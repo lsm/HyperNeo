@@ -5755,9 +5755,12 @@ describe('AgentSession', () => {
       }
     }
 
-    async function runSteerRow(
-      row: Omit<SteerRow, 'name'>
-    ): Promise<{ db: Database; queue: MessageQueue; outcome: unknown }> {
+    async function runSteerRow(row: Omit<SteerRow, 'name'>): Promise<{
+      db: Database;
+      queue: MessageQueue;
+      outcome: unknown;
+      admitWithId: ReturnType<typeof mock>;
+    }> {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
       session.config.provider = row.provider;
@@ -5811,8 +5814,16 @@ describe('AgentSession', () => {
         });
       }
       const queue = agentSession.messageQueue;
-      (queue as unknown as { hasPendingOrInFlight: (id: string) => boolean }).hasPendingOrInFlight =
-        mock((id: string) => id === steerUuid && row.pending);
+      if (row.provider === 'acp' && row.pending) {
+        queue.admitWithId(steerUuid, steerContent, false, { durable: true });
+      } else {
+        (
+          queue as unknown as { hasPendingOrInFlight: (id: string) => boolean }
+        ).hasPendingOrInFlight = mock((id: string) => id === steerUuid && row.pending);
+      }
+      const originalAdmit = queue.admitWithId.bind(queue);
+      const admitWithId = mock(originalAdmit);
+      (queue as unknown as { admitWithId: MessageQueue['admitWithId'] }).admitWithId = admitWithId;
       if (row.queryPromise === 'present') {
         agentSession.queryPromise = new Promise<void>(() => {});
       }
@@ -5825,7 +5836,7 @@ describe('AgentSession', () => {
       );
       await settleFeedAck(steerPromise, queue, rowExpectsAdmission(row));
       const outcome = await steerPromise;
-      return { db, queue, outcome };
+      return { db, queue, outcome, admitWithId };
     }
 
     const rows: SteerRow[] = [
@@ -6123,7 +6134,7 @@ describe('AgentSession', () => {
 
     for (const row of rows) {
       it(row.name, async () => {
-        const { db, queue, outcome } = await runSteerRow(row);
+        const { db, queue, outcome, admitWithId } = await runSteerRow(row);
         try {
           expect(outcome).toEqual({ outcome: row.expected });
           if (row.expected === 'consumed') {
@@ -6135,7 +6146,12 @@ describe('AgentSession', () => {
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('enqueued');
           }
-          expect(queue.size()).toBe(0);
+          if (row.expected === 'awaiting_acceptance' && row.pending) {
+            expect(queue.hasPendingOrInFlight(steerUuid)).toBe(true);
+          } else {
+            expect(queue.size()).toBe(0);
+          }
+          expect(admitWithId).toHaveBeenCalledTimes(rowExpectsAdmission(row) ? 1 : 0);
         } finally {
           db.close();
         }
