@@ -14,7 +14,6 @@ import {
   getSessionModelInfo,
   hasRefreshBeenAttemptedFor,
   markRefreshAttemptedFor,
-  refreshModels,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -159,6 +158,7 @@ describe('Model Service', () => {
     }
 
     it('arms a scheduled retry for a transient failure and replaces the cache slice on recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         let failing = true;
@@ -195,6 +195,7 @@ describe('Model Service', () => {
     });
 
     it('re-arms the retry while the provider keeps failing transiently', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         const { getModels } = registerGlmProvider(async () => {
@@ -220,6 +221,7 @@ describe('Model Service', () => {
     });
 
     it('stays dormant for definitive credential failures (HTTP 401)', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         const { getModels } = registerGlmProvider(async () => {
@@ -240,6 +242,7 @@ describe('Model Service', () => {
     });
 
     it('stays dormant for definitive ACP spawn failures', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         const { getModels } = registerGlmProvider(async () => {
@@ -259,6 +262,7 @@ describe('Model Service', () => {
     });
 
     it('cancels a pending transient retry when a later load classifies the failure as definitive', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         let message = 'Endpoint returned HTTP 503';
@@ -284,6 +288,7 @@ describe('Model Service', () => {
     });
 
     it('clearModelsCache cancels pending retry timers', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         const { getModels } = registerGlmProvider(async () => {
@@ -306,6 +311,7 @@ describe('Model Service', () => {
     });
 
     it('drops in-flight retry results when a global clear lands mid-probe', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         let resolveProbe: (models: ModelInfo[]) => void = () => {};
@@ -337,6 +343,7 @@ describe('Model Service', () => {
     });
 
     it('skips the fetch when the provider is unregistered before the timer fires', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         const { getModels } = registerGlmProvider(async () => {
@@ -358,6 +365,7 @@ describe('Model Service', () => {
     });
 
     it('keeps a still-failing marker set across refreshes and clears it only on recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         let failing = true;
