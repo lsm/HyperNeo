@@ -154,11 +154,18 @@ export class EvolutionLogEvidenceService {
     const interrupted = this.drainItem;
     if (interrupted !== null) {
       this.drainItem = null;
-      for (const subscription of interrupted.subscriptions.slice(interrupted.offset)) {
+      for (let i = interrupted.offset; i < interrupted.subscriptions.length; i++) {
         try {
-          this.writeEvidence(interrupted.event, subscription);
+          this.writeEvidence(interrupted.event, interrupted.subscriptions[i]);
         } catch (error) {
-          if (isSqliteBusyError(error)) busyHit = true;
+          if (!isSqliteBusyError(error)) continue;
+          busyHit = true;
+          this.drainItem = {
+            event: interrupted.event,
+            subscriptions: interrupted.subscriptions,
+            offset: i,
+          };
+          break;
         }
       }
     }
@@ -166,22 +173,46 @@ export class EvolutionLogEvidenceService {
     if (batch.length > 0) {
       try {
         const subscriptions = this.getSubscriptions();
-        for (const event of batch) {
+        for (let index = 0; index < batch.length; index++) {
+          const event = batch[index];
+          let eventBusy = false;
           for (const subscription of subscriptions) {
             if (!matchesSubscription(subscription, event)) continue;
             try {
               this.writeEvidence(event, subscription);
             } catch (error) {
-              if (isSqliteBusyError(error)) busyHit = true;
+              if (isSqliteBusyError(error)) {
+                busyHit = true;
+                eventBusy = true;
+                break;
+              }
             }
           }
+          if (eventBusy) {
+            for (let remain = batch.length - 1; remain >= index; remain--) {
+              this.buffer.unshift(batch[remain]);
+            }
+            break;
+          }
         }
-      } catch {}
+      } catch {
+        for (let remain = batch.length - 1; remain >= 0; remain--) {
+          this.buffer.unshift(batch[remain]);
+        }
+      }
     }
-    if (!busyHit) {
+    if (busyHit) {
+      this.busyRetryCount += 1;
+      this.retryDelayMs = Math.min(
+        BUSY_RETRY_BASE_MS * 2 ** (this.busyRetryCount - 1),
+        MAX_BUSY_RETRY_MS
+      );
+    } else if (this.buffer.length === 0 && this.drainItem === null) {
       this.busyRetryCount = 0;
       this.retryDelayMs = null;
+      return;
     }
+    this.scheduleDrain();
   }
 
   private cancelScheduledDrain(): void {
@@ -237,6 +268,7 @@ export class EvolutionLogEvidenceService {
     if (existing) {
       const firstSeenAt = numberOr(existing.metadata.firstSeenAt, now);
       const lastSeenAt = numberOr(existing.metadata.lastSeenAt, firstSeenAt);
+      if (lastSeenAt === now) return;
       if (now - lastSeenAt <= (this.deps.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS)) {
         this.deps.evolutionRepo.updateEvidence(existing.id, {
           summary,

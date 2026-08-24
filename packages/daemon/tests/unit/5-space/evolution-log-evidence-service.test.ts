@@ -560,6 +560,36 @@ describe('EvolutionLogEvidenceService', () => {
     expect(evolutionRepo.listEvidence(productScope()!.id)).toHaveLength(1);
   });
 
+  it('requeues evidence interrupted by a busy synchronous flush', async () => {
+    let failWrites = true;
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.createEvidence = (params: CreateEvidenceRefParams) => {
+      if (failWrites) throw new Error('database is locked');
+      return evolutionRepo.createEvidence(params);
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'flush busy warning' }));
+    const drain = service.flushAsync();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    service.flush();
+    await drain;
+
+    failWrites = false;
+    const deadline = Date.now() + 6000;
+    while (evolutionRepo.listEvidence(scopeId).length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    const evidence = evolutionRepo.listEvidence(scopeId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].metadata.count).toBe(1);
+  });
+
   it('does not double-write evidence when flush interrupts an active drain', async () => {
     const sleepSync = (ms: number): void => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
