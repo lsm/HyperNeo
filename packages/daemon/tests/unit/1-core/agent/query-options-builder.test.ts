@@ -223,6 +223,19 @@ describe('QueryOptionsBuilder', () => {
         expect(response).toEqual({ behavior: 'cancelled' });
       });
 
+      it('declines the refusal dialog when session-scoped provider settings change after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        mockSession.config = { ...mockSession.config, providerConfig: { baseUrl: 'http://new' } };
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
       it('validates a session-scoped provider fallback against the curated set only', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
         try {

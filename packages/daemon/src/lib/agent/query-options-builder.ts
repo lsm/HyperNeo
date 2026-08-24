@@ -328,6 +328,8 @@ export class QueryOptionsBuilder {
 
     const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
     const configuredPrimaryModel = config.model;
+    const configuredScopedApiKey = config.providerConfig?.apiKey;
+    const configuredScopedBaseUrl = config.providerConfig?.baseUrl;
     this.effectiveFallbackCaptured = true;
     this.effectiveFallbackModel = configuredFallbackModel;
 
@@ -417,7 +419,9 @@ export class QueryOptionsBuilder {
         if (
           (configAfter.provider ?? 'anthropic') !== providerId ||
           configAfter.fallbackModel !== fallbackAtRequest ||
-          configAfter.model !== configuredPrimaryModel
+          configAfter.model !== configuredPrimaryModel ||
+          configAfter.providerConfig?.apiKey !== configuredScopedApiKey ||
+          configAfter.providerConfig?.baseUrl !== configuredScopedBaseUrl
         ) {
           return { behavior: 'cancelled' };
         }
