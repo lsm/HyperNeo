@@ -2917,7 +2917,7 @@ const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
       timestamp,
       send_status,
       origin,
-      rowid,
+      rowid AS rowid,
       COALESCE(
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
         task_id
@@ -2948,7 +2948,7 @@ recent_progress AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     COALESCE(
       CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
       task_id
@@ -2987,7 +2987,7 @@ task_starts AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     COALESCE(
       CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
       task_id
@@ -3009,7 +3009,7 @@ latest_progress AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     task_id
   FROM (
     SELECT
@@ -3018,7 +3018,7 @@ latest_progress AS (
       timestamp,
       send_status,
       origin,
-      rowid,
+      rowid AS rowid,
       COALESCE(
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
         task_id
@@ -3098,7 +3098,7 @@ top_level AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages

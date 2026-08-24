@@ -7980,6 +7980,11 @@ export function runMigration212(db: BunDatabase): void {
       `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sdk_messages' AND sql IS NOT NULL`
     )
     .all() as Array<{ sql: string }>;
+  const triggerRows = db
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'sdk_messages' AND sql IS NOT NULL`
+    )
+    .all() as Array<{ sql: string }>;
 
   const newSql = (storedSql ?? '')
     .replace(
@@ -8004,6 +8009,9 @@ export function runMigration212(db: BunDatabase): void {
     db.exec(`ALTER TABLE sdk_messages_m212_new RENAME TO sdk_messages`);
     for (const index of indexRows) {
       db.exec(index.sql);
+    }
+    for (const trigger of triggerRows) {
+      db.exec(trigger.sql);
     }
     db.exec('COMMIT');
   } catch (error) {

@@ -667,7 +667,7 @@ export class SDKMessageRepository {
     >;
     hasMore: boolean;
   } {
-    let query = `SELECT id, sdk_message, timestamp, send_status, origin, rowid FROM sdk_messages
+    let query = `SELECT id, sdk_message, timestamp, send_status, origin, rowid AS rowid FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))

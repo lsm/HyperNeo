@@ -41,6 +41,13 @@ describe('Migration 212: stable sdk_messages rowids', () => {
         PRIMARY KEY (source_message_id, target_uuid, kind),
         FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
       );
+      CREATE TABLE sdk_message_audit_log (
+        message_id TEXT NOT NULL
+      );
+      CREATE TRIGGER sdk_messages_audit_ai
+      AFTER INSERT ON sdk_messages BEGIN
+        INSERT INTO sdk_message_audit_log (message_id) VALUES (new.id);
+      END;
     `);
     const insert = db.prepare(`
       INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, consumed_seq)
@@ -125,6 +132,11 @@ describe('Migration 212: stable sdk_messages rowids', () => {
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
        VALUES ('message-new', 'session-1', 'user', '{}', '2026-08-24T00:00:00.000Z')`
     ).run();
+    expect(
+      db
+        .prepare(`SELECT message_id FROM sdk_message_audit_log WHERE message_id = 'message-new'`)
+        .get()
+    ).toEqual({ message_id: 'message-new' });
     expect(
       db.prepare(`SELECT rowid AS cursor FROM sdk_messages WHERE id = 'message-new'`).get()
     ).toEqual({ cursor: 25 });
