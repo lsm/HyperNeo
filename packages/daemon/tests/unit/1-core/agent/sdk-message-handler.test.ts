@@ -2671,6 +2671,174 @@ describe('SDKMessageHandler', () => {
       expect(mockSession.metadata?.totalCost).toBe(1.5);
       expect(mockSession.metadata?.lastSdkCost).toBe(0.5);
     });
+
+    describe('C1c: cost-reset table and legacy-fragility characterization', () => {
+      function makeResultMessage(
+        totalCostUsd: number,
+        overrides: Partial<SDKMessage> = {}
+      ): SDKMessage {
+        return {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'test-uuid',
+          parent_tool_use_id: null,
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: totalCostUsd,
+          modelUsage: {},
+          ...overrides,
+        } as unknown as SDKMessage;
+      }
+
+      function makeErrorResult(overrides: Partial<SDKMessage> = {}): SDKMessage {
+        return {
+          type: 'result',
+          subtype: 'error_during_execution',
+          uuid: 'error-uuid',
+          parent_tool_use_id: null,
+          is_error: true,
+          errors: ['boom'],
+          total_cost_usd: 0,
+          ...overrides,
+        } as unknown as SDKMessage;
+      }
+
+      describe('cost-reset table', () => {
+        const rows = [
+          [0, 0, 0.3, 0, 0.3],
+          [0.5, 0.2, 0.5, 0.2, 0.7],
+          [0.5, 0.2, 0.3, 0.7, 1.0],
+          [1.0, 0, 0.5, 1.0, 1.5],
+          [1.0, 0.5, 0, 1.5, 1.5],
+        ] as const;
+
+        for (const [lastSdkCost, costBaseline, sdkCost, expectedBaseline, expectedTotal] of rows) {
+          it(`lastSdkCost=${lastSdkCost} costBaseline=${costBaseline} sdkCost=${sdkCost}`, async () => {
+            mockSession.metadata = {
+              ...mockSession.metadata,
+              lastSdkCost,
+              costBaseline,
+            };
+
+            await handler.handleMessage(makeResultMessage(sdkCost));
+
+            expect(mockSession.metadata?.lastSdkCost).toBe(sdkCost);
+            expect(mockSession.metadata?.costBaseline).toBeCloseTo(expectedBaseline, 10);
+            expect(mockSession.metadata?.totalCost).toBeCloseTo(expectedTotal, 10);
+          });
+        }
+      });
+
+      describe('legacy-fragility characterization', () => {
+        it('legacy success path fires beginTerminalIdle then two setIdle calls', async () => {
+          const order: string[] = [];
+          beginTerminalIdleSpy.mockImplementation(() => {
+            order.push('beginTerminalIdle');
+          });
+          setIdleSpy.mockImplementation(async () => {
+            order.push('setIdle');
+          });
+
+          await handler.handleMessage(makeResultMessage(0.001));
+
+          expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+          expect(setIdleSpy).toHaveBeenCalledTimes(2);
+          expect(order).toEqual(['beginTerminalIdle', 'setIdle', 'setIdle']);
+        });
+
+        it('cost accounting runs between the two setIdle calls', async () => {
+          let setIdleCount = 0;
+          let baselineAtFirstSetIdle: number | undefined;
+          let baselineAtSecondSetIdle: number | undefined;
+
+          setIdleSpy.mockImplementation(async () => {
+            setIdleCount++;
+            if (setIdleCount === 1) {
+              baselineAtFirstSetIdle = mockSession.metadata?.costBaseline;
+            } else if (setIdleCount === 2) {
+              baselineAtSecondSetIdle = mockSession.metadata?.costBaseline;
+            }
+          });
+
+          mockSession.metadata = {
+            ...mockSession.metadata,
+            lastSdkCost: 1.0,
+            costBaseline: 0,
+          };
+
+          await handler.handleMessage(makeResultMessage(0.5));
+
+          expect(baselineAtFirstSetIdle).toBe(0);
+          expect(baselineAtSecondSetIdle).toBe(1.0);
+          expect(setIdleSpy.mock.calls).toEqual([[], []]);
+        });
+
+        it('lastResultWasSuccess stays set after a result until an idle event resets it', async () => {
+          const privateHandler = handler as unknown as { lastResultWasSuccess: boolean | null };
+
+          await handler.handleMessage(makeResultMessage(0.001));
+
+          expect(privateHandler.lastResultWasSuccess).toBe(true);
+
+          emitSpy.mockClear();
+          setIdleSpy.mockClear();
+
+          await handler.handleMessage({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state: 'idle',
+            uuid: 'idle-uuid',
+          } as unknown as SDKMessage);
+
+          expect(privateHandler.lastResultWasSuccess).toBeNull();
+          expect(emitSpy).toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+        });
+
+        it('a stale lastResultWasSuccess=false suppresses replay for a later idle', async () => {
+          const privateHandler = handler as unknown as { lastResultWasSuccess: boolean | null };
+
+          await handler.handleMessage(makeErrorResult());
+
+          expect(privateHandler.lastResultWasSuccess).toBe(false);
+
+          emitSpy.mockClear();
+
+          await handler.handleMessage({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state: 'idle',
+            uuid: 'idle-uuid',
+          } as unknown as SDKMessage);
+
+          expect(privateHandler.lastResultWasSuccess).toBeNull();
+          expect(emitSpy).not.toHaveBeenCalledWith('query.trigger', {
+            sessionId: 'test-session-id',
+          });
+        });
+
+        it('a later result overwrites the stale lastResultWasSuccess window', async () => {
+          const privateHandler = handler as unknown as { lastResultWasSuccess: boolean | null };
+
+          await handler.handleMessage(makeErrorResult());
+
+          expect(privateHandler.lastResultWasSuccess).toBe(false);
+
+          await handler.handleMessage(makeResultMessage(0.001, { uuid: 'success-uuid' }));
+
+          expect(privateHandler.lastResultWasSuccess).toBe(true);
+
+          emitSpy.mockClear();
+
+          await handler.handleMessage({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state: 'idle',
+            uuid: 'idle-uuid',
+          } as unknown as SDKMessage);
+
+          expect(emitSpy).toHaveBeenCalledWith('query.trigger', { sessionId: 'test-session-id' });
+        });
+      });
+    });
   });
 
   describe('handleUserMessage', () => {
