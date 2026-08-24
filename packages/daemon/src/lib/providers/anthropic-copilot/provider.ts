@@ -125,12 +125,21 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     success: boolean;
   } | null = null;
 
+  private readonly credentialEnvBaseline: Readonly<{
+    COPILOT_GITHUB_TOKEN?: string;
+    GH_TOKEN?: string;
+  }>;
+
   constructor(
     private readonly cwd: string = process.cwd(),
     private readonly env: NodeJS.ProcessEnv = process.env,
     authDir?: string
   ) {
     this.authPath = path.join(authDir || getDataDir(), 'auth.json');
+    this.credentialEnvBaseline = Object.freeze({
+      COPILOT_GITHUB_TOKEN: env.COPILOT_GITHUB_TOKEN,
+      GH_TOKEN: env.GH_TOKEN,
+    });
   }
 
   setCredentials(credentials: ProviderCredentials): void {
@@ -463,10 +472,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async findExternalCredentialSource(): Promise<string | undefined> {
-    const envToken = this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN;
+    const envToken =
+      this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN || this.credentialEnvBaseline.GH_TOKEN;
     if (envToken) {
       if (envToken.startsWith('ghp_')) return undefined;
-      return this.env.COPILOT_GITHUB_TOKEN
+      return this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN
         ? EXTERNAL_SOURCE_LABELS['copilot-env']
         : EXTERNAL_SOURCE_LABELS['gh-env'];
     }
@@ -615,11 +625,16 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     }
     if (stored) return { token: stored, source: 'auth-file' };
 
-    if (this.env.COPILOT_GITHUB_TOKEN) {
-      return { token: this.env.COPILOT_GITHUB_TOKEN, source: 'copilot-env' };
+    if (this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN) {
+      return {
+        token: this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN,
+        source: 'copilot-env',
+      };
     }
 
-    if (this.env.GH_TOKEN) return { token: this.env.GH_TOKEN, source: 'gh-env' };
+    if (this.credentialEnvBaseline.GH_TOKEN) {
+      return { token: this.credentialEnvBaseline.GH_TOKEN, source: 'gh-env' };
+    }
 
     const ghCliToken = await this.tryGhCliToken();
     if (ghCliToken) return { token: ghCliToken, source: 'gh-cli' };

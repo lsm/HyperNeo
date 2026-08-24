@@ -17,6 +17,7 @@ import {
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry.ts';
+import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import {
   applyRecordedFailureToAuthStatus,
@@ -189,8 +190,10 @@ export function setupAuthHandlers(
       }
 
       try {
-        const hasEnvironmentCredentials =
-          credentialManager?.hasEnvironmentCredentials(providerId) ?? false;
+        const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
+          'provider-credential-manager.hasEnvironmentCredentials',
+          () => credentialManager?.hasEnvironmentCredentials(providerId) ?? false
+        );
         if (!provider.logout && hasEnvironmentCredentials) {
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           return {

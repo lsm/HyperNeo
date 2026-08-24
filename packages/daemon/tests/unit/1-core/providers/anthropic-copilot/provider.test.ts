@@ -256,6 +256,40 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       ).mockResolvedValue(undefined as never);
       expect(await p.isAvailable()).toBe(false);
     });
+
+    it('does not discover a COPILOT_GITHUB_TOKEN injected after construction (overlapping lease window)', async () => {
+      const env: NodeJS.ProcessEnv = {};
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', env);
+      env.COPILOT_GITHUB_TOKEN = 'gho_lease_window_token';
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      expect(await p.isAvailable()).toBe(false);
+    });
+
+    it('keeps discovering construction-time env tokens after the live env changes', async () => {
+      const env: NodeJS.ProcessEnv = { COPILOT_GITHUB_TOKEN: 'gho_baseline_token' };
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', env);
+      delete env.COPILOT_GITHUB_TOKEN;
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      expect(await p.isAvailable()).toBe(true);
+    });
   });
 
   describe('getAuthStatus', () => {
