@@ -1675,12 +1675,15 @@ export class AgentSession
   private recoverTaskNotificationRequeryAfterSettlement(episodeToken: number): void {
     if (
       this._isCleaningUp ||
+      this.taskNotificationRequeryExhausted ||
       episodeToken !== this.taskNotificationRequeryEpisodeToken ||
       this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration() ||
       this.taskNotificationRequeryBusyInterruptGeneration === this.getQueryGeneration()
     ) {
       return;
     }
+    this.taskNotificationRequeryAwaitingSdkIdle = false;
+    this.taskNotificationRequeryBusyInterruptGeneration = null;
     this.taskNotificationRequeryPending = true;
     this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
       this.taskNotificationRequeryAttempts

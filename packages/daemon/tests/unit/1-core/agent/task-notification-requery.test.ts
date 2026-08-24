@@ -919,6 +919,50 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(needsAttentionPublishes()).toBe(0);
   });
 
+  it('clears the SDK-busy latch when the delivering query settles without idle', async () => {
+    const ensureQueryStarted = mock(async () => 'started' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    const holder: { resolve?: () => void } = {};
+    agentSession.queryPromise = new Promise<void>((resolve) => {
+      holder.resolve = resolve;
+    });
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    holder.resolve?.();
+    agentSession.queryPromise = null;
+    await settleRequery();
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+    expect(continueCalls()).toBe(2);
+  });
+
+  it('does not re-arm settlement recovery after escalation', async () => {
+    const holder: { resolve?: () => void } = {};
+    agentSession.queryPromise = new Promise<void>((resolve) => {
+      holder.resolve = resolve;
+    });
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+
+    holder.resolve?.();
+    agentSession.queryPromise = null;
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(continueCalls()).toBe(0);
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
