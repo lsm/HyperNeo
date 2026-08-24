@@ -321,7 +321,30 @@ gate never sees. Re-flagging and admission are two separate rules:
   (the backlog expands into concurrent calls the serialized lane excludes).
   The consumed grant resolves only when `processEvent` terminates — clean
   completion of the whole chain mints the successor, a classified 429 from
-  either agent re-arms saturation, any other termination releases. The GitHub agents' denial shape **splits by invocation**:
+  either agent re-arms saturation, any other termination releases.
+  **Each agent query re-consults admission at its start**: an event
+  admitted while the account was open holds no grant, and a sibling arming
+  saturation while its security query runs would otherwise let it walk
+  straight into the router query under the workflow-wide rule — with
+  several security checks in flight, all of them would start fresh router
+  calls after the cap is known, recreating the concurrent wave the lane
+  excludes. The per-query consult admits the workflow through when it
+  already holds the event grant (probing included); a grantless event
+  whose account went saturated or closed between stages parks durably —
+  the inbox entry this design already gives GitHub events carries the
+  resume state (security verdict already computed), and the wake re-enters
+  `processEvent` at `routeEvent` without repeating the completed security
+  query. **Termination awaits cancellation**: both agents' timeout paths
+  currently fire-and-forget `queryObj.interrupt().catch(() => {})`
+  (security-agent.ts:236-238, router-agent.ts:270-272), so `processEvent`
+  could terminate while the timed-out SDK request is still live —
+  releasing the grant there would wake a successor overlapping it, and
+  repeated timeouts would stack concurrent probes. The timeout path
+  therefore awaits both the interrupt and the query's actual termination
+  (the runner's terminal callback / abort completion) before the workflow
+  reports query end and resolves the grant, so `inFlight` decrements and
+  successor minting happen only after the request is truly dead.
+  The GitHub agents' denial shape **splits by invocation**:
   the poll path (a durable tick) skips the agent work this tick — the denial
   returns `skipped_provider_saturated`, and **cursor/ETag handling follows
   the sole-owner rule below exactly** — advance past every event *whose
@@ -395,9 +418,24 @@ gate never sees. Re-flagging and admission are two separate rules:
   lose the edit, since both actions share the resource timestamp and the
   first would consume their shared canonical key, and a same-second
   same-action webhook re-edit is a distinct delivery id the canonical key
-  must not absorb); a replay from the OTHER
-  source finds the canonical key consumed by a different source and
-  delivers nothing. **Webhook-only installations** (webhooks enabled
+  must not absorb); a replay from the OTHER source is suppressed by a
+  **one-per-event pairing, not a global consumed latch**: each delivered
+  event opens exactly one suppression slot on its canonical tuple for a
+  subsequent opposite-source event, and consuming the slot records the
+  pairing (delivering identity → suppressed identity). A further
+  opposite-source event with a distinct per-source identity delivers —
+  the second same-second webhook after a poll observation must not be
+  suppressed by it: a global once-latch on the coarse tuple would drop
+  BOTH webhooks off one poll in that arrival order while the reverse
+  order delivers both and suppresses only the poll, making delivery
+  order-dependent and losing a transition that routes differently. The
+  recorded imprecision is confined to the timestamp's own resolution:
+  second-resolution `updated_at` cannot say WHICH opposite-source event
+  an arrival duplicates, so the pairing rule suppresses the first and
+  delivers the rest — never losing a distinct delivery, at most
+  re-delivering one, and the both-enabled common case (one change, one
+  webhook, one poll) still dedupes to exactly one delivery.
+  **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
   persisted to a durable raw-event inbox keyed by the **GitHub delivery
@@ -760,7 +798,14 @@ job-queue rows (background-waiter linkage and ordering); the raw-event
 inbox table (payload + stable replay key + ingest sequence + per-event
 delivery-record state); the persisted shared sequence allocator's
 counter row; and the **per-account saturation marker row** (key, kind,
-`untilMs`/closed, charge — written on arm, updated on refine, cleared on
+`untilMs`/closed, charge, and — stored with the closed kind — the same
+resolvable `configRef` snapshot the in-memory `closureProbeGrant` carries:
+provider id plus effective providerConfig/credential reference, captured
+when closure armed and kept current by the rotation hooks; a restart
+reconstructing a closed account with no waiter could not build the daily
+health probe's request from a digest alone, and without the persisted
+reference the account would stay closed until manual Retry or a
+credential change — written on arm, updated on refine, cleared on
 clear, so restart reconstruction re-enters saturation or the closed state
 instead of an open registry; caveat 1). None of these exist in the current
 schema — the PR3 plan's migration scope names all of them.
@@ -894,10 +939,16 @@ not inherit):
   reset state; against a **consumed** grant
   (the probe's prompt has yielded — a running turn cannot be safely
   un-yielded) the refinement is **recorded against the episode** — kept,
-  not discarded — and the running probe resolves on its own termination (its 429 re-arms at the
-  refined deadline via `reportRefinedReset`, its clean completion opens and
-  the recorded reset arms for the *next* episode), so no delivery is
-  duplicated and the refinement's knowledge is never lost. The classifier's **own SDK query
+  not discarded — and the running probe resolves on its own termination:
+  its 429 re-arms at the refined deadline via `reportRefinedReset`, while
+  its clean completion opens AND **retires the recorded refinement with
+  the episode** — a successful post-clear request has disproved the
+  evidence the reset timestamp carried, and letting an unrelated later
+  concurrency 429 inherit an authoritative multi-hour deadline from it
+  would violate the stale-evidence rule above — so the refinement's
+  knowledge is applied exactly when the probe confirmed the limit, no
+  delivery is
+  duplicated and nothing stale survives into a fresh episode. The classifier's **own SDK query
   consults admission too**: `resolveClassifierProvider` prefers another
   provider but falls back to the excluded one when it is the only usable
   choice — on a single-provider installation every ambiguous limit error would
@@ -1335,7 +1386,7 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the raw-event inbox (payload, upstream-tuple secondary index, ingest sequence, per-event delivery records), the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes, its repository, and the reconstruction wiring that re-enters saturation/closed from it, without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the raw-event inbox (payload, upstream-tuple secondary index, ingest sequence, per-event delivery records), the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes incl. the closed kind's resolvable `configRef`, its repository, and the reconstruction wiring that re-enters saturation/closed from it, without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -1367,17 +1418,27 @@ by pre-existing suites):
    closed state — the old exclusion assertion is replaced by: closed admits
    nothing, parks durably at the sentinel, requeues on credential change, and
    clears via manual Retry or the bounded daily health probe without any
-   credential change); the consult-before-destructive-setup pin (a denied
+   credential change), including reconstruction of a closed account
+   resolving the daily health probe's configuration from the row's
+   persisted `configRef` (no digest-only dead end); the
+   consult-before-destructive-setup pin (a denied
    recursive retry falls through with `_lastConsumedUserMessage` intact);
    per-event poll rollback (completed events are not reprocessed; the denied
    event persists to the inbox and drains on normal clears too); the
    **source-appropriate dedupe keys** — two same-second same-action webhook
    deliveries (distinct `X-GitHub-Delivery` ids) both ingest, a
-   created-then-edited same-second poll pair both ingest, and a
-   cross-source pair sharing the canonical tuple delivers exactly once;
+   created-then-edited same-second poll pair both ingest, a
+   cross-source pair sharing the canonical tuple delivers exactly once,
+   and a poll followed by two distinct same-second webhooks suppresses at
+   most one webhook (the one-per-event pairing — the canonical tuple is
+   never a global once-latch, in either arrival order);
    **one-event-one-grant boundary** — the security query's clean completion
    leaves the event grant held (no successor minted, event B stays parked)
-   until `processEvent` terminates; webhook inbox-commit failure exhausts
+   until `processEvent` terminates, a timed-out agent query's interrupt
+   and termination are awaited before the grant resolves (no successor
+   overlaps a live timed-out request), and a grantless event whose account
+   saturates between security and routing parks via the inbox and resumes
+   at `routeEvent` on the wake (security not repeated); webhook inbox-commit failure exhausts
    the in-process retries and answers non-2xx without any duplicate ingest
    when the caveat-9 sweep later re-ingests the same delivery id; GitHub
    agents recreated from new credentials before replay;
@@ -1417,7 +1478,10 @@ by pre-existing suites):
    to non-probe-clearable reset state; an authoritative episode is never
    extended by a reset-less report; `reportRefinedReset` is episode-token
    correlated (stale/delayed refinements discarded; a matching one converts to
-   authoritative and revokes an outstanding probe grant); `chargeResetArmed` is
+   authoritative and revokes an outstanding probe grant), and a refinement
+   recorded against a consumed grant retires with the episode on the
+   probe's clean completion while its 429 applies the refined deadline;
+   `chargeResetArmed` is
    consumed only by the outstanding probe's completion; evidence expiry at arm
    time; the
    clean-completion flag derived from turn classification, not iteration
@@ -1584,7 +1648,10 @@ by pre-existing suites):
    new send passes admission before any response re-arms, recreating the
    post-restart herd the single-discovery-probe promise excludes. Arming
    therefore persists **one saturation row per account key** (key, kind,
-   `untilMs` or `closed`, charge — written on arm, updated on refine,
+   `untilMs` or `closed`, charge, and the resolvable `configRef` snapshot
+   alongside the closed kind — the restart's daily health probe needs a
+   buildable request, which a digest alone cannot provide — written on
+   arm, updated on refine,
    cleared on clear; part of the PR3 migration family), and
    reconstruction re-enters saturation/probing from it. What stays
    in-memory-only is the fine-grained grant/registration state; the
