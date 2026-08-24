@@ -579,7 +579,7 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
     PROVIDER_RETRY_PROBE_TIMEOUT_MS
   );
   if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
-    return 'no-op';
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
   }
   if (result === 'timeout' || result.status === 'unavailable') {
     if (providerRetryGeneration === generationAtStart) {

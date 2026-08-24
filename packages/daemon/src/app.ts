@@ -442,7 +442,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
-    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
+    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges((change) => {
+      if (change.record === null) {
+        credentialManager.markProviderHealth(change.providerId, 'healthy');
+      }
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {

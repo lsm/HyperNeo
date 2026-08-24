@@ -76,6 +76,8 @@ const EXTERNAL_SOURCE_LABELS: Partial<Record<TokenSource, string>> = {
   hosts: 'the gh CLI hosts.yml oauth_token',
 };
 
+export class ExternalCredentialSourceError extends Error {}
+
 interface TokenCacheEntry {
   token: string | undefined;
   expiresAt: number;
@@ -287,7 +289,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       const generation = this.runtimeGeneration;
       try {
         const sdkModels = await client.listModels();
-        if (generation !== this.runtimeGeneration) {
+        if (generation !== this.runtimeGeneration || client !== this.clientCache) {
           return COPILOT_ANTHROPIC_MODELS;
         }
         const mapped = sdkModels
@@ -440,7 +442,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const cachedExternalSource = this.freshCachedExternalSource();
     const externalSource = (await this.findExternalCredentialSource()) ?? cachedExternalSource;
     if (externalSource) {
-      throw new Error(
+      throw new ExternalCredentialSourceError(
         `GitHub Copilot credentials are managed by ${externalSource}. ` +
           'Remove that source to log out.'
       );

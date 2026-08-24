@@ -22,6 +22,7 @@ import {
   applyRecordedFailureToAuthStatus,
   classifyProviderFailure,
 } from '../providers/provider-failure-store.js';
+import { ExternalCredentialSourceError } from '../providers/anthropic-copilot/provider.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
@@ -241,11 +242,13 @@ export function setupAuthHandlers(
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
       } catch (error) {
-        try {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
-        } catch (cleanupError) {
-          if (!(cleanupError instanceof KeychainUnavailableError)) {
-            log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
+        if (!(error instanceof ExternalCredentialSourceError)) {
+          try {
+            await removeCredentialsOrKeychainError(credentialManager, providerId);
+          } catch (cleanupError) {
+            if (!(cleanupError instanceof KeychainUnavailableError)) {
+              log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
+            }
           }
         }
         await clearCacheAndNotifyProvidersChanged(internalEventBus);

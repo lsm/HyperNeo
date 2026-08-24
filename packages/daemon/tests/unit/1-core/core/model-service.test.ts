@@ -1573,6 +1573,39 @@ describe('Model Service', () => {
       expect(getProviderFailure('glm')).toBeUndefined();
       expect(getAvailableModels('global').some((m) => m.id === 'glm-newer-0')).toBe(true);
     });
+
+    it('reports failed when a newer refresh overtook the probe and recorded a failure', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider(async (): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) throw new Error('Request failed (http 401)');
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((resolve) => {
+            releaseProbe = resolve;
+          });
+        }
+        throw new Error('Endpoint returned HTTP 503');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+      releaseProbe?.([glmModel('glm-recovery-model')]);
+      await expect(recovery).resolves.toBe('failed');
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
   });
 
   describe('cache management', () => {

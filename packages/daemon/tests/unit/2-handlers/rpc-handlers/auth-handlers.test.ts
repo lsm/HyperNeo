@@ -10,6 +10,7 @@ import {
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
+import { ExternalCredentialSourceError } from '../../../../src/lib/providers/anthropic-copilot/provider';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -515,6 +516,39 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(true);
       expect(mockProvider.logout).toHaveBeenCalled();
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('preserves stored credentials when the provider rejects logout as externally managed', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'api_key' as const, apiKey: 'stored-key' })),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        logout: mock(async () => {
+          throw new ExternalCredentialSourceError(
+            'GitHub Copilot credentials are managed by the COPILOT_GITHUB_TOKEN environment variable. Remove that source to log out.'
+          );
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('COPILOT_GITHUB_TOKEN');
+      expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
     });
 
     it('removes provider credential store row when provider has no logout method', async () => {

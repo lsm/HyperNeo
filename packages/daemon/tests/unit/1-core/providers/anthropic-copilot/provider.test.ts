@@ -26,6 +26,7 @@ vi.mock('../../../../../src/lib/providers/anthropic-copilot/server', async (impo
 });
 
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
+import { ExternalCredentialSourceError } from '../../../../../src/lib/providers/anthropic-copilot/provider';
 import { COPILOT_ANTHROPIC_MODELS } from '../../../../../src/lib/providers/anthropic-copilot/models';
 import {
   initializeProviders,
@@ -1204,7 +1205,9 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       };
 
       const modelsPromise = p.getModels();
-      await Promise.resolve();
+      for (let i = 0; i < 50 && !releaseList; i++) {
+        await Promise.resolve();
+      }
       const state = p as unknown as Record<string, unknown>;
       state['runtimeGeneration'] = (state['runtimeGeneration'] as number) + 1;
       releaseList?.([
@@ -1422,6 +1425,7 @@ describe('logout()', () => {
   it('preserves owned credentials when an external source blocks logout', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
     p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    await expect(p.logout()).rejects.toBeInstanceOf(ExternalCredentialSourceError);
     await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
     expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBe(
       'gho_stored_tok'
