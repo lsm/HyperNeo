@@ -355,11 +355,14 @@ function isCacheStale(cacheKey: string): boolean {
 
 function readCachedModels(cacheKey: string): ModelInfo[] | null {
   const cachedModels = modelsCache.get(cacheKey);
-  if (!cachedModels || cachedModels.length === 0) {
+  if (!cachedModels) {
     return null;
   }
   if (isCacheStale(cacheKey)) {
     triggerBackgroundRefresh(cacheKey).catch(() => {});
+  }
+  if (cachedModels.length === 0) {
+    return null;
   }
   return cachedModels;
 }

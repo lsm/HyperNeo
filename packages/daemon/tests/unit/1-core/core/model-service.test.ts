@@ -384,6 +384,46 @@ describe('Model Service', () => {
       expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
     });
 
+    it('re-arms the background refresh for a stale empty cache', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'recovered-model',
+          name: 'Recovered Model',
+          family: 'test',
+          provider: 'stale-empty-provider',
+          contextWindow: 100000,
+          description: 'Recovered model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'stale-empty-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      setModelsCache(new Map([['global', []]]), Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(getAvailableModels('global')).toEqual([]);
+
+      const deadline = Date.now() + 3_000;
+      let loadTriggered = false;
+      while (Date.now() < deadline) {
+        if (getModels.mock.calls.length > 0) {
+          loadTriggered = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(loadTriggered, 'stale empty cache should re-trigger a provider load on read').toBe(
+        true
+      );
+    });
+
     it('keeps a stale entry stale so the next read re-triggers a background refresh', async () => {
       const getModels = mock(async () => [
         {

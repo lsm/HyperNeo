@@ -244,6 +244,40 @@ describe('Session RPC Handlers — models.list', () => {
     expect(getModelCalls).toBe(0);
   });
 
+  it('session.model.get keeps metadata for a session on a curated-out model', async () => {
+    const models = [
+      { id: 'opus', name: 'Opus', provider: 'anthropic', contextWindow: 200000 },
+    ] as ModelInfo[];
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', models]]));
+
+    const sessionManager = {
+      getSessionAsync: async () => ({
+        getCurrentModel: () => ({ id: 'opus' }),
+        getSessionData: () => ({
+          id: 'session-1',
+          config: { model: 'opus', provider: 'anthropic' },
+        }),
+      }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers: setupForModelGet } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    const hub = createMockMessageHub();
+    setupForModelGet(hub.hub, sessionManager, eventBus, {} as SpaceManager);
+
+    const handler = hub.handlers.get('session.model.get')!;
+    const result = (await handler({ sessionId: 'session-1' }, {})) as {
+      currentModel: string;
+      currentProvider: string;
+      modelInfo: ModelInfo | null;
+    };
+
+    expect(result.currentModel).toBe('opus');
+    expect(result.currentProvider).toBe('anthropic');
+    expect(result.modelInfo).toMatchObject({ id: 'opus', provider: 'anthropic' });
+  });
+
   it('returns cached models when cache is populated', async () => {
     const testCache = new Map<
       string,
