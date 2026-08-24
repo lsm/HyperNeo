@@ -3840,6 +3840,7 @@ describe('QueryRunner', () => {
 
       async function runBackoffRow(flip?: (tools: BackoffTools) => void) {
         delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = flip ? '200' : '0';
         buildSpy.mockRejectedValue(new Error(PROVIDER_5XX_MSG));
 
         let cleaningUp = false;
@@ -3847,18 +3848,6 @@ describe('QueryRunner', () => {
         const ctx = createContext({
           queryAbortController: controller,
           isCleaningUp: () => cleaningUp,
-          processExitedPromise: Promise.resolve(),
-          resetProcessExitedPromise: () => {
-            flip?.({
-              supersede: () => ctx.incrementQueryGeneration(),
-              abortSignal: () => controller.abort(),
-              setCleaningUp: () => {
-                cleaningUp = true;
-              },
-              stopQueue: () => isRunningSpy.mockReturnValue(false),
-              interruptProcessing: () => getStateSpy.mockReturnValue({ status: 'interrupted' }),
-            });
-          },
         });
         runner = new QueryRunner(ctx);
         const runnerPrivate = runner as unknown as RunnerPrivate;
@@ -3869,6 +3858,20 @@ describe('QueryRunner', () => {
         runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
         ctx.incrementQueryGeneration();
         isRunningSpy.mockReturnValue(true);
+
+        if (flip) {
+          setTimeout(() => {
+            flip({
+              supersede: () => ctx.incrementQueryGeneration(),
+              abortSignal: () => controller.abort(),
+              setCleaningUp: () => {
+                cleaningUp = true;
+              },
+              stopQueue: () => isRunningSpy.mockReturnValue(false),
+              interruptProcessing: () => getStateSpy.mockReturnValue({ status: 'interrupted' }),
+            });
+          }, 20);
+        }
         await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
         return runnerPrivate;
       }
@@ -3943,6 +3946,16 @@ describe('QueryRunner', () => {
           name: 'otherwise identical limit error with the handoff declined → full RATE_LIMIT terminal',
           options: { message: LIMIT_429_MSG, onRateLimit: () => false },
           expect: routeTerminal(ErrorCategory.RATE_LIMIT),
+        },
+        {
+          name: 'rejecting cooldown handoff → no terminal handling, finalizer still idles, query rejects',
+          options: {
+            message: LIMIT_429_MSG,
+            onRateLimit: () => {
+              throw new Error('watchdog handoff failed');
+            },
+          },
+          expect: routeAllZero({ idle: 1, clear: 1, stop: 1 }),
         },
         {
           name: 'incoming cooldown flag is recomputed per error, not sticky across attempts',
