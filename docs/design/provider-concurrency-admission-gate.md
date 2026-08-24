@@ -190,8 +190,11 @@ already prevents a query start). One side effect is deliberately deferred:
 `needsWorkspaceInit` is published **false** for a provider-queued send, because
 title generation runs its own SDK query outside the message pipeline — N new
 sessions on a saturated account would otherwise each fire a title query the
-gate never sees — and the promotion interpreter re-flags title generation when
-the queued row is finally delivered (still ungenerated). This is the
+gate never sees. It is re-flagged **only after the granted delivery's probe
+turn completes cleanly** (not at promotion, which happens while the provider is
+still probing — a title query racing the one allowed probe defeats the
+one-at-a-time recovery), and if the session still needs a title then, the title
+query itself runs through the same admission consult. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -216,7 +219,12 @@ gate inherits the documented order; existing outcomes are unchanged).
 ### P2 — provider gate in `decideInjectDelivery` (Space inject pipeline)
 
 Insert `applyInjectProviderConcurrencyGate` into the existing composition
-(`D/src/lib/agent/message-delivery-pipeline.ts:79-85`), giving the gate list:
+(`D/src/lib/agent/message-delivery-pipeline.ts:79-85`). Like P1, the gate is
+**skipped when the target session has a live turn** (`liveTurnActive`): an
+immediate injection into a processing session is a steer candidate whose role
+the delivery layer resolves after admission, and queueing it here could
+withhold input the active turn needs to finish and clear saturation — the same
+pre-gate ordering obligation as P1. Gate list:
 
 ```
 applyAlreadyConsumedGate          → noop            (unchanged)
@@ -440,16 +448,23 @@ not inherit):
   `[1305]/[1308]/[1313]` and the framed-429 regex are limit markers, not
   concurrency-specific), so short concurrency waits must not pay the full
   10-minute first ladder step forever.
-- **LLM refinements feed the registry.** The watchdog's refinement tier
-  (`fireLlmRefinement`, `rate-limit-watchdog.ts:256-317`) can upgrade an ambiguous
-  ladder-armed error to a multi-hour parsed reset — but as wired it extends only
-  the originating session's cooldown. The accepted refinement is forwarded to the
-  registry (`reportRefinedReset(accountKey, resetAtMs)` from the same wiring that
-  owns `classifyUnknownLimit`): it replaces a ladder-derived `untilMs` (never
-  shortening a structured/parsed reset) and reschedules the wake timer, so sibling
-  sessions are not woken into a limit the system already knows is still active.
-  This is the design's full consumption of #2664's tier, not just its
-  deterministic half.
+- **LLM refinements feed the registry, correlated to their episode.** The
+  watchdog's refinement tier (`fireLlmRefinement`,
+  `rate-limit-watchdog.ts:256-317`) can upgrade an ambiguous ladder-armed error
+  to a multi-hour parsed reset — but as wired it extends only the originating
+  session's cooldown. The accepted refinement is forwarded to the registry
+  (`reportRefinedReset(accountKey, episodeToken, resetAtMs)` from the same
+  wiring that owns `classifyUnknownLimit`): `reportLimitError` returns an
+  **episode token**, and the refinement must carry it — a refinement landing
+  after the 60-second early clear, or after a newer episode occupies the
+  account, is **discarded** rather than overwriting whatever episode is now
+  live (a stale multi-hour deadline would queue siblings against a limit that
+  may have lifted). A matching refinement converts the ladder episode to
+  authoritative reset state: `untilMs` is replaced (never shortened for an
+  already-authoritative reset), the wake timer reschedules, and any outstanding
+  probe grant is revoked (its delivery returns to the queue) so the next
+  admission waits for the known reset. This is the design's full consumption of
+  #2664's tier, not just its deterministic half.
 
 **Feed sites — including the provider-retry branch.** `reportLimitError` is
 wired at the three existing classification sites (`query-runner.ts:1258`,
@@ -475,7 +490,11 @@ forever).
 
 **Charging is per saturation episode, not per report.** N sibling sessions 429ing
 within the same window produce N `reportLimitError` calls; reports arriving while
-saturated extend `untilMs` to the max but do **not** advance `charge` — otherwise
+saturated never extend an **authoritative** (parsed/structured-reset) episode —
+  a later reset-less report's ladder deadline is computed from its own later
+  timestamp and could slide a reset two minutes out to ten; only a newer
+  reset-bearing report may extend an authoritative episode — and do **not**
+  advance `charge` — otherwise
 ten concurrent 429s would jump straight to the ladder's 4-hour cap
 (`ladderIndex = min(retryCount, lastIndex)`) off one transient blip. A
 **reset-bearing report upgrades a ladder episode**: it converts the active
@@ -559,39 +578,56 @@ at provider scope.
   requeued to one deadline and claimed up to 64-wide by the delivery processor
   (`D/src/app.ts:307-318`), a backlog wake promoting every registered uuid, or
   post-restart reconstruction firing independently in several sessions.
-- **Restart reconstruction:** the `queue_reason` marker rebuilds the queue. At
-  session startup, beside `scheduleInitialPendingMessageReplay`
-  (`agent-session.ts:671-682`), rows carrying the marker are re-registered —
-  both `'deferred'` rows and **`'enqueued'` rows parked by a P3 denial** (a
-  parked V2 job stays `'enqueued'` with a durable requeued job and no deferred
-  twin, so a deferred-only filter would miss exactly the rows whose shared
-  `retryAt` could otherwise release as a 64-wide post-restart wave); rows
-  without the marker (manual-mode, user-deferred) are untouched, and historical
-  rows that left the queue are invisible because the marker is cleared on exit
-  (below). The P3 park therefore stamps the marker on the parked `'enqueued'`
-  row. The first reconstructed registration mints the probe grant, so the
-  restart drain is serialized by the same one-at-a-time release — one probe
-  query runs (a parked job's next claim holding the grant), the rest wait for
-  its resolution. Saturation *state* is still lost, so that probe may pay one
-  discovery 429 — bounded, one charge.
+- **Restart reconstruction — a daemon-level marker scan.** At daemon startup
+  (not per-session: a jobless `'deferred'` row never causes its lazy
+  `SessionCache` session to load, so a startup hook beside
+  `scheduleInitialPendingMessageReplay` would never run for inactive sessions),
+  one scan enumerates `sdk_messages WHERE queue_reason IS NOT NULL` and
+  re-registers every marker row — both `'deferred'` rows and **`'enqueued'`
+  rows parked by a P3 denial** (a parked V2 job stays `'enqueued'` with a
+  durable requeued job and no deferred twin, so a deferred-only filter would
+  miss exactly the rows whose shared `retryAt` could otherwise release as a
+  64-wide post-restart wave); rows without the marker are untouched, and
+  historical rows are invisible because the marker is cleared on exit (below).
+  The wake path likewise resolves sessions on demand (`getSessionAsync`) rather
+  than relying on already-subscribed sessions. The first reconstructed
+  registration mints the probe grant, so the restart drain is serialized by the
+  same one-at-a-time release. Saturation *state* is still lost, so that probe
+  may pay one discovery 429 — bounded, one charge.
+- **The enqueued wake arm addresses the existing job.** Waking a
+  reconstructed/P3-parked `'enqueued'` row must NOT go through the deferred-row
+  promotion path — `promotePending` cannot select it, and its durable job sits
+  at a stale `retryAt` (potentially hours out), which would leave the grant
+  minting and expiring against a registration that never claims. The enqueued
+  arm instead makes the row's existing delivery job claimable immediately
+  (requeue with `retryAt = now` under the same claim token rules); the claim's
+  P3 consult then applies the grant. Deferred rows keep the promotion path.
 - **Marker clearing on exit.** Every transition that moves a provider-queued row
   out of its queued state — promotion to `'enqueued'`, terminal `'consumed'` /
   `'failed'`, **and an explicit user defer of a P3-parked `'enqueued'` row**
   (`session.messages.deferPending` → `deferEnqueuedUserMessage`): leaving the
   marker there would let a later provider wake auto-promote a row the user just
   deferred — clears `queue_reason` and deregisters the uuid in the same
-  statement as the `send_status` flip (the chain-B status-plan interpreter's
-  instructions are the natural carrier), so reconstruction never registers
-  history the user or the pipeline retired. A stale marker on a retired row
+  statement as the `send_status` flip — **and `session.messages.removePending`
+  (row deletion via `revokePendingDelivery(..., 'remove')`) deregisters the
+  same way**: a deleted row's composite identity must leave the registry with
+  the row, or repeated send/remove cycles during a long reset window grow stale
+  registrations whose wakes burn grants on nonexistent deliveries (the chain-B
+  status-plan interpreter's instructions are the natural carrier), so
+  reconstruction never registers history the user or the pipeline retired. A stale marker on a retired row
   would otherwise mint a probe grant with nothing deliverable to resolve it.
-- **Provider changes re-admit their queue.** A provider/config change while
-  rows are registered behind the old key — `switchModel`/`handleModelSwitch`
-  **and** `SessionConfigHandler.updateConfig` (Space long-horizon refresh and
-  provider clearing go through it, never `switchModel`) — deregisters those
-  rows from the old key and immediately re-runs admission against the new key:
-  otherwise the switched session's queued rows wait on a wake for a provider
-  the session no longer uses, while newer messages on the new provider run
-  ahead of them.
+- **Provider changes re-admit their queue.** Any change of a session's
+  effective account key while its rows are registered behind the old key
+  deregisters them and immediately re-runs admission against the new key —
+  session-local changes (`switchModel`/`handleModelSwitch` and
+  `SessionConfigHandler.updateConfig`, which Space long-horizon refresh and
+  provider clearing use, never `switchModel`) **and shared credential changes**
+  (`providers.update` credential resync, `auth.login`/`auth.logout` mutating
+  the registered provider's credentials — these change the effective
+  fingerprint for every session on the provider's default credentials without
+  touching any `session.config`): otherwise queued rows wait on a wake for an
+  account key the session no longer uses, while newer messages on the new key
+  run ahead of them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
   registered rows for the session, on terminal row status, and on session destroy.
   Registrations are idempotent insertion-ordered sets, so a parked job
@@ -815,13 +851,20 @@ by pre-existing suites):
 6. **`inFlight` is bookkeeping until caps exist.** v1 never gates on it
    (`configuredCap` is null); it exists so the cap follow-up changes one constant
    plus a settings reader, and so the probe rule has a completion signal.
-7. **Live-turn steers bypass the gate by design.** A steer fed into a live turn
-   adds no provider call — it rides the turn's existing request via
-   `feedDeliverySteer` — so it admits unconditionally (`liveTurnSteer` fact).
-   Parking it while the live turn waits on that very input would deadlock the
-   turn whose completion could clear saturation. A steer with no live turn
-   (session idle) is an ordinary turn-role delivery and consults normally.
-   Recorded to preempt a "why doesn't steer check" review round.
+7. **The steer bypass is scoped to input the live turn waits on.** A steer fed
+   into a live turn adds no provider call — it rides the turn's existing
+   request via `feedDeliverySteer` — so it admits unconditionally
+   (`liveTurnSteer` fact); parking it while the unresolved turn waits on that
+   input would deadlock the turn whose completion could clear saturation. But
+   a steer arriving while the session is merely *processing* (not
+   input-blocked) queues in the persistent `MessageQueue` and becomes the
+   **next** turn's prompt — it starts a provider call, so the bypass must not
+   cover it. The authoritative admission check at the prompt-yield boundary
+   (the grant-consumption site) therefore applies to **every non-internal
+   prompt**: a queued steer with no valid grant is not yielded; it returns to
+   the queue. A steer with no live turn (session idle) is an ordinary
+   turn-role delivery and consults normally. Recorded to preempt a "why
+   doesn't steer check" review round.
 8. **P3's consult does not touch `rate_limit_cooldown` session state** — a
    parked-for-provider job leaves the session idle, not cooldown; the session's
    watchdog never learns about sibling 429s. That isolation is deliberate (the
