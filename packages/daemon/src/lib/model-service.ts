@@ -644,10 +644,15 @@ export async function getSessionModelInfo(
   if (rawModels) {
     const providerModels = rawModels.filter((m) => m.provider === providerId);
     const fromRaw = findInModels(providerModels, session.config.model);
-    if (fromRaw) return fromRaw;
+    if (fromRaw) {
+      return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromRaw) : fromRaw;
+    }
   }
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
-  return findInModels(staticProviderModels, session.config.model) ?? null;
+  const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
+  return providerId === 'anthropic-copilot' && fromStatic
+    ? overlayCodexStaticMetadata(fromStatic)
+    : fromStatic;
 }
 
 export async function getModelInfoUnfiltered(

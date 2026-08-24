@@ -1305,6 +1305,40 @@ describe('Model Service', () => {
       expect(model).toMatchObject({ id: 'opus' });
     });
 
+    it('overlays Codex metadata for a copilot session on a curated-out model', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'gpt-5.3-codex',
+                name: 'GPT-5.3 Codex (Copilot API)',
+                alias: 'copilot-gpt-5-3-codex',
+                family: 'gpt',
+                provider: 'anthropic-copilot',
+                contextWindow: 200000,
+                description: 'GPT-5.3 Codex via GitHub Copilot',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+            ] as ModelInfo[],
+          ],
+        ])
+      );
+
+      expect(await getModelInfo('gpt-5.3-codex', 'global', 'anthropic-copilot')).toBeNull();
+
+      const model = await getSessionModelInfo({
+        config: { model: 'gpt-5.3-codex', provider: 'anthropic-copilot' },
+      } as any);
+
+      expect(model).toMatchObject({ id: 'gpt-5.3-codex', contextWindow: 272000 });
+      expect(model?.preferContextWindowMetadata).toBe(true);
+    });
+
     it('scopes the preserved session metadata to the session provider', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
