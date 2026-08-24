@@ -1035,21 +1035,25 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
 
     let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityScan: Promise<void> | null = null;
     if (process.env.NODE_ENV !== 'test') {
-      let inactivityScanInProgress = false;
-      const scanInactivityWatchdog = async () => {
-        if (inactivityScanInProgress) return;
-        inactivityScanInProgress = true;
-        try {
-          const spaces = await spaceManager.listSpaces(false);
-          for (const space of spaces) {
-            await spaceAgentInactivityWatchdog.scanSpace(space.id);
+      const scanInactivityWatchdog = (): Promise<void> => {
+        if (inactivityScan !== null) return inactivityScan;
+        const run = (async () => {
+          try {
+            const spaces = await spaceManager.listSpaces(false);
+            for (const space of spaces) {
+              await spaceAgentInactivityWatchdog.scanSpace(space.id);
+            }
+          } catch (err) {
+            logError('[Daemon] Inactivity watchdog scan failed:', err);
           }
-        } catch (err) {
-          logError('[Daemon] Inactivity watchdog scan failed:', err);
-        } finally {
-          inactivityScanInProgress = false;
-        }
+        })();
+        inactivityScan = run;
+        void run.finally(() => {
+          inactivityScan = null;
+        });
+        return run;
       };
       void scanInactivityWatchdog();
       const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
@@ -1076,6 +1080,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       if (inactivityWatchdogTimer !== null) {
         clearInterval(inactivityWatchdogTimer);
         inactivityWatchdogTimer = null;
+      }
+      if (inactivityScan !== null) {
+        await inactivityScan;
       }
 
       try {

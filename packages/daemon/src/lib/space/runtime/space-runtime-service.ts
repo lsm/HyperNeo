@@ -356,11 +356,11 @@ export class SpaceRuntimeService {
   > {
     const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
     if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
-      return 'terminal_failure';
+      return 'pre_admission_failure';
     }
     const space = await this.config.spaceManager.getSpace(args.spaceId);
     if (!space || space.status !== 'active' || space.paused || space.stopped) {
-      return 'terminal_failure';
+      return 'pre_admission_failure';
     }
     if (args.expectedConfigRevision !== undefined) {
       const config = this.config.inactivityConfigRepo?.getByAgent(args.spaceId, args.agentId);

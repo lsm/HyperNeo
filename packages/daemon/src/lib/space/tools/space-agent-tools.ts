@@ -204,6 +204,7 @@ const SPACE_SESSION_MAX_LIMIT = 100;
 const SPACE_SESSION_DEFAULT_LIMIT = 50;
 const SESSION_DETAIL_MESSAGE_LIMIT = 5;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
+const DEFAULT_INACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
 const SESSION_MESSAGE_MAX_LIMIT = 100;
 
 function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
@@ -5331,6 +5332,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           );
           if (args.enabled) {
             config.inactivityClaimRepo?.clearDegraded(config.spaceId, config.myAgentId);
+            if (cfg && cfg.thresholdMs === null) {
+              config.inactivityConfigRepo?.upsert({
+                spaceId: config.spaceId,
+                agentId: config.myAgentId,
+                thresholdMs: DEFAULT_INACTIVITY_THRESHOLD_MS,
+              });
+            }
           }
           return {
             content: [

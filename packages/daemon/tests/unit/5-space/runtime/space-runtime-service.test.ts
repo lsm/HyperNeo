@@ -1337,7 +1337,7 @@ describe('SpaceRuntimeService', () => {
       }
     });
 
-    test('deliverLongHorizonAgentNag returns terminal_failure for an inactive agent', async () => {
+    test('deliverLongHorizonAgentNag returns pre_admission_failure for an inactive agent', async () => {
       const sessionManager = makeSessionManager(null);
       const longHorizonAgentRepo = {
         getById: mock(() => ({
@@ -1359,10 +1359,10 @@ describe('SpaceRuntimeService', () => {
         message: 'nag',
         idempotencyKey: 'k',
       });
-      expect(result).toBe('terminal_failure');
+      expect(result).toBe('pre_admission_failure');
     });
 
-    test('deliverLongHorizonAgentNag returns terminal_failure when the space is not wakeable', async () => {
+    test('deliverLongHorizonAgentNag returns pre_admission_failure when the space is not wakeable', async () => {
       const sessionManager = makeSessionManager(null);
       const longHorizonAgentRepo = {
         getById: mock(() => ({
@@ -1387,7 +1387,7 @@ describe('SpaceRuntimeService', () => {
         message: 'nag',
         idempotencyKey: 'k',
       });
-      expect(result).toBe('terminal_failure');
+      expect(result).toBe('pre_admission_failure');
     });
 
     test('deliverLongHorizonAgentNag returns pre_admission_failure when the config revision moved on', async () => {
