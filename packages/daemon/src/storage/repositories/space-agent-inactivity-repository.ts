@@ -138,13 +138,17 @@ export class SpaceAgentInactivityClaimRepository {
     const now = Date.now();
     const result = this.db.transaction(() => {
       const existing = this.getByAgent(params.spaceId, params.agentId);
-      if (
+      const blocksCurrentWindow =
         existing !== null &&
         existing.state !== 'none' &&
         !existing.degraded &&
-        existing.claimKey !== params.claimKey
+        existing.windowAnchoredAt === params.windowAnchoredAt &&
+        existing.configRevision === params.configRevision;
+      if (
+        blocksCurrentWindow &&
+        (existing!.claimKey !== params.claimKey || existing!.ownerToken !== params.ownerToken)
       ) {
-        return { acquired: false, claim: existing };
+        return { acquired: false, claim: existing! };
       }
       const id = existing?.id ?? generateUUID();
       const createdAt = existing?.createdAt ?? now;
@@ -208,6 +212,9 @@ export class SpaceAgentInactivityClaimRepository {
       if (reset.releaseClaim) {
         this.db.prepare(`DELETE FROM space_agent_inactivity_claims WHERE id = ?`).run(existing.id);
         return null;
+      }
+      if (!reset.markDegraded && !reset.advanceAttemptGeneration) {
+        return existing;
       }
       this.db
         .prepare(

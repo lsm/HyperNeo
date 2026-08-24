@@ -106,6 +106,84 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(retry.acquired).toBe(true);
     });
 
+    it('treats a matching live claim as idempotent only for its owner', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      const otherOwner = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-b',
+        configRevision: 1,
+      });
+      expect(otherOwner.acquired).toBe(false);
+      expect(otherOwner.claim.ownerToken).toBe('scanner-a');
+    });
+
+    it('replaces a live claim left behind for an older window or revision', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'old',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      const newWindow = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'new-window',
+        windowAnchoredAt: 200,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-b',
+        configRevision: 1,
+      });
+      expect(newWindow.acquired).toBe(true);
+      expect(newWindow.claim.claimKey).toBe('new-window');
+
+      const newRevision = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'new-revision',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-c',
+        configRevision: 2,
+      });
+      expect(newRevision.acquired).toBe(true);
+      expect(newRevision.claim.claimKey).toBe('new-revision');
+    });
+
+    it('holds an accepted claim unchanged through a no-op accepted reset', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      claimRepo.markInFlight(spaceId, 'agent-1', 'k');
+      const held = claimRepo.applyReset(spaceId, 'agent-1', {
+        releaseClaim: false,
+        markDegraded: false,
+        advanceAttemptGeneration: false,
+      });
+      expect(held?.state).toBe('in_flight');
+      expect(held?.claimKey).toBe('k');
+    });
+
     it('refuses to steal a live different-key claim', () => {
       claimRepo.acquire({
         spaceId,
