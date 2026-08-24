@@ -51,6 +51,11 @@ const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
   return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
 })();
 
+const MAX_ZERO_PROGRESS_DELIVERY_FAILURES = (() => {
+  const env = Number(process.env.HYPERNEO_DELIVERY_ZERO_PROGRESS_MAX);
+  return Number.isFinite(env) && env > 0 ? env : 3;
+})();
+
 interface NoPidTrackedProcess {
   proc: TrackedAgentProcess;
   exitPromise?: Promise<void>;
@@ -232,7 +237,33 @@ export class AgentSession
   private rateLimitWatchdog: RateLimitWatchdog;
 
   queryObject: QueryLike | null = null;
-  queryPromise: Promise<void> | null = null;
+  private queryPromiseValue: Promise<void> | null = null;
+  private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
+  get queryPromise(): Promise<void> | null {
+    return this.queryPromiseValue;
+  }
+  set queryPromise(next: Promise<void> | null) {
+    this.queryPromiseValue = next;
+    if (!next) {
+      this.queryLiveness = null;
+      return;
+    }
+    let live = true;
+    next.then(
+      () => {
+        live = false;
+      },
+      () => {
+        live = false;
+      }
+    );
+    this.queryLiveness = { promise: next, isLive: () => live };
+  }
+  hasLiveQuery(): boolean {
+    const tracked = this.queryLiveness;
+    if (!tracked || this.queryPromiseValue !== tracked.promise) return false;
+    return tracked.isLive();
+  }
   private _queryGeneration = 0;
   queryAbortController: AbortController | null = null;
   firstMessageReceived = false;
@@ -242,6 +273,7 @@ export class AgentSession
 
   private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
   private deliveryTurnStalled = false;
+  private zeroProgressDeliveryFailures = 0;
   private deliveryResponseObserver: {
     generation: number;
     observer: MessageDeliveryAttemptObserver;
@@ -1627,6 +1659,7 @@ export class AgentSession
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
     if (started.kind === 'turn_terminated') {
+      this.zeroProgressDeliveryFailures = 0;
       return { outcome: 'turn_terminated' };
     }
     if (started.kind === 'aborted') {
@@ -1658,22 +1691,41 @@ export class AgentSession
     let stallWatchdog: DeliveryTurnStallWatchdog | null = null;
     let activeTurnEnd = started.turnEnd;
     const responseObserver = started.responseObserver;
+    let kickoffAcknowledged = false;
     try {
       if (started.acknowledgment) {
         const aborted = waitForDeliveryAbort(signal);
+        let kickoffWinner: 'acknowledged' | 'query_ended' = 'query_ended';
         try {
-          await Promise.race([started.acknowledgment, aborted.promise]);
+          kickoffWinner = await Promise.race([
+            started.acknowledgment.then(() => 'acknowledged' as const),
+            started.queryPromise.catch(() => {}).then(() => 'query_ended' as const),
+            aborted.promise,
+          ]);
         } catch (error) {
           if (signal?.aborted) {
             if (!started.freshFeed) throw error;
             if (this.messageQueue.remove(messageUuid)) throw error;
             await started.acknowledgment;
+            kickoffWinner = 'acknowledged';
           } else {
-            throw error;
+            const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
+            throw terminal ?? error;
           }
         } finally {
           aborted.cancel();
         }
+        if (kickoffWinner === 'query_ended') {
+          const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
+          throw (
+            terminal ??
+            new MessageDeliveryRecoverableTurnError(
+              'Turn query ended before the SDK consumed the kickoff'
+            )
+          );
+        }
+        kickoffAcknowledged = true;
+        this.zeroProgressDeliveryFailures = 0;
         this.logger.debug(
           `delivery-turn: kickoff consumed by SDK ` +
             `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
@@ -1788,12 +1840,17 @@ export class AgentSession
         throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
       }
       if (completion.outcome === 'recoverable_error') {
+        if (!kickoffAcknowledged) {
+          const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
+          if (terminal) throw terminal;
+        }
         if (completion.reopenForRetry) {
           this.reopenDeliveryForRetry(messageUuid);
         }
         throw new MessageDeliveryRecoverableTurnError(completion.detail, completion.category);
       }
     }
+    this.zeroProgressDeliveryFailures = 0;
     return { outcome: 'completed' };
   }
 
@@ -1832,6 +1889,58 @@ export class AgentSession
   private clearDeliveryTurnStall(): void {
     this.deliveryTurnStall?.cancel();
     this.deliveryTurnStall = null;
+  }
+
+  private async escalateZeroProgressDeliveryFailure(
+    messageUuid: string
+  ): Promise<MessageDeliveryTerminalTurnError | null> {
+    this.zeroProgressDeliveryFailures += 1;
+    if (this.zeroProgressDeliveryFailures < MAX_ZERO_PROGRESS_DELIVERY_FAILURES) return null;
+    this.zeroProgressDeliveryFailures = 0;
+    const detail =
+      `Delivery for ${messageUuid} failed ${MAX_ZERO_PROGRESS_DELIVERY_FAILURES} consecutive ` +
+      `times with zero SDK progress — every query backing the turn died before the message ` +
+      `was consumed (startup-gate admission aborts under retry pressure). Failing the message ` +
+      `and resetting the session instead of retrying.`;
+    this.logger.error(
+      `delivery-turn: zero-progress delivery livelock detected for session ${this.session.id} ` +
+        `(uuid=${messageUuid}, queueRunning=${this.messageQueue.isRunning()}, ` +
+        `liveQuery=${this.hasLiveQuery()}, generation=${this.getQueryGeneration()}); ` +
+        `resetting the session and terminalizing the delivery`
+    );
+    deliveryMetrics.recordZeroProgressWedge();
+    try {
+      const resetResult = await this.resetQuery({ restartQuery: false });
+      if (!resetResult.success) {
+        this.logger.warn(
+          `delivery-turn: wedge recovery reset reported failure: ${resetResult.error ?? 'unknown'}`
+        );
+      }
+    } catch (resetError) {
+      this.logger.warn('delivery-turn: wedge recovery reset failed:', resetError);
+    }
+    return new MessageDeliveryTerminalTurnError(detail, 'delivery_zero_progress');
+  }
+
+  async clearStuckProcessingState(messageUuid: string): Promise<boolean> {
+    const shouldReset = await withSessionLock(this.session.id, async () => {
+      const state = this.stateManager.getState();
+      if (state.status !== 'processing' || state.messageId !== messageUuid) return false;
+      return !this.hasLiveQuery();
+    });
+    if (!shouldReset) return false;
+    this.logger.warn(
+      `delivery: clearing stuck processing state (messageId=${messageUuid}) after terminal ` +
+        `delivery failure — no live query owns the turn; resetting so the session accepts ` +
+        `new messages`
+    );
+    try {
+      await this.resetQuery({ restartQuery: false });
+    } catch (resetError) {
+      this.logger.warn('delivery: stuck-state reset failed:', resetError);
+      return false;
+    }
+    return true;
   }
 
   private consumeTerminalTurnError(turnStartedAt: number): StructuredError | null {
@@ -1888,17 +1997,29 @@ export class AgentSession
       return { outcome: 'awaiting_acceptance' };
     }
     const aborted = waitForDeliveryAbort(signal);
+    const steerQueryEnded: Promise<'query_ended'> = this.queryPromise
+      ? this.queryPromise.catch(() => {}).then(() => 'query_ended' as const)
+      : Promise.resolve('query_ended');
+    let steerWinner: 'acknowledged' | 'query_ended' = 'query_ended';
     try {
-      await Promise.race([action.acknowledgment, aborted.promise]);
+      steerWinner = await Promise.race([
+        action.acknowledgment.then(() => 'acknowledged' as const),
+        steerQueryEnded,
+        aborted.promise,
+      ]);
     } catch (error) {
       if (signal?.aborted) {
         if (this.messageQueue.remove(messageUuid)) throw error;
         await action.acknowledgment;
+        steerWinner = 'acknowledged';
       } else {
         throw error;
       }
     } finally {
       aborted.cancel();
+    }
+    if (steerWinner === 'query_ended') {
+      throw new Error('Steer target query ended before the SDK consumed the steer');
     }
     deliveryMetrics.recordFeed(messageUuid);
     observer?.reportStage('sdk_admitted', { generation: action.generation });

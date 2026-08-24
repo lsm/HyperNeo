@@ -956,11 +956,18 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
-    it('a DURABLE feed that was never yielded still rejects (genuine stall → safe retry)', async () => {
+    it('a DURABLE feed that was never yielded stays pending (timeout arms only once a consumer yields it)', async () => {
       const q = new MessageQueue();
       q.overrideTimeoutMsForTest(40);
       const promise = q.enqueueWithId('msg-stalled', 'hello', false, { durable: true });
-      await expect(promise).rejects.toThrow('Message queue timeout');
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      expect(q.hasPendingOrInFlight('msg-stalled')).toBe(true);
+      const settled = promise.then(
+        () => 'resolved',
+        (error) => error
+      );
+      q.clear();
+      expect(await settled).toMatchObject({ message: 'Interrupted by user' });
     });
   });
 });

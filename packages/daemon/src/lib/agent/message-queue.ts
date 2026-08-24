@@ -102,8 +102,6 @@ export class MessageQueue {
         internal,
       };
 
-      this.armQueueTimeout(queuedMessage);
-
       if (options?.prepend) {
         this.queue.unshift(queuedMessage);
       } else {
