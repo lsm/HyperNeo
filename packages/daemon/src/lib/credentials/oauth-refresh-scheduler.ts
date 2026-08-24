@@ -1,5 +1,6 @@
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
+import { getProviderFailure } from '../providers/provider-failure-store.js';
 import type { ProviderRecoveryOutcome } from '../model-service.js';
 import type { ProviderCredentialManager } from './provider-credential-manager.js';
 
@@ -59,12 +60,13 @@ export class OAuthRefreshScheduler {
     }
     const tick = this.activeTick;
     if (tick) {
-      await tick;
+      await tick.catch(() => {});
     }
   }
 
   async tick(): Promise<void> {
-    const promise = this.runTick();
+    const prior = this.activeTick ?? Promise.resolve();
+    const promise = prior.catch(() => {}).then(() => this.runTick());
     this.activeTick = promise;
     try {
       await promise;
@@ -125,6 +127,8 @@ export class OAuthRefreshScheduler {
     try {
       const outcome = await this.recoverDormantProvider(providerId);
       if (outcome === 'failed') {
+        this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      } else if (outcome === 'no-op' && getProviderFailure(providerId)) {
         this.credentialManager.markProviderHealth(providerId, 'unhealthy');
       }
     } catch {}

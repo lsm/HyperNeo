@@ -2,6 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import type { Provider } from '@hyperneo/shared/provider';
 import { ProviderRegistry } from '../../../../src/lib/providers/registry';
 import { OAuthRefreshScheduler } from '../../../../src/lib/credentials/oauth-refresh-scheduler';
+import {
+  clearProviderFailureRecords,
+  recordClassifiedProviderFailure,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 class FakeCredentialManager {
   credentials = new Map<string, unknown>();
@@ -401,5 +405,115 @@ describe('OAuthRefreshScheduler', () => {
 
     expect(stopResolved).toBe(true);
     expect(manager.stored).toHaveLength(1);
+  });
+
+  it('serializes overlapping ticks and drains all of them on stop', async () => {
+    const registry = new ProviderRegistry();
+    const credentials = {
+      type: 'oauth' as const,
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    };
+    const provider = createProvider(true);
+    provider.getCredentials = () => credentials;
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', credentials);
+    const gates: Array<() => void> = [];
+    let recoveryRuns = 0;
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      recoverDormantProvider: () =>
+        new Promise((resolve) => {
+          recoveryRuns++;
+          gates.push(() => resolve('recovered'));
+        }),
+    });
+
+    const first = scheduler.tick();
+    for (let i = 0; i < 50 && recoveryRuns < 1; i++) {
+      await Promise.resolve();
+    }
+    expect(recoveryRuns).toBe(1);
+
+    const second = scheduler.tick();
+    for (let i = 0; i < 50; i++) {
+      await Promise.resolve();
+    }
+    expect(recoveryRuns).toBe(1);
+
+    let stopResolved = false;
+    const stopped = scheduler.stop().then(() => {
+      stopResolved = true;
+    });
+    gates[0]?.();
+    await first;
+    for (let i = 0; i < 50 && recoveryRuns < 2; i++) {
+      await Promise.resolve();
+    }
+    expect(recoveryRuns).toBe(2);
+    expect(stopResolved).toBe(false);
+
+    gates[1]?.();
+    await second;
+    await stopped;
+
+    expect(stopResolved).toBe(true);
+  });
+
+  it('stop waits for a failing tick without propagating its rejection', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    manager.storeOAuthTokens = async () => {
+      throw new Error('credential store failed');
+    };
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+
+    await expect(scheduler.tick()).rejects.toThrow('credential store failed');
+
+    await expect(scheduler.stop()).resolves.toBeUndefined();
+  });
+
+  it('retains unhealthy on a no-op recovery when a failure is still recorded', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    recordClassifiedProviderFailure('oauth-provider', {
+      errorKind: 'transient',
+      message: 'Endpoint returned HTTP 503',
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      recoverDormantProvider: async () => 'no-op',
+    });
+    try {
+      await scheduler.tick();
+
+      expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    } finally {
+      clearProviderFailureRecords();
+    }
   });
 });
