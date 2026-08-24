@@ -453,6 +453,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(enqueueSpy.mock.calls[0]).toEqual([
       expect.any(String),
       TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+      true,
     ]);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
@@ -1357,6 +1358,70 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(continueCalls()).toBe(1);
     expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('attaches the settlement watcher to directly parked episodes', async () => {
+    const ensureQueryStarted = mock(async () => 'started' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    const holder: { resolve?: () => void } = {};
+    agentSession.queryPromise = new Promise<void>((resolve) => {
+      holder.resolve = resolve;
+    });
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    holder.resolve?.();
+    agentSession.queryPromise = null;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('cancels the escalation when the episode resets before the publish resolves', async () => {
+    publishSpy.mockImplementation(async (event?: unknown, payload?: Record<string, unknown>) => {
+      if (event === 'space.workflowRun.needsAttention') {
+        agentSession.resetTaskNotificationRequery();
+        if (payload) payload.handledBySpaceService = false;
+      }
+      return { delivered: 1, failures: [] };
+    });
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
+      undefined
+    );
+  });
+
+  it('skips the escalation fallback when a reset lands during a rejecting publish', async () => {
+    publishSpy.mockImplementation(async (event?: unknown) => {
+      if (event === 'space.workflowRun.needsAttention') {
+        agentSession.resetTaskNotificationRequery();
+        throw new Error('bus boom');
+      }
+      return { delivered: 1, failures: [] };
+    });
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
+      undefined
+    );
   });
 
   it('clears a pending re-query timer when the user interrupts', async () => {

@@ -1485,6 +1485,7 @@ export class AgentSession
       this.clearTaskNotificationRequeryTimer();
       this.taskNotificationRequeryPending = true;
       this.taskNotificationRequeryPendingDelayMs = decision.delayMs;
+      this.attachTaskNotificationRequerySettlementWatcher();
     }
   }
 
@@ -1506,8 +1507,6 @@ export class AgentSession
 
   private scheduleTaskNotificationRequery(delayMs: number): void {
     this.clearTaskNotificationRequeryTimer();
-    const episodeToken = this.taskNotificationRequeryEpisodeToken;
-    const owningQuery = this.queryPromise;
     const timer = setTimeout(() => {
       this.taskNotificationRequeryTimer = null;
       void this.runTaskNotificationRequeryContinue();
@@ -1516,10 +1515,15 @@ export class AgentSession
       timer.unref();
     }
     this.taskNotificationRequeryTimer = timer;
-    if (owningQuery) {
-      const onSettled = () => this.releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken);
-      void owningQuery.then(onSettled, onSettled);
-    }
+    this.attachTaskNotificationRequerySettlementWatcher();
+  }
+
+  private attachTaskNotificationRequerySettlementWatcher(): void {
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
+    const owningQuery = this.queryPromise;
+    if (!owningQuery) return;
+    const onSettled = () => this.releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken);
+    void owningQuery.then(onSettled, onSettled);
   }
 
   private releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken: number): void {
@@ -1709,7 +1713,8 @@ export class AgentSession
     try {
       await this.messageQueue.enqueueWithId(
         continueMessageId,
-        TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE
+        TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+        true
       );
       const settledQuery = this.queryPromise;
       if (settledQuery) {
@@ -1763,6 +1768,7 @@ export class AgentSession
 
   private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
     const attempts = this.taskNotificationRequeryAttempts;
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
     const execution = this.db.getNodeExecutionRepo?.().getByAgentSessionId(this.session.id) ?? null;
     const event = buildTaskNotificationRequeryEscalationEvent({
       sessionId: this.session.id,
@@ -1778,7 +1784,7 @@ export class AgentSession
           `${this.session.id}; needs attention: no space context resolved, surfacing a ` +
           'recoverable session error'
       );
-      await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
+      await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
       return;
     }
     this.logger.warn(
@@ -1791,23 +1797,29 @@ export class AgentSession
         handledBySpaceService: false,
       } as typeof event & import('../internal-event-bus').InternalEventPayload;
       await this.internalEventBus.publish('space.workflowRun.needsAttention', payload);
+      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       if (!payload.handledBySpaceService) {
         this.logger.warn(
           `task-notification requery: needs-attention escalation had no handler for space ` +
             `${event.spaceId}; surfacing a recoverable session error instead`
         );
-        await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
+        await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
       }
     } catch (error) {
+      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       this.logger.warn(
         `task-notification requery: failed to publish needs-attention escalation: ` +
           `${error instanceof Error ? error.message : String(error)}`
       );
-      await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
+      await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
     }
   }
 
-  private async surfaceTaskNotificationRequeryExhaustionError(attempts: number): Promise<void> {
+  private async surfaceTaskNotificationRequeryExhaustionError(
+    attempts: number,
+    episodeToken: number
+  ): Promise<void> {
+    if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
     try {
       await this.errorManager.handleError(
         this.session.id,
