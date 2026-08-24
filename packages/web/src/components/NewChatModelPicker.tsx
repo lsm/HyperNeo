@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
   getProviderLabel,
   groupModelsByProvider,
@@ -29,6 +29,7 @@ interface NewChatModelPickerProps {
 
 function providerDotClass(status: ProviderAuthStatus | undefined): string {
   if (!status) return 'bg-gray-500';
+  if (status.errorKind === 'transient') return 'bg-gray-500';
   if (!status.isAuthenticated) return 'bg-red-500';
   if (status.needsRefresh) return 'bg-yellow-500';
   return 'bg-green-500';
@@ -51,11 +52,10 @@ export function NewChatModelPicker({
 
   useClickOutside(dropdownRef, dropdown.close, dropdown.isOpen);
 
-  useEffect(() => {
-    if (!isConnected) return;
+  const loadAuthStatuses = useCallback(() => {
     let cancelled = false;
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
+    if (!hub) return () => {};
     hub
       .request<{ providers?: ProviderAuthStatus[] }>('auth.providers', {})
       .then((result) => {
@@ -70,7 +70,23 @@ export function NewChatModelPicker({
     return () => {
       cancelled = true;
     };
-  }, [isConnected]);
+  }, []);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    return loadAuthStatuses();
+  }, [isConnected, loadAuthStatuses]);
+
+  useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadAuthStatuses();
+    });
+    return () => {
+      unsub();
+    };
+  }, [loadAuthStatuses, connectionState.value]);
 
   useEffect(() => {
     if (!dropdown.isOpen) setSearchQuery('');
@@ -80,6 +96,7 @@ export function NewChatModelPicker({
     availableModels,
     providerAuthStatuses,
     activeModelInfo?.provider,
+    activeModelInfo?.id,
     searchQuery
   );
   const groupedModels = groupModelsByProvider(filteredModels);

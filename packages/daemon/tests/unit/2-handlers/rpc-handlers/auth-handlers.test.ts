@@ -172,6 +172,26 @@ describe('Auth RPC Handlers', () => {
       expect(result.providers[0].isAuthenticated).toBe(false);
       expect(result.providers[0].error).toBe('Auth check failed');
     });
+
+    it('propagates errorKind from provider auth status', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => ({
+          isAuthenticated: false,
+          errorKind: 'transient' as const,
+        })),
+      });
+      testRegistry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{ id: string; isAuthenticated: boolean; errorKind?: string }>;
+      };
+
+      expect(result.providers[0].errorKind).toBe('transient');
+    });
   });
 
   describe('auth.login', () => {

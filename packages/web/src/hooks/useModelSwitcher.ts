@@ -191,16 +191,23 @@ export function getProviderLabel(provider: string): string {
   return provider;
 }
 
+export function isDefinitiveAuthFailure(auth: ProviderAuthStatus): boolean {
+  return !auth.isAuthenticated && auth.errorKind !== 'transient';
+}
+
 export function filterModelsForPicker(
   models: ModelInfo[],
   providerAuthMap: Map<string, ProviderAuthStatus>,
-  currentProvider?: string
+  currentProvider?: string,
+  currentModelId?: string
 ): ModelInfo[] {
   return models.filter((m) => {
     const auth = providerAuthMap.get(m.provider);
     if (!auth) return true;
-    if (m.provider === currentProvider) return true;
-    return auth.isAuthenticated;
+    if (isDefinitiveAuthFailure(auth)) {
+      return m.provider === currentProvider && m.id === currentModelId;
+    }
+    return true;
   });
 }
 
@@ -223,12 +230,18 @@ export function useFilteredModelsForPicker(
   models: ModelInfo[],
   providerAuthMap: Map<string, ProviderAuthStatus>,
   currentProvider: string | undefined,
+  currentModelId: string | undefined,
   searchQuery: string
 ): ModelInfo[] {
   return useMemo(() => {
-    const authFilteredModels = filterModelsForPicker(models, providerAuthMap, currentProvider);
+    const authFilteredModels = filterModelsForPicker(
+      models,
+      providerAuthMap,
+      currentProvider,
+      currentModelId
+    );
     return filterModelsBySearch(authFilteredModels, searchQuery);
-  }, [models, providerAuthMap, currentProvider, searchQuery]);
+  }, [models, providerAuthMap, currentProvider, currentModelId, searchQuery]);
 }
 
 export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResult {

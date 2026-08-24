@@ -1,3 +1,5 @@
+import type { ProviderFailureErrorKind } from './types.js';
+
 export interface ProviderAuthStatus {
   id: string;
   displayName: string;
@@ -10,6 +12,7 @@ export interface ProviderAuthStatus {
     name?: string;
   };
   error?: string;
+  errorKind?: ProviderFailureErrorKind;
 }
 
 export interface ProviderAuthRequest {

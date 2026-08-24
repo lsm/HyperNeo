@@ -11,6 +11,7 @@ import {
   mapRawModelsToModelInfos,
   filterModelsForPicker,
   filterModelsBySearch,
+  isDefinitiveAuthFailure,
   useFilteredModelsForPicker,
 } from '../useModelSwitcher.ts';
 
@@ -198,10 +199,42 @@ describe('useModelSwitcher', () => {
       expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
     });
 
-    it('keeps GLM models when GLM is the active provider even if not authenticated', () => {
-      const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
+    it('keeps GLM models when GLM is the active provider and not definitively failed', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'transient' }],
+      ]);
       const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm');
       expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+
+    it('preserves only the selected model of the active provider under a definitive failure', () => {
+      const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm', 'glm-5');
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'sonnet']);
+    });
+
+    it('blocks every active-provider model under a credential failure when none is selected', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'credential' }],
+      ]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm');
+      expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
+    });
+
+    it('keeps models of a transiently failed provider even when unauthenticated', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'transient' }],
+      ]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'anthropic');
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+
+    it('hides models of a provider with a definitive credential failure', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'credential' }],
+      ]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'anthropic');
+      expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
     });
 
     it('shows GLM models optimistically when GLM is absent from the auth map', () => {
@@ -211,6 +244,35 @@ describe('useModelSwitcher', () => {
         'anthropic'
       );
       expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+  });
+
+  describe('isDefinitiveAuthFailure', () => {
+    it('treats unauthenticated without errorKind as definitive', () => {
+      expect(isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: false })).toBe(true);
+    });
+
+    it('treats unauthenticated with credential errorKind as definitive', () => {
+      expect(
+        isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: false, errorKind: 'credential' })
+      ).toBe(true);
+    });
+
+    it('treats unauthenticated with transient errorKind as not definitive', () => {
+      expect(
+        isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: false, errorKind: 'transient' })
+      ).toBe(false);
+    });
+
+    it('treats authenticated statuses as not definitive', () => {
+      expect(isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: true })).toBe(false);
+      expect(
+        isDefinitiveAuthFailure({
+          id: 'glm',
+          isAuthenticated: true,
+          errorKind: 'transient',
+        })
+      ).toBe(false);
     });
   });
 
@@ -1382,8 +1444,10 @@ describe('filterModelsForPicker', () => {
     expect(result[0].provider).toBe('anthropic');
   });
 
-  it('keeps the current provider even when unauthenticated', () => {
-    const authMap = new Map([['anthropic-copilot', makeAuth('anthropic-copilot', false)]]);
+  it('keeps the current provider when its failure is transient', () => {
+    const authMap = new Map([
+      ['anthropic-copilot', { ...makeAuth('anthropic-copilot', false), errorKind: 'transient' }],
+    ]);
     const result = filterModelsForPicker(
       [anthropicModel, copilotModel],
       authMap,
@@ -1398,7 +1462,7 @@ describe('filterModelsForPicker', () => {
     expect(result).toHaveLength(1);
   });
 
-  it('hides non-current unauthenticated and shows current unauthenticated', () => {
+  it('hides non-current unauthenticated and keeps only the selected model of the current unauthenticated provider', () => {
     const authMap = new Map([
       ['anthropic', makeAuth('anthropic', false)],
       ['anthropic-copilot', makeAuth('anthropic-copilot', false)],
@@ -1407,7 +1471,8 @@ describe('filterModelsForPicker', () => {
     const result = filterModelsForPicker(
       [anthropicModel, copilotModel, codexModel],
       authMap,
-      'anthropic'
+      'anthropic',
+      'claude-sonnet'
     );
     expect(result.map((m) => m.provider)).toEqual(['anthropic', 'anthropic-codex']);
   });
@@ -1482,6 +1547,7 @@ describe('useFilteredModelsForPicker', () => {
       useFilteredModelsForPicker(
         [anthropicModel, copilotModel, codexModel],
         authMap,
+        undefined,
         undefined,
         'sonnet'
       )
