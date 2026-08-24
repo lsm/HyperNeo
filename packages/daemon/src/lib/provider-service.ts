@@ -23,16 +23,6 @@ export const NON_ANTHROPIC_PREFIX_PROVIDER_VARS = [
   'ENABLE_TOOL_SEARCH',
 ] as const;
 
-function preferUncuratedModel(
-  providerId: string,
-  ...candidates: Array<string | undefined>
-): string | undefined {
-  for (const candidate of candidates) {
-    if (candidate && !isCuratedOutModel(candidate, providerId)) return candidate;
-  }
-  return undefined;
-}
-
 export interface ProviderEnvVars {
   ANTHROPIC_BASE_URL?: string;
   ANTHROPIC_API_KEY?: string;
@@ -228,6 +218,24 @@ export class ProviderService {
     return models[0]?.id || 'default';
   }
 
+  private async preferVisibleCuratedModel(
+    providerId: string,
+    provider: RegisteredProvider,
+    ...candidates: Array<string | undefined>
+  ): Promise<string | undefined> {
+    const curated = this.getRegistry().getCuratedModels(providerId);
+    const catalogIds =
+      curated !== undefined
+        ? new Set((await provider.getModels()).map((model) => model.id))
+        : undefined;
+    for (const candidate of candidates) {
+      if (!candidate || isCuratedOutModel(candidate, providerId)) continue;
+      if (catalogIds && !catalogIds.has(candidate)) continue;
+      return candidate;
+    }
+    return undefined;
+  }
+
   private async getVisibleProviderDefaultModelId(
     providerId: string,
     provider: RegisteredProvider
@@ -268,8 +276,9 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     if (!provider) return null;
-    const preferred = preferUncuratedModel(
+    const preferred = await this.preferVisibleCuratedModel(
       providerId,
+      provider,
       provider.getTitleGenerationModel?.(),
       provider.getModelForTier?.('haiku')
     );
@@ -305,7 +314,7 @@ export class ProviderService {
     const titleOverride = provider.getTitleGenerationModel?.();
     const tierFallback = provider.getModelForTier('haiku');
     let modelId =
-      preferUncuratedModel(providerId, titleOverride, tierFallback) ??
+      (await this.preferVisibleCuratedModel(providerId, provider, titleOverride, tierFallback)) ??
       (await this.getVisibleProviderDefaultModelId(providerId, provider));
     if (!modelId) {
       if (registry.getCuratedModels(providerId) !== undefined) return null;

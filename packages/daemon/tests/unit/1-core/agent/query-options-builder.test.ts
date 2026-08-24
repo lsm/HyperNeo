@@ -150,6 +150,40 @@ describe('QueryOptionsBuilder', () => {
         expect(options.fallbackModel).toBe('haiku');
         expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
       });
+
+      it('declines the refusal dialog when the fallback becomes curated out after build', async () => {
+        try {
+          mockSession.config.fallbackModel = 'haiku';
+          const options = await builder.build();
+          getProviderRegistry().setCuratedModels('anthropic', []);
+
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
+
+      it('approves the refusal dialog while the fallback remains visible', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        try {
+          mockSession.config.fallbackModel = 'haiku';
+          const options = await builder.build();
+
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'completed', result: { continue: true } });
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
     });
 
     it('should include agents when configured', async () => {

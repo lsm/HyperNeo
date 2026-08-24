@@ -381,7 +381,11 @@ export class QueryOptionsBuilder {
 
       canUseTool: this.canUseTool,
       onUserDialog: async (request) => {
-        if (request.dialogKind === 'refusal_fallback_prompt') {
+        if (
+          request.dialogKind === 'refusal_fallback_prompt' &&
+          config.fallbackModel &&
+          !isCuratedOutModel(config.fallbackModel, providerId)
+        ) {
           return { behavior: 'completed', result: { continue: true } };
         }
         return { behavior: 'cancelled' };

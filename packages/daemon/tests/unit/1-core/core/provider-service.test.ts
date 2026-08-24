@@ -649,12 +649,44 @@ describe('ProviderService', () => {
     it('uses the tier fallback when the title override is curated out', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();
-      globalRegistry.register(new TitleOverrideMockProvider());
+      const provider = new TitleOverrideMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => [
+        ...baseModels,
+        {
+          id: 'title-haiku',
+          name: 'Title Haiku',
+          alias: 'title-haiku',
+          family: 'mock',
+          provider: 'title-override',
+          contextWindow: 100000,
+          description: 'Mock model',
+          releaseDate: '',
+          available: true,
+        },
+      ];
+      globalRegistry.register(provider);
       globalRegistry.setCuratedModels('title-override', [{ id: 'title-haiku' }, { id: 'title-1' }]);
 
       const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
 
       expect(config?.modelId).toBe('title-haiku');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
+    });
+
+    it('skips a curated-listed title override that is missing from the provider catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [
+        { id: 'title-turbo' },
+        { id: 'title-haiku' },
+        { id: 'title-1' },
+      ]);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config?.modelId).toBe('title-1');
       expect(config?.baseUrl).toBe('https://mock.api.com');
     });
 
@@ -712,6 +744,19 @@ describe('ProviderService', () => {
       const realService = new ProviderService();
       globalRegistry.register(new TitleOverrideMockProvider());
       globalRegistry.setCuratedModels('title-override', [{ id: 'title-stale' }, { id: 'title-1' }]);
+
+      expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
+    });
+
+    it('skips curated-listed preferred candidates missing from the provider catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [
+        { id: 'title-turbo' },
+        { id: 'title-haiku' },
+        { id: 'title-1' },
+      ]);
 
       expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
     });
