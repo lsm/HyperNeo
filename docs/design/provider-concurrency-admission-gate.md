@@ -250,9 +250,12 @@ gate never sees. Re-flagging and admission are two separate rules:
   queries** — `evolution-conversation-analysis-service.ts:289-296`,
   `evolution-episode-service.ts:754-761`, and `llm-workflow-selector.ts:56-61`
   each invoke the SDK directly on the configured Space/default provider: they
-  defer while their effective account is saturated or probing (no grant
-  competition — same fully-open-only rule as titles) and classify/report their
-  failures via `reportLimitError` — but **each caller's denial shape differs**:
+  follow the **same grant-aware background contract as titles** — standard
+  admission (saturated/closed deny, probing deny unless the bound grant is
+  theirs, open admit), background-queue position, full grant lifecycle
+  (consume at query start, resolve on termination) — and classify/report
+  their failures via `reportLimitError`; but **each caller's denial shape
+  differs**:
   the conversation-friction analysis runs inside a durable job (the title
   interpreter's `requeue(job.id, retryAt)` park applies as-is);
   `evolution.episode.createFromEvidence` awaits its judge inside a MessageHub
@@ -263,7 +266,11 @@ gate never sees. Re-flagging and admission are two separate rules:
   (rule-based selection) instead of deferring. These six surfaces (titles +
   three Space jobs + `github/router-agent.ts:198-244` and
   `github/security-agent.ts:147-204`, which `DaemonApp` supplies with the same
-  stored session credentials, `app.ts:536-566`) are v1's roster of
+  stored session credentials, `app.ts:536-566` — a **one-time snapshot**,
+  so the credential-change re-admission hook recreates/updates both agents
+  from the new credentials before re-admitting or draining any parked
+  GitHub analysis; replaying with a stale snapshot would invoke the old
+  key while the registry reasons about the new account) are v1's roster of
   out-of-pipeline provider callers; any new direct `query(...)` caller joins
   them by convention. The GitHub agents' denial shape **splits by invocation**:
   the poll path (a durable tick) skips the agent work this tick — **without
@@ -274,8 +281,14 @@ gate never sees. Re-flagging and admission are two separate rules:
   would silently eat it) **nor persists the response ETag** — `pollIssues` /
   `pollComments` store the ETag before invoking the callback (`:174-184`,
   `:229-239`), and a retained ETag can 304 the next poll while the repository
-  is unchanged, losing the skipped analysis anyway; the event is re-processed
-  by the next poll once the account reopens; the **webhook path**
+  is unchanged, losing the skipped analysis anyway. **Rollback is
+  per-event, not response-wide**: a multi-event response can contain events
+  already routed before the denial, and `processEvent` has no event-id
+  dedupe before `deliverToRoom` — so the denied event is persisted for
+  targeted retry (the durable raw-event inbox, below) and the cursor
+  advances past the events that completed, rather than withholding the
+  response-wide cursor and reprocessing them; the event is re-processed by
+  the next poll once the account reopens; the **webhook path**
   (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
   callback — no job, no `job.id`) processes the event **without** agent
   analysis (records the raw event, skips the LLM triage) and answers the
@@ -284,11 +297,13 @@ gate never sees. Re-flagging and admission are two separate rules:
   once the account reopens. **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
-  persisted to a durable raw-event inbox keyed by event id, drained through
-  the agents by the credential-change re-admission hook (which already
-  requeues closed-parked jobs) once the account reopens; without that store,
-  saturated-period events in these supported configurations are silently
-  lost. This is the
+  persisted to a durable raw-event inbox keyed by event id, and the inbox
+  entries **register as durable background waiters** — drained through the
+  agents on **any** clear of their account key (normal timer/probe clears
+  included, via the same wake that drains the background queue), not only by
+  the credential-change hook (which covers the billing-closed case); without
+  that store, saturated-period events in these supported configurations are
+  silently lost. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -548,7 +563,15 @@ not inherit):
   keep issuing doomed calls to an exhausted account — contrary to Decision 2's
   all-limits-arm rule. `closed` admits nothing and clears only on a
   credential/account change (the same re-admission hooks as provider changes);
-  it has no probe and no ladder. **Durable parking under closure**: the job
+  it has no probe and no ladder. **Reopening without a credential change**:
+  topping up or renewing the same upstream account leaves the fingerprint
+  untouched, so closure also clears on (a) the session's manual Retry Now /
+  Resume path (the existing RPC re-runs the consult; a closed account's
+  manual retry is the one caller allowed to probe closure — success clears,
+  a fresh billing-terminal response re-arms), and (b) a bounded daily
+  health probe per closed account (one unref'd timer; a successful probe
+  turn clears, a limit re-arms) so a renewal while the daemon idles is not
+  stuck until restart. **Durable parking under closure**: the job
   queue's `run_at` is `INTEGER NOT NULL` and `requeue` takes a number, so a
   closed denial parks an already-enqueued job at a far-future sentinel
   (`CLOSED_PARK_MS`, e.g. 24 h) purely to keep the row durable — the sentinel
@@ -608,7 +631,16 @@ not inherit):
   authoritative reset state: `untilMs` is replaced (never shortened for an
   already-authoritative reset), the wake timer reschedules, and any outstanding
   probe grant is revoked (its delivery returns to the queue) so the next
-  admission waits for the known reset. The classifier's **own SDK query
+  admission waits for the known reset. **Refinement vs a running probe**:
+  the episode token stays matchable only while the grant is *unconsumed* —
+  a matching refinement revokes the unconsumed grant (its delivery returns
+  to the queue) and converts to reset state; once the grant is *consumed*
+  (the probe's prompt has yielded — a running turn cannot be safely
+  un-yielded), the refinement is recorded against the episode but the
+  running probe resolves on its own termination (its 429 re-arms at the
+  refined deadline via `reportRefinedReset`, its clean completion opens and
+  the recorded reset arms for the *next* episode), so no delivery is
+  duplicated and the refinement's knowledge is never lost. The classifier's **own SDK query
   consults admission too**: `resolveClassifierProvider` prefers another
   provider but falls back to the excluded one when it is the only usable
   choice — on a single-provider installation every ambiguous limit error would
@@ -634,13 +666,20 @@ whatever `isRetryableProviderError` accepts — a taxonomy-data-driven predicate
 (`error-taxonomy.ts:369-391`) — up to `maxProviderRetries` (default 3) recursive
 attempts *before* the `:1258` site is ever reached, so a bracketed GLM limit
 carrying no literal 4xx code could burn four calls per session while the
-registry stays clear. The branch classifies the raw message before deciding the
-retry: a limit assessment reports to the registry immediately, and the consult
-gates only the **recursive re-entry** — a denial must not skip-and-return (the
-branch tail-returns `runQuery(...)`, so a bare skip would return from the outer
-catch and swallow the error before the `:1258` assessment ever arms the session
-watchdog or restores the consumed message); it falls through to the existing
-error-path assessment, exactly as an exhausted retry does. Lifecycle reporting
+registry stays clear. The branch classifies the raw message **before its
+destructive setup** — the consult sits ahead of the consumed-message move
+(`retryMsg = this._lastConsumedUserMessage; this._lastConsumedUserMessage =
+null` at the branch head, query-runner.ts:1110-1112): a limit assessment
+reports to the registry immediately, and the consult gates only the
+**recursive re-entry** — a denial must not skip-and-return (the branch
+tail-returns `runQuery(...)`, so a bare skip would return from the outer
+catch and swallow the error before the `:1258` assessment ever arms the
+session watchdog), and it must not fall through *after* the destructive
+setup either (the error path's `messageQueue.clear()` would find
+`_lastConsumedUserMessage` already null and the watchdog could never recover
+the episode's message); consulting before the move lets the denial fall
+through to the existing error-path assessment with the consumed message
+intact, exactly as an exhausted retry does. Lifecycle reporting
 is wired symmetrically at the **provider-turn boundary** — start when the query
 consumes the granted delivery's prompt, end at the turn's terminal result,
 already classified — on the SDK `QueryRunner` **and** the ACP runner (saturation
@@ -684,8 +723,11 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
 ### Queue and wake
 
 - **Registering:** every queue arm appends a composite `(sessionId, messageUuid)`
-  entry to a **single global insertion-ordered queue** (per-session indices exist
-  only for wake routing and deregistration), and the append stamps a
+  entry to one of **two provider-wide insertion-ordered queues — chat and
+  background — with the grant always binding the chat queue's head first and
+  the background queue admitted only when the chat queue is empty**
+  (per-session indices exist only for wake routing and deregistration), and the
+  append stamps a
   **monotonic queue sequence** alongside the `queue_reason` marker (same
   migration) — the durable order key. In-memory order can diverge from row
   age (an older preexisting row P3-parks after a newer message registered),
@@ -843,7 +885,14 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   replay exists to re-run P1 for an idle session, so the rows would otherwise
   stay deferred indefinitely while newer immediate messages dispatch. The
   principle: retained rows are re-admitted on any config event that changes
-  *why* they were retained. Otherwise queued rows wait on a wake for an
+  *why* they were retained. **Logout closes, it does not re-admit**: the
+  re-admission hook re-runs admission against the *new* key — and
+  `ProviderAdmissionFacts` gains an `accountAvailable: boolean` fact (usable
+  credentials present); `auth.logout` removing a provider's only credential
+  makes the key unavailable, unavailable admits as `queue_until` (reason
+  `closed`, retained) rather than dispatching an unauthenticated call, and
+  the backlog re-admits only when a later `auth.login`/credential resync
+  makes the account usable again. Otherwise queued rows wait on a wake for an
   account key the session no longer uses, while newer messages on the new key
   run ahead of them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
@@ -1049,7 +1098,14 @@ by pre-existing suites):
    delivery passes. **Parked-row linkage** — the P3 park stamps the marker on
    the parked `'enqueued'` row, and restart reconstruction registers marker rows
    in both states, so a post-restart claim wave still meets a minted probe
-   grant. **Marker exit** — the marker survives promotion and clears only at
+   grant. **Batch jobs split on park**: a multi-message V2 batch created
+   while the account was open but claimed after saturation armed parks and
+   registers only its head — the remaining `batchUuids` may not ride the
+   head's grant (probing forbids it), and merely narrowing the job would
+   strand the tails (`'enqueued'`, no jobs, no markers, no registrations);
+   the park therefore splits the batch into per-member jobs/rows, each
+   stamped and registered in the head's FIFO sequence order, so the drain
+   re-batches them naturally once open. **Marker exit** — the marker survives promotion and clears only at
    grant consumption (prompt yield), terminal transitions, or an explicit
    user defer of a parked row (`deferPending` → `deferEnqueuedUserMessage`) —
    promotion itself never clears it (a restart after deferred→enqueued must
