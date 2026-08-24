@@ -3838,9 +3838,11 @@ describe('QueryRunner', () => {
         interruptProcessing: () => void;
       }
 
+      const BACKOFF_DELAY_MS = 200;
+
       async function runBackoffRow(flip?: (tools: BackoffTools) => void) {
         delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
-        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = flip ? '200' : '0';
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = flip ? String(BACKOFF_DELAY_MS) : '0';
         buildSpy.mockRejectedValue(new Error(PROVIDER_5XX_MSG));
 
         let cleaningUp = false;
@@ -3859,20 +3861,44 @@ describe('QueryRunner', () => {
         ctx.incrementQueryGeneration();
         isRunningSpy.mockReturnValue(true);
 
-        if (flip) {
-          setTimeout(() => {
-            flip({
-              supersede: () => ctx.incrementQueryGeneration(),
-              abortSignal: () => controller.abort(),
-              setCleaningUp: () => {
-                cleaningUp = true;
-              },
-              stopQueue: () => isRunningSpy.mockReturnValue(false),
-              interruptProcessing: () => getStateSpy.mockReturnValue({ status: 'interrupted' }),
-            });
-          }, 20);
+        if (!flip) {
+          await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+          return runnerPrivate;
         }
-        await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+        const tools: BackoffTools = {
+          supersede: () => ctx.incrementQueryGeneration(),
+          abortSignal: () => controller.abort(),
+          setCleaningUp: () => {
+            cleaningUp = true;
+          },
+          stopQueue: () => isRunningSpy.mockReturnValue(false),
+          interruptProcessing: () => getStateSpy.mockReturnValue({ status: 'interrupted' }),
+        };
+        const originalSetTimeout = globalThis.setTimeout;
+        let flipArmed = true;
+        const intercepting = ((
+          handler: (...timerArgs: unknown[]) => void,
+          timeout?: number,
+          ...rest: unknown[]
+        ) =>
+          originalSetTimeout(
+            (...timerArgs: unknown[]) => {
+              if (flipArmed && timeout === BACKOFF_DELAY_MS) {
+                flipArmed = false;
+                flip(tools);
+              }
+              handler(...timerArgs);
+            },
+            timeout,
+            ...rest
+          )) as unknown as typeof globalThis.setTimeout;
+        globalThis.setTimeout = intercepting;
+        try {
+          await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+        } finally {
+          globalThis.setTimeout = originalSetTimeout;
+        }
         return runnerPrivate;
       }
 
