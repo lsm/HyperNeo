@@ -1,7 +1,7 @@
-import type { ThinkingLevel } from '../types';
-import type { TaskRestriction } from './neo';
-import type { McpServerConfig } from './sdk-config';
-import type { SettingSource } from './settings';
+import type { ThinkingLevel } from '../types.ts';
+import type { TaskRestriction } from './neo.ts';
+import type { McpServerConfig } from './sdk-config.ts';
+import type { SettingSource } from './settings.ts';
 
 export type SpaceStatus = 'active' | 'archived';
 
@@ -1281,7 +1281,7 @@ export interface ExportedSpaceWorkerAgent {
   systemPrompt?: string;
   instructions?: string;
   tools?: string[];
-  settingSources?: import('./settings').SettingSource[];
+  settingSources?: import('./settings.ts').SettingSource[];
 }
 
 export interface ExportedSpaceWorkflow {

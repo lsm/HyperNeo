@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SessionManager } from '../session-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SessionManager } from '../session-manager.ts';
 import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
 
 export function setupRewindHandlers(

@@ -6,11 +6,11 @@ import {
   extractAzureDeploymentModel,
   normalizeModelList,
 } from '../providers/shared/model-list.js';
-import type { SettingsManager } from '../settings-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
-import { sanitizeGlobalSettings, VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
+import type { SettingsManager } from '../settings-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { sanitizeGlobalSettings, VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 import { Logger } from '../logger.js';
 
 const VALID_CUSTOM_ENDPOINT_TYPES: ReadonlySet<CustomEndpointType> = new Set([

@@ -1,2 +1,2 @@
-export { Database } from './index';
-export type { SQLiteValue } from './types';
+export { Database } from './index.ts';
+export type { SQLiteValue } from './types.ts';

@@ -122,6 +122,29 @@ describe('provider config sync', () => {
     expect(provider.getCachedModels()).toEqual([]);
   });
 
+  it('stores curation for providers without a provider-specific setter', async () => {
+    const provider = createMockProvider({ id: 'deepseek' });
+    getProviderRegistry().register(provider);
+    const record = {
+      id: 'deepseek-record',
+      providerId: 'deepseek',
+      displayName: 'DeepSeek',
+      kind: 'built_in',
+      authType: 'api_key',
+      isEnabled: true,
+      isDefault: false,
+      sortOrder: 0,
+      configJson: JSON.stringify({ models: [{ id: 'deepseek-v4-pro' }] }),
+      healthStatus: 'unknown',
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies ProviderRecord;
+
+    await syncProviderToRegistry(record);
+
+    expect(getProviderRegistry().getCuratedModels('deepseek')).toEqual([{ id: 'deepseek-v4-pro' }]);
+  });
+
   it('applies parsed model curation to any provider exposing setCuratedModels', async () => {
     const setCuratedModels = mock(() => {});
     const provider = createMockProvider({ id: 'glm', setCuratedModels });
@@ -145,12 +168,15 @@ describe('provider config sync', () => {
     await syncProviderToRegistry(recordFor(JSON.stringify({ models: [{ id: 'glm-5' }] })));
     expect(setCuratedModels).toHaveBeenCalledTimes(1);
     expect(setCuratedModels).toHaveBeenCalledWith([{ id: 'glm-5' }]);
+    expect(getProviderRegistry().getCuratedModels('glm')).toEqual([{ id: 'glm-5' }]);
 
     await syncProviderToRegistry(recordFor(JSON.stringify({ models: [] })));
     expect(setCuratedModels).toHaveBeenCalledWith([]);
+    expect(getProviderRegistry().getCuratedModels('glm')).toEqual([]);
 
     await syncProviderToRegistry(recordFor(undefined));
     expect(setCuratedModels).toHaveBeenCalledWith(undefined);
+    expect(getProviderRegistry().getCuratedModels('glm')).toBeUndefined();
   });
 });
 

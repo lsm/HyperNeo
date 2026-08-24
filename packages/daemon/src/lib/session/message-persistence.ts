@@ -11,22 +11,25 @@ import type {
 import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { Database } from '../../storage/database';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
+import type { Database } from '../../storage/database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import {
+  buildReferenceContext,
+  prependContextToMessage,
+} from '../agent/reference-context-builder.ts';
 import {
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
-} from '../agent/message-delivery';
-import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox';
-import { expandBuiltInCommand } from '../built-in-commands';
-import { Logger } from '../logger';
-import type { SessionCache } from './session-cache';
+} from '../agent/message-delivery.ts';
+import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox.ts';
+import { expandBuiltInCommand } from '../built-in-commands.ts';
+import { Logger } from '../logger.ts';
+import type { SessionCache } from './session-cache.ts';
 import {
   ReferenceResolver,
   type PreprocessedMessage,
   type ResolutionContext,
-} from './reference-resolver';
+} from './reference-resolver.ts';
 
 type MessageImageInput = MessageImage | ImageContent;
 

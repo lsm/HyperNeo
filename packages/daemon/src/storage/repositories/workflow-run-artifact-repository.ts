@@ -1,6 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import type { ReactiveDatabase } from '../reactive-database';
-import { Logger } from '../../lib/logger';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import { Logger } from '../../lib/logger.ts';
 
 const log = new Logger('workflow-run-artifact-repo');
 

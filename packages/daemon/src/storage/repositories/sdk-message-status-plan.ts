@@ -1,5 +1,5 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import type { SendStatus } from './sdk-message-admission';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { SendStatus } from './sdk-message-admission.ts';
 
 export const PENDING_ROW_FROM_STATUSES: readonly SendStatus[] = [
   'deferred',

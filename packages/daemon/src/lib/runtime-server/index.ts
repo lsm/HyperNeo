@@ -1,8 +1,13 @@
-import type { ServerOptions, ServerHandle } from './types';
-import { createBunServer } from './bun-backend';
-import { createNodeServer } from './node-backend';
+import type { ServerOptions, ServerHandle } from './types.ts';
+import { createBunServer } from './bun-backend.ts';
+import { createNodeServer } from './node-backend.ts';
 
-export type { RuntimeWebSocketHandler, ServerOptions, ServerHandle, RuntimeSocket } from './types';
+export type {
+  RuntimeWebSocketHandler,
+  ServerOptions,
+  ServerHandle,
+  RuntimeSocket,
+} from './types.ts';
 
 declare const Bun: unknown | undefined;
 

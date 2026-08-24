@@ -1,11 +1,11 @@
 import { WORKFLOW_SELECTOR_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-import { getProviderService } from '../../provider-service';
-import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver';
-import { mergeProviderEnvVars } from '../../provider-service';
+import { getProviderService } from '../../provider-service.ts';
+import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolver.ts';
+import { mergeProviderEnvVars } from '../../provider-service.ts';
 import { KimiProvider } from '../../providers/kimi-provider.js';
-import { Logger } from '../../logger';
-import { withSdkTranscriptRetention } from '../../agent/sdk-transcript-retention';
+import { Logger } from '../../logger.ts';
+import { withSdkTranscriptRetention } from '../../agent/sdk-transcript-retention.ts';
 
 const log = new Logger('llm-workflow-selector');
 

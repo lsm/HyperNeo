@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   Space,
@@ -7,7 +7,7 @@ import type {
   CreateSpaceParams,
   UpdateSpaceParams,
 } from '@hyperneo/shared';
-import type { SQLiteValue } from '../types';
+import type { SQLiteValue } from '../types.ts';
 
 export class SpaceRepository {
   constructor(private db: BunDatabase) {}

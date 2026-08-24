@@ -8,8 +8,8 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { Logger } from '../../lib/logger';
-import { withBusyRetry } from '../busy-retry';
+import { Logger } from '../../lib/logger.ts';
+import { withBusyRetry } from '../busy-retry.ts';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -17,24 +17,24 @@ import {
   type MessageSearchParams,
   type MessageSearchResponse,
   type MessageSearchResult,
-} from '../message-search';
-import type { ReactiveDatabase } from '../reactive-database';
-import type { Database as BunDatabase } from '../sqlite-compat';
-import type { SQLiteValue } from '../types';
+} from '../message-search.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { SQLiteValue } from '../types.ts';
 import {
   type DeliveryTransitionAction,
   deliveryTransitionRule,
   routeDeliveryTransition,
-} from './delivery-status-routing';
-import { decideMessageSearchAdmission } from './message-search-admission';
-import type { MessageSearchEligibilityRow } from './message-search-admission';
+} from './delivery-status-routing.ts';
+import { decideMessageSearchAdmission } from './message-search-admission.ts';
+import type { MessageSearchEligibilityRow } from './message-search-admission.ts';
 import {
   decideMessageAdmission,
   extractReplacementEdges,
   normalizeMessageAdmissionInput,
   type SDKMessageReplacementEdge,
   type SendStatus,
-} from './sdk-message-admission';
+} from './sdk-message-admission.ts';
 import {
   RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
   buildRowIdHydrationBatches,
@@ -52,26 +52,26 @@ import {
   type RenderableTextMessage,
   type RenderableTextMessageRow,
   type SubagentMessageRow,
-} from './sdk-message-projections';
+} from './sdk-message-projections.ts';
 import {
   planAdmissionBadgeUpdate,
   planBadgeRecompute,
   type BadgeUpdateInstruction,
-} from './sdk-message-badge';
+} from './sdk-message-badge.ts';
 import {
   applyMessageStatusPlan,
   PENDING_ROW_FROM_STATUSES,
   planMessageStatusApplication,
-} from './sdk-message-status-plan';
+} from './sdk-message-status-plan.ts';
 
-export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission';
+export type { SDKMessageReplacementEdge, SendStatus } from './sdk-message-admission.ts';
 export {
   computeIsRenderable,
   computeIsTerminal,
   extractParentToolUseId,
   extractReplacementEdges,
   extractSdkUuid,
-} from './sdk-message-admission';
+} from './sdk-message-admission.ts';
 
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
   AND json_valid(sdk_message)
@@ -667,7 +667,7 @@ export class SDKMessageRepository {
     >;
     hasMore: boolean;
   } {
-    let query = `SELECT id, sdk_message, timestamp, send_status, origin, rowid FROM sdk_messages
+    let query = `SELECT id, sdk_message, timestamp, send_status, origin, rowid AS rowid FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
@@ -1789,12 +1789,12 @@ export class SDKMessageRepository {
       : '';
     let candidateSql = `
 			SELECT
-				msc.rowid,
+				msc.id,
 				${broadQuery ? '0' : 'bm25(message_search_fts)'} AS rank,
 				msc.timestamp,
 				msc.source_id
 			FROM message_search_fts
-			JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+			JOIN message_search_content msc ON msc.id = message_search_fts.rowid
 			${sessionJoin}
 			${taskJoin}
 			WHERE message_search_fts MATCH ?
@@ -1831,29 +1831,29 @@ export class SDKMessageRepository {
     values.push(limit, offset);
 
     const candidates = this.db.prepare(candidateSql).all(...values) as Array<{
-      rowid: number;
+      id: number;
       rank: number;
     }>;
     if (candidates.length === 0) return { results: [], limit, offset };
 
-    const rankByRowId = new Map(candidates.map((row) => [row.rowid, row.rank]));
-    const orderByRowId = new Map(candidates.map((row, index) => [row.rowid, index]));
+    const rankById = new Map(candidates.map((row) => [row.id, row.rank]));
+    const orderById = new Map(candidates.map((row, index) => [row.id, index]));
     const placeholders = candidates.map(() => '?').join(', ');
     const rawRows = this.db
       .prepare(
         `
 				SELECT
-					msc.rowid, msc.kind, msc.source_id, msc.message_id, msc.session_id, msc.task_id,
+					msc.id, msc.kind, msc.source_id, msc.message_id, msc.session_id, msc.task_id,
 					msc.space_id, msc.task_number, msc.message_type, msc.title,
 					snippet(message_search_fts, 1, '<mark>', '</mark>', '…', 16) AS snippet,
 					msc.timestamp
 				FROM message_search_fts
-				JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				JOIN message_search_content msc ON msc.id = message_search_fts.rowid
 				WHERE message_search_fts.rowid IN (${placeholders})
 				  AND message_search_fts MATCH ?`
       )
-      .all(...candidates.map((row) => row.rowid), ftsQuery) as Array<{
-      rowid: number;
+      .all(...candidates.map((row) => row.id), ftsQuery) as Array<{
+      id: number;
       kind: 'message' | 'task';
       source_id: string;
       message_id: string | null;
@@ -1866,15 +1866,15 @@ export class SDKMessageRepository {
       snippet: string | null;
       timestamp: string | null;
     }>;
-    const seenRowId = new Set<number>();
+    const seenId = new Set<number>();
     const rows = rawRows.filter((row) => {
-      if (seenRowId.has(row.rowid)) return false;
-      seenRowId.add(row.rowid);
+      if (seenId.has(row.id)) return false;
+      seenId.add(row.id);
       return true;
     });
 
     const results: MessageSearchResult[] = rows
-      .sort((a, b) => (orderByRowId.get(a.rowid) ?? 0) - (orderByRowId.get(b.rowid) ?? 0))
+      .sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0))
       .map((row) => {
         const timestamp = parseSearchTimestamp(row.timestamp);
         return {
@@ -1892,7 +1892,7 @@ export class SDKMessageRepository {
           loadTarget: row.session_id
             ? { sessionId: row.session_id, before: timestamp + 1 }
             : undefined,
-          rank: rankByRowId.get(row.rowid) ?? 0,
+          rank: rankById.get(row.id) ?? 0,
         };
       });
 

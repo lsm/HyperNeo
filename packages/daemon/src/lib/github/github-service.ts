@@ -1,11 +1,11 @@
-import type { Database } from '../../storage/database';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { Database } from '../../storage/database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
-import type { Config } from '../../config';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { JobQueueProcessor } from '../../storage/job-queue-processor';
-import { GITHUB_POLL } from '../job-queue-constants';
-import { handleGitHubPoll } from '../job-handlers/github-poll.handler';
+import type { Config } from '../../config.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
+import { GITHUB_POLL } from '../job-queue-constants.ts';
+import { handleGitHubPoll } from '../job-handlers/github-poll.handler.ts';
 import type {
   GitHubEvent,
   RoutingResult,
@@ -13,19 +13,19 @@ import type {
   SecurityCheckResult,
   InboxItem,
   RoomGitHubMapping,
-} from './types';
-import { GitHubPollingService, createPollingService } from './polling-service';
+} from './types.ts';
+import { GitHubPollingService, createPollingService } from './polling-service.ts';
 import {
   GitHubEventFilter,
   createEventFilter,
   type GitHubEventFilterOptions,
-} from './event-filter';
-import { FilterConfigManager, createFilterConfigManager } from './filter-config-manager';
-import { SecurityAgent, createSecurityAgent } from './security-agent';
-import { RouterAgent, createRouterAgent, type RoomCandidate } from './router-agent';
-import { InboxManager } from './inbox-manager';
-import { createWebhookHandler } from './webhook-handler';
-import { Logger } from '../logger';
+} from './event-filter.ts';
+import { FilterConfigManager, createFilterConfigManager } from './filter-config-manager.ts';
+import { SecurityAgent, createSecurityAgent } from './security-agent.ts';
+import { RouterAgent, createRouterAgent, type RoomCandidate } from './router-agent.ts';
+import { InboxManager } from './inbox-manager.ts';
+import { createWebhookHandler } from './webhook-handler.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('github-service');
 const DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS = 120;

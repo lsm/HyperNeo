@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { classifyExternalEventTier, externalEventTopicSuffix } from './event-tiers';
+import { classifyExternalEventTier, externalEventTopicSuffix } from './event-tiers.ts';
 
 export interface ExternalEventEssenceEntry {
   eventId: string;

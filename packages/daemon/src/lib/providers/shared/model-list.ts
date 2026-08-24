@@ -95,6 +95,7 @@ export interface RemoteModelListParams {
   force?: boolean;
   cache?: Map<string, RemoteModelListEntry>;
   cacheTtlMs?: number;
+  fetchImpl?: typeof fetch;
 }
 
 function remoteModelListCacheKey(params: {
@@ -127,7 +128,7 @@ export async function fetchRemoteModelList(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(params.url, {
+    const response = await (params.fetchImpl ?? fetch)(params.url, {
       method: 'GET',
       headers: params.headers,
       signal: controller.signal,

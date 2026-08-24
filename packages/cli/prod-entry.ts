@@ -7,8 +7,8 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
   const [{ getConfig }, { parseArgs, getHelpText }, { startProdServer }, { version }] =
     await Promise.all([
       import('@hyperneo/daemon/config'),
-      import('./src/cli-utils'),
-      import('./src/prod-server-embedded'),
+      import('./src/cli-utils.ts'),
+      import('./src/prod-server-embedded.ts'),
       import('./package.json'),
     ]);
 

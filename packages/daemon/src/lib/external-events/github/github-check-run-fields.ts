@@ -1,4 +1,4 @@
-import { parseGitHubTimestamp } from './github-normalizer';
+import { parseGitHubTimestamp } from './github-normalizer.ts';
 
 export function checkRunIdFrom(row: unknown): number | string {
   if (!row || typeof row !== 'object') return 'unknown';

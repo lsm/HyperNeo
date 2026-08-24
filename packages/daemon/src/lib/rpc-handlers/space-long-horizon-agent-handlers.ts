@@ -3,16 +3,16 @@ import type {
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscriptionStatus,
 } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { validateGlobPattern, validateSource } from '../external-events/topic-validator';
-import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern';
-import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates';
-import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
+import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
+import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
+import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug.ts';
 
 function validateLongHorizonSubscriptionPattern(
   source: string,

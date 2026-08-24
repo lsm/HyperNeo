@@ -165,7 +165,6 @@ const mockKimiModels: ModelInfo[] = [
     preferContextWindowMetadata: true,
     available: true,
     providerAliases: ['kimi', 'kimi-for-coding', 'kimi-k2.7-code'],
-    providerAliasPrefixes: ['moonshot-'],
   },
 ];
 
@@ -173,6 +172,7 @@ import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
+import { getProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { AgentSessionFactory, SessionCache } from '../../../../src/lib/session/session-cache';
 import {
   generateBranchName,
@@ -542,7 +542,7 @@ describe('SessionLifecycle', () => {
     it('resolves Kimi aliases when no explicit provider is set', async () => {
       await lifecycle.create({
         config: {
-          model: 'moonshot-v1-32k',
+          model: 'kimi-k2.7-code',
         },
       });
 
@@ -640,6 +640,104 @@ describe('SessionLifecycle', () => {
           }),
         })
       );
+    });
+
+    describe('model curation', () => {
+      afterEach(() => {
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+        getProviderRegistry().setCuratedModels('anthropic', undefined);
+      });
+
+      it('rejects a curated-out model requested under an explicit provider', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await expect(
+          lifecycle.create({ config: { provider: 'kimi', model: 'k3-256k' } })
+        ).rejects.toThrow("Model 'k3-256k' is curated out for provider 'kimi'");
+
+        expect(createdSessions).toEqual([]);
+      });
+
+      it('creates with a curated-in model under an explicit provider', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await lifecycle.create({ config: { provider: 'kimi', model: 'kimi-for-coding' } });
+
+        expect(mockDb.createSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              model: 'kimi-for-coding',
+              provider: 'kimi',
+            }),
+          })
+        );
+      });
+
+      it('rejects an unknown model under a curated provider', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await expect(
+          lifecycle.create({ config: { provider: 'kimi', model: 'totally-custom-model-x' } })
+        ).rejects.toThrow("Model 'totally-custom-model-x' is curated out for provider 'kimi'");
+
+        expect(createdSessions).toEqual([]);
+      });
+
+      it('creates with an undiscovered model whose ID is a curated entry', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'totally-custom-model-x' }]);
+
+        await lifecycle.create({ config: { provider: 'kimi', model: 'totally-custom-model-x' } });
+
+        expect(mockDb.createSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              model: 'totally-custom-model-x',
+              provider: 'kimi',
+            }),
+          })
+        );
+      });
+
+      describe('empty model cache', () => {
+        it('rejects a curated-out model requested without a provider', async () => {
+          getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+          setModelsCache(new Map());
+
+          await expect(lifecycle.create({ config: { model: 'opus' } })).rejects.toThrow(
+            "Model 'opus' is curated out for provider 'anthropic'"
+          );
+
+          expect(createdSessions).toEqual([]);
+        });
+
+        it('creates with a curated-in model requested without a provider', async () => {
+          getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+          setModelsCache(new Map());
+
+          await lifecycle.create({ config: { model: 'sonnet' } });
+
+          expect(mockDb.createSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+              config: expect.objectContaining({
+                model: 'sonnet',
+              }),
+            })
+          );
+        });
+
+        it('rejects an unknown model without a provider under a curated inferred provider', async () => {
+          getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+          setModelsCache(new Map());
+
+          await expect(
+            lifecycle.create({ config: { model: 'totally-custom-model-x' } })
+          ).rejects.toThrow(
+            "Model 'totally-custom-model-x' is curated out for provider 'anthropic'"
+          );
+
+          expect(createdSessions).toEqual([]);
+        });
+      });
     });
 
     it('should create session with roomId', async () => {

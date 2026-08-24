@@ -24,36 +24,36 @@ import type {
   AcpTerminalWaitForExitParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { ErrorCategory } from '../error-manager';
-import { updateProviderModelsInCache } from '../model-service';
-import { getProviderRegistry } from '../providers/factory';
-import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
-import { AcpProvider } from '../providers/acp-provider';
-import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
-import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
-import { assessLimitError } from '../agent/limit-error-classifier';
-import type { AgentSession } from '../agent/agent-session';
+import { ErrorCategory } from '../error-manager.ts';
+import { updateProviderModelsInCache } from '../model-service.ts';
+import { getProviderRegistry } from '../providers/factory.ts';
+import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service.ts';
+import { AcpProvider } from '../providers/acp-provider.ts';
+import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
+import { assessLimitError } from '../agent/limit-error-classifier.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
   type TrackedAgentProcess,
-} from '../agent/query-runner';
+} from '../agent/query-runner.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
-} from '../space/runtime/space-mcp-session-policy';
+} from '../space/runtime/space-mcp-session-policy.ts';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { AcpClient, type AcpClientOptions } from './acp-client';
-import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command';
-import { getAcpProcessTreeOwner } from './acp-process-tree';
-import { AcpQueryAdapter } from './acp-query-adapter';
+import { AcpClient, type AcpClientOptions } from './acp-client.ts';
+import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command.ts';
+import { getAcpProcessTreeOwner } from './acp-process-tree.ts';
+import { AcpQueryAdapter } from './acp-query-adapter.ts';
 import {
   isSafeFsSupported,
   readFileWithinWorkspace,
   writeFileWithinWorkspace,
-} from './acp-safe-fs';
-import { AcpTerminalManager } from './acp-terminal-manager';
-import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
+} from './acp-safe-fs.ts';
+import { AcpTerminalManager } from './acp-terminal-manager.ts';
+import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge.ts';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
@@ -128,7 +128,7 @@ function parseThoughtTokenValue(choice: { name: string; value: string }): number
   return undefined;
 }
 
-export { parseAcpCommand } from './acp-command';
+export { parseAcpCommand } from './acp-command.ts';
 
 function toAcpPromptContent(message: SDKUserMessage): AcpContentBlock[] {
   const content = message.message.content;

@@ -8,9 +8,11 @@ import {
 describe('MinimaxProvider', () => {
   let provider: MinimaxProvider;
   let originalEnv: NodeJS.ProcessEnv;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    originalFetch = global.fetch;
     delete process.env.MINIMAX_API_KEY;
     resetProviderFailureStore();
     provider = new MinimaxProvider();
@@ -18,6 +20,7 @@ describe('MinimaxProvider', () => {
 
   afterEach(() => {
     resetProviderFailureStore();
+    global.fetch = originalFetch;
     process.env = originalEnv;
   });
 
@@ -129,7 +132,7 @@ describe('MinimaxProvider', () => {
 
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
       const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
       expect(url).toBe('https://api.minimax.io/anthropic/v1/messages');
       expect(init?.method).toBe('POST');
@@ -168,7 +171,150 @@ describe('MinimaxProvider', () => {
       await provider.getModels();
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('listRemoteModels', () => {
+    function installModelListFetch(responses: unknown[]): {
+      fetchMock: ReturnType<typeof mock>;
+      calls: Array<[RequestInfo | URL, RequestInit | undefined]>;
+    } {
+      const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
+      const fetchMock = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+        calls.push([url, init]);
+        const body = responses.shift();
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      return { fetchMock, calls };
+    }
+
+    it('uses MiniMax own OpenAI model-list endpoint and bearer auth', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      const { fetchMock, calls } = installModelListFetch([
+        {
+          object: 'list',
+          data: [
+            { id: 'MiniMax-M2.7', object: 'model' },
+            { id: 'MiniMax-M3', object: 'model' },
+            { id: 'ignored', object: 'other' },
+          ],
+        },
+      ]);
+      provider = new MinimaxProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models[0]).toEqual(MinimaxProvider.MODELS[2]);
+      expect(models[1]).toMatchObject({
+        id: 'MiniMax-M3',
+        name: 'MiniMax-M3',
+        provider: 'minimax',
+        contextWindow: 200000,
+        available: true,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = calls[0] ?? [];
+      expect(url).toBe('https://api.minimax.io/v1/models');
+      expect(init?.method).toBe('GET');
+      expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
+    });
+
+    it('uses the injected fetch implementation', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      const fetchMock = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7', object: 'model' }] }), {
+            status: 200,
+          })
+      );
+      provider = new MinimaxProvider(process.env, fetchMock as unknown as typeof fetch);
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toEqual([MinimaxProvider.MODELS[2]]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.minimax.io/v1/models');
+    });
+
+    it('filters discovered IDs that MiniMax cannot route', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      installModelListFetch([
+        {
+          data: [
+            { id: 'MiniMax-M3', object: 'model' },
+            { id: 'deployment-alias', object: 'model' },
+          ],
+        },
+      ]);
+      provider = new MinimaxProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models.map((model) => model.id)).toEqual(['MiniMax-M3']);
+    });
+
+    it('maps the message base and leaves custom baseUrl overrides read-only', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      const { calls } = installModelListFetch([
+        { data: [{ id: 'MiniMax-M2.7', object: 'model' }] },
+        { data: [{ id: 'MiniMax-M3', object: 'model' }] },
+        { data: [{ id: 'MiniMax-M2.7-highspeed', object: 'model' }] },
+        { data: [{ id: 'MiniMax-M2.5', object: 'model' }] },
+      ]);
+      provider = new MinimaxProvider();
+
+      await provider.listRemoteModels();
+      await provider.listRemoteModels({ baseUrl: MinimaxProvider.BASE_URL });
+      await provider.listRemoteModels({ baseUrl: 'https://API.MINIMAX.IO/anthropic/' });
+      await provider.listRemoteModels({ baseUrl: 'https://proxy.example.com/openai' });
+
+      expect(calls.map((call) => call[0])).toEqual([
+        'https://api.minimax.io/v1/models',
+        'https://api.minimax.io/v1/models',
+        'https://api.minimax.io/v1/models',
+        'https://proxy.example.com/openai/v1/models',
+      ]);
+    });
+
+    it('caches successful discovery and force bypasses the cache', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'MiniMax-M2.7', object: 'model' }] },
+        { data: [{ id: 'MiniMax-M3', object: 'model' }] },
+      ]);
+      provider = new MinimaxProvider();
+
+      const first = await provider.listRemoteModels();
+      const cached = await provider.listRemoteModels();
+      const forced = await provider.listRemoteModels({ force: true });
+
+      expect(first).toEqual(cached);
+      expect(forced[0]?.id).toBe('MiniMax-M3');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('propagates forced discovery failures instead of serving the cached list', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      let calls = 0;
+      global.fetch = mock(async () => {
+        calls++;
+        return calls === 1
+          ? new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), { status: 200 })
+          : new Response('unavailable', { status: 502 });
+      }) as unknown as typeof fetch;
+      provider = new MinimaxProvider();
+
+      await provider.listRemoteModels();
+
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+        'Endpoint returned HTTP 502'
+      );
+    });
+
+    it('rejects discovery without credentials', async () => {
+      await expect(provider.listRemoteModels()).rejects.toThrow('MiniMax API key not configured');
     });
   });
 
@@ -328,8 +474,9 @@ describe('MinimaxProvider', () => {
       expect(model?.available).toBe(true);
     });
 
-    it('should have correct base URL', () => {
+    it('should have provider-specific message and model-list base URLs', () => {
       expect(MinimaxProvider.BASE_URL).toBe('https://api.minimax.io/anthropic');
+      expect(MinimaxProvider.MODEL_LIST_BASE_URL).toBe('https://api.minimax.io/v1');
     });
   });
 });

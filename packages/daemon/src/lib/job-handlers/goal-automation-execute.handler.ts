@@ -1,20 +1,20 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
-import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository';
-import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
+import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
 import {
   maxCompletedTaskTimestamp,
   maxEvidenceCursor,
   readAutomationPolicyForScope,
   readCompletedTaskThreshold,
   selectEvidenceAfterCursor,
-} from '../space/goals/goal-automation-service';
-import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants';
-import { Logger } from '../logger';
+} from '../space/goals/goal-automation-service.ts';
+import { GOAL_AUTOMATION_EXECUTE } from '../job-queue-constants.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('goal-automation-execute');
 const MAX_ACTIVE_REVIEW_REQUEUES = 60;

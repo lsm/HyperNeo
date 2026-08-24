@@ -1,11 +1,11 @@
-export { runGhJson } from '../gh-lookup-helpers';
+export { runGhJson } from '../gh-lookup-helpers.ts';
 export type {
   Connector,
   ConnectorAuth,
   ConnectorContext,
   ConnectorOp,
   ConnectorOutcome,
-} from './connector';
+} from './connector.ts';
 export {
   clearConnectorRegistry,
   getConnector,
@@ -13,19 +13,19 @@ export {
   isConnectorsLayerEnabled,
   isRegisteredConnector,
   registerConnector,
-} from './connector';
+} from './connector.ts';
 export {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
   type ParamResolver,
-} from './external-state-validator';
-export { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
-export type { Path, Predicate } from './predicate';
-export { evaluatePredicate, getPath } from './predicate';
+} from './external-state-validator.ts';
+export { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector.ts';
+export type { Path, Predicate } from './predicate.ts';
+export { evaluatePredicate, getPath } from './predicate.ts';
 export {
   createCodexApprovalValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
   createReviewPostedValidator,
   registerGithubConnector,
-} from './presets';
+} from './presets.ts';

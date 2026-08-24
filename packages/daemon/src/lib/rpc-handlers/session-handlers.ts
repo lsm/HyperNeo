@@ -13,31 +13,32 @@ import type {
   RuntimeMcpServerEntry,
 } from '@hyperneo/shared';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { composeDraftWhole, generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
+import type { SessionManager } from '../session-manager.ts';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import {
   clearModelsCache,
   hasRefreshBeenAttemptedFor,
+  isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
-import { getProviderRegistry } from '../providers/registry.js';
+import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
-} from '../agent/message-delivery';
+} from '../agent/message-delivery.ts';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
   scanSDKSessionFiles,
   identifyOrphanedSDKFiles,
-} from '../sdk-session-file-manager';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { Logger } from '../logger';
+} from '../sdk-session-file-manager.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('session-handlers');
 
@@ -64,9 +65,15 @@ export async function detectStrandedProviders(
   const cachedProviders = new Set(
     cachedModels.map((m) => m.provider).filter((p): p is string => !!p)
   );
-  const toProbe = getProviderRegistry()
+  const registry = getProviderRegistry();
+  const toProbe = registry
     .getAll()
-    .filter((p) => !cachedProviders.has(p.id) && !hasRefreshBeenAttemptedFor(p.id));
+    .filter(
+      (provider) =>
+        !cachedProviders.has(provider.id) &&
+        registry.getCuratedModels(provider.id)?.length !== 0 &&
+        !hasRefreshBeenAttemptedFor(provider.id)
+    );
   if (toProbe.length === 0) return [];
   markRefreshAttemptedFor(toProbe.map((p) => p.id));
   const stranded: string[] = [];
@@ -345,6 +352,36 @@ export function setupSessionHandlers(
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
     const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;
 
+    const configUpdate = (updates as Partial<Session>).config;
+    if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
+      const existingConfig =
+        agentSessionForUpdate?.getSessionData().config ??
+        sessionManager.getSessionFromDB(targetSessionId)?.config;
+      const currentModel = existingConfig?.model;
+      const currentProvider =
+        existingConfig?.provider ??
+        (currentModel ? inferProviderForModel(currentModel) : undefined);
+      const effectiveModel = configUpdate.model ?? currentModel;
+      const providerId =
+        configUpdate.provider ??
+        existingConfig?.provider ??
+        (effectiveModel ? inferProviderForModel(effectiveModel) : undefined);
+      const rewritesOwnPair =
+        existingConfig !== undefined &&
+        effectiveModel === currentModel &&
+        providerId === currentProvider;
+      if (
+        providerId &&
+        effectiveModel &&
+        !rewritesOwnPair &&
+        isCuratedOutModel(effectiveModel, providerId)
+      ) {
+        throw new Error(
+          `Model '${effectiveModel}' is curated out for provider '${providerId}' and cannot be set on a session`
+        );
+      }
+    }
+
     await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
     const updatedPayload = { ...updates, sessionId: targetSessionId, roomId: roomIdForUpdate };
@@ -473,7 +510,7 @@ export function setupSessionHandlers(
     const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
     if (session.worktree) {
-      const { WorktreeManager } = await import('../worktree-manager');
+      const { WorktreeManager } = await import('../worktree-manager.ts');
       const worktreeManager = new WorktreeManager();
       const commitStatus = await worktreeManager.getCommitsAhead(session.worktree);
 
@@ -591,12 +628,11 @@ export function setupSessionHandlers(
       throw new Error('Session has no provider configured');
     }
 
-    const { resolveModelAlias, getModelInfo } = await import('../model-service.js');
-    const currentModelId = await resolveModelAlias(rawModelId, 'global', sessionProvider);
-    const modelInfo = await getModelInfo(currentModelId, 'global', sessionProvider);
+    const { getSessionModelInfo } = await import('../model-service.js');
+    const modelInfo = await getSessionModelInfo(agentSession.getSessionData(), 'global');
 
     return {
-      currentModel: currentModelId,
+      currentModel: modelInfo?.id ?? rawModelId,
       currentProvider: sessionProvider,
       modelInfo,
     };
@@ -755,7 +791,9 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('models.list', async (data) => {
     try {
-      const { getAvailableModels, refreshModels } = await import('../model-service.js');
+      const { getAvailableModels, getModelsCache, refreshModels } = await import(
+        '../model-service.js'
+      );
 
       const params = data as {
         forceRefresh?: boolean;
@@ -765,18 +803,19 @@ export function setupSessionHandlers(
       let didRefresh = forceRefresh;
 
       if (forceRefresh) {
-        await refreshModels();
+        await refreshModels(undefined, { forceRemote: true });
       }
 
       let availableModels = getAvailableModels('global');
+      const cachePopulated = getModelsCache().has('global');
 
-      if (!forceRefresh && availableModels.length === 0) {
+      if (!forceRefresh && availableModels.length === 0 && !cachePopulated) {
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
       }
 
-      if (!forceRefresh && availableModels.length > 0) {
+      if (!forceRefresh && (availableModels.length > 0 || cachePopulated)) {
         const stranded = await detectStrandedProviders(availableModels);
         if (stranded.length > 0) {
           const providersBefore = new Set(

@@ -2,15 +2,15 @@ import type * as NodeSqlite from 'node:sqlite';
 import {
   createSQLiteQueryDescriptor,
   type SQLiteQueryDescriptor,
-} from './sqlite-query-normalization';
+} from './sqlite-query-normalization.ts';
 import {
   observeExecExecution,
   observeIterateExecution,
   observeStatementExecution,
   SQLiteQueryObserver,
   type SQLiteQueryObservabilityOptions,
-} from './sqlite-query-observability';
-import { STATEMENT_CACHE_CAPACITY, StatementCache } from './statement-cache';
+} from './sqlite-query-observability.ts';
+import { STATEMENT_CACHE_CAPACITY, StatementCache } from './statement-cache.ts';
 
 const { DatabaseSync, StatementSync } = (await import('node:' + 'sqlite')) as typeof NodeSqlite;
 

@@ -1,7 +1,7 @@
 import type { IClientEventGateway, EventChannel } from '@hyperneo/shared';
 import { Channels } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
-import { Logger } from './logger';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
+import { Logger } from './logger.ts';
 
 type ClientBridgeEventName = keyof DaemonInternalEventMap & string;
 type ClientBridgePayload = DaemonInternalEventMap[keyof DaemonInternalEventMap];

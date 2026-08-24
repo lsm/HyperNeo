@@ -9,9 +9,9 @@ import type {
   SessionMcpServerEntry,
   UpdateAppMcpServerRequest,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
-import type { Database } from '../../storage/database';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
+import type { Database } from '../../storage/database.ts';
 import type {
   McpEnablementClearOverrideRequest,
   McpEnablementClearOverrideResponse,
@@ -22,8 +22,8 @@ import type {
   McpEnablementSetOverrideRequest,
   McpEnablementSetOverrideResponse,
 } from '@hyperneo/shared';
-import { scopeChainForSession } from '../mcp/resolve-mcp-servers';
-import { Logger } from '../logger';
+import { scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('app-mcp-handlers');
 

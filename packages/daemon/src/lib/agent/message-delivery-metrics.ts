@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { JobQueueProcessorSnapshot } from '../../storage/job-queue-processor';
-import { emitStructuredLogEvent } from '../logger';
+import type { JobQueueProcessorSnapshot } from '../../storage/job-queue-processor.ts';
+import { emitStructuredLogEvent } from '../logger.ts';
 
 export type MessageDeliveryLifecycleEventName =
   | 'claim'

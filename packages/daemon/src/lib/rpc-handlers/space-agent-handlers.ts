@@ -7,13 +7,13 @@ import type {
   ThinkingLevel,
 } from '@hyperneo/shared';
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
-import type { Database } from '../../storage';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
-import type { SpaceManager } from '../space/managers/space-manager';
-import { getPresetAgentTemplates } from '../space/agents/seed-agents';
-import { computeAgentTemplateHash } from '../space/agents/agent-template-hash';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/index.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import { getPresetAgentTemplates } from '../space/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../space/agents/agent-template-hash.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-agent-handlers');
 

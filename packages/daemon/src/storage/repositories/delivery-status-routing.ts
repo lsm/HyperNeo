@@ -1,4 +1,4 @@
-import type { SendStatus } from './sdk-message-admission';
+import type { SendStatus } from './sdk-message-admission.ts';
 
 export type DeliveryTransitionAction =
   | 'fail'

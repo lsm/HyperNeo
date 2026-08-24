@@ -10,8 +10,8 @@ export interface McpServerInfo {
   command?: string;
   args?: string[];
 }
-import type { Database } from '../storage/database';
-import { Logger } from './logger';
+import type { Database } from '../storage/database.ts';
+import { Logger } from './logger.ts';
 
 export class SettingsManager {
   private logger = new Logger('SettingsManager');

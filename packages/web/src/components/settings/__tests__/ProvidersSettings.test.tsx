@@ -22,6 +22,8 @@ const {
   mockGetHubIfConnected,
   mockOnEvent,
   mockUnsubscribe,
+  mockListProviderRemoteModels,
+  mockListAvailableModels,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -42,6 +44,8 @@ const {
   mockGetHubIfConnected: vi.fn(),
   mockOnEvent: vi.fn(),
   mockUnsubscribe: vi.fn(),
+  mockListProviderRemoteModels: vi.fn(),
+  mockListAvailableModels: vi.fn(),
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
@@ -57,6 +61,9 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   refreshProvider: (providerId: string) => mockRefreshProvider(providerId),
   createProvider: (params: unknown, creds?: unknown) => mockCreateProvider(params, creds),
   listCustomEndpointModels: vi.fn(),
+  listProviderRemoteModels: (id: string, options?: unknown) =>
+    mockListProviderRemoteModels(id, options),
+  listAvailableModels: () => mockListAvailableModels(),
 }));
 
 vi.mock('../../../lib/toast.ts', () => ({
@@ -267,6 +274,9 @@ describe('ProvidersSettings', () => {
     mockOnEvent.mockReturnValue(mockUnsubscribe);
     mockGetHubIfConnected.mockReset();
     mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
+    mockListProviderRemoteModels.mockReset();
+    mockListAvailableModels.mockReset();
+    mockListAvailableModels.mockResolvedValue({ models: [], cached: true });
     globalStore.systemState.value = null;
     connectionState.value = 'connecting';
   });
@@ -1656,5 +1666,264 @@ describe('ProvidersSettings', () => {
     });
 
     vi.useRealTimers();
+  });
+
+  describe('visible models panel', () => {
+    const expandFirstProvider = async (container: Element) => {
+      fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+      await waitFor(() => expect(screen.getByText('Fetch models')).toBeTruthy());
+      return screen.getByTestId('visible-models-panel')!;
+    };
+
+    it('fetches remote candidates and renders them merged with stored curation', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }, { id: 'kimi-k4' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => {
+        expect(mockListProviderRemoteModels).toHaveBeenCalledWith('k1', { force: true });
+      });
+      await waitFor(() => {
+        expect(panel.textContent).toContain('kimi-k3');
+        expect(panel.textContent).toContain('kimi-k4');
+      });
+      expect(panel.textContent).toContain('Kimi K3');
+      expect(panel.textContent).toContain('2 models — all visible (no curation stored).');
+      expect(mockListAvailableModels).not.toHaveBeenCalled();
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      expect(boxes.length).toBe(2);
+      for (const box of boxes) {
+        expect(box.checked).toBe(true);
+        expect(box.disabled).toBe(true);
+      }
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+    });
+
+    it('seeds checkbox checks from the stored curation', async () => {
+      const provider = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({
+          region: 'china',
+          models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+        }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      const preFetchBoxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      expect(preFetchBoxes.length).toBe(1);
+      expect(preFetchBoxes[0].checked).toBe(true);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => expect(panel.textContent).toContain('1 of 2 visible.'));
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      expect(boxes.length).toBe(2);
+      expect(boxes[0].checked).toBe(true);
+      expect(boxes[1].checked).toBe(false);
+      for (const box of boxes) {
+        expect(box.disabled).toBe(true);
+      }
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+    });
+
+    it('treats an explicitly empty stored curation as no visible models', async () => {
+      const provider = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ models: [] }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      expect(panel.textContent).toContain('No visible models curated.');
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => expect(panel.textContent).toContain('0 of 2 visible.'));
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      for (const box of boxes) {
+        expect(box.checked).toBe(false);
+      }
+    });
+
+    it('probes the stored ACP command as a read-only override', async () => {
+      const provider = createMockProvider('acp-1', 'acp', {
+        displayName: 'ACP Agent',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'devin acp' }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'devin-model', name: 'Devin Model' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => {
+        expect(mockListProviderRemoteModels).toHaveBeenCalledWith('acp-1', {
+          command: 'devin acp',
+          force: true,
+        });
+      });
+      await waitFor(() => expect(panel.textContent).toContain('devin-model'));
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      const box = panel.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      expect(box?.checked).toBe(true);
+      expect(box?.disabled).toBe(true);
+      fireEvent.click(box!);
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+    });
+
+    it('probes a stored baseUrl override for non-ACP providers', async () => {
+      const provider = createMockProvider('m1', 'minimax', {
+        displayName: 'MiniMax',
+        baseUrl: 'https://api.minimax.io/v1',
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({ models: [{ id: 'abab6.5s-chat' }] });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('MiniMax'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => {
+        expect(mockListProviderRemoteModels).toHaveBeenCalledWith('m1', {
+          baseUrl: 'https://api.minimax.io/v1',
+          force: true,
+        });
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel')!.textContent).toContain('abab6.5s-chat')
+      );
+    });
+
+    it('renders the fetch error without leaving the panel', async () => {
+      const provider = createMockProvider('g1', 'glm', { displayName: 'GLM' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockRejectedValue(new Error('Z.ai API key not configured'));
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('GLM'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => expect(panel.textContent).toContain('Z.ai API key not configured'));
+      expect(panel.textContent).toContain('No stored curation to display.');
+      expect(screen.getByText('Fetch models')).toBeTruthy();
+    });
+
+    it('keeps stored curation visible when remote listing fails', async () => {
+      const provider = createMockProvider('1', 'anthropic-copilot', {
+        displayName: 'OpenAI Copilot',
+        configJson: JSON.stringify({
+          models: [
+            { id: 'o3-mini', name: 'o3 mini' },
+            { id: 'o1', name: 'o1' },
+          ],
+        }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockRejectedValue(
+        new Error('anthropic-copilot does not support remote model listing')
+      );
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('OpenAI Copilot'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() =>
+        expect(panel.textContent).toContain(
+          'anthropic-copilot does not support remote model listing'
+        )
+      );
+      expect(panel.textContent).not.toContain('No curation stored');
+      expect(panel.textContent).toContain('o3-mini');
+      expect(panel.textContent).toContain('o1');
+    });
+
+    it('clears fetched candidates when the provider configuration changes', async () => {
+      const provider = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({ models: [{ id: 'kimi-k3' }] });
+      mockTestProvider.mockResolvedValue({ healthy: true });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() => expect(panel.textContent).toContain('kimi-k3'));
+
+      mockListProviders.mockResolvedValue({
+        providers: [
+          createMockProvider('k1', 'kimi', {
+            displayName: 'Kimi',
+            configJson: JSON.stringify({ region: 'global' }),
+          }),
+        ],
+      });
+      fireEvent.click(screen.getByText('Test connection'));
+
+      await waitFor(() => {
+        expect(container.textContent).toContain('Kimi');
+        expect(screen.getByTestId('visible-models-panel')!.textContent).not.toContain('kimi-k3');
+      });
+    });
+
+    it('hides the panel for custom endpoint providers', async () => {
+      const provider = createMockProvider('1', 'custom:lm', {
+        displayName: 'LM Studio',
+        kind: 'custom_endpoint',
+        baseUrl: 'http://localhost:1234/v1',
+        customEndpointConfigJson: JSON.stringify({
+          id: 'lm',
+          type: 'openai-chat',
+          name: 'LM Studio',
+          baseUrl: 'http://localhost:1234/v1',
+          models: [{ id: 'qwen' }],
+        }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('LM Studio'));
+      fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+
+      await waitFor(() => expect(container.textContent).toContain('Authentication'));
+      expect(screen.queryByTestId('visible-models-panel')).toBeNull();
+      expect(screen.queryByText('Fetch models')).toBeNull();
+    });
   });
 });

@@ -1,5 +1,5 @@
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import { JOB_QUEUE_CLEANUP, LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import { JOB_QUEUE_CLEANUP, LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * ONE_HOUR_MS;

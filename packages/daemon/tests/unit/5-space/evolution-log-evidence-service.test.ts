@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
-import type { StructuredLogEvent } from '@hyperneo/shared';
+import type { CreateEvidenceRefParams, StructuredLogEvent } from '@hyperneo/shared';
 import {
   EvolutionLogEvidenceService,
   PRODUCT_FORGE_SCOPE_ID,
@@ -14,13 +14,14 @@ describe('EvolutionLogEvidenceService', () => {
   let db: Database;
   let evolutionRepo: EvolutionRepository;
   let scopeId: string;
+  let spaceId: string;
 
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceTables(db);
     const spaceRepo = new SpaceRepository(db as never);
     evolutionRepo = new EvolutionRepository(db as never);
-    const spaceId = spaceRepo.createSpace({
+    spaceId = spaceRepo.createSpace({
       workspacePath: '/workspace/log-evidence',
       slug: 'log-evidence',
       name: 'Log Evidence',
@@ -119,7 +120,7 @@ describe('EvolutionLogEvidenceService', () => {
       .find((item) => item.policy.logEvidenceProductScope === true);
     expect(scope).toBeTruthy();
     expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(2);
-    expect(listSpacesCalls).toBe(2);
+    expect(listSpacesCalls).toBe(1);
   });
 
   it('refreshes empty default subscriptions when spaces are created later', () => {
@@ -396,6 +397,394 @@ describe('EvolutionLogEvidenceService', () => {
     expect(JSON.stringify(evidence[0].metadata)).not.toContain('sk-test-secret');
     expect(JSON.stringify(evidence[0].metadata)).not.toContain('secret-value');
     expect(JSON.stringify(evidence[0].metadata)).toContain('[REDACTED]');
+  });
+
+  it('emits warn-heavy bursts without blocking on a contended DB writer', async () => {
+    const CONTEND_MS = 15;
+    let blockedCalls = 0;
+    const sleepSync = (ms: number): void => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    };
+    const contend = <T>(write: () => T): T => {
+      sleepSync(CONTEND_MS);
+      blockedCalls += 1;
+      return write();
+    };
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.getScope = (id: string) => contend(() => evolutionRepo.getScope(id));
+    repo.listScopes = (params: Parameters<EvolutionRepository['listScopes']>[0]) =>
+      contend(() => evolutionRepo.listScopes(params));
+    repo.createScope = (params: Parameters<EvolutionRepository['createScope']>[0]) =>
+      contend(() => evolutionRepo.createScope(params));
+    repo.findLatestEvidenceBySource = (scopeId: string, sourceId: string) =>
+      contend(() => evolutionRepo.findLatestEvidenceBySource(scopeId, sourceId));
+    repo.updateEvidence = (
+      id: string,
+      params: Pick<CreateEvidenceRefParams, 'summary' | 'metadata'>
+    ) => contend(() => evolutionRepo.updateEvidence(id, params));
+    repo.createEvidence = (params: CreateEvidenceRefParams) =>
+      contend(() => evolutionRepo.createEvidence(params));
+    const underlyingSpaceRepo = new SpaceRepository(db as never);
+    const contendedSpaceRepo = Object.create(underlyingSpaceRepo) as SpaceRepository;
+    contendedSpaceRepo.listSpaces = (includeArchived?: boolean) =>
+      contend(() => underlyingSpaceRepo.listSpaces(includeArchived));
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      spaceRepo: contendedSpaceRepo,
+      flushDelayMs: 60_000,
+    });
+    const productScopeFor = () =>
+      evolutionRepo
+        .listScopes({ spaceId })
+        .find((scope) => scope.policy.logEvidenceProductScope === true);
+
+    const startedAt = Date.now();
+    for (let i = 0; i < 12; i++) {
+      service.capture(createEvent({ level: 'warn', message: `contended warning ${i}` }));
+    }
+    const inlineRepoCalls = blockedCalls;
+    const emissionMs = Date.now() - startedAt;
+
+    expect(inlineRepoCalls).toBe(0);
+    expect(emissionMs).toBeLessThan(250);
+    expect(productScopeFor()).toBeUndefined();
+
+    await service.flushAsync();
+
+    expect(blockedCalls).toBeGreaterThan(inlineRepoCalls);
+    expect(productScopeFor()).toBeTruthy();
+    expect(evolutionRepo.listEvidence(productScopeFor()!.id)).toHaveLength(12);
+  });
+
+  it('drains captured evidence on the deferred timer without an explicit flush', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 20,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'timer drained warning' }));
+
+    const deadline = Date.now() + 2000;
+    while (evolutionRepo.listEvidence(scopeId).length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(1);
+    await service.flushAsync();
+  });
+
+  it('does not let unsubscribed log levels evict buffered evidence', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      maxBufferedEvents: 5,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'kept warning' }));
+    for (let i = 0; i < 20; i++) {
+      service.capture(createEvent({ level: 'info', message: `noise ${i}` }));
+    }
+
+    await service.flushAsync();
+
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(1);
+    expect(evolutionRepo.listEvidence(scopeId)[0].summary).toContain('kept warning');
+  });
+
+  it('does not let non-matching events evict pattern-matched evidence', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'], patterns: [/^payment:/] }],
+      maxBufferedEvents: 5,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'payment: kept failure' }));
+    for (let i = 0; i < 20; i++) {
+      service.capture(createEvent({ level: 'warn', message: `unrelated noise ${i}` }));
+    }
+
+    await service.flushAsync();
+
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(1);
+    expect(evolutionRepo.listEvidence(scopeId)[0].summary).toContain('payment:');
+  });
+
+  it('matches stateful patterns consistently across capture and drain', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'], patterns: [/burst error \d/g] }],
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'burst error 7' }));
+    await service.flushAsync();
+
+    const evidence = evolutionRepo.listEvidence(scopeId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].summary).toContain('burst error 7');
+  });
+
+  it('retains events when subscription refresh hits a busy database', async () => {
+    const underlying = new SpaceRepository(db as never);
+    let failNextRefresh = true;
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      spaceRepo: {
+        listSpaces: (includeArchived?: boolean) => {
+          if (failNextRefresh) {
+            failNextRefresh = false;
+            throw new Error('database is locked');
+          }
+          return underlying.listSpaces(includeArchived);
+        },
+      },
+      subscriptionRefreshMs: 0,
+      flushDelayMs: 10,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'busy refresh warning' }));
+
+    const productScope = () =>
+      evolutionRepo
+        .listScopes({ spaceId })
+        .find((scope) => scope.policy.logEvidenceProductScope === true);
+    const evidenceReady = () => {
+      const scope = productScope();
+      return scope ? evolutionRepo.listEvidence(scope.id).length > 0 : false;
+    };
+    const deadline = Date.now() + 6000;
+    while (!evidenceReady() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect(evidenceReady()).toBe(true);
+    expect(evolutionRepo.listEvidence(productScope()!.id)).toHaveLength(1);
+  });
+
+  it('requeues evidence interrupted by a busy synchronous flush', async () => {
+    let failWrites = true;
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.createEvidence = (params: CreateEvidenceRefParams) => {
+      if (failWrites) throw new Error('database is locked');
+      return evolutionRepo.createEvidence(params);
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'flush busy warning' }));
+    const drain = service.flushAsync();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    service.flush();
+    await drain;
+
+    failWrites = false;
+    const deadline = Date.now() + 6000;
+    while (evolutionRepo.listEvidence(scopeId).length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    const evidence = evolutionRepo.listEvidence(scopeId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].metadata.count).toBe(1);
+  });
+
+  it('counts distinct same-millisecond occurrences separately', async () => {
+    const timestamp = Date.now();
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      dedupeWindowMs: 60_000,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'burst warning', timestamp }));
+    service.capture(createEvent({ level: 'warn', message: 'burst warning', timestamp }));
+    await service.flushAsync();
+
+    const burstEvidence = evolutionRepo.listEvidence(scopeId);
+    expect(burstEvidence).toHaveLength(1);
+    expect(burstEvidence[0].metadata.count).toBe(2);
+  });
+
+  it('does not double-count when the same event is written twice', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    const event = createEvent({ level: 'warn', message: 'single warning' });
+    service.capture(event);
+    await service.flushAsync();
+    service.capture(event);
+    await service.flushAsync();
+
+    const singleEvidence = evolutionRepo.listEvidence(scopeId);
+    expect(singleEvidence).toHaveLength(1);
+    expect(singleEvidence[0].metadata.count).toBe(1);
+  });
+
+  it('bounds drain writes per pass after subscription fan-out', async () => {
+    const scope2 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'fanout-2',
+      objective: 'fanout scope 2',
+    }).id;
+    const scope3 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'fanout-3',
+      objective: 'fanout scope 3',
+    }).id;
+    const totalEvidence = () =>
+      evolutionRepo.listEvidence(scopeId).length +
+      evolutionRepo.listEvidence(scope2).length +
+      evolutionRepo.listEvidence(scope3).length;
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [
+        { scopeId, levels: ['warn'] },
+        { scopeId: scope2, levels: ['warn'] },
+        { scopeId: scope3, levels: ['warn'] },
+      ],
+      maxBufferedEvents: 2,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'fanout one' }));
+    service.capture(createEvent({ level: 'warn', message: 'fanout two' }));
+
+    await service.flushAsync();
+    expect(totalEvidence()).toBe(2);
+
+    await service.flushAsync();
+    await service.flushAsync();
+
+    expect(totalEvidence()).toBe(6);
+  });
+
+  it('drains all fan-out writes synchronously in flush', () => {
+    const scope2 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'flush-fanout-2',
+      objective: 'flush fanout scope 2',
+    }).id;
+    const scope3 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'flush-fanout-3',
+      objective: 'flush fanout scope 3',
+    }).id;
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [
+        { scopeId, levels: ['warn'] },
+        { scopeId: scope2, levels: ['warn'] },
+        { scopeId: scope3, levels: ['warn'] },
+      ],
+      maxBufferedEvents: 2,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'shutdown drain' }));
+    service.flush();
+
+    const total =
+      evolutionRepo.listEvidence(scopeId).length +
+      evolutionRepo.listEvidence(scope2).length +
+      evolutionRepo.listEvidence(scope3).length;
+    expect(total).toBe(3);
+  });
+
+  it('requeues a busy batch suffix exactly once', async () => {
+    let failWrites = true;
+    let findCalls = 0;
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.createEvidence = (params: CreateEvidenceRefParams) => {
+      if (failWrites) throw new Error('database is locked');
+      return evolutionRepo.createEvidence(params);
+    };
+    repo.findLatestEvidenceBySource = (sid: string, sourceId: string) => {
+      if (!failWrites) findCalls += 1;
+      return evolutionRepo.findLatestEvidenceBySource(sid, sourceId);
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      service.capture(createEvent({ level: 'warn', message: `suffix warning ${i}` }));
+    }
+    service.flush();
+    failWrites = false;
+
+    await service.flushAsync();
+    await service.flushAsync();
+
+    expect(findCalls).toBe(3);
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(3);
+    for (const evidence of evolutionRepo.listEvidence(scopeId)) {
+      expect(evidence.metadata.count).toBe(1);
+    }
+  });
+
+  it('does not double-write evidence when flush interrupts an active drain', async () => {
+    const sleepSync = (ms: number): void => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    };
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.getScope = (id: string) => {
+      sleepSync(10);
+      return evolutionRepo.getScope(id);
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'raced warning' }));
+    const drain = service.flushAsync();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    service.flush();
+    await drain;
+
+    const evidence = evolutionRepo.listEvidence(scopeId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].metadata.count).toBe(1);
+  });
+
+  it('keeps flush non-throwing when subscription resolution fails', () => {
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.listScopes = () => {
+      throw new Error('database is locked');
+    };
+    const failingSpaceRepo = Object.create(new SpaceRepository(db as never)) as SpaceRepository;
+    failingSpaceRepo.listSpaces = () => {
+      throw new Error('database is locked');
+    };
+    repo.getScope = () => {
+      throw new Error('database is locked');
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      spaceRepo: failingSpaceRepo,
+      subscriptionRefreshMs: 0,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'locked out warning' }));
+
+    expect(() => service.flush()).not.toThrow();
   });
 });
 

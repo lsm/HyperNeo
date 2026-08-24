@@ -1,1 +1,1 @@
-export { SessionManager } from './session/session-manager';
+export { SessionManager } from './session/session-manager.ts';

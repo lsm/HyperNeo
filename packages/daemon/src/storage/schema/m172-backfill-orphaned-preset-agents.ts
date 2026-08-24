@@ -1,6 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
-import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
 
 interface AgentRow {
   id: string;

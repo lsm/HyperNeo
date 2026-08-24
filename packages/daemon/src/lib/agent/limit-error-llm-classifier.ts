@@ -1,9 +1,9 @@
-import { getProviderService, mergeProviderEnvVars } from '../provider-service';
+import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { Logger } from '../logger';
-import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention';
-import { normalizeEpochMs } from './limit-error-classifier';
+import { Logger } from '../logger.ts';
+import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
+import { normalizeEpochMs } from './limit-error-classifier.ts';
 
 type SdkQueryFunction = typeof import('@anthropic-ai/claude-agent-sdk').query;
 

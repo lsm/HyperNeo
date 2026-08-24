@@ -2,15 +2,15 @@ import {
   emitMessageDeliveryLifecycleEvent,
   fingerprintDeliveryClaim,
   type MessageDeliveryLifecycleFields,
-} from '../lib/agent/message-delivery-metrics';
-import { Logger } from '../lib/logger';
-import type { TableChangeScope } from './reactive-database';
+} from '../lib/agent/message-delivery-metrics.ts';
+import { Logger } from '../lib/logger.ts';
+import type { TableChangeScope } from './reactive-database.ts';
 import type {
   Job,
   JobQueueRepository,
   PayloadMatch,
   ReclaimedJobClaim,
-} from './repositories/job-queue-repository';
+} from './repositories/job-queue-repository.ts';
 
 const log = new Logger('job-queue-processor');
 

@@ -1,8 +1,8 @@
-import { emitStructuredLogEvent } from '../lib/logger';
+import { emitStructuredLogEvent } from '../lib/logger.ts';
 import {
   createSQLiteQueryDescriptor,
   type SQLiteQueryDescriptor,
-} from './sqlite-query-normalization';
+} from './sqlite-query-normalization.ts';
 
 export type SQLiteQueryOperation = 'get' | 'all' | 'run' | 'iterate' | 'exec';
 

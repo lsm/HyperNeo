@@ -3,8 +3,11 @@ import {
   isWorkflowRunSucceeded,
   isWorkflowRunWaiting,
 } from '@hyperneo/shared';
-import { decisionRun } from './decision-pipeline';
-import type { RunTickAdmissionDecision, RunTickAdmissionInput } from './run-tick-admission-gates';
+import { decisionRun } from './decision-pipeline.ts';
+import type {
+  RunTickAdmissionDecision,
+  RunTickAdmissionInput,
+} from './run-tick-admission-gates.ts';
 
 export interface RunTickDecisionCtx extends RunTickAdmissionInput {
   decision: RunTickAdmissionDecision | null;

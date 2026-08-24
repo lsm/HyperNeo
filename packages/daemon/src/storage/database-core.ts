@@ -9,12 +9,17 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { Logger } from '../lib/logger';
-import { runMessageSearchMerge } from '../lib/message-search-merge';
-import { DatabaseLock } from './database-lock';
-import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability';
-import { configureMessageSearchFts, createTables, runMigrations } from './schema';
-import { Database as BunDatabase } from './sqlite-compat';
+import { Logger } from '../lib/logger.ts';
+import { runMessageSearchMerge } from '../lib/message-search-merge.ts';
+import { DatabaseLock } from './database-lock.ts';
+import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import {
+  configureMessageSearchFts,
+  createTables,
+  reclaimPendingMigrationSpace,
+  runMigrations,
+} from './schema/index.ts';
+import { Database as BunDatabase } from './sqlite-compat.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
@@ -68,7 +73,18 @@ export class DatabaseCore {
 
       this.db.exec('PRAGMA foreign_keys = ON');
 
-      runMigrations(this.db, () => this.createBackup());
+      const pendingSpaceReclaims = runMigrations(this.db, () => this.createBackup());
+      const reclaim = reclaimPendingMigrationSpace(this.db, pendingSpaceReclaims);
+      if (reclaim.kind === 'reclaimed') {
+        this.logger.info(
+          `[Database] Reclaimed space after ${reclaim.reclaimedMigrations} rewrite migrations` +
+            ` (${reclaim.freelistBefore} free pages${reclaim.vacuumed ? '' : ', no vacuum needed'})`
+        );
+      } else if (reclaim.kind === 'deferred') {
+        this.logger.warn(
+          '[Database] Migration space reclaim blocked by an active WAL reader; retrying next startup'
+        );
+      }
 
       createTables(this.db);
 
