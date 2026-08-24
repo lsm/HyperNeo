@@ -248,6 +248,8 @@ export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
+  private effectiveFallbackSourceModel?: string;
+  private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
@@ -319,6 +321,8 @@ export class QueryOptionsBuilder {
     }
 
     const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
+    this.effectiveFallbackSourceModel = config.fallbackModel;
+    this.effectiveFallbackModel = configuredFallbackModel;
 
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
@@ -387,16 +391,22 @@ export class QueryOptionsBuilder {
 
       canUseTool: this.canUseTool,
       onUserDialog: async (request) => {
-        const liveFallbackModel = this.ctx.session.config.fallbackModel;
-        if (
-          request.dialogKind === 'refusal_fallback_prompt' &&
-          liveFallbackModel &&
-          liveFallbackModel === configuredFallbackModel &&
-          !(await isModelExcludedByCuration(liveFallbackModel, providerId))
-        ) {
-          return { behavior: 'completed', result: { continue: true } };
+        if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
+        const fallbackAtRequest = this.ctx.session.config.fallbackModel;
+        if (!fallbackAtRequest || fallbackAtRequest !== configuredFallbackModel) {
+          return { behavior: 'cancelled' };
         }
-        return { behavior: 'cancelled' };
+        if (await isModelExcludedByCuration(fallbackAtRequest, providerId)) {
+          return { behavior: 'cancelled' };
+        }
+        const configAfter = this.ctx.session.config;
+        if (
+          (configAfter.provider ?? 'anthropic') !== providerId ||
+          configAfter.fallbackModel !== fallbackAtRequest
+        ) {
+          return { behavior: 'cancelled' };
+        }
+        return { behavior: 'completed', result: { continue: true } };
       },
       supportedDialogKinds: sdkFallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
@@ -560,7 +570,11 @@ export class QueryOptionsBuilder {
         }
       }
 
-      const fallbackModel = this.ctx.session.config.fallbackModel;
+      const configuredFallback = this.ctx.session.config.fallbackModel;
+      const fallbackModel =
+        configuredFallback === this.effectiveFallbackSourceModel
+          ? this.effectiveFallbackModel
+          : configuredFallback;
       if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);

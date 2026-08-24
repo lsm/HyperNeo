@@ -1829,6 +1829,90 @@ describe('Model Service', () => {
       await expect(isModelExcludedByCuration('llama3', 'ollama')).resolves.toBe(true);
       await expect(isModelExcludedByCuration('ollama-ghost', 'ollama')).resolves.toBe(true);
     });
+
+    it('excludes a cached curated model that has left the live catalog', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'ollama-qwen',
+            name: 'Qwen',
+            alias: 'qwen3',
+            family: 'qwen',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Qwen',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-old' }, { id: 'ollama-qwen' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'ollama-old',
+                name: 'Ollama Old',
+                alias: 'old',
+                family: 'llama',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Old',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      await expect(isModelExcludedByCuration('ollama-old', 'ollama')).resolves.toBe(true);
+      await expect(isModelExcludedByCuration('ollama-qwen', 'ollama')).resolves.toBe(false);
+    });
+
+    it('re-reads curation after live model resolution', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [
+            {
+              id: 'ollama-qwen',
+              name: 'Qwen',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Qwen',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+      setModelsCache(new Map());
+
+      const pending = isModelExcludedByCuration('qwen3', 'ollama');
+      registry.setCuratedModels('ollama', []);
+
+      await expect(pending).resolves.toBe(true);
+    });
   });
 
   describe('getAvailableModels', () => {

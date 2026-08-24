@@ -223,16 +223,19 @@ export class ProviderService {
     provider: RegisteredProvider,
     ...candidates: Array<string | undefined>
   ): Promise<string | undefined> {
-    const curated = this.getRegistry().getCuratedModels(providerId);
-    if (curated === undefined) {
+    if (this.getRegistry().getCuratedModels(providerId) === undefined) {
       return candidates.find((candidate) => candidate !== undefined);
     }
-    const curatedIds = new Set(curated.map((model) => model.id));
     const catalogIds = new Set((await provider.getModels()).map((model) => model.id));
     for (const candidate of candidates) {
       if (!candidate) continue;
       const canonicalId =
         (await resolveVisibleCanonicalModelId(candidate, providerId)) ?? candidate;
+      const curatedAfter = this.getRegistry().getCuratedModels(providerId);
+      if (curatedAfter === undefined) {
+        return candidate;
+      }
+      const curatedIds = new Set(curatedAfter.map((model) => model.id));
       if (!curatedIds.has(canonicalId) || !catalogIds.has(canonicalId)) continue;
       return candidate;
     }
@@ -243,8 +246,8 @@ export class ProviderService {
     providerId: string,
     provider: RegisteredProvider
   ): Promise<string | undefined> {
-    const curated = this.getRegistry().getCuratedModels(providerId);
     const models = await provider.getModels();
+    const curated = this.getRegistry().getCuratedModels(providerId);
     if (curated !== undefined) {
       const catalogIds = new Set(models.map((model) => model.id));
       return curated.find((entry) => catalogIds.has(entry.id))?.id;

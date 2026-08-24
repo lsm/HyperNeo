@@ -781,6 +781,39 @@ describe('ProviderService', () => {
 
       expect(config).toBeNull();
     });
+
+    it('re-reads curation after catalog discovery', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new TitleOverrideMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          ...baseModels,
+          {
+            id: 'title-haiku',
+            name: 'Title Haiku',
+            alias: 'title-haiku',
+            family: 'mock',
+            provider: 'title-override',
+            contextWindow: 100000,
+            description: 'Mock model',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-haiku' }, { id: 'title-1' }]);
+
+      const pending = realService.getTitleGenerationConfig('title-override' as ProviderId);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      const config = await pending;
+
+      expect(config?.modelId).toBe('title-1');
+    });
   });
 
   describe('getCheapTierModel', () => {

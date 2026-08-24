@@ -1072,19 +1072,26 @@ export async function resolveVisibleCanonicalModelId(
   cacheKey: string = 'global'
 ): Promise<string | null> {
   const cachedId = resolveCuratedCanonicalModelId(idOrAlias, providerId, cacheKey);
-  if (cachedId) {
-    return cachedId;
+  const provider = getProviderRegistry().get(providerId);
+  let liveModels: ModelInfo[] | null = null;
+  if (provider) {
+    try {
+      if (await provider.isAvailable()) {
+        liveModels = await provider.getModels();
+      }
+    } catch {
+      liveModels = null;
+    }
   }
 
-  try {
-    const providerModels = (await getProviderRegistry().get(providerId)?.getModels()) ?? [];
-    return (
-      providerModels.find((model) => model.id === idOrAlias || model.alias === idOrAlias)?.id ??
-      null
-    );
-  } catch {
-    return null;
+  if (cachedId) {
+    if (liveModels === null) return cachedId;
+    return liveModels.some((model) => model.id === cachedId) ? cachedId : null;
   }
+  if (liveModels === null) return null;
+  return (
+    liveModels.find((model) => model.id === idOrAlias || model.alias === idOrAlias)?.id ?? null
+  );
 }
 
 export async function isModelExcludedByCuration(
@@ -1092,17 +1099,21 @@ export async function isModelExcludedByCuration(
   providerId: string,
   cacheKey: string = 'global'
 ): Promise<boolean> {
-  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
-  if (curatedModels === undefined) {
+  const registry = getProviderRegistry();
+  if (registry.getCuratedModels(providerId) === undefined) {
     return false;
   }
 
-  const curatedIds = new Set(curatedModels.map((model) => model.id));
   const canonicalId = await resolveVisibleCanonicalModelId(idOrAlias, providerId, cacheKey);
   if (!canonicalId) {
     return true;
   }
-  return !curatedIds.has(canonicalId);
+
+  const curatedAfter = registry.getCuratedModels(providerId);
+  if (curatedAfter === undefined) {
+    return false;
+  }
+  return !curatedAfter.some((model) => model.id === canonicalId);
 }
 
 export async function resolveModelAlias(

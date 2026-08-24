@@ -209,6 +209,24 @@ describe('QueryOptionsBuilder', () => {
 
         expect(response).toEqual({ behavior: 'cancelled' });
       });
+
+      it('declines the refusal dialog when the fallback changes during the async curation check', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        try {
+          mockSession.config.fallbackModel = 'haiku';
+          const options = await builder.build();
+
+          const pending = options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+          mockSession.config = { ...mockSession.config, fallbackModel: 'opus' };
+
+          await expect(pending).resolves.toEqual({ behavior: 'cancelled' });
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
     });
 
     it('should include agents when configured', async () => {
@@ -955,6 +973,25 @@ describe('QueryOptionsBuilder', () => {
         const result = builder.addSessionStateOptions(
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
+        expect(result.thinking).toBeUndefined();
+      } finally {
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      }
+    });
+
+    it('does not force an enabled budget for a fallback dropped by build', async () => {
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-k3';
+        mockSession.config.fallbackModel = 'kimi-k2.7-code';
+        mockSession.config.thinkingLevel = 'off';
+
+        await builder.build();
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+
         expect(result.thinking).toBeUndefined();
       } finally {
         getProviderRegistry().setCuratedModels('kimi', undefined);
