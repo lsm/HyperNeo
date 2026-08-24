@@ -231,8 +231,9 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     expect(bounded.includes('�')).toBe(false);
   });
 
-  it('marks the claim degraded when a delivery hangs past its timeout', async () => {
+  it('holds the claim when a delivery times out and applies the late outcome', async () => {
     configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    let resolveDelivery: (outcome: InactivityNagDeliveryOutcome) => void = () => {};
     const service = new SpaceAgentInactivityWatchdogService({
       configRepo,
       claimRepo,
@@ -244,12 +245,29 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       deliveryTimeoutMs: 50,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
-        return new Promise(() => {});
+        return new Promise((resolve) => {
+          resolveDelivery = resolve;
+        });
       },
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')?.degraded).toBe(true);
+    const held = claimRepo.getByAgent(spaceId, 'agent-1');
+    expect(held?.degraded).toBe(false);
+    expect(held?.state).toBe('in_flight');
+    resolveDelivery('consumed');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+  });
+
+  it('does not redeliver a claim already held by this scanner', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    nextOutcome = 'accepted';
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')?.state).toBe('in_flight');
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
   });
 
   it('does not deliver or reset a claim replaced by a newer scan revision', async () => {

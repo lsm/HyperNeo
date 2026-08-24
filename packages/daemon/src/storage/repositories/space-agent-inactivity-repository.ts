@@ -144,6 +144,7 @@ export class SpaceAgentInactivityClaimRepository {
   acquire(params: AcquireAgentInactivityClaimParams): {
     acquired: boolean;
     claim: SpaceAgentInactivityClaim;
+    created: boolean;
   } {
     const now = Date.now();
     const result = this.db.transaction(() => {
@@ -158,7 +159,7 @@ export class SpaceAgentInactivityClaimRepository {
         existing.windowAnchoredAt === params.windowAnchoredAt &&
         existing.configRevision === params.configRevision
       ) {
-        return { acquired: true, claim: existing };
+        return { acquired: true, claim: existing, created: false };
       }
       const blocksCurrentWindow =
         existing !== null &&
@@ -167,7 +168,7 @@ export class SpaceAgentInactivityClaimRepository {
         existing.windowAnchoredAt === params.windowAnchoredAt &&
         existing.configRevision === params.configRevision;
       if (blocksCurrentWindow) {
-        return { acquired: false, claim: existing };
+        return { acquired: false, claim: existing, created: false };
       }
       const id = existing?.id ?? generateUUID();
       const createdAt = existing?.createdAt ?? now;
@@ -199,7 +200,11 @@ export class SpaceAgentInactivityClaimRepository {
           createdAt,
           now
         );
-      return { acquired: true, claim: this.getByAgent(params.spaceId, params.agentId)! };
+      return {
+        acquired: true,
+        claim: this.getByAgent(params.spaceId, params.agentId)!,
+        created: true,
+      };
     })();
     return result;
   }

@@ -120,6 +120,7 @@ describe('SpaceAgentInactivity repositories', () => {
         configRevision: 1,
       });
       expect(first.acquired).toBe(true);
+      expect(first.created).toBe(true);
       expect(first.claim.state).toBe('accepted');
 
       const retry = claimRepo.acquire({
@@ -132,6 +133,7 @@ describe('SpaceAgentInactivity repositories', () => {
         configRevision: 1,
       });
       expect(retry.acquired).toBe(true);
+      expect(retry.created).toBe(false);
     });
 
     it('treats a matching live claim as idempotent only for its owner', () => {
@@ -177,6 +179,7 @@ describe('SpaceAgentInactivity repositories', () => {
         configRevision: 1,
       });
       expect(newWindow.acquired).toBe(true);
+      expect(newWindow.created).toBe(true);
       expect(newWindow.claim.claimKey).toBe('new-window');
 
       const newRevision = claimRepo.acquire({

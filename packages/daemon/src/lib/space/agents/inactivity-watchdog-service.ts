@@ -133,6 +133,7 @@ export class SpaceAgentInactivityWatchdogService {
       configRevision: decision.configRevision,
     });
     if (!acquired.acquired) return;
+    if (!acquired.created) return;
     this.deps.claimRepo.markInFlight(spaceId, agentId, decision.claimKey);
     await this.deliver(
       spaceId,
@@ -212,13 +213,14 @@ export class SpaceAgentInactivityWatchdogService {
       );
       return;
     }
-    let outcome: InactivityNagDeliveryOutcome;
+    let outcome: InactivityNagDeliveryOutcome | 'pending';
     try {
       outcome = await this.deliverNagBounded({
         spaceId,
         agentId,
         prompt,
         idempotencyKey: claimKey,
+        acquiredConfigRevision,
       });
     } catch (err) {
       log.warn(
@@ -228,6 +230,7 @@ export class SpaceAgentInactivityWatchdogService {
       );
       outcome = 'terminal_failure';
     }
+    if (outcome === 'pending') return;
     this.applyOutcome(spaceId, agentId, claimKey, acquiredConfigRevision, outcome);
   }
 
@@ -236,7 +239,8 @@ export class SpaceAgentInactivityWatchdogService {
     agentId: string;
     prompt: string;
     idempotencyKey: string;
-  }): Promise<InactivityNagDeliveryOutcome> {
+    acquiredConfigRevision: number | null;
+  }): Promise<InactivityNagDeliveryOutcome | 'pending'> {
     const timeoutMs = this.deps.deliveryTimeoutMs ?? INACTIVITY_NAG_DELIVERY_TIMEOUT_MS;
     if (timeoutMs <= 0) return this.deps.deliverNag(args);
     const delivery = this.deps.deliverNag(args);
@@ -244,11 +248,34 @@ export class SpaceAgentInactivityWatchdogService {
     try {
       return await Promise.race([
         delivery,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`Inactivity nag delivery timed out after ${timeoutMs}ms`)),
-            timeoutMs
-          );
+        new Promise<InactivityNagDeliveryOutcome | 'pending'>((resolve) => {
+          timer = setTimeout(() => {
+            resolve('pending');
+            delivery.then(
+              (outcome) =>
+                this.applyOutcome(
+                  args.spaceId,
+                  args.agentId,
+                  args.idempotencyKey,
+                  args.acquiredConfigRevision,
+                  outcome
+                ),
+              (err) => {
+                log.warn(
+                  `Inactivity nag delivery for agent "${args.agentId}" in space "${args.spaceId}" failed after timing out: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`
+                );
+                this.applyOutcome(
+                  args.spaceId,
+                  args.agentId,
+                  args.idempotencyKey,
+                  args.acquiredConfigRevision,
+                  'terminal_failure'
+                );
+              }
+            );
+          }, timeoutMs);
         }),
       ]);
     } finally {
