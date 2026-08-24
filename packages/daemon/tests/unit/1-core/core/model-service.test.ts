@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import {
   getAvailableModels,
   getModelInfo,
@@ -14,9 +14,10 @@ import {
   getSessionModelInfo,
   hasRefreshBeenAttemptedFor,
   markRefreshAttemptedFor,
+  refreshModels,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
   getProviderFailure,
@@ -88,6 +89,20 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('minimax')).toBe(false);
     });
 
+    it('attempt markers expire after the retry backoff window', () => {
+      jest.useFakeTimers();
+      try {
+        markRefreshAttemptedFor(['glm']);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+        jest.advanceTimersByTime(59_999);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+        jest.advanceTimersByTime(2);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('clearModelsCache resets the tracking', () => {
       markRefreshAttemptedFor(['glm']);
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
@@ -100,6 +115,271 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache('session-123');
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+    });
+  });
+
+  describe('scheduled transient retry', () => {
+    type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+    function glmModel(id: string): ModelInfo {
+      return {
+        id,
+        name: id,
+        alias: id,
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 128000,
+        description: id,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    function registerGlmProvider(
+      getModels: () => Promise<ModelInfo[]>,
+      isAvailable: () => Promise<boolean> = async () => true
+    ): { getModels: ReturnType<typeof mock> } {
+      const getModelsMock = mock(getModels);
+      getProviderRegistry().register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable,
+        getModels: getModelsMock,
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as ProviderLike);
+      return { getModels: getModelsMock };
+    }
+
+    it('arms a scheduled retry for a transient failure and replaces the cache slice on recovery', async () => {
+      jest.useFakeTimers();
+      try {
+        let failing = true;
+        const { getModels } = registerGlmProvider(async () => {
+          if (failing) throw new Error('Endpoint returned HTTP 503');
+          return [glmModel('glm-5-new'), glmModel('glm-5-air-new')];
+        });
+
+        await refreshModels();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-new')).toBe(false);
+
+        const changes: ProviderFailureChange[] = [];
+        subscribeProviderFailureChanges((change) => changes.push(change));
+        failing = false;
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-new', 'glm-5-air-new']);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+        expect(changes.some((c) => c.providerId === 'glm' && c.record === null)).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('re-arms the retry while the provider keeps failing transiently', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('stays dormant for definitive credential failures (HTTP 401)', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Request failed (http 401)');
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('stays dormant for definitive ACP spawn failures', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('ACP agent process error: spawn acp-agent ENOENT');
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('cancels a pending transient retry when a later load classifies the failure as definitive', async () => {
+      jest.useFakeTimers();
+      try {
+        let message = 'Endpoint returned HTTP 503';
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error(message);
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        message = 'Request failed (http 401)';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('clearModelsCache cancels pending retry timers', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+
+        clearModelsCache();
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('drops in-flight retry results when a global clear lands mid-probe', async () => {
+      jest.useFakeTimers();
+      try {
+        let resolveProbe: (models: ModelInfo[]) => void = () => {};
+        let failFirst = true;
+        const { getModels } = registerGlmProvider(async () => {
+          if (failFirst) throw new Error('Endpoint returned HTTP 503');
+          return new Promise<ModelInfo[]>((resolve) => {
+            resolveProbe = resolve;
+          });
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        failFirst = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        clearModelsCache();
+
+        resolveProbe([glmModel('glm-5-new')]);
+        await flushMicrotasks();
+
+        expect(getModelsCache().size).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('skips the fetch when the provider is unregistered before the timer fires', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+
+        getProviderRegistry().unregister('glm');
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps a still-failing marker set across refreshes and clears it only on recovery', async () => {
+      jest.useFakeTimers();
+      try {
+        let failing = true;
+        registerGlmProvider(async () => {
+          if (failing) throw new Error('Endpoint returned HTTP 503');
+          return [glmModel('glm-5-new')];
+        });
+
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        failing = false;
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+        expect(getProviderFailure('glm')).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 

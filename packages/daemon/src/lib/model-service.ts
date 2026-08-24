@@ -118,7 +118,16 @@ const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
 
-const refreshedMissingProviders = new Set<string>();
+const PROVIDER_RETRY_BACKOFF_MS = 60_000;
+
+interface ProviderRetryEntry {
+  lastAttemptAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const providerRetryEntries = new Map<string, ProviderRetryEntry>();
+
+let providerRetryGeneration = 0;
 
 export async function getSupportedModelsFromQuery(
   queryObject: QueryLike | null,
@@ -286,17 +295,99 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
   for (const failure of getAllProviderFailures()) {
     if (!registry.has(failure.providerId)) {
       removeProviderFailure(failure.providerId);
+      clearProviderRetry(failure.providerId);
     }
   }
   for (const providerId of result.succeededProviderIds) {
     clearProviderFailure(providerId);
+    clearProviderRetry(providerId);
   }
   for (const failure of result.failures) {
     if (!registry.has(failure.providerId)) {
       continue;
     }
     recordClassifiedProviderFailure(failure.providerId, failure);
+    if (failure.errorKind === 'transient') {
+      armProviderRetryTimer(failure.providerId);
+    } else {
+      cancelProviderRetryTimer(failure.providerId);
+    }
   }
+}
+
+function getOrCreateProviderRetryEntry(providerId: string): ProviderRetryEntry {
+  let entry = providerRetryEntries.get(providerId);
+  if (!entry) {
+    entry = { lastAttemptAt: Date.now(), timer: null };
+    providerRetryEntries.set(providerId, entry);
+  }
+  return entry;
+}
+
+function cancelProviderRetryTimer(providerId: string): void {
+  const entry = providerRetryEntries.get(providerId);
+  if (!entry?.timer) return;
+  clearTimeout(entry.timer);
+  entry.timer = null;
+}
+
+function clearProviderRetry(providerId: string): void {
+  cancelProviderRetryTimer(providerId);
+  providerRetryEntries.delete(providerId);
+}
+
+function armProviderRetryTimer(providerId: string): void {
+  const entry = getOrCreateProviderRetryEntry(providerId);
+  if (entry.timer) return;
+  const timer = setTimeout(() => {
+    entry.timer = null;
+    entry.lastAttemptAt = Date.now();
+    void runScheduledProviderRetry(providerId);
+  }, PROVIDER_RETRY_BACKOFF_MS);
+  timer.unref?.();
+  entry.timer = timer;
+}
+
+function cancelAllProviderRetries(): void {
+  for (const entry of providerRetryEntries.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+  }
+  providerRetryEntries.clear();
+  providerRetryGeneration += 1;
+}
+
+function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
+  const cacheKey = 'global';
+  const existing = modelsCache.get(cacheKey);
+  if (!existing || existing.length === 0) {
+    modelsCache.set(cacheKey, mergeWithFallbackModels(models));
+  } else {
+    modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...models]);
+  }
+  cacheTimestamps.set(cacheKey, Date.now());
+}
+
+async function runScheduledProviderRetry(providerId: string): Promise<void> {
+  const generationAtStart = providerRetryGeneration;
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) {
+    providerRetryEntries.delete(providerId);
+    return;
+  }
+  const result = await loadProviderModels(provider);
+  if (providerRetryGeneration !== generationAtStart) {
+    return;
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  const failed = error !== undefined;
+  if (result.status === 'loaded') {
+    replaceProviderModelsInCache(providerId, result.models);
+  }
+  applyProviderLoadOutcome({
+    models: result.models,
+    succeededProviderIds: failed ? [] : [providerId],
+    failures: failed ? [{ providerId, ...classifyProviderFailure(error) }] : [],
+  });
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -390,16 +481,21 @@ export function clearModelsCache(cacheKey?: string): void {
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
-    refreshedMissingProviders.clear();
+    cancelAllProviderRetries();
   }
 }
 
 export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
-  return refreshedMissingProviders.has(providerId);
+  const entry = providerRetryEntries.get(providerId);
+  if (!entry) return false;
+  return Date.now() - entry.lastAttemptAt < PROVIDER_RETRY_BACKOFF_MS;
 }
 
 export function markRefreshAttemptedFor(providerIds: string[]): void {
-  for (const id of providerIds) refreshedMissingProviders.add(id);
+  const now = Date.now();
+  for (const id of providerIds) {
+    getOrCreateProviderRetryEntry(id).lastAttemptAt = now;
+  }
 }
 
 export async function refreshModels(signal?: AbortSignal): Promise<void> {
