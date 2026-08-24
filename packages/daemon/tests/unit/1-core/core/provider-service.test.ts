@@ -584,6 +584,28 @@ describe('ProviderService', () => {
 
       expect(model).toBe('translated-4.7');
     });
+
+    it('falls back to the first curated model when the session model is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new GlmMockProvider());
+      globalRegistry.setCuratedModels('glm', [{ id: 'glm-1' }]);
+
+      const model = await realService.getTitleGenerationModel('glm', 'glm-4.7');
+
+      expect(model).toBe('translated-1');
+    });
+
+    it('keeps the session model when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', []);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-9');
+
+      expect(model).toBe('translated-9');
+    });
   });
 
   describe('getTitleGenerationConfig', () => {
@@ -647,6 +669,17 @@ describe('ProviderService', () => {
       expect(config.modelId).toBe('title-1');
       expect(config.baseUrl).toBe('https://mock.api.com');
     });
+
+    it('returns the default model when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', []);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config.modelId).toBe('default');
+    });
   });
 
   describe('getCheapTierModel', () => {
@@ -663,6 +696,15 @@ describe('ProviderService', () => {
       globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
 
       expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
+    });
+
+    it('returns null when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', []);
+
+      expect(await realService.getCheapTierModel('title-override')).toBeNull();
     });
   });
 

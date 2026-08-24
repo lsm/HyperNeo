@@ -233,7 +233,7 @@ export class ProviderService {
     provider: RegisteredProvider
   ): Promise<string | undefined> {
     const curated = this.getRegistry().getCuratedModels(providerId);
-    if (curated !== undefined && curated.length > 0) return curated[0].id;
+    if (curated !== undefined) return curated[0]?.id;
     return (await provider.getModels())[0]?.id;
   }
 
@@ -243,9 +243,8 @@ export class ProviderService {
   ): Promise<{ providerModelId: string; sdkModelId: string }> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
-    const preferred = provider?.getTitleGenerationModel?.();
-    let providerModelId = preferred ?? sessionModelId;
-    if (provider && preferred && isModelCuratedOut(preferred, providerId)) {
+    let providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    if (provider && isModelCuratedOut(providerModelId, providerId)) {
       providerModelId =
         (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? sessionModelId;
     }

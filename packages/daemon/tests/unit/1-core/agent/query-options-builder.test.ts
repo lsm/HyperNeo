@@ -885,6 +885,23 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
+    it('does not force an enabled budget when the Kimi K2.7 fallback is curated out', () => {
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-k3';
+        mockSession.config.fallbackModel = 'kimi-k2.7-code';
+        mockSession.config.thinkingLevel = 'off';
+
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+        expect(result.thinking).toBeUndefined();
+      } finally {
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      }
+    });
+
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-for-coding';

@@ -549,7 +549,7 @@ export class QueryOptionsBuilder {
       }
 
       const fallbackModel = this.ctx.session.config.fallbackModel;
-      if (fallbackModel) {
+      if (fallbackModel && !isModelCuratedOut(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
