@@ -309,6 +309,7 @@ export function setupAuthHandlers(
           if (remaining?.type === 'oauth') {
             await credentialManager?.storeOAuthTokens(providerId, remaining);
           }
+          await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',

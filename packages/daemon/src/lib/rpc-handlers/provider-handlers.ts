@@ -268,6 +268,21 @@ async function listAcpRemoteModels(
   return fetchAcpModels(provider, { command: options.command || undefined });
 }
 
+const DISCOVERY_REFRESH_TIMEOUT_MS = 30_000;
+
+function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Provider discovery timed out')), ms);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 function isUnchangedSavedConfig(
   record: ProviderRecord | null,
   saved: { baseUrl?: string; configJson?: string }
@@ -470,17 +485,21 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         getCurrentCacheLoad,
         applyDiscoveredProviderModels,
         releaseAppliedProviderSlice,
+        schedulePendingSliceRelease,
         markProviderRefreshSucceeded,
       } = await import('../model-service.js');
       const clearsAtStart = getModelsCacheClearSequence();
       const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
       const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
 
-      const discovered = await provider.listRemoteModels({ force: true });
+      const discovered = await raceWithTimeout(
+        provider.listRemoteModels({ force: true }),
+        DISCOVERY_REFRESH_TIMEOUT_MS
+      );
       if (discovered.length === 0) {
         throw new Error(`Provider ${record.providerId} returned no models`);
       }
-      const models = await provider.getModels();
+      const models = await raceWithTimeout(provider.getModels(), DISCOVERY_REFRESH_TIMEOUT_MS);
 
       if (
         getModelsCacheClearSequence() !== clearsAtStart ||
@@ -509,13 +528,20 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             getModelsCacheClearSequence() !== clearsAtStart ||
             JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
             !isUnchangedSavedConfig(providerRepo.getProvider(request.id), persistedConfig);
+          const currentRow = providerRepo.getProvider(request.id);
           if (supersededDuringWait) {
-            providerRepo.updateProvider(request.id, { configJson: record.configJson });
+            if (currentRow && currentRow.configJson === persistedConfig.configJson) {
+              providerRepo.updateProvider(request.id, { configJson: record.configJson });
+            }
             return { success: false, reason: 'superseded' };
           }
           if (applyDiscoveredProviderModels(record.providerId, models)) {
             releaseAppliedProviderSlice(record.providerId);
+          } else {
+            schedulePendingSliceRelease(record.providerId);
           }
+        } else {
+          schedulePendingSliceRelease(record.providerId);
         }
       }
       const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
@@ -648,7 +674,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          const record = providerRepo.updateProvider(data.id, updates);
+          let record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
 
           const shouldResync =
@@ -678,7 +704,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               providerRepo.getProvider(data.id)?.configJson
             );
             if (strippedConfig !== record.configJson) {
-              providerRepo.updateProvider(data.id, { configJson: strippedConfig });
+              record =
+                providerRepo.updateProvider(data.id, { configJson: strippedConfig }) ?? record;
             }
           }
 

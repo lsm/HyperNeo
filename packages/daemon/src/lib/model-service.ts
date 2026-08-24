@@ -176,6 +176,8 @@ const refreshModes = new Map<string, boolean>();
 
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
+const pendingSliceReleases = new Set<string>();
+
 function pendingSliceKey(cacheKey: string, providerId: string): string {
   return `${cacheKey}:${providerId}`;
 }
@@ -289,6 +291,12 @@ function releaseRefreshState(cacheKey: string, refreshPromise: Promise<void>): v
   }
   refreshInProgress.delete(cacheKey);
   refreshModes.delete(cacheKey);
+  for (const key of [...pendingSliceReleases]) {
+    if (key.startsWith(`${cacheKey}:`)) {
+      pendingSliceReleases.delete(key);
+      pendingProviderSlices.delete(key);
+    }
+  }
   if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
     cacheGeneration.delete(cacheKey);
   }
@@ -997,7 +1005,12 @@ export function markProviderRefreshSucceeded(providerId: string): boolean {
 }
 
 export function releaseAppliedProviderSlice(providerId: string, cacheKey: string = 'global'): void {
+  pendingSliceReleases.delete(pendingSliceKey(cacheKey, providerId));
   pendingProviderSlices.delete(pendingSliceKey(cacheKey, providerId));
+}
+
+export function schedulePendingSliceRelease(providerId: string, cacheKey: string = 'global'): void {
+  pendingSliceReleases.add(pendingSliceKey(cacheKey, providerId));
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {

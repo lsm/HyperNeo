@@ -1132,17 +1132,20 @@ describe('Provider RPC handlers', () => {
       await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
       expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
 
-      await handlers.get('providers.update')!(
+      const updated = (await handlers.get('providers.update')!(
         { id: created.id, params: { configJson: JSON.stringify({ region: 'global' }) } },
         {}
-      );
+      )) as { provider: ProviderRecord };
 
-      const updated = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+      const stored = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
         string,
         unknown
       >;
-      expect(updated.region).toBe('global');
-      expect(updated).not.toHaveProperty('discoveredModels');
+      expect(stored.region).toBe('global');
+      expect(stored).not.toHaveProperty('discoveredModels');
+      expect(JSON.parse(updated.provider.configJson ?? '{}')).not.toHaveProperty(
+        'discoveredModels'
+      );
     });
 
     it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {
