@@ -7929,6 +7929,7 @@ export function runMigration141(db: BunDatabase): void {
   const hasOptimizedFts =
     ftsSql?.includes("content='message_search_content'") && ftsSql.includes('detail=column');
   createMessageSearchContentTable(db);
+  ensureStableMessageSearchIds(db);
   if (!hasOptimizedFts) {
     dropMessageSearchTriggers(db);
     db.exec(`DROP TABLE IF EXISTS message_search_fts`);
@@ -7954,19 +7955,18 @@ export function runMigration211(db: BunDatabase): void {
       reclaimed_at INTEGER NOT NULL
     )
   `;
-  if (!tableExists(db, 'message_search_content')) {
-    db.exec(createReclaims);
-    return;
+  if (tableExists(db, 'message_search_content')) {
+    ensureStableMessageSearchIds(db);
   }
+  db.exec(createReclaims);
+}
 
+function ensureStableMessageSearchIds(db: BunDatabase): void {
   const contentSql = tableCreateSql(db, 'message_search_content');
   const hasStableContentId = !!contentSql && /\bid\s+INTEGER\s+PRIMARY KEY\b/i.test(contentSql);
   const ftsSql = tableCreateSql(db, 'message_search_fts');
   const hasStableFtsId = ftsSql?.includes("content_rowid='id'");
-  if (hasStableContentId && hasStableFtsId) {
-    db.exec(createReclaims);
-    return;
-  }
+  if (hasStableContentId && (hasStableFtsId || !ftsSql)) return;
 
   const foreignKeys = (
     db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
@@ -7974,11 +7974,10 @@ export function runMigration211(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN');
   try {
-    db.exec(createReclaims);
     dropMessageSearchTriggers(db);
     db.exec(`DROP TABLE IF EXISTS message_search_fts`);
     if (!hasStableContentId) {
-      db.exec(`ALTER TABLE message_search_content RENAME TO message_search_content_m211_old`);
+      db.exec(`ALTER TABLE message_search_content RENAME TO message_search_content_stable_old`);
       createMessageSearchContentTable(db);
       db.exec(`
         INSERT INTO message_search_content (
@@ -7988,9 +7987,9 @@ export function runMigration211(db: BunDatabase): void {
         SELECT
           kind, source_id, message_id, session_id, task_id, space_id, task_number,
           message_type, title, body, timestamp
-        FROM message_search_content_m211_old
+        FROM message_search_content_stable_old
       `);
-      db.exec(`DROP TABLE message_search_content_m211_old`);
+      db.exec(`DROP TABLE message_search_content_stable_old`);
     }
     createMessageSearchFtsTable(db);
     createMessageSearchSyncTriggers(db);

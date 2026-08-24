@@ -134,7 +134,8 @@ pre-vacuum backup copy to reclaim its disk.
 - **Rewrite migrations:** migrations that rebuild tables are declared with `rewrite(...)` in the
   migration runner. After those migrations commit and before normal daemon services start,
   the daemon runs `VACUUM main` when the freelist is nonempty, verifies that it reaches zero,
-  truncates the WAL, and records the rewrite markers as reclaimed. A failed or interrupted
+  truncates the WAL, and records the rewrite markers as reclaimed. A reclaim interrupted by a
+  concurrent WAL reader defers instead of blocking startup, and any failed or interrupted
   reclaim remains pending and is retried on the next startup. Future table rewrites must use
   this declaration.
 - **Stats:** plain `PRAGMA optimize` on every clean daemon shutdown — the periodic,

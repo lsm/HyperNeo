@@ -6,6 +6,7 @@ export interface MigrationSpaceReclaimRequest {
 
 export type MigrationSpaceReclaimResult =
   | { kind: 'not-pending' }
+  | { kind: 'deferred' }
   | {
       kind: 'reclaimed';
       vacuumed: boolean;
@@ -52,7 +53,7 @@ export function reclaimPendingMigrationSpace(
     | { busy: number; log: number; checkpointed: number }
     | undefined;
   if (!checkpoint || checkpoint.busy !== 0 || checkpoint.checkpointed < checkpoint.log) {
-    throw new Error('Migration space reclaim could not truncate the WAL');
+    return { kind: 'deferred' };
   }
 
   const hasMarker = db.prepare(`SELECT 1 FROM migration_markers WHERE key = ?`);

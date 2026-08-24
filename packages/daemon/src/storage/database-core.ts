@@ -80,6 +80,10 @@ export class DatabaseCore {
           `[Database] Reclaimed space after ${reclaim.reclaimedMigrations} rewrite migrations` +
             ` (${reclaim.freelistBefore} free pages${reclaim.vacuumed ? '' : ', no vacuum needed'})`
         );
+      } else if (reclaim.kind === 'deferred') {
+        this.logger.warn(
+          '[Database] Migration space reclaim blocked by an active WAL reader; retrying next startup'
+        );
       }
 
       createTables(this.db);

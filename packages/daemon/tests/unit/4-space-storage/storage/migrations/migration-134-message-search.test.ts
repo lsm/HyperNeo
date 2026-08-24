@@ -294,6 +294,50 @@ describe('Migration 134: message search FTS', () => {
     ).toEqual(before);
   });
 
+  test('migration 141 converts legacy rowid content before recreating optimized FTS', () => {
+    seedSearchFixtures(db);
+    db.exec(`
+      CREATE TABLE message_search_content (
+        kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        message_id TEXT,
+        session_id TEXT,
+        task_id TEXT,
+        space_id TEXT,
+        task_number INTEGER,
+        message_type TEXT,
+        title TEXT,
+        body TEXT,
+        timestamp INTEGER,
+        PRIMARY KEY (kind, source_id)
+      );
+      CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body);
+    `);
+
+    runMigration141(db);
+
+    const contentSql = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE name = 'message_search_content'`)
+      .get() as { sql: string };
+    const ftsSql = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE name = 'message_search_fts'`)
+      .get() as { sql: string };
+    expect(contentSql.sql).toContain('id INTEGER PRIMARY KEY');
+    expect(ftsSql.sql).toContain("content_rowid='id'");
+    const rows = db
+      .prepare(
+        `SELECT msc.kind, msc.source_id
+         FROM message_search_fts
+         JOIN message_search_content msc ON msc.id = message_search_fts.rowid
+         WHERE message_search_fts MATCH ?`
+      )
+      .all('needle') as Array<{ kind: string; source_id: string }>;
+    expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
+      'message:msg-1',
+      'task:task-1',
+    ]);
+  });
+
   test('migration 141 prunes policy-excluded rows after legacy FTS upgrade', () => {
     runMigration134(db);
     db.prepare(`INSERT INTO sessions (id, title) VALUES (?, ?)`).run('coder:old', 'Coder');
