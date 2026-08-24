@@ -119,7 +119,10 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
+import {
+  isSDKResultSuccess,
+  isSDKSessionStateChangedMessage,
+} from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner';
 import { resolveModelAlias } from '../model-service';
 import { getProviderRegistry } from '../providers/factory.js';
@@ -258,6 +261,7 @@ export class AgentSession
   private taskNotificationRequeryAttempts = 0;
   private taskNotificationRequeryExhausted = false;
   private taskNotificationRequeryTimer: ReturnType<typeof setTimeout> | null = null;
+  private taskNotificationRequeryPending = false;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -1381,6 +1385,12 @@ export class AgentSession
 
   private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
     if (this.session.config.provider === 'acp') return;
+    if (isSDKSessionStateChangedMessage(message)) {
+      if (message.state === 'idle') {
+        this.flushPendingTaskNotificationRequery();
+      }
+      return;
+    }
     if (message.type !== 'result') return;
     const parentToolUseId = (
       message as import('@hyperneo/shared/sdk').SDKMessage & {
@@ -1401,22 +1411,23 @@ export class AgentSession
     if (decision.action === 'hold') return;
     if (decision.action === 'escalate') {
       this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryPending = false;
       this.taskNotificationRequeryExhausted = true;
       void this.escalateTaskNotificationRequeryExhaustion();
       return;
     }
-    this.scheduleTaskNotificationRequery(decision.delayMs);
+    if (this.stateManager.getState().status === 'idle') {
+      this.scheduleTaskNotificationRequery(decision.delayMs);
+    } else {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryPending = true;
+    }
   }
 
   private hasQueuedFollowUpDelivery(): boolean {
     if (this.messageQueue.size() > 0) return true;
     const status = this.stateManager.getState().status;
-    if (
-      status === 'processing' ||
-      status === 'queued' ||
-      status === 'waiting_for_input' ||
-      status === 'interrupted'
-    ) {
+    if (status === 'queued' || status === 'waiting_for_input' || status === 'interrupted') {
       return true;
     }
     const jobQueue = this.db.getJobQueueRepo?.();
@@ -1445,13 +1456,32 @@ export class AgentSession
     this.clearTaskNotificationRequeryTimer();
     this.taskNotificationRequeryAttempts = 0;
     this.taskNotificationRequeryExhausted = false;
+    this.taskNotificationRequeryPending = false;
+  }
+
+  private flushPendingTaskNotificationRequery(): void {
+    if (!this.taskNotificationRequeryPending) return;
+    this.taskNotificationRequeryPending = false;
+    if (this.stateManager.getState().status !== 'idle') return;
+    if (
+      this._isCleaningUp ||
+      this.isLimitRecoveryPending() ||
+      this.stateManager.getState().status === 'rate_limit_cooldown'
+    ) {
+      this.taskNotificationRequeryPending = true;
+      return;
+    }
+    void this.runTaskNotificationRequeryContinue();
   }
 
   private async runTaskNotificationRequeryContinue(): Promise<void> {
     if (this._isCleaningUp) return;
     if (this.db.getSession(this.session.id)?.status === 'archived') return;
     if (this.hasQueuedFollowUpDelivery()) return;
-    if (this.stateManager.getState().status === 'rate_limit_cooldown') return;
+    if (this.stateManager.getState().status !== 'idle') {
+      this.taskNotificationRequeryPending = true;
+      return;
+    }
     if (this.isLimitRecoveryPending()) return;
     if (!this.messageQueue.isRunning() || !this.queryPromise) {
       this.logger.warn(

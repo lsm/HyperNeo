@@ -48,6 +48,16 @@ function buildHollowTaskNotificationResult(): SDKMessage {
   return buildResultMessage({ origin: { kind: 'task-notification' } });
 }
 
+function buildSessionStateChangedMessage(state: string): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'session_state_changed',
+    state,
+    uuid: 'state-uuid',
+    session_id: 'requery-session-id',
+  } as unknown as SDKMessage;
+}
+
 function buildRealSuccessResult(): SDKMessage {
   return buildResultMessage({
     result: 'Review handoff submitted.',
@@ -426,6 +436,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await settleRequery();
     expect(continueCalls()).toBe(1);
     expect(needsAttentionPublishes()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(2);
   });
 
   it('clears a pending re-query timer when the user interrupts', async () => {
