@@ -402,7 +402,7 @@ describe('KimiProvider', () => {
         alias: 'moonshot-v1-32k',
         family: 'kimi',
         provider: 'kimi',
-        contextWindow: 262_144,
+        contextWindow: 32_768,
         thinkingModes: 'on',
         available: true,
       });
@@ -556,6 +556,17 @@ describe('KimiProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
     });
 
+    it('derives smaller context windows from discovered capacity suffixes', () => {
+      expect(KimiProvider.resolveContextWindow('moonshot-v1-8k')).toBe(8_192);
+      expect(KimiProvider.resolveContextWindow('moonshot-v1-32k')).toBe(32_768);
+      expect(KimiProvider.resolveContextWindow('moonshot-v1-128k')).toBe(131_072);
+      expect(KimiProvider.resolveContextWindow('moonshot-v1-256k')).toBe(262_144);
+
+      const config = provider.buildSdkConfig('moonshot-v1-32k');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('moonshot-v1-32k');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('32768');
+    });
+
     it('preserves newly discovered moonshot IDs instead of routing them to K2.7', () => {
       expect(provider.ownsModel('moonshot-k4')).toBe(true);
 
@@ -565,10 +576,21 @@ describe('KimiProvider', () => {
       expect(provider.translateModelIdForSdk('moonshot-k4')).toBe('moonshot-k4');
     });
 
+    it('classifies only delimiter-bounded K3 variants as K3 family', () => {
+      expect(KimiProvider.isKimiK3Model('k3-preview')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('kimi-k3-preview')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('moonshot-k3-preview')).toBe(true);
+      expect(KimiProvider.isKimiK3Model('kimi-k30')).toBe(false);
+      expect(KimiProvider.isKimiK3Model('k330')).toBe(false);
+      expect(provider.getModelThinkingMode('kimi-k30')).toBeUndefined();
+    });
+
     it('keeps foreign and colon-tagged IDs on the region default', () => {
       expect(provider.ownsModel('gpt-4o')).toBe(false);
       expect(provider.ownsModel('abab6.5s-chat')).toBe(false);
       expect(provider.ownsModel('kimi-k4:latest')).toBe(false);
+      expect(provider.ownsModel('moonshot-k4:latest')).toBe(false);
+      expect(provider.ownsModel('moonshot-k3:latest')).toBe(false);
 
       const config = provider.buildSdkConfig('gpt-4o');
 
@@ -1168,13 +1190,12 @@ describe('KimiProvider', () => {
       expect(KimiProvider.MODELS.every((m) => m.preferContextWindowMetadata)).toBe(true);
     });
 
-    it('should expose moonshot-* provider aliases via providerAliasPrefixes', () => {
+    it('keeps the coding model free of a broad moonshot- prefix so discovered IDs stay themselves', () => {
       const codingModel = KimiProvider.MODELS.find((m) => m.id === 'kimi-for-coding')!;
       const providerAliases = codingModel.providerAliases ?? [];
-      const providerAliasPrefixes = codingModel.providerAliasPrefixes ?? [];
       expect(providerAliases).toContain('KIMI');
       expect(providerAliases).toContain('kimi-k2.7-code');
-      expect(providerAliasPrefixes).toContain('moonshot-');
+      expect(codingModel.providerAliasPrefixes ?? []).not.toContain('moonshot-');
     });
 
     it('should expose k3 alias on the K3 model', () => {
@@ -1192,7 +1213,7 @@ describe('KimiProvider', () => {
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-256k-preview')?.id).toBe('k3-256k');
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-256k')?.id).toBe('k3-256k');
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3-preview')?.id).toBe('kimi-k3[1m]');
-      expect(findInModels(KimiProvider.MODELS, 'moonshot-v1-32k')?.id).toBe('kimi-for-coding');
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-v1-32k')).toBeUndefined();
     });
   });
 

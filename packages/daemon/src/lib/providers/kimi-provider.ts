@@ -123,7 +123,6 @@ export class KimiProvider implements Provider {
       provider: 'kimi',
       contextWindow: 262_144,
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
-      providerAliasPrefixes: ['moonshot-'],
       preferContextWindowMetadata: true,
       thinkingModes: 'on',
       description: 'Kimi Code model from Moonshot Claude Code integration docs.',
@@ -191,7 +190,14 @@ export class KimiProvider implements Provider {
 
   static isKimiK3Model(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    return id.startsWith('k3') || id.startsWith('kimi-k3') || id.startsWith('moonshot-k3');
+    return (
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'moonshot-k3' ||
+      id.startsWith('k3-') ||
+      id.startsWith('kimi-k3-') ||
+      id.startsWith('moonshot-k3-')
+    );
   }
 
   static isKimiK3OneMModel(modelId: string): boolean {
@@ -370,6 +376,7 @@ export class KimiProvider implements Provider {
 
   ownsModel(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
+    if (id.includes(':')) return false;
     return (
       id === 'kimi' ||
       id === 'k3' ||
@@ -452,6 +459,8 @@ export class KimiProvider implements Provider {
     if (normalized === 'kimi-k3' || KimiProvider.hasOneMContextSuffix(modelId)) {
       return 1_048_576;
     }
+    const capacityMatch = /-(8|32|128)k$/.exec(normalized);
+    if (capacityMatch) return parseInt(capacityMatch[1], 10) * 1024;
     return 262_144;
   }
 
@@ -554,7 +563,7 @@ export class KimiProvider implements Provider {
         }
       }
     }
-    if (prefixMatch && KimiProvider.isKimiK3Model(model.id)) return prefixMatch.model;
+    if (prefixMatch) return prefixMatch.model;
     if (KimiProvider.isDiscoveredKimiModelId(model.id)) {
       return {
         id: model.id,
