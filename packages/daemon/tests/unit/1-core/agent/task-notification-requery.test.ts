@@ -351,7 +351,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     consumedFollowUpUuids = new Set();
     revokedPendingMessage = null;
     enqueueSpy = mock(async () => {});
-    publishSpy = mock(async () => {});
+    publishSpy = mock(async () => ({ delivered: 1, failures: [] }));
     agentSession = createRequerySession({
       context: { spaceId: 'space-1', taskId: 'task-1' },
     });
@@ -894,6 +894,37 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.stateManager.setIdle();
     await settleRequery();
     expect(continueCalls()).toBe(1);
+  });
+
+  it('probes parked episodes after limit recovery is cancelled without an idle transition', async () => {
+    const isRecoveryPending = mock(() => true);
+    (
+      agentSession as unknown as {
+        rateLimitWatchdog: { isRecoveryPending: typeof isRecoveryPending };
+      }
+    ).rateLimitWatchdog = { isRecoveryPending };
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    isRecoveryPending.mockImplementation(() => false);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('surfaces a session error when the needs-attention event has no subscriber', async () => {
+    publishSpy.mockImplementation(async () => ({ delivered: 0, failures: [] }));
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(
+      publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')
+    ).toBeDefined();
   });
 
   it('re-parks a scheduled retry when the SDK turns busy during the backoff', async () => {

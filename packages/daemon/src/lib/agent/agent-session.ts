@@ -1590,6 +1590,7 @@ export class AgentSession
     if (this.isLimitRecoveryPending()) {
       this.taskNotificationRequeryPending = true;
       this.taskNotificationRequeryPendingDelayMs = 0;
+      this.scheduleTaskNotificationRequery(1000);
       return;
     }
     if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
@@ -1724,22 +1725,7 @@ export class AgentSession
           `${this.session.id}; needs attention: no space context resolved, surfacing a ` +
           'recoverable session error'
       );
-      try {
-        await this.errorManager.handleError(
-          this.session.id,
-          new Error(`task-notification re-query budget exhausted after ${attempts} attempt(s)`),
-          ErrorCategory.SYSTEM,
-          'A background-task notification could not be delivered to the model after repeated ' +
-            'automatic retries. Send a message to continue the session and consume it.',
-          this.stateManager.getState(),
-          { taskNotificationRequeryAttempts: attempts }
-        );
-      } catch (error) {
-        this.logger.warn(
-          `task-notification requery: failed to surface exhaustion error: ` +
-            `${error instanceof Error ? error.message : String(error)}`
-        );
-      }
+      await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
       return;
     }
     this.logger.warn(
@@ -1747,10 +1733,39 @@ export class AgentSession
         `session=${this.session.id} run=${event.runId} task=${event.taskId}`
     );
     try {
-      await this.internalEventBus.publish('space.workflowRun.needsAttention', { ...event });
+      const published = await this.internalEventBus.publish('space.workflowRun.needsAttention', {
+        ...event,
+      });
+      const delivered = (published as { delivered?: number } | null | undefined)?.delivered;
+      if (delivered === 0) {
+        this.logger.warn(
+          `task-notification requery: needs-attention escalation had no subscriber for session ` +
+            `${this.session.id}; surfacing a recoverable session error instead`
+        );
+        await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
+      }
     } catch (error) {
       this.logger.warn(
         `task-notification requery: failed to publish needs-attention escalation: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async surfaceTaskNotificationRequeryExhaustionError(attempts: number): Promise<void> {
+    try {
+      await this.errorManager.handleError(
+        this.session.id,
+        new Error(`task-notification re-query budget exhausted after ${attempts} attempt(s)`),
+        ErrorCategory.SYSTEM,
+        'A background-task notification could not be delivered to the model after repeated ' +
+          'automatic retries. Send a message to continue the session and consume it.',
+        this.stateManager.getState(),
+        { taskNotificationRequeryAttempts: attempts }
+      );
+    } catch (error) {
+      this.logger.warn(
+        `task-notification requery: failed to surface exhaustion error: ` +
           `${error instanceof Error ? error.message : String(error)}`
       );
     }
