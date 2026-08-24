@@ -928,36 +928,31 @@ export async function isValidModel(
   }
 }
 
-export async function isCuratedOutModel(
+export function isCuratedOutModel(
   idOrAlias: string,
   providerId: string,
   cacheKey: string = 'global'
-): Promise<boolean> {
-  if (getProviderRegistry().getCuratedModels(providerId) === undefined) {
+): boolean {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) {
     return false;
   }
 
-  if (await isValidModel(idOrAlias, cacheKey, providerId)) {
-    return false;
-  }
+  const curatedIds = new Set(curatedModels.map((model) => model.id));
 
   const rawModels = readCachedModels(cacheKey);
-  if (
-    rawModels &&
-    findInModels(
-      rawModels.filter((model) => model.provider === providerId),
-      idOrAlias
-    )
-  ) {
-    return true;
-  }
-
-  return Boolean(
+  const knownModel =
+    (rawModels &&
+      findInModels(
+        rawModels.filter((model) => model.provider === providerId),
+        idOrAlias
+      )) ??
     findInModels(
       STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
       idOrAlias
-    )
-  );
+    );
+
+  return knownModel !== undefined && !curatedIds.has(knownModel.id);
 }
 
 export async function resolveModelAlias(

@@ -353,22 +353,24 @@ export function setupSessionHandlers(
     const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;
 
     const configUpdate = (updates as Partial<Session>).config;
-    if (configUpdate?.model) {
+    if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
       const existingConfig =
         agentSessionForUpdate?.getSessionData().config ??
         sessionManager.getSessionFromDB(targetSessionId)?.config;
+      const effectiveModel = configUpdate.model ?? existingConfig?.model;
       const providerId = configUpdate.provider ?? existingConfig?.provider;
-      const rewritesOwnModel =
+      const rewritesOwnPair =
         existingConfig !== undefined &&
-        configUpdate.model === existingConfig.model &&
+        effectiveModel === existingConfig.model &&
         providerId === existingConfig.provider;
       if (
         providerId &&
-        !rewritesOwnModel &&
-        (await isCuratedOutModel(configUpdate.model, providerId))
+        effectiveModel &&
+        !rewritesOwnPair &&
+        isCuratedOutModel(effectiveModel, providerId)
       ) {
         throw new Error(
-          `Model '${configUpdate.model}' is curated out for provider '${providerId}' and cannot be set on a session`
+          `Model '${effectiveModel}' is curated out for provider '${providerId}' and cannot be set on a session`
         );
       }
     }

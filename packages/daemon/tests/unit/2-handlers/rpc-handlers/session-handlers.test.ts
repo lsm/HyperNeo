@@ -1143,6 +1143,20 @@ describe('Session RPC Handlers — session.update model curation', () => {
     { id: 'sonnet', name: 'Sonnet', alias: 'sonnet', provider: 'anthropic', contextWindow: 200000 },
     { id: 'opus', name: 'Opus', alias: 'opus', provider: 'anthropic', contextWindow: 200000 },
     { id: 'haiku', name: 'Haiku', alias: 'haiku', provider: 'anthropic', contextWindow: 200000 },
+    {
+      id: 'opus',
+      name: 'Opus via Copilot',
+      alias: 'opus',
+      provider: 'anthropic-copilot',
+      contextWindow: 128000,
+    },
+    {
+      id: 'copilot-sonnet',
+      name: 'Copilot Sonnet',
+      alias: 'copilot-sonnet',
+      provider: 'anthropic-copilot',
+      contextWindow: 128000,
+    },
   ] as ModelInfo[];
 
   beforeEach(async () => {
@@ -1253,6 +1267,32 @@ describe('Session RPC Handlers — session.update model curation', () => {
     await handler!({ sessionId: 's1', config: { model: 'opus' } }, {});
 
     expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'opus' } });
+  });
+
+  it('rejects a provider-only change that pairs the kept model with a provider that curates it out', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'copilot-sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(
+      handler!({ sessionId: 's1', config: { provider: 'anthropic-copilot' } }, {})
+    ).rejects.toThrow("Model 'opus' is curated out for provider 'anthropic-copilot'");
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows a provider-only change when the kept model is curated in for the new provider', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'opus' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { provider: 'anthropic-copilot' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { provider: 'anthropic-copilot' } });
   });
 });
 

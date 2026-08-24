@@ -1019,7 +1019,7 @@ export class SessionLifecycle {
   ): Promise<{ id: string; provider?: string }> {
     if (requestedModel && explicitProvider) {
       const { isCuratedOutModel } = await import('../model-service');
-      if (await isCuratedOutModel(requestedModel, explicitProvider)) {
+      if (isCuratedOutModel(requestedModel, explicitProvider)) {
         throw new Error(
           `Model '${requestedModel}' is curated out for provider '${explicitProvider}' and cannot be used for a new session`
         );
