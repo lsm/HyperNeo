@@ -4254,11 +4254,15 @@ describe('SDKMessageHandler', () => {
         expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
       });
 
-      it('does not acknowledge a failed persisted user message', async () => {
+      it('does not acknowledge a failed persisted user message and falls through', async () => {
         statusSpy('failed');
         await handler.handleMessage(ackMessage);
         expect(updateMessageStatusSpy).not.toHaveBeenCalled();
         expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', ackMessage);
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
       });
 
       it('suppresses duplicate SDK replay for a consumed persisted user message', async () => {
@@ -4285,6 +4289,10 @@ describe('SDKMessageHandler', () => {
         await handler.handleMessage(ackMessage);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
         expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', ackMessage);
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
       });
     });
 
@@ -4319,6 +4327,15 @@ describe('SDKMessageHandler', () => {
         statusSpy('submitted');
         mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
+        expect(publishSpy).toHaveBeenCalledWith(
+          'state.sdkMessages.delta',
+          expect.objectContaining({
+            added: expect.arrayContaining([expect.objectContaining({ uuid: ackUuid })]),
+            timestamp: yieldAt,
+          }),
+          { channel: 'session:test-session-id' }
+        );
 
         getUserMessagesByStatusSpy.mockClear();
         await handler.handleMessage(ackResult);
@@ -4329,28 +4346,54 @@ describe('SDKMessageHandler', () => {
         statusSpy('deferred');
         mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
+        expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: 'test-session-id',
+          messageIds: [ackDbId],
+          status: 'consumed',
+        });
+        expect(publishSpy).toHaveBeenCalledWith(
+          'state.sdkMessages.delta',
+          expect.objectContaining({
+            added: expect.arrayContaining([expect.objectContaining({ uuid: ackUuid })]),
+            timestamp: yieldAt,
+          }),
+          { channel: 'session:test-session-id' }
+        );
 
         getUserMessagesByStatusSpy.mockClear();
         await handler.handleMessage(ackResult);
         expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
       });
 
-      it('does nothing for a consumed message at pre-yield', () => {
+      it('does nothing for a consumed message at pre-yield and leaves the fallback', async () => {
         statusSpy('consumed');
         mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
       });
 
-      it('does nothing for a failed message at pre-yield', () => {
+      it('does nothing for a failed message at pre-yield and leaves the fallback', async () => {
         statusSpy('failed');
         mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
       });
 
-      it('does nothing when no persisted message matches the yielded uuid', () => {
+      it('does nothing when no persisted message matches the yielded uuid and leaves the fallback', async () => {
         statusSpy('none');
         mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
       });
     });
 
@@ -4479,6 +4522,17 @@ describe('SDKMessageHandler', () => {
         expect(markConsumed).not.toHaveBeenCalled();
       });
 
+      it('skips a durable message that is active but not yielded', async () => {
+        const markConsumed = await runRow({
+          durable: true,
+          yielded: false,
+          pending: false,
+          active: true,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
       it('skips a durable yielded message that is not the active turn message', async () => {
         const markConsumed = await runRow({
           durable: true,
@@ -4508,6 +4562,17 @@ describe('SDKMessageHandler', () => {
           yielded: true,
           pending: true,
           active: true,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('skips a non-durable message that is pending or claimed', async () => {
+        const markConsumed = await runRow({
+          durable: false,
+          yielded: false,
+          pending: true,
+          active: false,
           expected: false,
         });
         expect(markConsumed).not.toHaveBeenCalled();
