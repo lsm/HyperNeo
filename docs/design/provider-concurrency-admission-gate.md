@@ -316,6 +316,8 @@ interface ProviderAdmissionFacts {
   probing: boolean;                 // post-clear / post-restart: a probe grant
                                     // is outstanding and unresolved
   holdsProbeGrant: boolean;         // this delivery owns the grant
+  liveTurnSteer: boolean;           // feeds an already-live provider turn —
+                                    // adds no concurrency
 }
 type ProviderAdmission =
   | { action: 'admit' }
@@ -323,11 +325,14 @@ type ProviderAdmission =
 ```
 
 `decideProviderAdmission(facts)` is pure and synchronous (`.end`, never
-`.endAsync` — Decision item 5): saturated → `queue_until` with the registry's
-deadline; else probing without the grant → `queue_until` (reason `probing`,
-until = the probe tick); else if `configuredCap !== null && inFlight >=
-configuredCap` → `queue_until` (reason `slot_pressure`, until = null-safe probe
-tick); else `admit`. The first admitting consult after a clear mints the grant
+`.endAsync` — Decision item 5): `liveTurnSteer` → `admit` unconditionally (a
+steer fed into a live turn via `feedDeliverySteer` rides the turn's existing
+provider call; it adds none — and parking it while the live turn waits on that
+very input would deadlock the turn whose completion could clear saturation);
+else saturated → `queue_until` with the registry's deadline; else probing
+without the grant → `queue_until` (reason `probing`, until = the probe tick);
+else if `configuredCap !== null && inFlight >= configuredCap` → `queue_until`
+(reason `slot_pressure`, until = null-safe probe tick); else `admit`. The first admitting consult after a clear mints the grant
 (the registry, not the core, owns it — the core only reads `holdsProbeGrant`);
 grant minting, consumption at query start, and release are registry state-machine
 steps. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
@@ -355,14 +360,17 @@ identity `query-runner.ts:665` resolves; but sessions may override
 provider id with different overrides reach **independent upstream accounts** —
 keying those together would queue healthy account B's traffic behind account A's
 429 for the full reset/ladder. The key therefore appends a non-secret fingerprint
-of the effective override (hash of `baseUrl` + a keyed digest of the API key —
-never the key itself) when `providerConfig` is present, and is the bare provider
-id otherwise (the common case: one credential-store entry per provider).
+of the effective override — a hash of **every endpoint-affecting `providerConfig`
+field** (`baseUrl`, `region`, and a keyed digest of the API key — never the key
+itself; region included because e.g. `KimiProvider.buildSdkConfig` selects
+distinct China/global endpoints from it) when `providerConfig` is present, and
+is the bare provider id otherwise (the common case: one credential-store entry
+per provider).
 
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
 | `saturation` | `{ untilMs, kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch) | admission facts, wake timer |
-| `inFlight` | count per provider | `reportQueryStart` / `reportQueryEnd` (query-runner + ACP runner) | admission facts (cap follow-up), probe evidence |
+| `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | `Map<sessionId, insertion-ordered uuid set>` (idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release, registration cleanup, provider-change re-admission |
 | `probeGrant` | `{ messageUuid, leaseUntilMs } \| null` per provider | first admitting consult after a clear; consumed at query start; **the lease bounds only the unconsumed grant** (mint → start) — a consumed grant resolves solely on its query's termination; unconsumed-grant expiry re-mints for the next consult | downstream consults (same delivery passes), probe resolution |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
@@ -445,10 +453,12 @@ branch tail-returns `runQuery(...)`, so a bare skip would return from the outer
 catch and swallow the error before the `:1258` assessment ever arms the session
 watchdog or restores the consumed message); it falls through to the existing
 error-path assessment, exactly as an exhausted retry does. Lifecycle reporting
-is wired symmetrically: `reportQueryStart`/`reportQueryEnd` attach to the SDK
-`QueryRunner` seam **and** the ACP runner — saturation arms from
-`acp-query-runner.ts:1009`, so an ACP probe's completion must be reportable too,
-or an ACP-cleared saturation would probe once and stay probing forever.
+is wired symmetrically at the **provider-turn boundary** — start when the query
+consumes the granted delivery's prompt, end at the turn's terminal result,
+already classified — on the SDK `QueryRunner` **and** the ACP runner (saturation
+arms from `acp-query-runner.ts:1009`, so an ACP probe's completion must be
+reportable too, or an ACP-cleared saturation would probe once and stay probing
+forever).
 
 **Charging is per saturation episode, not per report.** N sibling sessions 429ing
 within the same window produce N `reportLimitError` calls; reports arriving while
@@ -504,18 +514,22 @@ at provider scope.
   it, keyed by that delivery's message uuid; every downstream consult for the
   *same* delivery — the V2 claim, the V1 start, the retry — admits on the grant,
   so one logical delivery passes all backstops instead of deadlocking against its
-  own probing state. The grant is consumed at provider query start; the probe
-  resolves exactly three ways: its query's clean completion **mints the successor
-  grant and wakes the next queued delivery** (the drain is *pushed* — the
-  remaining deferred rows have no jobs polling, so nothing else would ever
-  re-run their admission; the pace continues one-at-a-time until no registrations
-  remain, then the provider is fully open), its classified 429 re-arms saturation,
-  and any other termination (interrupt, session destroy, non-limit error)
-  releases the permit for the next consult. A **lease bounds only the
-  unconsumed grant** (mint → start): provider turns legitimately stream for
-  long, so a consumed grant resolves solely on its own query's termination —
-  lease-expiring a running probe would stack concurrent probes and defeat the
-  one-at-a-time recovery. All other consults while probing queue at a short
+  own probing state. The grant is consumed when the turn starts — the query
+  consumes the granted delivery's prompt; the probe resolves exactly three ways:
+  its turn's clean completion **mints the successor grant and wakes the next
+  queued delivery** (the drain is *pushed* — the remaining deferred rows have no
+  jobs polling, so nothing else would ever re-run their admission; the pace
+  continues one-at-a-time until no registrations remain, then the provider is
+  fully open), its classified 429 re-arms saturation (whose timer wakes the
+  queue), and any other termination — interrupt, session destroy, non-limit
+  error — **likewise mints the successor grant and wakes the next queued
+  delivery**: in a deferred-only backlog no consult would ever arrive to claim a
+  bare release, stranding the queue. A **lease bounds only the unconsumed
+  grant** (mint → turn start): provider turns legitimately stream for long, so a
+  consumed grant resolves solely on its own turn's termination — lease-expiring
+  a running probe would stack concurrent probes and defeat the one-at-a-time
+  recovery; unconsumed-grant expiry re-mints and wakes the next, same as any
+  termination. All other consults while probing queue at a short
   probe tick. Without this rule, every path that consults a clear snapshot
   simultaneously recreates the herd the gate exists to prevent: N parked V2 jobs
   requeued to one deadline and claimed up to 64-wide by the delivery processor
@@ -538,11 +552,14 @@ at provider scope.
   discovery 429 — bounded, one charge.
 - **Marker clearing on exit.** Every transition that moves a provider-queued row
   out of its queued state — promotion to `'enqueued'`, terminal `'consumed'` /
-  `'failed'` — clears `queue_reason` in the same statement as the
-  `send_status` flip (the chain-B status-plan interpreter's instructions are the
-  natural carrier), so reconstruction never registers delivered history. A stale
-  marker on a non-deferred row would otherwise mint a probe grant with nothing
-  deliverable to resolve it.
+  `'failed'`, **and an explicit user defer of a P3-parked `'enqueued'` row**
+  (`session.messages.deferPending` → `deferEnqueuedUserMessage`): leaving the
+  marker there would let a later provider wake auto-promote a row the user just
+  deferred — clears `queue_reason` and deregisters the uuid in the same
+  statement as the `send_status` flip (the chain-B status-plan interpreter's
+  instructions are the natural carrier), so reconstruction never registers
+  history the user or the pipeline retired. A stale marker on a retired row
+  would otherwise mint a probe grant with nothing deliverable to resolve it.
 - **Provider changes re-admit their queue.** A model switch while rows are
   registered behind the old provider's saturation (`switchModel` /
   `handleModelSwitch` persists the new `session.config`) deregisters those rows
@@ -621,7 +638,7 @@ at provider scope.
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — and the retry consult (P4); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction (deferred-only); per-session wake publishes + grant lifecycle + provider-change re-admission + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — and the retry consult (P4); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes + grant lifecycle + provider-change re-admission + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -669,7 +686,7 @@ by pre-existing suites):
    the outstanding probe's completion; evidence expiry at arm time; the
    clean-completion flag derived from turn classification, not iteration
    fulfillment; **keying** — distinct `providerConfig` overrides (apiKey /
-   baseUrl) produce distinct provider keys; **idempotent registration** — a
+   baseUrl / region) produce distinct provider keys; **idempotent registration** — a
    parked job re-consulting every probe tick never duplicates its uuid;
    registration add/lookup/lazy cleanup; timer lifecycle (destroy clears;
    unref'd); clock and jitter injection throughout (the pilot-9 purity
@@ -683,7 +700,11 @@ by pre-existing suites):
 5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
    registers; precedence over deliver; parity of the earlier arms (pipeline suite
    extension).
-6. **Interpreter — delivery-start parks (P3):** V2 — saturated claim → job
+6. **Interpreter — delivery-start parks (P3):** live-turn steers admit
+   unconditionally (`liveTurnSteer` fact — a parked steer would starve the
+   waiting turn); a turn-boundary lifecycle pin — a granted probe resolves at
+   its turn's terminal result while the SDK query stays alive for later prompts.
+   V2 — saturated claim → job
    requeued at `retryAt`, session restored to idle if persist had queued it, no
    `driveDeliveryTurn` call; after clear, re-claim delivers; a parked-job wave
    variant (N jobs requeued to one deadline) pins the probing re-park at the probe
@@ -695,8 +716,10 @@ by pre-existing suites):
    delivery passes. **Parked-row linkage** — the P3 park stamps the marker on
    the parked `'enqueued'` row, and restart reconstruction registers marker rows
    in both states, so a post-restart claim wave still meets a minted probe
-   grant. **Marker exit** — promotion and terminal transitions clear
-   `queue_reason` in the same statement.
+   grant. **Marker exit** — promotion, terminal transitions, and an explicit
+   user defer of a parked row (`deferPending` → `deferEnqueuedUserMessage`)
+   clear `queue_reason` and deregister in the same statement; a later wake must
+   never undo the user's defer.
 7. **Interpreter — retry consult (P4):** saturated auto-retry returns the
    widened `parked` callback outcome — the watchdog relinquishes its timer
    without startup retries and without `notifyResume` — settles the row deferred
@@ -761,10 +784,13 @@ by pre-existing suites):
 6. **`inFlight` is bookkeeping until caps exist.** v1 never gates on it
    (`configuredCap` is null); it exists so the cap follow-up changes one constant
    plus a settings reader, and so the probe rule has a completion signal.
-7. **Steer-role messages ride the turn's admission.** A steer enqueued behind a
-   live turn on a saturated provider is not separately gated (it cannot start a
-   provider call); its claim consult is the P3 one. Recorded to preempt a
-   "why doesn't steer check" review round.
+7. **Live-turn steers bypass the gate by design.** A steer fed into a live turn
+   adds no provider call — it rides the turn's existing request via
+   `feedDeliverySteer` — so it admits unconditionally (`liveTurnSteer` fact).
+   Parking it while the live turn waits on that very input would deadlock the
+   turn whose completion could clear saturation. A steer with no live turn
+   (session idle) is an ordinary turn-role delivery and consults normally.
+   Recorded to preempt a "why doesn't steer check" review round.
 8. **P3's consult does not touch `rate_limit_cooldown` session state** — a
    parked-for-provider job leaves the session idle, not cooldown; the session's
    watchdog never learns about sibling 429s. That isolation is deliberate (the
