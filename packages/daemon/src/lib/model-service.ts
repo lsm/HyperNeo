@@ -6,6 +6,7 @@ import {
   clearProviderFailure,
   classifyProviderFailure,
   getAllProviderFailures,
+  getProviderFailure,
   recordClassifiedProviderFailure,
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
@@ -126,6 +127,8 @@ interface ProviderRetryEntry {
 }
 
 const providerRetryEntries = new Map<string, ProviderRetryEntry>();
+
+const providerRetryInvalidations = new Map<string, number>();
 
 let providerRetryGeneration = 0;
 
@@ -299,10 +302,14 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
     }
   }
   for (const providerId of result.succeededProviderIds) {
+    invalidateProviderRetry(providerId);
     clearProviderFailure(providerId);
-    clearProviderRetry(providerId);
+    if (result.models.some((m) => m.provider === providerId)) {
+      clearProviderRetry(providerId);
+    }
   }
   for (const failure of result.failures) {
+    invalidateProviderRetry(failure.providerId);
     if (!registry.has(failure.providerId)) {
       continue;
     }
@@ -313,6 +320,10 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
       cancelProviderRetryTimer(failure.providerId);
     }
   }
+}
+
+function invalidateProviderRetry(providerId: string): void {
+  providerRetryInvalidations.set(providerId, (providerRetryInvalidations.get(providerId) ?? 0) + 1);
 }
 
 function getOrCreateProviderRetryEntry(providerId: string): ProviderRetryEntry {
@@ -353,6 +364,7 @@ function cancelAllProviderRetries(): void {
     if (entry.timer) clearTimeout(entry.timer);
   }
   providerRetryEntries.clear();
+  providerRetryInvalidations.clear();
   providerRetryGeneration += 1;
 }
 
@@ -361,33 +373,43 @@ function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): 
   const existing = modelsCache.get(cacheKey);
   if (!existing || existing.length === 0) {
     modelsCache.set(cacheKey, mergeWithFallbackModels(models));
-  } else {
-    modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...models]);
+    return;
   }
-  cacheTimestamps.set(cacheKey, Date.now());
+  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...models]);
 }
 
 async function runScheduledProviderRetry(providerId: string): Promise<void> {
   const generationAtStart = providerRetryGeneration;
+  const invalidationAtStart = providerRetryInvalidations.get(providerId) ?? 0;
   const provider = getProviderRegistry().get(providerId);
   if (!provider) {
     providerRetryEntries.delete(providerId);
     return;
   }
   const result = await loadProviderModels(provider);
-  if (providerRetryGeneration !== generationAtStart) {
+  if (
+    providerRetryGeneration !== generationAtStart ||
+    (providerRetryInvalidations.get(providerId) ?? 0) !== invalidationAtStart
+  ) {
     return;
   }
   const error = result.status === 'failed' ? result.error : undefined;
-  const failed = error !== undefined;
-  if (result.status === 'loaded') {
-    replaceProviderModelsInCache(providerId, result.models);
+  if (error !== undefined) {
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+    });
+    return;
   }
-  applyProviderLoadOutcome({
-    models: result.models,
-    succeededProviderIds: failed ? [] : [providerId],
-    failures: failed ? [{ providerId, ...classifyProviderFailure(error) }] : [],
-  });
+  if (result.status === 'unavailable') {
+    providerRetryEntries.delete(providerId);
+    clearProviderFailure(providerId);
+    return;
+  }
+  replaceProviderModelsInCache(providerId, result.models);
+  clearProviderFailure(providerId);
+  providerRetryEntries.delete(providerId);
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -469,6 +491,9 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
+    if (cacheKey === 'global') {
+      cancelAllProviderRetries();
+    }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
@@ -487,8 +512,10 @@ export function clearModelsCache(cacheKey?: string): void {
 
 export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
   const entry = providerRetryEntries.get(providerId);
-  if (!entry) return false;
-  return Date.now() - entry.lastAttemptAt < PROVIDER_RETRY_BACKOFF_MS;
+  if (entry && Date.now() - entry.lastAttemptAt < PROVIDER_RETRY_BACKOFF_MS) {
+    return true;
+  }
+  return getProviderFailure(providerId)?.errorKind === 'credential';
 }
 
 export function markRefreshAttemptedFor(providerIds: string[]): void {
