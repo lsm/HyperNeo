@@ -260,7 +260,7 @@ function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
   if (newlySuperseded.length === 0) return result;
   for (const providerId of newlySuperseded) superseded.add(providerId);
   const models = result.models.filter((m) => !m.provider || !superseded.has(m.provider));
-  for (const providerId of newlySuperseded) {
+  for (const providerId of superseded) {
     models.push(...(modelsCache.get('global')?.filter((m) => m.provider === providerId) ?? []));
   }
   return {
@@ -374,7 +374,7 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
   }
   for (const providerId of result.succeededProviderIds) {
     if (result.loadedProviderIds.includes(providerId)) continue;
-    if (getProviderFailure(providerId)) {
+    if (getProviderFailure(providerId)?.errorKind === 'transient') {
       armProviderRetryTimer(providerId);
     }
   }
@@ -416,6 +416,7 @@ function clearProviderRetry(providerId: string): void {
 function armProviderRetryTimer(providerId: string): void {
   const entry = getOrCreateProviderRetryEntry(providerId);
   if (entry.timer) return;
+  entry.lastAttemptAt = Date.now();
   const timer = setTimeout(() => {
     entry.timer = null;
     entry.lastAttemptAt = Date.now();

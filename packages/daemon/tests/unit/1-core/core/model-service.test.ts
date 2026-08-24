@@ -935,6 +935,160 @@ describe('Model Service', () => {
         jest.useRealTimers();
       }
     });
+
+    it('keeps credential failures dormant when an empty foreground load succeeds', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'reject' | 'empty' = 'reject';
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'reject') throw new Error('Request failed (http 401)');
+          return [];
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        mode = 'empty';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps the stranded gate shut while a timed-out probe is re-armed', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseStall: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseStall = resolve;
+            });
+          }
+          return [glmModel('glm-5-late')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(30_001);
+        await flushMicrotasks();
+
+        jest.advanceTimersByTime(45_000);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        mode = 'ok';
+        releaseStall?.([]);
+        await flushMicrotasks();
+        jest.advanceTimersByTime(16_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        releaseStall?.([glmModel('glm-stale')]);
+        await flushMicrotasks();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('restores every superseded slice when two providers recover around a foreground load', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const stubModel = (id: string): ModelInfo => ({
+          ...glmModel(id),
+          provider: 'stub-b',
+          family: 'stub-b',
+        });
+        let glmMode: 'fail' | 'stall' | 'ok' = 'fail';
+        let stubMode: 'fail' | 'stall' | 'ok' = 'fail';
+        let resolveGlmForeground: ((models: ModelInfo[]) => void) | null = null;
+        let resolveGlmScheduled: ((models: ModelInfo[]) => void) | null = null;
+        let resolveStubForeground: ((models: ModelInfo[]) => void) | null = null;
+        let resolveStubScheduled: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (glmMode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (glmMode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              if (resolveGlmForeground) resolveGlmScheduled = resolve;
+              else resolveGlmForeground = resolve;
+            });
+          }
+          return [glmModel('glm-5-recovered')];
+        });
+        getProviderRegistry().register({
+          id: 'stub-b',
+          isAvailable: async () => true,
+          getModels: async (): Promise<ModelInfo[]> => {
+            if (stubMode === 'fail') throw new Error('Stub probe failed (HTTP 503)');
+            if (stubMode === 'stall') {
+              return new Promise<ModelInfo[]>((resolve) => {
+                if (resolveStubForeground) resolveStubScheduled = resolve;
+                else resolveStubForeground = resolve;
+              });
+            }
+            return [stubModel('stub-b-recovered')];
+          },
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as ProviderLike);
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('stub-b')?.errorKind).toBe('transient');
+
+        glmMode = 'stall';
+        stubMode = 'stall';
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        resolveGlmScheduled?.([glmModel('glm-5-recovered')]);
+        await flushMicrotasks();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-recovered')).toBe(true);
+
+        resolveGlmForeground?.([glmModel('glm-stale')]);
+        resolveStubForeground?.([stubModel('stub-b-stale')]);
+        resolveStubScheduled?.([stubModel('stub-b-recovered')]);
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getProviderFailure('stub-b')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'stub-b')
+            .map((m) => m.id)
+        ).toEqual(['stub-b-recovered']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('cache management', () => {
