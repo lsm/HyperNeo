@@ -300,7 +300,7 @@ interface LastGoodDiscoveredModels {
 function lastGoodDiscoveryBudget(base: Record<string, unknown>): number {
   const stripped = { ...base };
   delete stripped[LAST_GOOD_DISCOVERY_KEY];
-  const prefixLength = Object.keys(stripped).length > 0 ? JSON.stringify(stripped).length + 1 : 0;
+  const prefixLength = Object.keys(stripped).length > 0 ? JSON.stringify(stripped).length + 1 : 1;
   return Math.max(0, MAX_JSON_FIELD_LEN - prefixLength - LAST_GOOD_DISCOVERY_WRAPPER_RESERVE);
 }
 
@@ -479,8 +479,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
-      applyDiscoveredProviderModels(record.providerId, models);
-      releaseAppliedProviderSlice(record.providerId);
+      const applied = applyDiscoveredProviderModels(record.providerId, models);
+      if (applied) releaseAppliedProviderSlice(record.providerId);
       const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
       if (!recoveredFailure) notifyProvidersChanged(internalEventBus);
 

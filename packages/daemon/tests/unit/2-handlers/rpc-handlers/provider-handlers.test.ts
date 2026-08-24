@@ -12,6 +12,7 @@ import {
   clearModelsCache,
   getModelsCache,
   hasRefreshBeenAttemptedFor,
+  initializeModels,
   markRefreshAttemptedFor,
   setModelsCache,
 } from '../../../../src/lib/model-service';
@@ -478,6 +479,7 @@ describe('Provider RPC handlers', () => {
       const getModels = mock(overrides.getModels ?? (async () => []));
       getProviderRegistry().register({
         id: 'remote',
+        isAvailable: async () => true,
         listRemoteModels,
         getModels,
       } as unknown as Provider);
@@ -1021,6 +1023,49 @@ describe('Provider RPC handlers', () => {
       expect(repo.getProvider(created.id)?.configJson).toBe(JSON.stringify({ pad }));
       expect(getModelsCache().get('global')).toEqual([makeDiscoveredModel('existing')]);
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('retains a deferred slice through an in-flight initialization and lands both catalogs', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const slowModels: ModelInfo[] = [
+        {
+          ...makeDiscoveredModel('slow-provider-model', 'Slow Provider Model'),
+          provider: 'slow-provider',
+        },
+      ];
+      getProviderRegistry().register({
+        id: 'slow-provider',
+        isAvailable: async () => true,
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return slowModels;
+        },
+      } as unknown as Provider);
+      const refreshed = [makeDiscoveredModel('refreshed-a')];
+      registerRemoteProvider({
+        listRemoteModels: async () => refreshed,
+        getModels: async () => refreshed,
+      });
+      const handlers = setup();
+
+      const initPromise = initializeModels();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      await initPromise;
+
+      const models = getModelsCache().get('global') ?? [];
+      const ids = models.map((model) => model.id).sort();
+      expect(ids).toContain('slow-provider-model');
+      expect(ids).toContain('refreshed-a');
     });
 
     it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {
