@@ -375,7 +375,7 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
       expect(updated.metrics.converted).toBe(2);
     });
 
-    it('does not update recurring-goal progress through outcome review', () => {
+    it('rejects progress updates for recurring goals through outcome review', () => {
       const recurring = service.createGoal({
         spaceId: goal.spaceId,
         title: 'Recurring',
@@ -383,10 +383,17 @@ describe('SpaceGoalService.claimOutcomeNotification', () => {
         progress: 10,
       });
 
+      expect(() =>
+        service.applyOutcomeGoalUpdate({
+          goalId: recurring.id,
+          summary: 'Reviewed',
+          progress: 80,
+        })
+      ).toThrow(/Recurring goals do not accept progress/);
+
       const updated = service.applyOutcomeGoalUpdate({
         goalId: recurring.id,
         summary: 'Reviewed',
-        progress: 80,
       });
 
       expect(updated.progress).toBe(10);
