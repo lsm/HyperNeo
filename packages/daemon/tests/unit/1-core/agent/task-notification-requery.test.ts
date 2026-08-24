@@ -516,6 +516,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
     await settleRequery();
     expect(continueCalls()).toBe(0);
+    expect(
+      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
+        .taskNotificationRequeryAttempts
+    ).toBe(0);
   });
 
   it('ignores delivery jobs whose messages were already consumed when detecting follow-ups', async () => {
@@ -527,19 +531,23 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(1);
   });
 
-  it('does not arm a new episode from a hollow result trailing an interrupt', async () => {
+  it('does not arm a new episode from a hollow result trailing an in-flight interrupt', async () => {
+    await agentSession.stateManager.setProcessing('live-turn', 'initializing');
+    agentSession.onInterruptRequested();
+    await agentSession.stateManager.setIdle();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('keeps arming episodes after an interrupt that landed while idle', async () => {
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(1);
 
     agentSession.onInterruptRequested();
-    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
-    await settleRequery();
-    expect(continueCalls()).toBe(1);
-
-    (
-      agentSession as unknown as { incrementQueryGeneration: () => number }
-    ).incrementQueryGeneration();
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(2);
@@ -611,6 +619,54 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.revokePendingDelivery('db-pending', 'remove');
     await settleRequery();
     expect(continueCalls()).toBe(1);
+  });
+
+  it('escalates instead of exceeding the budget when a held episode is flushed', async () => {
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    activeDeliveryUuids.clear();
+    revokedPendingMessage = { dbId: 'db-pending', uuid: 'queued-follow-up-uuid' };
+    await agentSession.revokePendingDelivery('db-pending', 'remove');
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(1);
+  });
+
+  it('keeps retrying after restarting the dead query bumps the generation', async () => {
+    const ensureQueryStarted = mock(async () => {
+      (
+        agentSession as unknown as { incrementQueryGeneration: () => number }
+      ).incrementQueryGeneration();
+      return 'started' as const;
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+    let failNextEnqueue = true;
+    enqueueSpy = mock(async () => {
+      if (failNextEnqueue) {
+        failNextEnqueue = false;
+        throw new Error('enqueue boom');
+      }
+    });
+    (agentSession.messageQueue as unknown as { enqueueWithId: typeof enqueueSpy }).enqueueWithId =
+      enqueueSpy;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(continueCalls()).toBe(2);
+    expect(needsAttentionPublishes()).toBe(0);
   });
 
   it('clears a pending re-query timer when the user interrupts', async () => {

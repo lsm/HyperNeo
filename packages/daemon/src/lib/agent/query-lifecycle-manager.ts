@@ -280,6 +280,7 @@ export class QueryLifecycleManager {
 
     try {
       messageHandler.resetCircuitBreaker();
+      this.ctx.resetTaskNotificationRequery?.();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       await this.stop();

@@ -785,7 +785,10 @@ export class AgentSession
   }
 
   onInterruptRequested(): void {
-    this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
+    const status = this.stateManager.getState().status;
+    if (status !== 'idle' && status !== 'interrupted') {
+      this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
+    }
     const continueMessageId = this.taskNotificationRequeryContinueMessageId;
     if (continueMessageId) {
       this.messageQueue.remove(continueMessageId);
@@ -1505,7 +1508,7 @@ export class AgentSession
         `task-notification requery: query replaced while a continuation was pending for session ` +
           `${this.session.id}; dropping the stale episode`
       );
-      this.taskNotificationRequeryInterruptionGeneration = null;
+      this.resetTaskNotificationRequery();
       return;
     }
     if (
@@ -1537,7 +1540,7 @@ export class AgentSession
           `(generation ${this.taskNotificationRequeryInterruptionGeneration} -> ` +
           `${this.getQueryGeneration()}); standing down for session ${this.session.id}`
       );
-      this.taskNotificationRequeryInterruptionGeneration = null;
+      this.resetTaskNotificationRequery();
       return;
     }
     if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
@@ -1564,6 +1567,7 @@ export class AgentSession
         if (started === 'blocked') {
           throw new Error('SDK transcript recovery prompt emitted');
         }
+        this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
       } catch (error) {
         this.logger.warn(
           `task-notification requery: could not restart the dead query for session ` +
@@ -1573,6 +1577,12 @@ export class AgentSession
         this.handleTaskNotificationRequeryFailure();
         return;
       }
+    }
+    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
     }
     this.taskNotificationRequeryAttempts += 1;
     const attempt = this.taskNotificationRequeryAttempts;
