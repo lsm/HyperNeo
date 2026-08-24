@@ -874,10 +874,17 @@ pool, per the endpoint rule below):
   credentials directly, outside `providers.update` and
   `auth.login`/`auth.logout`) invokes the same re-admission hook the
   other credential mutations use, with account-continuous semantics —
-  registrations migrate from the old digest to the new and an active
-  saturation/closure record MOVES with them (the same upstream account;
-  only the digest changed). Without the hook, queued work strands under
-  the old key while new calls compute the new one and bypass its episode.
+  registrations migrate from the old digest to the new and the move is
+  ATOMIC across everything the account owns: an active saturation/closure
+  record, a persisted probing record, its probe grant (pending or bound —
+  a bound ephemeral holder re-keys too, so its terminal report resolves
+  against the new key instead of stranding the old one's probing state),
+  and the in-flight/captured-report associations (the same upstream
+  account; only the digest changed — moving registrations alone would let
+  migrated waiters and new calls admit concurrently against a probing
+  account whose grant stayed behind). Without the hook, queued work
+  strands under the old key while new calls compute the new one and
+  bypass its episode.
 - **Session overrides** (`providerConfig.apiKey`): the override digest keys
   the session — two built-in-provider sessions with different API keys are
   different accounts; neither queues behind the other.
@@ -905,9 +912,17 @@ for *limits*. **Credentialless providers** (a supported configuration:
 `getCredentials()` at all, acp-provider.ts:101-106, and
 `CustomEndpointProvider` treats a base URL as sufficient with an absent
 API key, custom-endpoint-provider.ts:94-99) key by their **endpoint or
-command identity** instead — `digest(baseUrl ?? command)` under a
+command identity** instead — `digest(family + ':' + canonical(baseUrl ??
+command) + ':' + digest(identityHeaders))` under a
 **provider-family namespace (the resolved provider type, never the logical
-record id)** — two credentialless custom-endpoint records with the same
+record id)**, where `identityHeaders` is a stable digest of the
+configuration's identity-bearing headers (`Authorization`, `x-api-key`,
+tenant-routing headers — `CustomEndpointConfig.headers` is a supported
+field, shared/src/types/custom-endpoint.ts:23-30, forwarded to every
+bridge, custom-endpoint-provider.ts:316-346, so two credentialless
+endpoints on one base URL with different auth headers are different
+accounts and must not merge; non-identity headers stay excluded so
+content-type variation never splits a domain) — two credentialless custom-endpoint records with the same
 `baseUrl` carry distinct runtime ids (`custom:<endpointId>`) yet send to the
 same anonymous upstream concurrency domain, so a record-id namespace would
 let each observe the other's limit without gating it and sibling traffic
@@ -960,8 +975,14 @@ while the final granted probe is running, would otherwise find neither
 a saturation row nor a remaining marker and open the account — several
 new sends could start concurrently before one reports another 429,
 recreating the post-reset herd the pending grant exists to prevent.
-The row is deleted only when the probe resolves clean (open) and
-rewritten when its 429 re-arms; reconstruction of a probing row
+The row is **rewritten atomically whenever a successor grant is minted**
+(the successor's identity and lease replace the old holder's) — a clean
+probe with registrations remaining does NOT open the account, it mints
+the successor and continues probing, so a restart after the first item
+of a multi-item drain must reconstruct the successor's probing state,
+not an open account or a stale holder — and deleted only when a clean
+probe resolves with NO successor remaining (truly open), or rewritten
+when its 429 re-arms; reconstruction of a probing row
 re-enters probing and re-mints the grant — re-bound to the serialized
 identity when it is a durable kind still registered, else re-minted
 pending (an ephemeral holder died with the process) — so restart
@@ -1420,7 +1441,10 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   queued delivery** (the drain is *pushed* — the remaining deferred rows have no
   jobs polling, so nothing else would ever re-run their admission; the pace
   continues one-at-a-time until no registrations remain, then the provider is
-  fully open), its classified 429 re-arms saturation (whose timer wakes the
+  fully open — and **every successor mint rewrites the persisted probing row**
+  with the new holder and lease, so a mid-drain restart reconstructs the
+  successor's serialized lane; the row is deleted only when a clean probe
+  resolves with NO successor remaining), its classified 429 re-arms saturation (whose timer wakes the
   queue), and any other termination — interrupt, session destroy, non-limit
   error — **likewise mints the successor grant and wakes the next queued
   delivery**: in a deferred-only backlog no consult would ever arrive to claim a
@@ -1456,7 +1480,17 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   64-wide post-restart wave); rows without the marker are untouched, and
   historical rows are invisible because the marker is cleared on exit (below).
   The wake path likewise resolves sessions on demand (`getSessionAsync`) rather
-  than relying on already-subscribed sessions. **Archived sessions are
+  than relying on already-subscribed sessions — **with automatic replay
+  suppressed for provider-wake loads**: a never-loaded `AgentSession`
+  immediately schedules `scheduleInitialPendingMessageReplay`
+  (agent-session.ts:452-456,671-686), whose query-mode handler selects
+  every deferred row and flips them all to `'enqueued'`
+  (query-mode-handler.ts:53-69), and that microtask can run as the load
+  resolves — BEFORE the targeted grant event is handled — promoting the
+  session's entire provider backlog and creating exactly the claim wave
+  the targeted load avoids; the wake's load therefore passes a
+  replay-suppressed flag (or the blanket replay excludes
+  provider-marked rows), so only the bound identity moves. **Archived sessions are
   excluded, on both edges — including their parked background jobs**:
   `archiveResources` cancels only delivery-job UUIDs
   (`cancelForSessionWithMessages`, `session-lifecycle.ts:481-520`) — a
@@ -1819,7 +1853,9 @@ by pre-existing suites):
    running probe is never lease-expired into stacking concurrent probes); a
    clean completion **mints the successor grant and wakes the next queued
    delivery** until the backlog is exhausted (the drain is pushed, not
-   rediscovered); a reset-bearing report **upgrades an active ladder episode**
+   rediscovered), each successor mint rewriting the persisted probing row
+   (deleted only when no successor remains — a mid-drain restart
+   reconstructs the successor, not an open account); a reset-bearing report **upgrades an active ladder episode**
    to non-probe-clearable reset state; an authoritative episode is never
    extended by a reset-less report; `reportRefinedReset` is episode-token
    correlated (stale/delayed refinements discarded; a matching one converts to
@@ -1996,7 +2032,12 @@ by pre-existing suites):
    the persisted probing record reconstructs `probing` (not open),
    re-mints the grant bound to the serialized durable identity or
    pending, and the first post-restart consult queues at the tick
-   instead of admitting concurrently. An ACP variant pins the
+   instead of admitting concurrently; the credentialless keying pins
+   identity-header digests (same base URL, different `Authorization`
+   headers — two keys); a provider-wake load of a never-loaded session
+   does not fire the blanket deferred replay (only the bound identity
+   moves); an OAuth re-key moves the probing record, grant, and
+   in-flight associations with the registrations. An ACP variant pins the
    symmetric lifecycle wiring: saturation armed from an ACP limit clears and the
    ACP probe's completion is reported (no permanently-probing ACP provider).
 10. **No-regression:** the pre-existing agent-session / delivery / inject suites
@@ -2018,7 +2059,8 @@ by pre-existing suites):
    alongside the closed kind — the restart's daily health probe needs a
    buildable request, which a digest alone cannot provide — written on
    arm, updated on refine, transitioned to a probing
-   record at clear (deleted only on the probe's clean resolution —
+   record at clear (rewritten atomically on every successor mint —
+   deleted only when a clean probe resolves with NO successor remaining;
    reconstructed probing re-mints the grant, bound to the serialized
    identity if durable-and-registered, else pending; part of the PR3
    migration family), and
