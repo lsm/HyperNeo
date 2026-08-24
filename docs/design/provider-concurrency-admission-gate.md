@@ -238,8 +238,15 @@ gate never sees. Re-flagging and admission are two separate rules:
   different provider than the session's chat provider) before falling back — a
   title request can be the call that trips the cap, and the registry must learn
   it. This keeps background titling strictly behind the user-visible drain —
-  chat FIFO precedence plus one-at-a-time grant release; a 64-wide title herd
-  cannot hit the just-recovered account. **The same interpreter covers the Space background provider
+  chat-queue precedence plus one-at-a-time grant release; a 64-wide title herd
+  cannot hit the just-recovered account. **Parked background jobs survive
+  restart**: their synthetic registrations are in-memory and they have no
+  `sdk_messages` row for the marker scan, so the park stamps a
+  `provider_park` reason on the job-queue row itself, and the startup scan
+  extends to parked background jobs (registering them into the background
+  queue by park order) — otherwise their shared `run_at` becomes due against
+  an open registry and every claim starts concurrently, recreating the herd.
+  **The same interpreter covers the Space background provider
   queries** — `evolution-conversation-analysis-service.ts:289-296`,
   `evolution-episode-service.ts:754-761`, and `llm-workflow-selector.ts:56-61`
   each invoke the SDK directly on the configured Space/default provider: they
@@ -264,14 +271,24 @@ gate never sees. Re-flagging and admission are two separate rules:
   `skipped_provider_saturated` and the poller does not advance
   `state.lastPollTime` past that event (`pollRepository` advances the cursor
   after the callbacks, `github/polling-service.ts:121-133`, so a plain skip
-  would silently eat it); the event is re-processed by the next poll once the
-  account reopens; the **webhook path**
+  would silently eat it) **nor persists the response ETag** — `pollIssues` /
+  `pollComments` store the ETag before invoking the callback (`:174-184`,
+  `:229-239`), and a retained ETag can 304 the next poll while the repository
+  is unchanged, losing the skipped analysis anyway; the event is re-processed
+  by the next poll once the account reopens; the **webhook path**
   (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
   callback — no job, no `job.id`) processes the event **without** agent
   analysis (records the raw event, skips the LLM triage) and answers the
   webhook immediately (the callback must complete — GitHub would otherwise
   retry the delivery); the skipped analysis is picked up by the next poll
-  once the account reopens. This is the
+  once the account reopens. **Webhook-only installations** (webhooks enabled
+  without a GitHub token, or polling interval zero — `refreshPolling`
+  disables polling entirely) have no next poll: the skipped analysis is
+  persisted to a durable raw-event inbox keyed by event id, drained through
+  the agents by the credential-change re-admission hook (which already
+  requeues closed-parked jobs) once the account reopens; without that store,
+  saturated-period events in these supported configurations are silently
+  lost. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -362,11 +379,15 @@ injection paths (`deliverInjectedMessage`,
 `rpc-handlers/index.ts:869-880`) call `ensureQueryStarted` *before*
 inserting their SDK row — there is no row to settle or register on denial, and
 the message exists only in the caller's memory. For these the boundary returns
-a **typed `provider_parked` outcome** to the caller instead of settling a row:
-the caller holds its in-memory message and re-runs the inject when the wake
-arrives (the registry registers the caller's intent via a synthetic identity,
-same mechanism as title jobs), or the caller persists the deferred row itself
-if it has that capability. **Identity-less callers are exempt**: `ensureQueryStarted` is not
+a **typed `provider_parked` outcome** to the caller — and the caller's
+obligation is to **durably insert the deferred row and marker first**: an
+in-memory-only copy is lost on restart (under a long reset or the indefinite
+closed state), silently dropping the injection. The parked flow: insert the
+`'deferred'` row with the marker (these callers already build the full SDK
+message — persisting it ahead of the retry is P1's queue-arm shape),
+register it normally, then return `provider_parked` so the caller abandons
+the in-memory start; the wake re-runs the inject against the persisted row.
+No synthetic in-memory registration remains on this path. **Identity-less callers are exempt**: `ensureQueryStarted` is not
 exclusively a delivery boundary — `AskUserQuestionHandler` calls it before
 injecting an unpersisted tool result into the live query, and context-reset /
 restart paths call it with no message row; those starts ride existing
