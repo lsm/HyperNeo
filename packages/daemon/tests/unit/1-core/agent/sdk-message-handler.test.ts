@@ -4341,4 +4341,490 @@ describe('SDKMessageHandler', () => {
       expect(publishedTopics()).toContain('query.trigger');
     });
   });
+
+  describe('ack-selection table (C1b)', () => {
+    const ackUuid = 'ack-user-uuid';
+    const ackDbId = 'db-ack-user';
+    const ackPersisted = {
+      dbId: ackDbId,
+      uuid: ackUuid,
+      type: 'user',
+      timestamp: 1700000000000,
+      message: { role: 'user', content: [{ type: 'text', text: 'ack user' }] },
+    } as unknown as SDKMessage & { dbId: string; timestamp: number };
+
+    const ackMessage = {
+      type: 'user',
+      uuid: ackUuid,
+      message: { role: 'user', content: [{ type: 'text', text: 'ack user' }] },
+    } as unknown as SDKMessage;
+
+    const ackResult = {
+      type: 'result',
+      subtype: 'success',
+      uuid: 'result-uuid',
+      usage: { input_tokens: 1, output_tokens: 1 },
+      total_cost_usd: 0,
+      modelUsage: {},
+    } as unknown as SDKMessage;
+
+    function statusSpy(
+      status: 'enqueued' | 'deferred' | 'submitted' | 'consumed' | 'failed' | 'none'
+    ) {
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (sessionId: string, queryStatus: string, uuid: string) =>
+          status !== 'none' &&
+          sessionId === 'test-session-id' &&
+          uuid === ackUuid &&
+          queryStatus === status
+            ? ackPersisted
+            : null
+      );
+    }
+
+    const trapUuid = 'trap-queued-uuid';
+    const trapDbId = 'db-trap-queued';
+    const trapMessage = { role: 'user', content: [{ type: 'text', text: 'trap queued' }] };
+
+    function setupTurnEndTrap() {
+      const queued = {
+        dbId: trapDbId,
+        uuid: trapUuid,
+        type: 'user',
+        timestamp: 1700000000001,
+        message: trapMessage,
+      };
+      getUserMessagesByStatusSpy.mockImplementation((sessionId: string, status: string) => {
+        if (sessionId === 'test-session-id' && status === 'enqueued') {
+          return { messages: [queued], total: 1 };
+        }
+        return { messages: [], total: 0 };
+      });
+
+      const markConsumed = mock(() => ({ ids: [queued.dbId], uuids: [queued.uuid] }));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveriesConsumedAtTurnEnd: markConsumed,
+      })) as never;
+
+      return { markConsumed };
+    }
+
+    describe('acknowledgePersistedUserMessage by sendStatus', () => {
+      it('consumes an enqueued user message and suppresses turn-end fallback', async () => {
+        statusSpy('enqueued');
+        await handler.handleMessage(ackMessage);
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId);
+        expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: 'test-session-id',
+          messageIds: [ackDbId],
+          status: 'consumed',
+        });
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+
+        getUserMessagesByStatusSpy.mockClear();
+        const { markConsumed } = setupTurnEndTrap();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('consumes a deferred user message and suppresses turn-end fallback', async () => {
+        statusSpy('deferred');
+        await handler.handleMessage(ackMessage);
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId);
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+
+        getUserMessagesByStatusSpy.mockClear();
+        const { markConsumed } = setupTurnEndTrap();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('consumes a submitted user message and suppresses turn-end fallback', async () => {
+        statusSpy('submitted');
+        await handler.handleMessage(ackMessage);
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId);
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+
+        getUserMessagesByStatusSpy.mockClear();
+        const { markConsumed } = setupTurnEndTrap();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('does not acknowledge a failed persisted user message and falls through', async () => {
+        statusSpy('failed');
+        await handler.handleMessage(ackMessage);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+        expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', ackMessage);
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+      });
+
+      it('suppresses duplicate SDK replay for a consumed persisted user message', async () => {
+        statusSpy('consumed');
+        await handler.handleMessage(ackMessage);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-after-consumed',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          modelUsage: {},
+        } as unknown as SDKMessage);
+
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+      });
+
+      it('falls through to save a user message with no persisted sendStatus match', async () => {
+        statusSpy('none');
+        await handler.handleMessage(ackMessage);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', ackMessage);
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+      });
+    });
+
+    describe('handleMessageYielded by sendStatus', () => {
+      const yieldAt = 1700000001234;
+
+      it('consumes an enqueued message at pre-yield and suppresses turn-end fallback', async () => {
+        hasPendingOrClaimedSpy.mockImplementation((id) => id === ackUuid);
+        statusSpy('enqueued');
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
+        expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: 'test-session-id',
+          messageIds: [ackDbId],
+          status: 'consumed',
+        });
+        expect(publishSpy).toHaveBeenCalledWith(
+          'state.sdkMessages.delta',
+          expect.objectContaining({
+            added: expect.arrayContaining([
+              expect.objectContaining({ uuid: ackUuid, timestamp: yieldAt }),
+            ]),
+            timestamp: yieldAt,
+          }),
+          { channel: 'session:test-session-id' }
+        );
+
+        getUserMessagesByStatusSpy.mockClear();
+        const { markConsumed } = setupTurnEndTrap();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('consumes a submitted message at pre-yield and suppresses turn-end fallback', async () => {
+        hasPendingOrClaimedSpy.mockImplementation((id) => id === ackUuid);
+        statusSpy('submitted');
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
+        expect(publishSpy).toHaveBeenCalledWith(
+          'state.sdkMessages.delta',
+          expect.objectContaining({
+            added: expect.arrayContaining([
+              expect.objectContaining({ uuid: ackUuid, timestamp: yieldAt }),
+            ]),
+            timestamp: yieldAt,
+          }),
+          { channel: 'session:test-session-id' }
+        );
+
+        getUserMessagesByStatusSpy.mockClear();
+        const { markConsumed } = setupTurnEndTrap();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('consumes a deferred message at pre-yield and suppresses turn-end fallback', async () => {
+        hasPendingOrClaimedSpy.mockImplementation((id) => id === ackUuid);
+        statusSpy('deferred');
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
+        expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+          sessionId: 'test-session-id',
+          messageIds: [ackDbId],
+          status: 'consumed',
+        });
+        expect(publishSpy).toHaveBeenCalledWith(
+          'state.sdkMessages.delta',
+          expect.objectContaining({
+            added: expect.arrayContaining([
+              expect.objectContaining({ uuid: ackUuid, timestamp: yieldAt }),
+            ]),
+            timestamp: yieldAt,
+          }),
+          { channel: 'session:test-session-id' }
+        );
+
+        getUserMessagesByStatusSpy.mockClear();
+        const { markConsumed } = setupTurnEndTrap();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('does nothing for a consumed message at pre-yield and leaves the fallback', async () => {
+        statusSpy('consumed');
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+      });
+
+      it('does nothing for a failed message at pre-yield and leaves the fallback', async () => {
+        statusSpy('failed');
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+      });
+
+      it('does nothing when no persisted message matches the yielded uuid and leaves the fallback', async () => {
+        statusSpy('none');
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+
+        getUserMessagesByStatusSpy.mockClear();
+        await handler.handleMessage(ackResult);
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+      });
+    });
+
+    describe('acknowledgeOldestQueuedUserOnTurnEnd decision table', () => {
+      const turnUuid = 'turn-end-uuid';
+      const turnDbId = 'db-turn-end';
+      const turnUser = {
+        dbId: turnDbId,
+        uuid: turnUuid,
+        type: 'user',
+        timestamp: 1700000000000,
+        message: { role: 'user', content: [{ type: 'text', text: 'turn end' }] },
+      };
+
+      function makeResultMessage(): SDKMessage {
+        return {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+      }
+
+      function setTurnEndState(options: {
+        durable: boolean;
+        yielded: boolean;
+        pending: boolean;
+        active: boolean;
+      }) {
+        getUserMessagesByStatusSpy.mockImplementation((sessionId: string, status: string) => {
+          if (sessionId === 'test-session-id' && status === 'enqueued') {
+            return { messages: [turnUser], total: 1 };
+          }
+          return { messages: [], total: 0 };
+        });
+
+        const activeMessageId = options.active ? turnUuid : 'other-uuid';
+        getStateSpy.mockReturnValue({
+          status: 'processing',
+          messageId: activeMessageId,
+          phase: 'streaming',
+        });
+
+        if (options.durable) {
+          mockDb.getJobQueueRepo = mock(() => ({
+            activeDeliveryMessageUuids: () => new Set([turnUuid]),
+            getActiveDeliveryBatchUuids: () => [turnUuid],
+          })) as never;
+        } else {
+          mockDb.getJobQueueRepo = mock(() => ({
+            activeDeliveryMessageUuids: () => new Set<string>(),
+          })) as never;
+        }
+
+        hasYieldedSpy.mockImplementation((id: string) => id === turnUuid && options.yielded);
+        hasPendingOrClaimedSpy.mockImplementation(
+          (id: string) => id === turnUuid && options.pending
+        );
+        acknowledgeYieldedSpy.mockImplementation(
+          (id: string) => id === turnUuid && options.yielded
+        );
+      }
+
+      async function runRow(options: {
+        durable: boolean;
+        yielded: boolean;
+        pending: boolean;
+        active: boolean;
+        expected: boolean;
+      }) {
+        const markConsumedSpy = mock(() => ({ ids: [turnDbId], uuids: [turnUuid] }));
+        mockDb.getSDKMessageRepo = mock(() => ({
+          markDeliveriesConsumedAtTurnEnd: markConsumedSpy,
+        })) as never;
+
+        setTurnEndState(options);
+        await handler.handleMessage(makeResultMessage());
+        return markConsumedSpy;
+      }
+
+      it('acknowledges a non-durable, non-yielded, non-pending message', async () => {
+        const markConsumed = await runRow({
+          durable: false,
+          yielded: false,
+          pending: false,
+          active: false,
+          expected: true,
+        });
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
+      });
+
+      it('acknowledges an active non-durable, non-yielded, non-pending message', async () => {
+        const markConsumed = await runRow({
+          durable: false,
+          yielded: false,
+          pending: false,
+          active: true,
+          expected: true,
+        });
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
+      });
+
+      it('acknowledges an inactive yielded non-durable message', async () => {
+        const markConsumed = await runRow({
+          durable: false,
+          yielded: true,
+          pending: false,
+          active: false,
+          expected: true,
+        });
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+      });
+
+      it('acknowledges a yielded non-durable message that is also active', async () => {
+        const markConsumed = await runRow({
+          durable: false,
+          yielded: true,
+          pending: false,
+          active: true,
+          expected: true,
+        });
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+      });
+
+      it('skips a durable message that is not yielded', async () => {
+        const markConsumed = await runRow({
+          durable: true,
+          yielded: false,
+          pending: false,
+          active: false,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('skips a durable message that is active but not yielded', async () => {
+        const markConsumed = await runRow({
+          durable: true,
+          yielded: false,
+          pending: false,
+          active: true,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('skips a durable yielded message that is not the active turn message', async () => {
+        const markConsumed = await runRow({
+          durable: true,
+          yielded: true,
+          pending: false,
+          active: false,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('acknowledges a durable yielded message that is the active turn message', async () => {
+        const markConsumed = await runRow({
+          durable: true,
+          yielded: true,
+          pending: false,
+          active: true,
+          expected: true,
+        });
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+      });
+
+      it('skips a durable yielded active message that is pending or claimed', async () => {
+        const markConsumed = await runRow({
+          durable: true,
+          yielded: true,
+          pending: true,
+          active: true,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('skips a non-durable message that is pending or claimed', async () => {
+        const markConsumed = await runRow({
+          durable: false,
+          yielded: false,
+          pending: true,
+          active: false,
+          expected: false,
+        });
+        expect(markConsumed).not.toHaveBeenCalled();
+      });
+
+      it('finds no enqueued users when the persisted row has another sendStatus', async () => {
+        getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+          if (status === 'submitted') {
+            return { messages: [turnUser], total: 1 };
+          }
+          return { messages: [], total: 0 };
+        });
+
+        const markConsumedSpy = mock(() => ({ ids: [turnDbId], uuids: [turnUuid] }));
+        mockDb.getSDKMessageRepo = mock(() => ({
+          markDeliveriesConsumedAtTurnEnd: markConsumedSpy,
+        })) as never;
+
+        await handler.handleMessage(makeResultMessage());
+
+        expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+        expect(markConsumedSpy).not.toHaveBeenCalled();
+      });
+    });
+  });
 });
