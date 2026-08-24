@@ -1,4 +1,5 @@
 import type {
+  ListRemoteModelsOptions,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
@@ -23,6 +24,8 @@ interface OpenRouterModel {
 interface OpenRouterModelsResponse {
   data?: OpenRouterModel[];
 }
+
+class OpenRouterModelAuthError extends Error {}
 
 const CURATED_PROVIDER_PREFIXES = [
   'anthropic/',
@@ -191,44 +194,20 @@ export class OpenRouterProvider implements Provider {
     if (!this.isAvailable()) return [];
     if (this.modelCache) return this.modelCache;
 
-    const allowedIds = this.getAllowedModelIds();
-
     try {
-      const response = await this.fetchImpl(OpenRouterProvider.MODELS_URL, {
-        headers: {
-          Authorization: `Bearer ${this.getApiKey()}`,
-        },
-      });
-
-      if (response.status === 401 || response.status === 403) {
-        this.lastAuthError =
-          'OPENROUTER_API_KEY was rejected by OpenRouter. Check the key value and account credits.';
-        return [];
-      }
-
-      if (!response.ok) {
-        const fallback = this.getConfiguredAllowedModels();
-        this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
-        return this.modelCache;
-      }
-
-      const body = (await response.json()) as OpenRouterModelsResponse;
-      const apiModels = (body.data ?? [])
-        .filter((model) => typeof model.id === 'string' && model.id.length > 0)
-        .filter(
-          (model) =>
-            allowedIds || !SYSTEM_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix))
-        )
-        .filter((model) => !allowedIds || allowedIds.has(model.id))
-        .map((model) => this.toModelInfo(model));
-      this.modelCache = apiModels;
-      this.lastAuthError = undefined;
-      return this.modelCache;
-    } catch {
+      return await this.fetchModels();
+    } catch (error) {
+      if (error instanceof OpenRouterModelAuthError) return [];
       const fallback = this.getConfiguredAllowedModels();
       this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
       return this.modelCache;
     }
+  }
+
+  async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
+    if (!this.isAvailable()) return [];
+    if (!options?.force && this.modelCache) return this.modelCache;
+    return this.fetchModels();
   }
 
   ownsModel(modelId: string): boolean {
@@ -313,6 +292,37 @@ export class OpenRouterProvider implements Provider {
       method: 'api_key',
       error: this.lastAuthError,
     };
+  }
+
+  private async fetchModels(): Promise<ModelInfo[]> {
+    const response = await this.fetchImpl(OpenRouterProvider.MODELS_URL, {
+      headers: {
+        Authorization: `Bearer ${this.getApiKey()}`,
+      },
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      this.lastAuthError =
+        'OPENROUTER_API_KEY was rejected by OpenRouter. Check the key value and account credits.';
+      throw new OpenRouterModelAuthError(this.lastAuthError);
+    }
+    if (!response.ok) {
+      throw new Error(`OpenRouter model listing returned HTTP ${response.status}`);
+    }
+
+    const allowedIds = this.getAllowedModelIds();
+    const body = (await response.json()) as OpenRouterModelsResponse;
+    const models = (body.data ?? [])
+      .filter((model) => typeof model.id === 'string' && model.id.length > 0)
+      .filter(
+        (model) =>
+          allowedIds || !SYSTEM_MODEL_PREFIXES.some((prefix) => model.id.startsWith(prefix))
+      )
+      .filter((model) => !allowedIds || allowedIds.has(model.id))
+      .map((model) => this.toModelInfo(model));
+    this.modelCache = models;
+    this.lastAuthError = undefined;
+    return this.modelCache;
   }
 
   private toModelInfo(model: OpenRouterModel): ModelInfo {
