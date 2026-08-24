@@ -230,6 +230,7 @@ interface ProviderLoadFailure {
 interface ModelsLoadResult {
   models: ModelInfo[];
   succeededProviderIds: string[];
+  loadedProviderIds: string[];
   failures: ProviderLoadFailure[];
 }
 
@@ -270,6 +271,9 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
     await waitForOptionalProviderRegistration(registry);
   }
   const providers = getAvailableProviders();
+  const invalidationsAtStart = new Map(
+    providers.map((provider) => [provider.id, providerRetryInvalidations.get(provider.id) ?? 0])
+  );
 
   const results = await Promise.allSettled(
     providers.map((provider) => loadProviderModels(provider))
@@ -277,20 +281,33 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
 
   const allModels: ModelInfo[] = [];
   const succeededProviderIds: string[] = [];
+  const loadedProviderIds: string[] = [];
   const failures: ProviderLoadFailure[] = [];
   results.forEach((result, index) => {
     const provider = providers[index];
     /* v8 ignore next 2 */
     if (result.status !== 'fulfilled') return;
+    if (
+      (providerRetryInvalidations.get(provider.id) ?? 0) !==
+      (invalidationsAtStart.get(provider.id) ?? 0)
+    ) {
+      return;
+    }
     allModels.push(...result.value.models);
     if (result.value.status === 'failed' && result.value.error !== undefined) {
       failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
-    } else {
-      succeededProviderIds.push(provider.id);
+      return;
+    }
+    if (result.value.status === 'unavailable') {
+      return;
+    }
+    succeededProviderIds.push(provider.id);
+    if (result.value.status === 'loaded') {
+      loadedProviderIds.push(provider.id);
     }
   });
 
-  return { models: allModels, succeededProviderIds, failures };
+  return { models: allModels, succeededProviderIds, loadedProviderIds, failures };
 }
 
 function applyProviderLoadOutcome(result: ModelsLoadResult): void {
@@ -304,9 +321,9 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
   for (const providerId of result.succeededProviderIds) {
     invalidateProviderRetry(providerId);
     clearProviderFailure(providerId);
-    if (result.models.some((m) => m.provider === providerId)) {
-      clearProviderRetry(providerId);
-    }
+  }
+  for (const providerId of result.loadedProviderIds) {
+    clearProviderRetry(providerId);
   }
   for (const failure of result.failures) {
     invalidateProviderRetry(failure.providerId);
@@ -378,6 +395,21 @@ function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): 
   modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...models]);
 }
 
+const PROVIDER_RETRY_PROBE_TIMEOUT_MS = 30_000;
+
+function raceProviderProbe<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function runScheduledProviderRetry(providerId: string): Promise<void> {
   const generationAtStart = providerRetryGeneration;
   const invalidationAtStart = providerRetryInvalidations.get(providerId) ?? 0;
@@ -386,11 +418,18 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     providerRetryEntries.delete(providerId);
     return;
   }
-  const result = await loadProviderModels(provider);
+  const result = await raceProviderProbe(
+    loadProviderModels(provider),
+    PROVIDER_RETRY_PROBE_TIMEOUT_MS
+  );
   if (
     providerRetryGeneration !== generationAtStart ||
     (providerRetryInvalidations.get(providerId) ?? 0) !== invalidationAtStart
   ) {
+    return;
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    armProviderRetryTimer(providerId);
     return;
   }
   const error = result.status === 'failed' ? result.error : undefined;
@@ -398,15 +437,13 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     applyProviderLoadOutcome({
       models: [],
       succeededProviderIds: [],
+      loadedProviderIds: [],
       failures: [{ providerId, ...classifyProviderFailure(error) }],
     });
     return;
   }
-  if (result.status === 'unavailable') {
-    armProviderRetryTimer(providerId);
-    return;
-  }
   replaceProviderModelsInCache(providerId, result.models);
+  invalidateProviderRetry(providerId);
   clearProviderFailure(providerId);
   providerRetryEntries.delete(providerId);
 }
