@@ -406,7 +406,7 @@ key instead of splitting traffic that reaches the same account.
 | --- | --- | --- | --- |
 | `saturation` | `{ untilMs, kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch) | admission facts, wake timer |
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner) | admission facts (cap follow-up), probe evidence |
-| `queuedMessages` | `Map<sessionId, insertion-ordered uuid set>` (idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release, registration cleanup, provider-change re-admission |
+| `queuedMessages` | a **single provider-wide insertion-ordered queue of composite `(sessionId, messageUuid)` identities** (the authoritative drain order — cross-session FIFO), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release (global order), registration cleanup (indices), provider-change re-admission (indices) |
 | `probeGrant` | `{ sessionId, messageUuid, leaseUntilMs } \| null` per provider (composite identity — message uuids are session-scoped and explicit injected ids can collide across sessions) | first admitting consult after a clear; consumed at query start; **the lease bounds only the unconsumed grant** (mint → start) — a consumed grant resolves solely on its query's termination; unconsumed-grant expiry re-mints for the next consult | downstream consults (same delivery passes), probe resolution |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
@@ -521,8 +521,12 @@ pre-arm sibling completing after the clear must not erase the episode's charge
 before the granted probe's verdict, or a re-arm under continued saturation would
 fall back to the first ladder step instead of escalating. The timer-expiry path
 still resets: expiry clears → successor probe granted → its clean completion
-consumes the flag. Mirrors the watchdog's `retryCount` / `freeWait` distinction
-at provider scope.
+consumes the flag. **The empty-backlog clear is the one exception**: when a
+clear's drain finds no registrations, no probe identity will ever exist, so
+the flag is consumed by the **first clean provider turn completing after that
+clear** — otherwise the next independent episode inherits the advanced charge
+and starts at a longer ladder step for no reason. Mirrors the watchdog's
+`retryCount` / `freeWait` distinction at provider scope.
 
 ### Queue and wake
 
@@ -604,9 +608,16 @@ at provider scope.
   64-wide post-restart wave); rows without the marker are untouched, and
   historical rows are invisible because the marker is cleared on exit (below).
   The wake path likewise resolves sessions on demand (`getSessionAsync`) rather
-  than relying on already-subscribed sessions. The first reconstructed
-  registration mints the probe grant, so the restart drain is serialized by the
-  same one-at-a-time release. Saturation *state* is still lost, so that probe
+  than relying on already-subscribed sessions. **Archived sessions are
+  excluded, on both edges**: `archiveResources` cancels only delivery-job UUIDs
+  (`cancelForSessionWithMessages`, `session-lifecycle.ts:481-520`), and a
+  provider-queued `'deferred'` row deliberately has no job — so archiving also
+  retires marked rows atomically (marker cleared, registration removed), and
+  the scan joins against non-archived sessions, clearing any marker it finds on
+  archived rows as stale. Without this, the on-demand wake could load and
+  promote an archived conversation into a provider call after restart. The
+  first reconstructed registration mints the probe grant, so the restart drain
+  is serialized by the same one-at-a-time release. Saturation *state* is still lost, so that probe
   may pay one discovery 429 — bounded, one charge.
 - **The enqueued wake arm addresses the existing job.** Waking a
   reconstructed/P3-parked `'enqueued'` row must NOT go through the deferred-row
@@ -639,7 +650,14 @@ at provider scope.
   (`providers.update` credential resync, `auth.login`/`auth.logout` mutating
   the registered provider's credentials — these change the effective
   fingerprint for every session on the provider's default credentials without
-  touching any `session.config`): otherwise queued rows wait on a wake for an
+  touching any `session.config`) — **and query-mode changes**: when
+  `SessionConfigHandler.updateConfig`/`updateBulk` flips `queryMode` back to
+  `'immediate'`, retained (previously skipped) registrations re-run admission
+  immediately — that path publishes only `session.updated` and no turn-end
+  replay exists to re-run P1 for an idle session, so the rows would otherwise
+  stay deferred indefinitely while newer immediate messages dispatch. The
+  principle: retained rows are re-admitted on any config event that changes
+  *why* they were retained. Otherwise queued rows wait on a wake for an
   account key the session no longer uses, while newer messages on the new key
   run ahead of them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
@@ -774,8 +792,11 @@ by pre-existing suites):
    order (cross-session FIFO: A1, B1, A2), scan-past-manual never lets a
    retained row consume a wake, user defer AND row removal (`removePending`)
    both deregister atomically, and the enqueued wake arm requeues the existing
-   job to `retryAt = now`; registration add/lookup/lazy cleanup; timer
-   lifecycle (destroy clears;
+   job to `retryAt = now`; reconstruction excludes archived sessions and
+   archiving retires marked rows; a query-mode flip to immediate re-admits
+   retained registrations; an empty-backlog clear consumes `chargeResetArmed`
+   on the first subsequent clean turn; registration add/lookup/lazy cleanup;
+   timer lifecycle (destroy clears;
    unref'd); clock and jitter injection throughout (the pilot-9 purity
    convention: every time check against an injected `now`).
 4. **Interpreter — persist:** a send during a live turn skips the provider
