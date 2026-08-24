@@ -5719,6 +5719,7 @@ describe('AgentSession', () => {
       provider: 'acp' | 'anthropic';
       pending: boolean;
       claimGuard: 'held' | 'superseded';
+      archived?: boolean;
       expected: 'aborted' | 'park' | 'promote' | 'awaiting_acceptance' | 'consumed';
     };
 
@@ -5765,6 +5766,9 @@ describe('AgentSession', () => {
       const session = createTestSession(sessionId);
       session.config.provider = row.provider;
       db.createSession(session);
+      if (row.archived) {
+        db.updateSession(sessionId, { status: 'archived' });
+      }
       const repo = db.getSDKMessageRepo();
       if (row.delivery !== 'missing') {
         repo.saveUserMessage(
@@ -5814,7 +5818,7 @@ describe('AgentSession', () => {
         });
       }
       const queue = agentSession.messageQueue;
-      if (row.provider === 'acp' && row.pending) {
+      if (row.expected === 'awaiting_acceptance' && row.pending) {
         queue.admitWithId(steerUuid, steerContent, false, { durable: true });
       } else {
         (
@@ -6051,6 +6055,17 @@ describe('AgentSession', () => {
         expected: 'aborted',
       },
       {
+        name: 'processing aborts when the persisted session is archived despite an enqueued delivery',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        archived: true,
+        expected: 'aborted',
+      },
+      {
         name: 'processing aborts on an invalid delivery even when no query is live',
         status: 'processing',
         delivery: 'consumed',
@@ -6141,7 +6156,7 @@ describe('AgentSession', () => {
             expect(
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('consumed');
-          } else if (row.expected === 'awaiting_acceptance' && row.provider === 'acp') {
+          } else if (row.delivery === 'enqueued') {
             expect(
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('enqueued');
@@ -6262,6 +6277,58 @@ describe('AgentSession', () => {
         expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
         expect(queue.hasPendingOrClaimed(steerUuid)).toBe(true);
         expect(queue.hasYielded(steerUuid)).toBe(false);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('pins: an ACP steer already yielded to the SDK returns awaiting_acceptance without re-admitting', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        session.config.provider = 'acp';
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        queue.admitWithId(steerUuid, steerContent, false, { durable: true });
+        queue.start();
+        const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
+        await generator.next();
+        expect(queue.hasYielded(steerUuid)).toBe(true);
+        const outcome = await agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        expect(outcome).toEqual({ outcome: 'awaiting_acceptance' });
+        expect(queue.hasYielded(steerUuid)).toBe(true);
+        expect(queue.size()).toBe(1);
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
       } finally {
         db.close();
       }
