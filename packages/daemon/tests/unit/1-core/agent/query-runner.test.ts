@@ -2238,7 +2238,7 @@ describe('QueryRunner', () => {
         await runTerminalFailure(testCase.errorMessage, { onRateLimitExhausted });
 
         expect(handoffArgs.length).toBe(1);
-        expect(handoffArgs[0]?.[0]).toBe(testCase.errorMessage);
+        expect(handoffArgs[0]?.[0]).toBe(`Error: ${testCase.errorMessage}`);
         expect(handoffArgs[0]?.[1]).toBeNull();
         expect(handoffArgs[0]?.[2]).toEqual(testCase.hint);
       }
@@ -2267,6 +2267,26 @@ describe('QueryRunner', () => {
       expect(
         (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
       ).toBeNull();
+    });
+
+    it('treats a rejecting handoff as unscheduled and surfaces only the finalizer idle', async () => {
+      const rejectingHandoff = mock(async (): Promise<boolean> => {
+        throw new Error('handoff boom');
+      });
+
+      const ctx = await runTerminalFailure('429 Too Many Requests', {
+        onRateLimitExhausted: rejectingHandoff,
+      });
+
+      const settled = await ctx.queryPromise?.then(
+        (): string => 'resolved',
+        (error: unknown): string => String(error)
+      );
+      expect(settled).toBe('Error: handoff boom');
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy.mock.calls.length).toBe(1);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to the full terminal route when the handoff declines', async () => {
@@ -2626,6 +2646,9 @@ describe('QueryRunner', () => {
         'exit.reset',
         'queue.stop',
         'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
       ]);
       expect(notices.length).toBe(1);
       expect(notices[0]?.markAsError).toBe(false);
@@ -2655,6 +2678,9 @@ describe('QueryRunner', () => {
         'queue.clear',
         'terminal.begin',
         'error.handle',
+        'idle',
+        'exit.reset',
+        'queue.stop',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -2689,6 +2715,9 @@ describe('QueryRunner', () => {
         'exit.reset',
         'queue.stop',
         'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
       ]);
       expect(notices.length).toBe(1);
       expect(notices[0]?.markAsError).toBe(false);
@@ -2719,6 +2748,9 @@ describe('QueryRunner', () => {
         'queue.clear',
         'terminal.begin',
         'error.handle',
+        'idle',
+        'exit.reset',
+        'queue.stop',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -2759,6 +2791,7 @@ describe('QueryRunner', () => {
         'queue.start',
         'firstMsg.reset',
         'build#1',
+        'queue.clear',
         'terminal.begin',
         'display:err',
         'idle',
