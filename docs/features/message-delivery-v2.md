@@ -626,10 +626,17 @@ path unchanged.
   sparse fold entries are re-hydrated from the external-event store (render
   fields included, not just classification fields) before classification, and
   cooldowns are armed for every direct class the fold represents. A fold that
-  spans cooling and budgeted classes is partitioned: the budgeted events are
-  re-enveloped for the steer while the cooling events stay deferred for the
-  turn-end digest, so a mixed fold cannot ride a budgeted class past another
-  class's rate cap. The flush runs under `withSessionResetCoordination` — the same
+  spans cooling and budgeted classes is partitioned (real row ids resolved by
+  uuid first): the budgeted events are re-enveloped for the steer while the
+  cooling events stay deferred for the turn-end digest, so a mixed fold cannot
+  ride a budgeted class past another class's rate cap; duplicate admissions of
+  the same message uuid are ignored. When the deferred backlog cap supersedes
+  buffered rows into an early envelope, that envelope is itself admitted to
+  the buffer, so cap-folded direct events still reach the mid-turn steer.
+  Steers render without the digest snippet truncation — review feedback
+  arrives in full because its source rows are consumed — and only
+  direct-class events are rendered even when a fold carries digest-tier
+  passengers. The flush runs under `withSessionResetCoordination` — the same
   lock the turn-end fold holds — and only folds rows that are still `deferred`;
   if the turn ended first (turn-end flush already consumed them), no steer is
   emitted and nothing is delivered twice.

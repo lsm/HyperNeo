@@ -123,7 +123,11 @@ function digestTierPrStateText(eventId: string): string {
   );
 }
 
-function deferredRowFixture(dbId: string, uuid: string): StoredRow {
+function deferredRowFixture(
+  dbId: string,
+  uuid: string,
+  text = 'preexisting deferred row'
+): StoredRow {
   return {
     dbId,
     status: 'deferred',
@@ -134,7 +138,7 @@ function deferredRowFixture(dbId: string, uuid: string): StoredRow {
       parent_tool_use_id: null,
       isSynthetic: true,
       inputKind: 'system',
-      message: { role: 'user', content: [{ type: 'text', text: 'preexisting deferred row' }] },
+      message: { role: 'user', content: [{ type: 'text', text }] },
     } as unknown as SDKUserMessage,
   };
 }
@@ -717,6 +721,129 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
       status: 'consumed',
     });
     expect(preexisting.status).toBe('consumed');
+  });
+
+  it('consumes the real row id when splitting a mixed fold delivered under an existing uuid', async () => {
+    const harness = makeHarness();
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'warm-review'));
+    await sleep(DEBOUNCE_MS + 40);
+    expect(steerRows(harness.rows)).toHaveLength(1);
+
+    const mixedEssences = [
+      {
+        eventId: 'split-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        actor: 'codex[bot]',
+        commentId: 'c-split-review',
+      },
+      {
+        eventId: 'split-check',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+        conclusion: 'failure',
+        checkName: 'Daemon Tests',
+      },
+    ];
+    const mixedFoldText = buildDeferredEventDigestEnvelopeText(mixedEssences as never);
+    harness.rows.push(deferredRowFixture('db-pre', 'uuid-pre', mixedFoldText));
+    await harness.manager.injectSubSessionMessage(
+      SESSION_ID,
+      mixedFoldText,
+      true,
+      undefined,
+      'defer',
+      'system',
+      'uuid-pre'
+    );
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    expect(harness.statusUpdates).toContainEqual({ dbIds: ['db-pre'], status: 'consumed' });
+    expect(harness.rows.find((row) => row.dbId === 'db-pre')?.status).toBe('consumed');
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(2);
+    const splitSteerText = rowText(steers[1]!.message);
+    expect(splitSteerText).toContain('Daemon Tests');
+    expect(splitSteerText).not.toContain('split-review');
+  });
+
+  it('keeps cap-folded events in the mid-turn steer via the replacement envelope', async () => {
+    const harness = makeHarness();
+    await injectDefer(harness.manager, checkFailedText('chk-0', 'Check Zero'));
+    await injectDefer(harness.manager, checkFailedText('chk-1', 'Check One'));
+    for (let i = 2; i <= 102; i++) {
+      await injectDefer(harness.manager, checkFailedText(`chk-${i}`, `Check ${i}`));
+    }
+
+    await sleep(MAX_BURST_WAIT_MS + 80);
+
+    const steers = steerRows(harness.rows);
+    expect(steers.length).toBeGreaterThanOrEqual(1);
+    const allSteerText = steers.map((row) => rowText(row.message)).join('\n');
+    expect(allSteerText).toContain('Check Zero');
+    expect(allSteerText).toContain('Check One');
+    expect(allSteerText).toContain('Check 60');
+    expect(harness.metrics.getCounters().directSteerInjected).toBe(1);
+  });
+
+  it('ignores duplicate buffer admissions for the same explicit message uuid', async () => {
+    const harness = makeHarness();
+    const text = reviewVerdictText('CHANGES_REQUESTED', 'dup-evt');
+    await harness.manager.injectSubSessionMessage(
+      SESSION_ID,
+      text,
+      true,
+      undefined,
+      'defer',
+      'system',
+      'dup-uuid'
+    );
+    await harness.manager.injectSubSessionMessage(
+      SESSION_ID,
+      text,
+      true,
+      undefined,
+      'defer',
+      'system',
+      'dup-uuid'
+    );
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    expect(rowText(steers[0]!.message)).toContain('(1 event');
+  });
+
+  it('renders full review feedback without the digest snippet truncation', async () => {
+    const harness = makeHarness();
+    const longBody = `${'Consider handling the empty-burst case here and also '.repeat(6)}TAIL_MARKER`;
+    await injectDefer(
+      harness.manager,
+      formatExternalEventEssence(
+        externalEvent(
+          'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+          'long-body-evt',
+          {
+            eventType: 'pull_request_review_comment',
+            action: 'polled',
+            actor: 'codex[bot]',
+            body: longBody,
+            commentId: 'c-long-body',
+            path: 'packages/daemon/src/lib/space/runtime/task-agent-manager.ts',
+            line: 3400,
+            inReplyToId: '',
+          }
+        )
+      )
+    );
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    const steerText = rowText(steers[0]!.message);
+    expect(steerText).toContain('TAIL_MARKER');
+    expect(steerText).not.toContain('…');
   });
 
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
