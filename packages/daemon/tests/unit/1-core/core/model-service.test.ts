@@ -1944,6 +1944,19 @@ describe('Model Service', () => {
       expect(getProviderFailure('glm')).toBeUndefined();
     });
 
+    it('accepts an explicitly curated empty provider catalog', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { AcpProvider } = await import('../../../../src/lib/providers/acp-provider');
+      const provider = new AcpProvider({ HYPERNEO_ACP_COMMAND: 'claude --acp' }, async () => {});
+      provider.setCuratedModels([]);
+      getProviderRegistry().register(provider);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('acp')).toBeUndefined();
+      expect(getAvailableModels('global').some((model) => model.provider === 'acp')).toBe(false);
+    });
+
     it('propagates a recorded probe rejection into the provider auth status', async () => {
       const fetchImpl = mock(
         async () => new Response('unauthorized', { status: 401 })

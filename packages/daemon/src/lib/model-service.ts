@@ -282,11 +282,12 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
       return { status: 'unavailable', models: [] };
     }
     const models = await provider.getModels();
-    if (models.length > 0) {
+    if (
+      models.length > 0 ||
+      provider.hasCuratedModelList?.() ||
+      getProviderRegistry().getCuratedModels(provider.id)?.length === 0
+    ) {
       return { status: 'loaded', models: filterProviderModels(provider.id, models) };
-    }
-    if (getProviderRegistry().getCuratedModels(provider.id)?.length === 0) {
-      return { status: 'loaded', models: [] };
     }
     return { status: 'failed', models: fallbackModelsFor(provider) };
   } catch (error) {
@@ -316,8 +317,15 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
     /* v8 ignore next 2 */
     if (result.status !== 'fulfilled') return;
     allModels.push(...result.value.models);
-    if (result.value.status === 'failed' && result.value.error !== undefined) {
-      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+    if (result.value.status === 'failed') {
+      if (result.value.error !== undefined) {
+        failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+      } else {
+        failures.push({
+          providerId: provider.id,
+          ...classifyProviderFailure(new Error('Provider returned no models')),
+        });
+      }
     } else {
       succeededProviderIds.push(provider.id);
     }

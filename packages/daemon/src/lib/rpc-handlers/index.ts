@@ -660,7 +660,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     evolutionEpisodeService,
     artifactProfile,
     outcomeNotificationRepo,
-    enableGoalOutcomeWake: false,
+    enableGoalOutcomeWake: true,
   });
   deliverOutcomeWake = (notification) => {
     void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
@@ -681,6 +681,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
     spaceRuntimeService.recoverLongTermAgentInboxForSpace(spaceId);
+    void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
   });
 
   setupSpaceAgentHandlers(

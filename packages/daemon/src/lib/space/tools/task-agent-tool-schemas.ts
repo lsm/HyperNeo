@@ -49,7 +49,7 @@ export const GoalUpdateSchema = z
 export const MarkCompleteSchema = z
   .object({
     goal_update: GoalUpdateSchema.describe(
-      "Optional rolling-state update for the task's linked goal. Provide this when completed work changes long-horizon goal state."
+      'Legacy field. Goal rolling state is owned by the goal owner, who reviews this outcome and applies updates via review_goal_outcome. Record your outcome in the task result instead of providing this.'
     ).optional(),
   })
   .strict();

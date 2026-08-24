@@ -2,7 +2,7 @@ import { createLogger } from '@hyperneo/shared/logger';
 import type { CuratedModel, Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
 import type { Provider as ProviderIdStr } from '@hyperneo/shared';
 
-const log = createLogger('hyperneo:providers:registry');
+const log = createLogger('hyperneo:providers:registry', { consoleDeltas: true });
 
 export class ProviderRegistry {
   private providers = new Map<ProviderId, Provider>();

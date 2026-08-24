@@ -1,15 +1,17 @@
 import type {
+  ListRemoteModelsOptions,
+  ModelTier,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
+import { fetchRemoteModelList, type RemoteModelListEntry } from './shared/model-list.js';
 
 export class GlmProvider implements Provider {
   readonly id = 'glm';
@@ -25,6 +27,7 @@ export class GlmProvider implements Provider {
   };
 
   static readonly BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+  static readonly MODEL_LIST_URL = 'https://open.bigmodel.cn/api/paas/v4/models';
 
   static readonly MODELS: ModelInfo[] = [
     {
@@ -120,7 +123,9 @@ export class GlmProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly DISCOVERED_MODEL_CONTEXT_WINDOW = 128_000;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -130,6 +135,11 @@ export class GlmProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
+    this.clearModelCache();
+  }
+
+  clearModelCache(): void {
+    this.modelListCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -187,6 +197,41 @@ export class GlmProvider implements Provider {
     return GlmProvider.MODELS;
   }
 
+  async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('Z.ai API key not configured');
+    const models = await fetchRemoteModelList({
+      url: GlmProvider.MODEL_LIST_URL,
+      headers: { Authorization: `Bearer ${apiKey}` },
+      force: options.force,
+      cache: this.modelListCache,
+    });
+    return models
+      .filter((model) => this.ownsModel(model.id))
+      .map((model) => this.toRemoteModelInfo(model));
+  }
+
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
+    const baseId = model.id.toLowerCase().replace(/(\[1m\])+$/, '');
+    const staticModel = GlmProvider.MODELS.find(
+      (candidate) => candidate.id.toLowerCase().replace(/(\[1m\])+$/, '') === baseId
+    );
+    if (staticModel) return { ...staticModel, id: model.id };
+    return {
+      id: model.id,
+      name: model.name ?? model.id,
+      alias: model.id,
+      family: 'glm',
+      provider: this.id,
+      contextWindow: GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
+      preferContextWindowMetadata: true,
+      thinkingModes: this.capabilities.thinkingModes,
+      description: `${model.name ?? model.id} via Z.ai`,
+      releaseDate: '',
+      available: true,
+    };
+  }
+
   ownsModel(modelId: string): boolean {
     return modelId === 'glm-5' || modelId.toLowerCase().startsWith('glm-');
   }
@@ -213,7 +258,9 @@ export class GlmProvider implements Provider {
         ? baseModelId
         : 'glm-5-turbo';
 
-    const contextWindow = GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ?? 200_000;
+    const contextWindow =
+      GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ??
+      GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
 
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,

@@ -107,6 +107,7 @@ import { SpaceGoalRepository } from './storage/repositories/space-goal-repositor
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger';
+import { createStartupPhaseTimer } from './lib/startup-phase-timer';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink';
 import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
 import { SkillsManager } from './lib/skills-manager';
@@ -253,23 +254,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     disposeProcessFatalLogging?.();
     await structuredLogSink?.close();
   };
-  let __startupStep = 0;
-  let __startupStart = 0;
-  let __startupPrev = 0;
-  const startupPhase = (name: string) => {
-    const now = Date.now();
-    if (__startupStart === 0) {
-      __startupStart = now;
-      __startupPrev = now;
-    }
-    const delta = now - __startupPrev;
-    __startupPrev = now;
-    if (verbose) {
-      console.log(
-        `[startup ${++__startupStep}] ${name} (+${delta}ms, total ${now - __startupStart}ms)`
-      );
-    }
-  };
+  const startupTimer = createStartupPhaseTimer(verbose ? console.log : null);
 
   try {
     options.onStructuredLogSinkReady?.(() => structuredLogSink?.flush() ?? Promise.resolve());
@@ -287,7 +272,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const db = new Database(config.dbPath);
     const reactiveDb = createReactiveDatabase(db);
-    startupPhase('database initialize (open + migrate)');
+    startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
@@ -382,16 +367,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    startupPhase('providers (register + credentials)');
+    startupTimer.start('providers (register + credentials)');
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
     await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
-    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
-      registry: providerRegistry,
-    });
 
-    startupPhase('provider sync (migrate / custom endpoints / registry)');
+    startupTimer.start('provider sync (migrate / custom endpoints / registry)');
     try {
       await migrateProvidersIfNeeded(db, credentialManager);
       await backfillDeepSeekProvider(db, credentialManager);
@@ -422,7 +404,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
 
     if (hasAnthropicAuth) {
-      startupPhase('model service init (background)');
       void import('./lib/model-service')
         .then(({ initializeModels }) => initializeModels())
         .catch((err) => {
@@ -433,6 +414,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo('[Daemon] Model initialization skipped - no credentials available');
     }
 
+    startupTimer.start('message hub + MCP setup');
     const router = new MessageHubRouter({
       logger: console,
       debug: config.nodeEnv === 'development',
@@ -458,6 +440,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
+    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
+      registry: providerRegistry,
+      onProviderChanged: () => {
+        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+      },
+    });
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
 
@@ -469,7 +457,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     seedDefaultMcpEntries(db);
 
     const mcpImportService = new McpImportService(db);
-    startupPhase('mcp import sweep (.mcp.json)');
+    startupTimer.start('mcp import sweep (.mcp.json)');
     if (process.env.NODE_ENV !== 'test') {
       try {
         const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
@@ -492,13 +480,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     skillsManager.initializeBuiltins();
 
     try {
-      startupPhase('skill plugin wrappers');
+      startupTimer.start('skill plugin wrappers');
       await skillsManager.ensureBuiltinPluginWrappers();
     } catch (err) {
       logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
     }
 
-    startupPhase('session manager');
+    startupTimer.start('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
       messageHub,
@@ -518,7 +506,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     sessionManager.start();
 
-    startupPhase('state projection service');
+    startupTimer.start('state projection service');
     const stateManager = new StateProjectionService(
       messageHub,
       sessionManager,
@@ -545,7 +533,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
     });
 
-    startupPhase('github service');
+    startupTimer.start('github + external event setup');
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
@@ -650,7 +638,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'github-polling-settings' }
     );
 
-    startupPhase('external event extensions');
+    startupTimer.start('external event extensions');
     for (const extension of extensionManager.getAll()) {
       const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
       if (!globalConfig.globallyEnabled) continue;
@@ -666,7 +654,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo(`[Daemon] Started external event extension: ${extension.sourceId}`);
     }
 
-    startupPhase('rpc handlers + space runtime provision');
+    startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
       messageHub,
       sessionManager,
@@ -703,7 +691,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
-    startupPhase('space runtime ready (background MCP re-attach)');
+    startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
@@ -795,7 +783,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     });
 
-    startupPhase('HTTP/WS server bound — createDaemonApp init complete');
+    startupTimer.start('post-bind jobs + background services');
+    const openMessageSearchMergeGate = (): void => db.startMessageSearchMerges();
+    void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });
@@ -1158,6 +1148,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     };
 
+    startupTimer.finish();
+
     return {
       server,
       db,
@@ -1192,6 +1184,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       cleanup,
     };
   } catch (error) {
+    startupTimer.finish();
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
     await invalidateInFlightModelLoads();

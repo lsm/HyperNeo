@@ -129,10 +129,18 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     });
+    const observed: Array<{ providerId: string; stored: number; health?: string }> = [];
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
       now: () => 0,
       refreshWindowMs: 10_000,
+      onProviderChanged: (providerId) => {
+        observed.push({
+          providerId,
+          stored: manager.stored.length,
+          health: manager.health.get(providerId),
+        });
+      },
     });
 
     await scheduler.tick();
@@ -149,6 +157,7 @@ describe('OAuthRefreshScheduler', () => {
       },
     ]);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
+    expect(observed).toEqual([{ providerId: 'oauth-provider', stored: 1, health: 'healthy' }]);
   });
 
   it('marks provider unhealthy after max refresh retries', async () => {
@@ -161,17 +170,24 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     });
+    const changed: string[] = [];
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
       now: () => 0,
       refreshWindowMs: 10_000,
       maxRetries: 2,
+      onProviderChanged: (providerId) => {
+        changed.push(providerId);
+      },
     });
 
     await scheduler.tick();
+    expect(changed).toEqual([]);
+    expect(manager.health.has('oauth-provider')).toBe(false);
     await scheduler.tick();
 
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    expect(changed).toEqual(['oauth-provider']);
   });
 
   it('counts thrown refresh attempts as failures', async () => {
@@ -184,16 +200,21 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     });
+    const changed: string[] = [];
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
       now: () => 0,
       refreshWindowMs: 10_000,
       maxRetries: 1,
+      onProviderChanged: (providerId) => {
+        changed.push(providerId);
+      },
     });
 
     await scheduler.tick();
 
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    expect(changed).toEqual(['oauth-provider']);
   });
 
   it('tracks retry counts per token expiry', async () => {

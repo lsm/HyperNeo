@@ -11,6 +11,7 @@ import {
   mapRawModelsToModelInfos,
   filterModelsForPicker,
   filterModelsBySearch,
+  isDefinitiveAuthFailure,
   useFilteredModelsForPicker,
 } from '../useModelSwitcher.ts';
 
@@ -198,10 +199,42 @@ describe('useModelSwitcher', () => {
       expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
     });
 
-    it('keeps GLM models when GLM is the active provider even if not authenticated', () => {
-      const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
+    it('keeps GLM models when GLM is the active provider and not definitively failed', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'transient' }],
+      ]);
       const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm');
       expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+
+    it('preserves only the selected model of the active provider under a definitive failure', () => {
+      const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm', 'glm-5');
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'sonnet']);
+    });
+
+    it('blocks every active-provider model under a credential failure when none is selected', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'credential' }],
+      ]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm');
+      expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
+    });
+
+    it('keeps models of a transiently failed provider even when unauthenticated', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'transient' }],
+      ]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'anthropic');
+      expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+
+    it('hides models of a provider with a definitive credential failure', () => {
+      const auth = new Map([
+        ['glm', { id: 'glm', isAuthenticated: false, errorKind: 'credential' }],
+      ]);
+      const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'anthropic');
+      expect(filtered.map((m) => m.id)).toEqual(['sonnet']);
     });
 
     it('shows GLM models optimistically when GLM is absent from the auth map', () => {
@@ -211,6 +244,35 @@ describe('useModelSwitcher', () => {
         'anthropic'
       );
       expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
+    });
+  });
+
+  describe('isDefinitiveAuthFailure', () => {
+    it('treats unauthenticated without errorKind as definitive', () => {
+      expect(isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: false })).toBe(true);
+    });
+
+    it('treats unauthenticated with credential errorKind as definitive', () => {
+      expect(
+        isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: false, errorKind: 'credential' })
+      ).toBe(true);
+    });
+
+    it('treats unauthenticated with transient errorKind as not definitive', () => {
+      expect(
+        isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: false, errorKind: 'transient' })
+      ).toBe(false);
+    });
+
+    it('treats authenticated statuses as not definitive', () => {
+      expect(isDefinitiveAuthFailure({ id: 'glm', isAuthenticated: true })).toBe(false);
+      expect(
+        isDefinitiveAuthFailure({
+          id: 'glm',
+          isAuthenticated: true,
+          errorKind: 'transient',
+        })
+      ).toBe(false);
     });
   });
 
@@ -263,6 +325,81 @@ describe('useModelSwitcher', () => {
         family: 'sonnet',
       });
       expect(result.current.availableModels.length).toBe(3);
+    });
+
+    it('backfills current model info by provider and id', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'gpt-5.4',
+            currentProvider: 'custom:local',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'gpt-5.4',
+                display_name: 'Built-in Codex',
+                description: '',
+                provider: 'anthropic-codex',
+              },
+              {
+                id: 'gpt-5.4',
+                display_name: 'Custom Model',
+                description: '',
+                provider: 'custom:local',
+              },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.currentModelInfo?.id).toBe('gpt-5.4');
+      expect(result.current.currentModelInfo?.provider).toBe('custom:local');
+      expect(result.current.currentModelInfo?.name).toBe('Custom Model');
+    });
+
+    it('backfills current model info by provider and alias', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'copilot-anthropic-opus',
+            currentProvider: 'anthropic-copilot',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'claude-opus-4.6',
+                alias: 'copilot-anthropic-opus',
+                display_name: 'Claude Opus 4.6',
+                description: '',
+                provider: 'anthropic-copilot',
+              },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.currentModelInfo?.id).toBe('claude-opus-4.6');
+      expect(result.current.currentModelInfo?.alias).toBe('copilot-anthropic-opus');
+      expect(result.current.currentModelInfo?.provider).toBe('anthropic-copilot');
     });
 
     it('should classify models by family correctly', async () => {
@@ -970,6 +1107,78 @@ describe('useModelSwitcher', () => {
   });
 
   describe('sessionId changes', () => {
+    it('discards a delayed model backfill from the previous session', async () => {
+      let resolveFirstModels!: (value: unknown) => void;
+      const firstModels = new Promise((resolve) => {
+        resolveFirstModels = resolve;
+      });
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi.fn((method, params) => {
+          if (method === 'session.model.get') {
+            if (params.sessionId === 'session-1') {
+              return Promise.resolve({
+                currentModel: 'old-alias',
+                currentProvider: 'custom:old',
+                modelInfo: null,
+              });
+            }
+            return Promise.resolve({
+              currentModel: 'new-model',
+              currentProvider: 'custom:new',
+              modelInfo: null,
+            });
+          }
+          if (mockHub.request.mock.calls.filter((call) => call[0] === 'models.list').length === 1) {
+            return firstModels;
+          }
+          return Promise.resolve({
+            models: [
+              {
+                id: 'new-model',
+                display_name: 'New Model',
+                description: '',
+                provider: 'custom:new',
+              },
+            ],
+          });
+        }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useModelSwitcher(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+
+      await waitFor(() => {
+        expect(mockHub.request).toHaveBeenCalledWith('models.list', { useCache: true });
+      });
+      rerender({ sessionId: 'session-2' });
+
+      await waitFor(() => {
+        expect(result.current.currentModelInfo?.provider).toBe('custom:new');
+      });
+
+      await act(async () => {
+        resolveFirstModels({
+          models: [
+            {
+              id: 'old-model',
+              alias: 'old-alias',
+              display_name: 'Old Model',
+              description: '',
+              provider: 'custom:old',
+            },
+          ],
+        });
+        await firstModels;
+      });
+
+      expect(result.current.currentModel).toBe('new-model');
+      expect(result.current.currentModelInfo?.provider).toBe('custom:new');
+      expect(result.current.availableModels[0]?.provider).toBe('custom:new');
+    });
+
     it('should reload when sessionId changes', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
@@ -1382,8 +1591,10 @@ describe('filterModelsForPicker', () => {
     expect(result[0].provider).toBe('anthropic');
   });
 
-  it('keeps the current provider even when unauthenticated', () => {
-    const authMap = new Map([['anthropic-copilot', makeAuth('anthropic-copilot', false)]]);
+  it('keeps the current provider when its failure is transient', () => {
+    const authMap = new Map([
+      ['anthropic-copilot', { ...makeAuth('anthropic-copilot', false), errorKind: 'transient' }],
+    ]);
     const result = filterModelsForPicker(
       [anthropicModel, copilotModel],
       authMap,
@@ -1398,7 +1609,7 @@ describe('filterModelsForPicker', () => {
     expect(result).toHaveLength(1);
   });
 
-  it('hides non-current unauthenticated and shows current unauthenticated', () => {
+  it('hides non-current unauthenticated and keeps only the selected model of the current unauthenticated provider', () => {
     const authMap = new Map([
       ['anthropic', makeAuth('anthropic', false)],
       ['anthropic-copilot', makeAuth('anthropic-copilot', false)],
@@ -1407,7 +1618,8 @@ describe('filterModelsForPicker', () => {
     const result = filterModelsForPicker(
       [anthropicModel, copilotModel, codexModel],
       authMap,
-      'anthropic'
+      'anthropic',
+      'claude-sonnet'
     );
     expect(result.map((m) => m.provider)).toEqual(['anthropic', 'anthropic-codex']);
   });
@@ -1482,6 +1694,7 @@ describe('useFilteredModelsForPicker', () => {
       useFilteredModelsForPicker(
         [anthropicModel, copilotModel, codexModel],
         authMap,
+        undefined,
         undefined,
         'sonnet'
       )
