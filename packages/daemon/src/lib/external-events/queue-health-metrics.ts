@@ -191,8 +191,11 @@ export class ExternalEventQueueMetrics {
     this.cooldownSkips += 1;
   }
 
-  recordDirectSteerInjected(eventClass: string): void {
+  recordDirectSteerInjected(): void {
     this.directSteerInjected += 1;
+  }
+
+  recordDirectSteerInjectedClass(eventClass: string): void {
     this.directSteerInjectedByClass.set(
       eventClass,
       (this.directSteerInjectedByClass.get(eventClass) ?? 0) + 1

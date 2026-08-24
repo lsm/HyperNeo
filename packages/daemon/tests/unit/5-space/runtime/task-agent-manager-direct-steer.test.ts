@@ -223,7 +223,15 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     spaceRuntimeService: { queueHealthMetrics: metrics },
     externalEventStore: {
       getById: (eventId: string) =>
-        eventPayloads.has(eventId) ? { event: { payload: eventPayloads.get(eventId) } } : null,
+        eventPayloads.has(eventId)
+          ? {
+              event: {
+                payload: eventPayloads.get(eventId),
+                occurredAt: Date.UTC(2026, 7, 23, 16, 14),
+                externalUrl: `${PR_URL}#${eventId}`,
+              },
+            }
+          : null,
     },
     directSteerDebounceMs: DEBOUNCE_MS,
     directSteerMaxBurstWaitMs: MAX_BURST_WAIT_MS,
@@ -530,6 +538,8 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     const steerText = rowText(steers[0]!.message);
     expect(steerText).toContain('codex[bot]');
     expect(steerText).toContain('packages/daemon/src/lib');
+    expect(steerText).not.toContain('unknown time');
+    expect(steerText).toContain('#sparse-rc-1');
     expect(steerJobs(harness.jobs)).toHaveLength(1);
   });
 
@@ -585,6 +595,10 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
     await sleep(DEBOUNCE_MS + 60);
     expect(steerRows(harness.rows)).toHaveLength(1);
+    const injectedByClass = harness.metrics.getCounters().directSteerInjectedByClass;
+    expect(injectedByClass.check).toBe(1);
+    expect(injectedByClass.merge_conflict).toBe(1);
+    expect(harness.metrics.getCounters().directSteerInjected).toBe(1);
 
     await injectDefer(
       harness.manager,
@@ -599,6 +613,43 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(harness.metrics.getCounters().directSteerSuppressedByCooldown).toBe(1);
     await sleep(DEBOUNCE_MS + 40);
     expect(steerRows(harness.rows)).toHaveLength(1);
+  });
+
+  it('drops a mixed burst at flush when a represented class cooled meanwhile', async () => {
+    const harness = makeHarness();
+    await injectDefer(harness.manager, checkFailedText('early-chk', 'Daemon Tests'));
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'mixed-verdict'));
+
+    await sleep(DEBOUNCE_MS + 80);
+
+    expect(steerRows(harness.rows)).toHaveLength(2);
+    expect(harness.metrics.getCounters().directSteerInjected).toBe(2);
+
+    const mixedEssences = [
+      {
+        eventId: 'late-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        actor: 'codex[bot]',
+        commentId: 'c-late-review',
+      },
+      {
+        eventId: 'late-check',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+        conclusion: 'failure',
+        checkName: 'Lint',
+      },
+    ];
+    await injectDefer(
+      harness.manager,
+      buildDeferredEventDigestEnvelopeText(mixedEssences as never)
+    );
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    expect(steerRows(harness.rows)).toHaveLength(2);
+    const mixedRow = harness.rows.find((row) => rowText(row.message).includes('late-review'));
+    expect(mixedRow?.status).toBe('deferred');
+    expect(harness.metrics.getCounters().directSteerSuppressedByCooldown).toBeGreaterThanOrEqual(1);
   });
 
   it('bounds the buffer by expanded event count, not row count', async () => {

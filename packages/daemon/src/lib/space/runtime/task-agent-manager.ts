@@ -3766,9 +3766,17 @@ export class TaskAgentManager {
     }
     const record = this.config.externalEventStore.getById(essence.eventId);
     const payload = record?.event.payload;
-    if (!payload) return essence;
+    if (!record || !payload) return essence;
     const hydrated: Record<string, unknown> = { ...essence };
     let changed = false;
+    if (hydrated.occurredAt === undefined && typeof record.event.occurredAt === 'number') {
+      hydrated.occurredAt = record.event.occurredAt;
+      changed = true;
+    }
+    if (hydrated.externalUrl === undefined && typeof record.event.externalUrl === 'string') {
+      hydrated.externalUrl = record.event.externalUrl;
+      changed = true;
+    }
     for (const field of DIRECT_STEER_HYDRATABLE_FIELDS) {
       if (hydrated[field] !== undefined) continue;
       const value = payload[field];
@@ -3804,7 +3812,12 @@ export class TaskAgentManager {
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       this.directSteerTimers.delete(key);
-      void this.flushDirectSteerBuffer(key);
+      void this.flushDirectSteerBuffer(key).catch((err) => {
+        log.warn(
+          `TaskAgentManager: direct steer flush failed for session ${key.split('\u0000')[0]}: ` +
+            `${err instanceof Error ? err.message : String(err)}; rows stay deferred`
+        );
+      });
     }, delay);
     this.directSteerTimers.set(key, timer);
   }
@@ -3847,12 +3860,16 @@ export class TaskAgentManager {
       );
       return;
     }
-    const key = directSteerBufferKey(sessionId, bufferClass);
-    if (this.isDirectSteerCoolingDown(key, Date.now())) {
+    const representedAtFlush = directSteerClasses(entries.flatMap((entry) => entry.essences));
+    const now = Date.now();
+    const coolingAtFlush = representedAtFlush.filter((eventClass) =>
+      this.isDirectSteerCoolingDown(directSteerBufferKey(sessionId, eventClass), now)
+    );
+    if (coolingAtFlush.length > 0) {
       this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByCooldown();
       log.debug(
-        `TaskAgentManager: direct steer for session ${sessionId} dropped at flush — cooldown ` +
-          `armed while the burst was pending; rows stay deferred`
+        `TaskAgentManager: direct steer for session ${sessionId} dropped at flush — classes ` +
+          `${coolingAtFlush.join(',')} cooled while the burst was pending; rows stay deferred`
       );
       return;
     }
@@ -3905,10 +3922,16 @@ export class TaskAgentManager {
     }
     const sourceDbIds = steerable.map((entry) => entry.dbId);
     this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
-    for (const eventClass of new Set(directSteerClasses(steerable.flatMap((e) => e.essences)))) {
+    const steeredClasses = new Set(directSteerClasses(steerable.flatMap((e) => e.essences)));
+    for (const eventClass of steeredClasses) {
       this.armDirectSteerCooldown(directSteerBufferKey(sessionId, eventClass));
     }
-    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected(bufferClass);
+    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected();
+    for (const eventClass of steeredClasses) {
+      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjectedClass(
+        eventClass
+      );
+    }
     log.info(
       `TaskAgentManager: injected direct steer for session ${sessionId} covering ` +
         `${eventCount} event(s) across ${steerable.length} row(s)`
@@ -3935,6 +3958,7 @@ export class TaskAgentManager {
 
   private armDirectSteerCooldown(key: string): void {
     const map = this.directSteerCooldowns;
+    map.delete(key);
     map.set(key, Date.now());
     if (map.size <= DIRECT_STEER_COOLDOWN_MAP_CAP) return;
     const now = Date.now();
