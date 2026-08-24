@@ -31,8 +31,15 @@ export interface ExternalEventEssenceEntry {
   reviewId?: string;
   context?: string;
   threadId?: string;
+  ruleName?: string;
+  adminEnforced?: boolean;
+  requiredApprovingReviewCount?: number;
+  requireCodeOwnerReview?: boolean;
+  requiredConversationResolutionLevel?: string;
+  strictRequiredStatusChecksPolicy?: boolean;
   requiredStatusChecks?: unknown;
   changedFields?: unknown;
+  receivedAt?: number;
 }
 
 export type DeferredExternalEventEntry =
@@ -67,9 +74,25 @@ const ESSENCE_ENTRY_FIELDS = [
   'reviewId',
   'context',
   'threadId',
+  'ruleName',
+  'adminEnforced',
+  'requiredApprovingReviewCount',
+  'requireCodeOwnerReview',
+  'requiredConversationResolutionLevel',
+  'strictRequiredStatusChecksPolicy',
+  'receivedAt',
 ] as const;
 
 const ESSENCE_STRUCTURED_FIELDS = ['requiredStatusChecks', 'changedFields'] as const;
+
+const POLICY_VALUE_FIELDS = [
+  'ruleName',
+  'adminEnforced',
+  'requiredApprovingReviewCount',
+  'requireCodeOwnerReview',
+  'requiredConversationResolutionLevel',
+  'strictRequiredStatusChecksPolicy',
+] as const;
 
 function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
   if (!value || typeof value !== 'object') return null;
@@ -258,7 +281,13 @@ export function partitionDeferredExternalEventRows(
       continue;
     }
     digestRows.push(row);
-    digestEvents.push(...deferredExternalEventEntryEvents(entry));
+    for (const event of deferredExternalEventEntryEvents(entry)) {
+      if (Number.isNaN(essenceTime(event)) && Number.isFinite(row.timestamp)) {
+        digestEvents.push({ ...event, receivedAt: row.timestamp });
+      } else {
+        digestEvents.push(event);
+      }
+    }
     if (entry.kind === 'fold') droppedCount += entry.droppedCount ?? 0;
   }
   if (digestEvents.length > DEFERRED_EVENT_ENVELOPE_MAX_EVENTS) {
@@ -291,6 +320,12 @@ function essenceTime(entry: ExternalEventEssenceEntry): number {
     if (Number.isFinite(numeric)) return validEpochMs(numeric);
   }
   return Number.NaN;
+}
+
+function orderTime(entry: ExternalEventEssenceEntry): number {
+  const eventTime = essenceTime(entry);
+  if (!Number.isNaN(eventTime)) return eventTime;
+  return typeof entry.receivedAt === 'number' ? validEpochMs(entry.receivedAt) : Number.NaN;
 }
 
 function digestTimestamp(entry: ExternalEventEssenceEntry, includeDate = false): string {
@@ -479,6 +514,12 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       for (const field of structured) {
         if (field) parts.push(field);
       }
+      const policyValues: Record<string, unknown> = {};
+      for (const field of POLICY_VALUE_FIELDS) {
+        if (latest[field] !== undefined) policyValues[field] = latest[field];
+      }
+      const policySnippet = digestSnippet(JSON.stringify(policyValues));
+      if (policySnippet) parts.push(policySnippet);
       const url = latest.externalUrl ?? latest.prUrl;
       if (url) parts.push(url);
       return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
@@ -513,10 +554,10 @@ export function buildExternalEventDigestMessage(
   const ordered = events
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => {
-      const at = essenceTime(a.entry);
-      const bt = essenceTime(b.entry);
-      const av = Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
-      const bv = Number.isFinite(bt) ? bt : Number.NEGATIVE_INFINITY;
+      const at = orderTime(a.entry);
+      const bt = orderTime(b.entry);
+      const av = Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at;
+      const bv = Number.isNaN(bt) ? Number.NEGATIVE_INFINITY : bt;
       return av - bv || a.index - b.index;
     })
     .map((item) => item.entry);
@@ -543,7 +584,9 @@ export function buildExternalEventDigestMessage(
   }
   const footer =
     droppedEventCount > 0
-      ? [`${droppedEventCount} older events were folded out of earlier batches and are superseded.`]
+      ? [
+          `${droppedEventCount} older events were omitted from this summary (over the event bound) and may still need attention.`,
+        ]
       : [];
   return [digestHeader(ordered, droppedEventCount), ...lines, ...footer].join('\n');
 }
@@ -587,7 +630,7 @@ export interface DeferredEventDigestRowOps {
 
 function deterministicFoldUuid(sourceDbIds: string[]): string {
   const digest = createHash('sha256')
-    .update([...sourceDbIds].sort().join(' '))
+    .update([...sourceDbIds].sort().join('\u0000'))
     .digest('hex');
   return `fold-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(
     16,
@@ -657,7 +700,9 @@ export function planDeferredExternalEventOverflow(
   const external: Array<{ row: DeferredDeliveryRow; entry: DeferredExternalEventEntry }> = [];
   for (const row of rows) {
     const entry = parseDeferredDeliveryRow(row);
-    if (entry && isDigestTierEntry(entry)) external.push({ row, entry });
+    if (entry && entry.kind === 'event' && isDigestTierEntry(entry)) {
+      external.push({ row, entry });
+    }
   }
   if (external.length <= cap) return null;
   const overflowCount = external.length - cap + 1;
@@ -665,10 +710,7 @@ export function planDeferredExternalEventOverflow(
   return {
     overflowRows: overflow.map((item) => item.row),
     events: overflow.flatMap((item) => deferredExternalEventEntryEvents(item.entry)),
-    droppedCount: overflow.reduce(
-      (sum, item) => sum + (item.entry.kind === 'fold' ? (item.entry.droppedCount ?? 0) : 0),
-      0
-    ),
+    droppedCount: 0,
   };
 }
 

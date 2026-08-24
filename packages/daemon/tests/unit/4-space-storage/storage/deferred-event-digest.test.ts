@@ -472,6 +472,25 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('latest eventId: pf-2');
   });
 
+  it('renders branch-protection policy values alongside changed field names', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'bp-2',
+        topic: 'github/o/r/repo/42.branch_protection_edited',
+        eventType: 'branch_protection_rule',
+        action: 'edited',
+        actor: 'marcliu',
+        ruleName: 'main',
+        requiredApprovingReviewCount: 2,
+        requireCodeOwnerReview: true,
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('"ruleName":"main"');
+    expect(digest).toContain('"requiredApprovingReviewCount":2');
+    expect(digest).toContain('"requireCodeOwnerReview":true');
+  });
+
   it('renders structured branch-protection payload fields on other-tier lines', () => {
     const digest = buildExternalEventDigestMessage([
       {
@@ -532,7 +551,7 @@ describe('buildExternalEventDigestMessage', () => {
     });
     expect(digest.split('\n')[0]).toBe('External events while you were working (205 events):');
     expect(digest).toContain(
-      '5 older events were folded out of earlier batches and are superseded.'
+      '5 older events were omitted from this summary (over the event bound) and may still need attention.'
     );
   });
 
@@ -859,7 +878,7 @@ describe('partitionDeferredExternalEventRows', () => {
       'External events while you were working (250 events, PR #7):'
     );
     expect(digest).toContain(
-      '50 older events were folded out of earlier batches and are superseded.'
+      '50 older events were omitted from this summary (over the event bound) and may still need attention.'
     );
   });
 
@@ -941,6 +960,54 @@ describe('deferred external event overflow cap', () => {
       planDeferredExternalEventOverflow(externalRows(DEFERRED_EXTERNAL_EVENT_ROW_CAP), 100)
     ).toBeNull();
     expect(planDeferredExternalEventOverflow(externalRows(3), 100)).toBeNull();
+  });
+
+  it('excludes envelope rows from overflow planning so crash retries see the same source set', () => {
+    const sources = Array.from({ length: 101 }, (_, i) =>
+      row(`db-${i}`, `u-${i}`, checkText(`chk-${i}`, at(15) + i * 1000, 'failure'))
+    );
+    const envelope = row(
+      'db-envelope',
+      'u-envelope',
+      buildDeferredEventDigestEnvelopeText([
+        { eventId: 'chk-0', topic: 'github/lsm/hyperneo/pull_request/2828.check_failed' },
+        { eventId: 'chk-1', topic: 'github/lsm/hyperneo/pull_request/2828.check_failed' },
+      ])
+    );
+    const first = planDeferredExternalEventOverflow(sources, 100);
+    expect(first?.overflowRows.map((r) => r.dbId)).toEqual(['db-0', 'db-1']);
+
+    const afterCrash = planDeferredExternalEventOverflow([envelope, ...sources.slice(2)], 100);
+    expect(afterCrash).toBeNull();
+    const withSourcesIntact = planDeferredExternalEventOverflow([envelope, ...sources], 100);
+    expect(withSourcesIntact?.overflowRows.map((r) => r.dbId)).toEqual(['db-0', 'db-1']);
+  });
+
+  it('stamps receipt time so later unknown-time events outrank older known-time events', () => {
+    const older = row(
+      'db-old',
+      'u-old',
+      essenceText({
+        eventId: 'st-old',
+        topic: 'github/lsm/hyperneo/pull_request/2828.polled',
+        eventType: 'pull_request',
+        occurredAt: at(15),
+        extra: { state: 'open' },
+      })
+    );
+    const ids = [{ id: 'st-new', topic: 'github/lsm/hyperneo/pull_request/2828.polled' }];
+    const later = row(
+      'db-new',
+      'u-new',
+      '1 events received for topics: github/lsm/hyperneo/pull_request/2828.polled ' +
+        '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+        `Event IDs: ${JSON.stringify(ids)}. ` +
+        'Use get_external_event(eventId) for full details.'
+    );
+    const partition = partitionDeferredExternalEventRows([older, later]);
+    const digest = buildExternalEventDigestMessage(partition.digestEvents);
+    expect(digest).toContain('state: updated');
+    expect(digest).toContain('latest eventId: st-new');
   });
 
   it('plans the oldest rows as overflow above the cap', () => {
