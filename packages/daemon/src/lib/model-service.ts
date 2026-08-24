@@ -403,8 +403,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     return;
   }
   if (result.status === 'unavailable') {
-    providerRetryEntries.delete(providerId);
-    clearProviderFailure(providerId);
+    armProviderRetryTimer(providerId);
     return;
   }
   replaceProviderModelsInCache(providerId, result.models);

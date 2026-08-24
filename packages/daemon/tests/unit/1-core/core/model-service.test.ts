@@ -510,6 +510,45 @@ describe('Model Service', () => {
         jest.useRealTimers();
       }
     });
+
+    it('re-arms while the provider is unavailable and recovers when it returns', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let available = true;
+        let failing = true;
+        const { getModels } = registerGlmProvider(
+          async () => {
+            if (failing) throw new Error('Endpoint returned HTTP 503');
+            return [glmModel('glm-5-back')];
+          },
+          async () => available
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        available = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        available = true;
+        failing = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-back')).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('cache management', () => {
