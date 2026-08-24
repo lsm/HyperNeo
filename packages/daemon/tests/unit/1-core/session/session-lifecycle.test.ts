@@ -687,6 +687,49 @@ describe('SessionLifecycle', () => {
           })
         );
       });
+
+      describe('empty model cache', () => {
+        it('rejects a curated-out model requested without a provider', async () => {
+          getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+          setModelsCache(new Map());
+
+          await expect(lifecycle.create({ config: { model: 'opus' } })).rejects.toThrow(
+            "Model 'opus' is curated out for provider 'anthropic'"
+          );
+
+          expect(createdSessions).toEqual([]);
+        });
+
+        it('creates with a curated-in model requested without a provider', async () => {
+          getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+          setModelsCache(new Map());
+
+          await lifecycle.create({ config: { model: 'sonnet' } });
+
+          expect(mockDb.createSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+              config: expect.objectContaining({
+                model: 'sonnet',
+              }),
+            })
+          );
+        });
+
+        it('keeps unknown-model passthrough without a provider', async () => {
+          getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+          setModelsCache(new Map());
+
+          await lifecycle.create({ config: { model: 'totally-custom-model-x' } });
+
+          expect(mockDb.createSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+              config: expect.objectContaining({
+                model: 'totally-custom-model-x',
+              }),
+            })
+          );
+        });
+      });
     });
 
     it('should create session with roomId', async () => {

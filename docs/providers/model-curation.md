@@ -55,7 +55,13 @@ without curation.
 
 `session.update` additionally permits rewriting the session's own current
 model and provider verbatim, so read-modify-write clients round-tripping a
-pinned session's config keep working (see below).
+pinned session's config keep working (see below). When a write or create
+carries no provider at all — a providerless legacy session, or a create that
+lands on the empty-cache fallback where the requested model would otherwise
+persist verbatim — the gate infers the effective provider from the model the
+session will end up on, the same inference model switching uses; with a
+populated cache, a providerless create keeps normalizing an unresolvable
+model to the configured default rather than erroring.
 
 ### Existing sessions on curated-out models: pin-and-keep
 
