@@ -351,7 +351,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     consumedFollowUpUuids = new Set();
     revokedPendingMessage = null;
     enqueueSpy = mock(async () => {});
-    publishSpy = mock(async () => ({ delivered: 1, failures: [] }));
+    publishSpy = mock(async (_event?: unknown) => ({ delivered: 1, failures: [] }));
     agentSession = createRequerySession({
       context: { spaceId: 'space-1', taskId: 'task-1' },
     });
@@ -986,14 +986,103 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(1);
 
     await agentSession.handleInterrupt();
+    expect(agentSession.messageQueue.isRunning()).toBe(false);
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.start();
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(1);
 
     await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    (
+      agentSession as unknown as { incrementQueryGeneration: () => number }
+    ).incrementQueryGeneration();
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(2);
+  });
+
+  it('parks the episode without consuming budget while transcript recovery awaits input', async () => {
+    const ensureQueryStarted = mock(async () => 'blocked' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(ensureQueryStarted.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+    expect(
+      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
+        .taskNotificationRequeryAttempts
+    ).toBe(0);
+  });
+
+  it('surfaces a session error when needs-attention publishing rejects', async () => {
+    publishSpy.mockImplementation(async (event?: unknown) => {
+      if (event === 'space.workflowRun.needsAttention') {
+        throw new Error('bus boom');
+      }
+      return { delivered: 1, failures: [] };
+    });
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(
+      publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')
+    ).toBeDefined();
+  });
+
+  it('consumes the parked flag when a recovery probe delivers the continuation', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    const isRecoveryPending = mock(() => true);
+    (
+      agentSession as unknown as {
+        rateLimitWatchdog: { isRecoveryPending: typeof isRecoveryPending };
+      }
+    ).rateLimitWatchdog = { isRecoveryPending };
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    isRecoveryPending.mockImplementation(() => false);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(continueCalls()).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(continueCalls()).toBe(2);
+  });
+
+  it('discards observations that outlive their query generation', async () => {
+    const handleMessage = mock(async () => {
+      (
+        agentSession as unknown as { incrementQueryGeneration: () => number }
+      ).incrementQueryGeneration();
+    });
+    (
+      agentSession.messageHandler as unknown as { handleMessage: typeof handleMessage }
+    ).handleMessage = handleMessage;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
   });
 
   it('resets the episode when the circuit breaker stops the session', async () => {

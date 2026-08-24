@@ -783,6 +783,14 @@ export class AgentSession
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
     this.messageHandler.cancelSuppressedResultWait();
+    const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
+    if (
+      yieldedContinuationId &&
+      this.stateManager.getState().status === 'idle' &&
+      (this.messageQueue.isRunning() || this.queryPromise)
+    ) {
+      await this.stateManager.setProcessing(yieldedContinuationId, 'initializing');
+    }
 
     await this.interruptHandler.handleInterrupt(opts);
   }
@@ -1400,7 +1408,9 @@ export class AgentSession
   }
 
   async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
+    const queryGeneration = this.getQueryGeneration();
     await this.messageHandler.handleMessage(message);
+    if (this.getQueryGeneration() !== queryGeneration) return;
     this.observeTaskNotificationResult(message);
   }
 
@@ -1622,7 +1632,9 @@ export class AgentSession
       try {
         const started = await this.lifecycleManager.ensureQueryStarted();
         if (started === 'blocked') {
-          throw new Error('SDK transcript recovery prompt emitted');
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          return;
         }
         if (
           this._isCleaningUp ||
@@ -1658,6 +1670,8 @@ export class AgentSession
       }
     }
     this.taskNotificationRequeryAttempts += 1;
+    this.taskNotificationRequeryPending = false;
+    this.taskNotificationRequeryPendingDelayMs = null;
     const attempt = this.taskNotificationRequeryAttempts;
     this.logger.warn(
       `task-notification requery: turn ended on a hollow task-notification result; ` +
@@ -1762,6 +1776,7 @@ export class AgentSession
         `task-notification requery: failed to publish needs-attention escalation: ` +
           `${error instanceof Error ? error.message : String(error)}`
       );
+      await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
     }
   }
 
