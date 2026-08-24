@@ -878,6 +878,47 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(1);
   });
 
+  it('re-parks a scheduled retry when the SDK turns busy during the backoff', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = 1;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('re-arms recovery when the query settles after delivering a continuation', async () => {
+    const ensureQueryStarted = mock(async () => 'started' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    const holder: { resolve?: () => void } = {};
+    agentSession.queryPromise = new Promise<void>((resolve) => {
+      holder.resolve = resolve;
+    });
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    holder.resolve?.();
+    agentSession.queryPromise = null;
+    await settleRequery();
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+    expect(continueCalls()).toBe(2);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
