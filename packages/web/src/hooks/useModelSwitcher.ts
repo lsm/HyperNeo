@@ -257,6 +257,8 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
+      let fetchedModelId = '';
+      let fetchedModelInfo: ModelInfo | null = null;
       if (sessionId) {
         try {
           const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
@@ -265,6 +267,8 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
             currentModel: string;
             modelInfo: ModelInfo | null;
           };
+          fetchedModelId = modelId;
+          fetchedModelInfo = modelInfo;
           setCurrentModel(modelId);
           setCurrentModelInfo(modelInfo);
         } catch {}
@@ -277,8 +281,8 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
       const modelInfos = mapRawModelsToModelInfos(models);
       setAvailableModels(modelInfos);
 
-      if (currentModel && !currentModelInfo) {
-        const matched = modelInfos.find((m) => m.id === currentModel);
+      if (fetchedModelId && !fetchedModelInfo) {
+        const matched = modelInfos.find((m) => m.id === fetchedModelId);
         if (matched) setCurrentModelInfo(matched);
       }
     } catch {

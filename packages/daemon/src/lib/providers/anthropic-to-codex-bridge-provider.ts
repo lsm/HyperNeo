@@ -22,6 +22,7 @@ import {
   codexBackendContextWindow,
 } from './codex-models.js';
 import { Logger } from '../logger.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -392,6 +393,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    return applyRecordedFailureToAuthStatus(this.id, await this.resolveCredentialAuthStatus());
+  }
+
+  private async resolveCredentialAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
       const hyperneoCreds = await this.loadCredentialsRaw();
       if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
@@ -418,6 +423,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
       return { isAuthenticated: true, method: 'oauth' };
     } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        return {
+          isAuthenticated: false,
+          error: 'Not logged in. Click Login to authenticate with OpenAI.',
+        };
+      }
       return {
         isAuthenticated: false,
         error: error instanceof Error ? error.message : 'Credential lookup failed',

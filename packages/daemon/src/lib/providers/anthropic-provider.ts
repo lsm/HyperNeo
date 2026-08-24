@@ -10,6 +10,7 @@ import type {
 import type { ModelInfo } from '@hyperneo/shared';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
 
@@ -112,11 +113,11 @@ export class AnthropicProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: this.credentials?.type ?? 'api_key',
       error: apiKey ? undefined : 'Set ANTHROPIC_API_KEY or log in with Claude Code OAuth.',
-    };
+    });
   }
 
   async shutdown(): Promise<void> {}
@@ -130,13 +131,9 @@ export class AnthropicProvider implements Provider {
       return [];
     }
 
-    try {
-      const models = await this.loadModelsFromSdk();
-      this.modelCache = models;
-      return models;
-    } catch {
-      return [];
-    }
+    const models = await this.loadModelsFromSdk();
+    this.modelCache = models;
+    return models;
   }
 
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {

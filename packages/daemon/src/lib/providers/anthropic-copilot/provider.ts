@@ -281,6 +281,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return {
         isAuthenticated: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+        errorKind: 'transient',
       };
     }
   }

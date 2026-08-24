@@ -230,6 +230,20 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(status.isAuthenticated).toBe(false);
     });
 
+    it('classifies credential discovery errors as transient', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'resolveGitHubToken' as never
+      ).mockRejectedValue(new Error('keychain unavailable') as never);
+
+      const status = await p.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.error).toBe('keychain unavailable');
+      expect(status.errorKind).toBe('transient');
+    });
+
     it('reports authenticated when COPILOT_GITHUB_TOKEN env var is set (same discovery chain as isAvailable)', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
       spyOn(

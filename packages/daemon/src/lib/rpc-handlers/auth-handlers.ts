@@ -18,26 +18,10 @@ import {
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry';
 import { registerBuiltInProvider } from '../providers/factory.js';
-import {
-  classifyProviderFailure,
-  getProviderFailure,
-} from '../providers/provider-failure-store.js';
+import { classifyProviderFailure } from '../providers/provider-failure-store.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
-
-function overlayProviderFailure(status: ProviderAuthStatus): ProviderAuthStatus {
-  const failure = getProviderFailure(status.id);
-  if (!failure) return status;
-
-  if (failure.errorKind === 'transient') {
-    if (!status.isAuthenticated) return status;
-    return { ...status, error: failure.message, errorKind: 'transient' };
-  }
-
-  if (status.isAuthenticated) return status;
-  return { ...status, isAuthenticated: false, error: failure.message, errorKind: 'credential' };
-}
 
 async function clearCacheAndNotifyProvidersChanged(
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>
@@ -120,7 +104,7 @@ export function setupAuthHandlers(
           };
         }
 
-        return overlayProviderFailure(authStatus);
+        return authStatus;
       })
     );
 

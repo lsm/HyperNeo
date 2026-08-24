@@ -327,6 +327,38 @@ describe('useModelSwitcher', () => {
       expect(result.current.availableModels.length).toBe(3);
     });
 
+    it('backfills current model info from the loaded model list', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'custom-model',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'custom-model',
+                display_name: 'Custom Model',
+                description: '',
+                provider: 'custom:local',
+              },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.currentModelInfo?.id).toBe('custom-model');
+      expect(result.current.currentModelInfo?.provider).toBe('custom:local');
+    });
+
     it('should classify models by family correctly', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
