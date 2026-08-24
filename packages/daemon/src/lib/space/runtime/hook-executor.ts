@@ -12,6 +12,7 @@ import {
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { validateWorkflowHookResult } from '../workflow-hook-validation.ts';
 import type { Connector } from './connectors/connector.ts';
 import {
@@ -298,7 +299,7 @@ export async function executeHookScript(
 
   let proc;
   try {
-    proc = Bun.spawn(args, {
+    proc = spawnProcess(args, {
       cwd: context.workspacePath,
       env: restrictedEnv,
       stdout: 'pipe',

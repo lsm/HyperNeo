@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import type { SpawnFn } from '../../runtime-spawn/index.ts';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils.ts';
 import {
   computeRateLimitRetryMs,
@@ -99,7 +100,7 @@ export function pickRateLimitResetEpoch(
 
 export async function fetchRateLimitResetEpoch(
   cwd: string,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   timeoutMs: number,
   host?: string,
   resource?: 'core' | 'graphql'
@@ -141,7 +142,7 @@ export async function fetchRateLimitResetEpoch(
 export async function runGhJson(
   args: string[],
   cwd: string,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   options?: {
     timeoutMs?: number;
     hostHint?: string;
