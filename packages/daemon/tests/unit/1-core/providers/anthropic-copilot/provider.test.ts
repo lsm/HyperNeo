@@ -1647,6 +1647,44 @@ describe('logout()', () => {
     await expect(p.logout()).rejects.toThrow('gh CLI');
   });
 
+  it('stops a late start and exits the restart loop once logged out', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    let createCalls = 0;
+    let serverStops = 0;
+    let releaseStart: (() => void) | undefined;
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      (() => {
+        createCalls++;
+        return new Promise((resolve) => {
+          releaseStart = () =>
+            resolve({
+              url: 'http://127.0.0.1:9999',
+              stop: async () => {
+                serverStops++;
+              },
+            });
+        });
+      }) as never
+    );
+
+    const restart = (
+      p as unknown as { restartServerForCurrentCredentials(): Promise<unknown> }
+    ).restartServerForCurrentCredentials();
+    for (let i = 0; i < 50 && !releaseStart; i++) {
+      await Promise.resolve();
+    }
+    expect(createCalls).toBe(1);
+
+    internals['loggedOut'] = true;
+    releaseStart?.();
+    await expect(restart).rejects.toThrow('shutting down');
+
+    expect(createCalls).toBe(1);
+    expect(serverStops).toBe(1);
+    expect(internals['serverCache']).toBeUndefined();
+  });
+
   it('stops the running bridge on logout', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     const internals = p as unknown as Record<string, unknown>;

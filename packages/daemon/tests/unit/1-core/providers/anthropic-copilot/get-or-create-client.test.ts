@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 
 type StartRecord = { resolve: () => void; reject: (err: Error) => void };
 const startCalls = vi.hoisted(() => [] as StartRecord[]);
+const stopCalls = vi.hoisted(() => [] as unknown[]);
 
 vi.mock('@github/copilot-sdk', () => {
   class MockCopilotClient {
@@ -14,7 +15,9 @@ vi.mock('@github/copilot-sdk', () => {
       });
     }
 
-    async stop(): Promise<void> {}
+    async stop(): Promise<void> {
+      stopCalls.push(this);
+    }
 
     async listModels(): Promise<unknown[]> {
       return [];
@@ -31,6 +34,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
 
   beforeEach(() => {
     startCalls.length = 0;
+    stopCalls.length = 0;
     provider = new AnthropicToCopilotBridgeProvider('/tmp', {});
   });
 
@@ -87,6 +91,25 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     expect(startCalls).toHaveLength(1);
     startCalls[0].resolve();
     await expect(p2).resolves.toBeDefined();
+  });
+
+  it('stops the client and leaves it uncached when shutdown lands during start()', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+    const state = provider as unknown as Record<string, unknown>;
+
+    const clientPromise = getOrCreate('gho_test_token');
+    expect(startCalls).toHaveLength(1);
+
+    state['shuttingDown'] = true;
+    startCalls[0].resolve();
+
+    await expect(clientPromise).rejects.toThrow('superseded');
+    expect(state['clientCache']).toBeUndefined();
+    expect(stopCalls).toHaveLength(1);
   });
 
   it('propagates start() failure through ensureServerStarted()', async () => {

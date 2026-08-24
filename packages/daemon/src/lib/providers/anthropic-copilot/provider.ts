@@ -565,13 +565,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async restartServerForCurrentCredentials(): Promise<EmbeddedServer> {
-    while (!this.shuttingDown) {
+    while (!this.shuttingDown && !this.loggedOut) {
       await this.stopServerAndClient();
-      if (this.shuttingDown) break;
+      if (this.shuttingDown || this.loggedOut) break;
       const credentialsVersion = this.credentialsVersion;
       try {
         const server = await this.createServer(credentialsVersion);
-        if (this.shuttingDown) {
+        if (this.shuttingDown || this.loggedOut) {
           await server.stop().catch(() => {});
           break;
         }
@@ -581,7 +581,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         }
         await server.stop().catch(() => {});
       } catch (error) {
-        if (!this.shuttingDown && credentialsVersion === this.credentialsVersion) {
+        if (
+          !this.shuttingDown &&
+          !this.loggedOut &&
+          credentialsVersion === this.credentialsVersion
+        ) {
           throw error;
         }
       }
@@ -879,9 +883,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         env: buildCopilotEnv(env),
       });
       await client.start();
-      if (credentialsVersion !== this.credentialsVersion) {
+      if (credentialsVersion !== this.credentialsVersion || this.shuttingDown) {
         await client.stop().catch(() => {});
-        throw new Error('GitHub Copilot credentials changed during client startup');
+        throw new Error('GitHub Copilot client startup was superseded');
       }
       this.clientCache = client;
       this.clientCredentialsVersion = credentialsVersion;

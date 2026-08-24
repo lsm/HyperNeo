@@ -455,7 +455,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
       registry: providerRegistry,
       recoverDormantProvider: async (providerId) => {
-        const { recoverDormantProvider } = await import('./lib/model-service');
+        const { recoverDormantProvider } = await import('./lib/model-service.ts');
         return await recoverDormantProvider(providerId);
       },
       onProviderChanged: () => {
