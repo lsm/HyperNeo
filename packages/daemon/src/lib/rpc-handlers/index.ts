@@ -687,8 +687,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,
     inactivityConfigRepo: spaceAgentInactivityConfigRepo,
     inactivityClaimRepo: spaceAgentInactivityClaimRepo,
-    inactivityRunNow: (spaceId, agentId) =>
-      spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId),
+    inactivityRunNow: (spaceId, agentId) => {
+      setTimeout(() => {
+        void spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId).catch(() => {});
+      }, 5000);
+      return Promise.resolve();
+    },
   });
 
   const spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService =
