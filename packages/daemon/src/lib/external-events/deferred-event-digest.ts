@@ -29,6 +29,7 @@ export interface ExternalEventEssenceEntry {
   line?: number;
   reviewId?: string;
   context?: string;
+  threadId?: string;
 }
 
 export type DeferredExternalEventEntry =
@@ -62,6 +63,7 @@ const ESSENCE_ENTRY_FIELDS = [
   'draft',
   'reviewId',
   'context',
+  'threadId',
 ] as const;
 
 function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
@@ -136,14 +138,13 @@ function parseRateLimitDigestText(text: string): DeferredExternalEventEntry | nu
     .split(',')
     .map((topic) => topic.trim())
     .filter((topic) => topic.length > 0);
-  const oldestMs = Date.parse(match[3]!);
   const newestMs = Date.parse(match[4]!);
   const idEntries = match[5]!
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
   if (idEntries.length === 0) return null;
-  const events = idEntries.map((entry, index) => {
+  const events = idEntries.map((entry) => {
     const annotated = /^(\S+)\s+\((.+)\)$/.exec(entry);
     const eventId = (annotated ? annotated[1] : entry).trim();
     const topic = annotated
@@ -151,14 +152,7 @@ function parseRateLimitDigestText(text: string): DeferredExternalEventEntry | nu
       : topics.length === 1
         ? topics[0]!
         : RATE_LIMIT_DIGEST_TOPIC;
-    let occurredAt: number | undefined;
-    if (Number.isFinite(oldestMs) && Number.isFinite(newestMs)) {
-      const span = newestMs - oldestMs;
-      occurredAt =
-        idEntries.length > 1
-          ? oldestMs + Math.round((span * index) / (idEntries.length - 1))
-          : newestMs;
-    }
+    const occurredAt = idEntries.length === 1 && Number.isFinite(newestMs) ? newestMs : undefined;
     return {
       eventId,
       topic,
@@ -320,9 +314,9 @@ function digestGroupKey(entry: ExternalEventEssenceEntry, kind: DigestGroupKind)
     case 'state':
       return `state|${scope}`;
     case 'reaction':
-      return `reaction|${scope}`;
+      return `reaction|${scope}|${entry.body ?? ''}`;
     case 'other':
-      return `other|${entry.topic}|${entry.reviewId ?? entry.context ?? ''}`;
+      return `other|${entry.topic}|${entry.reviewId ?? entry.context ?? entry.threadId ?? ''}`;
   }
 }
 

@@ -307,7 +307,7 @@ describe('buildExternalEventDigestMessage', () => {
     const digest = buildExternalEventDigestMessage(essences);
     const lines = digest.split('\n');
 
-    expect(lines).toHaveLength(11);
+    expect(lines).toHaveLength(12);
     expect(lines[0]).toBe('External events while you were working (30 events, PR #2828):');
     expect(lines[1]).toBe(
       '- CI check "Build Binary (linux-x64)": 11 runs (canceled ×6, failure ×5), ' +
@@ -336,9 +336,78 @@ describe('buildExternalEventDigestMessage', () => {
         `${PR_URL}#st-8 (latest eventId: st-8)`
     );
     expect(lines[10]).toBe(
-      `- Reactions on PR #2828: ×2, latest 🚀 by marcliu at 15:10 UTC — ` +
+      `- Reactions on PR #2828: ×1, latest 👍 by marcliu at 15:05 UTC — ` +
+        `${PR_URL}#re-1 (latest eventId: re-1)`
+    );
+    expect(lines[11]).toBe(
+      `- Reactions on PR #2828: ×1, latest 🚀 by marcliu at 15:10 UTC — ` +
         `${PR_URL}#re-2 (latest eventId: re-2)`
     );
+  });
+
+  it('keeps review-thread events grouped by thread', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'th-1',
+        topic: 'github/o/r/pull_request/7.thread_reopened',
+        eventType: 'pull_request_review_thread',
+        action: 'reopened',
+        actor: 'marcliu',
+        prNumber: 7,
+        threadId: 'tt_1',
+        occurredAt: at(15),
+      },
+      {
+        eventId: 'th-2',
+        topic: 'github/o/r/pull_request/7.thread_reopened',
+        eventType: 'pull_request_review_thread',
+        action: 'reopened',
+        actor: 'marcliu',
+        prNumber: 7,
+        threadId: 'tt_2',
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('latest eventId: th-1');
+    expect(digest).toContain('latest eventId: th-2');
+  });
+
+  it('collapses same-value reaction duplicates but splits distinct reactions', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'ra-1',
+        topic: 'github/o/r/pull_request/7.reaction_added',
+        eventType: 'reaction',
+        action: 'added',
+        actor: 'codex[bot]',
+        prNumber: 7,
+        body: '👍',
+        occurredAt: at(15),
+      },
+      {
+        eventId: 'ra-2',
+        topic: 'github/o/r/pull_request/7.reaction_added',
+        eventType: 'reaction',
+        action: 'added',
+        actor: 'marcliu',
+        prNumber: 7,
+        body: '👍',
+        occurredAt: at(16),
+      },
+      {
+        eventId: 'ra-3',
+        topic: 'github/o/r/pull_request/7.reaction_added',
+        eventType: 'reaction',
+        action: 'added',
+        actor: 'marcliu',
+        prNumber: 7,
+        body: '🚀',
+        occurredAt: at(17),
+      },
+    ]);
+    expect(digest).toContain('Reactions on PR #7: ×2, latest 👍 by marcliu at 16:00 UTC');
+    expect(digest).toContain('Reactions on PR #7: ×1, latest 🚀 by marcliu at 17:00 UTC');
+    expect(digest).toContain('latest eventId: ra-3');
   });
 
   it('renders date-inclusive timestamps when the backlog spans multiple UTC days', () => {
