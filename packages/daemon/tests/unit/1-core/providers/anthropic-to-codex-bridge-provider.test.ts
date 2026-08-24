@@ -14,6 +14,10 @@ import * as path from 'path';
 import * as os from 'os';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
@@ -161,6 +165,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     afterEach(() => {
+      resetProviderFailureStore();
       rmSync(emptyDir, { recursive: true, force: true });
     });
 
@@ -237,6 +242,25 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const result = await provider.getAuthStatus();
       expect(result.isAuthenticated).toBe(true);
       expect(result.needsRefresh).toBe(true);
+    });
+
+    it('surfaces a recorded transient failure as authenticated-but-degraded', async () => {
+      const hyperneoDir = path.join(emptyDir, 'hyperneo');
+      const codexDir = path.join(emptyDir, 'codex');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        refresh: 'oauth-refresh-token',
+        expires: Date.now() + 3600_000,
+      });
+      provider = makeProvider({}, hyperneoDir, codexDir);
+      recordProviderFailure('anthropic-codex', new Error('Codex probe failed (HTTP 503)'));
+
+      const result = await provider.getAuthStatus();
+
+      expect(result.isAuthenticated).toBe(true);
+      expect(result.errorKind).toBe('transient');
+      expect(result.error).toBe('Codex probe failed (HTTP 503)');
     });
   });
 

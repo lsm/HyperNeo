@@ -5,6 +5,10 @@ import {
   isCustomEndpointProviderId,
   resolveModelCapabilities,
 } from '../../../../src/lib/providers/custom-endpoint-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 import type { CustomEndpointConfig } from '@hyperneo/shared';
 import type {
   OpenAIChatBridgeConfig,
@@ -399,6 +403,18 @@ describe('CustomEndpointProvider', () => {
     const status = await p.getAuthStatus();
     expect(status.isAuthenticated).toBe(true);
     expect(status.method).toBe('api_key');
+  });
+
+  it('getAuthStatus surfaces a recorded credential failure as unauthenticated', async () => {
+    const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
+    recordProviderFailure(p.id, new Error('LM Studio Local API key rejected (HTTP 401)'));
+
+    const status = await p.getAuthStatus();
+
+    expect(status.isAuthenticated).toBe(false);
+    expect(status.errorKind).toBe('credential');
+    expect(status.error).toBe('LM Studio Local API key rejected (HTTP 401)');
+    resetProviderFailureStore();
   });
 
   it('translateModelIdForSdk always returns "default" (SDK tier alias)', () => {
