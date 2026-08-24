@@ -490,7 +490,15 @@ describe('sqlite query observability through the bun compat layer', () => {
 
 describe('sqlite query observability through the node compat layer', () => {
   test('node:sqlite driver reports the same execution coverage', () => {
-    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+    const repoRoot = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      '..'
+    );
     const driverPath = join(
       repoRoot,
       'packages/daemon/tests/helpers/sqlite-query-observability-node-driver.ts'
