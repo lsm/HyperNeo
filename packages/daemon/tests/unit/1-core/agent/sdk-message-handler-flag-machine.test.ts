@@ -640,12 +640,17 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         if (row.sendIdleEvent) {
           await handler.handleMessage(sessionState('idle'));
           if (row.expectedIdle === 'suppressed') {
+            expect(setIdleSpy).toHaveBeenCalledTimes(1);
             expect(setIdleSpy).toHaveBeenCalledWith({
               suppressDeliveryWaiters: true,
               suppressIdlePublish: true,
               suppressIdleCallback: true,
             });
           }
+        }
+        if (row.expectedIdle === 'plain') {
+          expect(setIdleSpy).toHaveBeenCalledTimes(1);
+          expect(setIdleSpy.mock.calls[0]).toEqual([]);
         }
         if (row.expectedIdle === 'none') {
           expect(setIdleSpy).not.toHaveBeenCalled();
