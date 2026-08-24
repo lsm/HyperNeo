@@ -109,7 +109,10 @@ export function ProvidersSettings() {
     () => new URLSearchParams(window.location.search).get('reason') === 'session_expired'
   );
   const loadGenerationRef = useRef(0);
+  const hasLoadedProvidersRef = useRef(false);
+  const reconnectPendingRef = useRef(false);
   const autoRetriedRef = useRef(false);
+  const autoRetryShowsLoadingRef = useRef(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -138,10 +141,11 @@ export function ProvidersSettings() {
   const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
     useFetchModels(customEditor);
 
-  const loadProviders = async () => {
+  const loadProviders = async (showLoading = true) => {
     const generation = ++loadGenerationRef.current;
+    autoRetryShowsLoadingRef.current = showLoading;
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       setLoadError(false);
       setGateTimeout(false);
       await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
@@ -150,11 +154,12 @@ export function ProvidersSettings() {
         listProviders(),
         listProviderAuthStatus().catch((_err) => {
           toast.warning('Auth status unavailable — showing cached state');
-          return { providers: [] as ProviderAuthStatus[] };
+          return null;
         }),
       ]);
       if (generation !== loadGenerationRef.current) return;
       autoRetriedRef.current = false;
+      hasLoadedProvidersRef.current = true;
       if (sessionExpired) {
         setSessionExpired(false);
         const params = new URLSearchParams(window.location.search);
@@ -166,10 +171,11 @@ export function ProvidersSettings() {
           `${window.location.pathname}${query ? `?${query}` : ''}`
         );
       }
-      const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
+      const authById = new Map(authResponse?.providers.map((a) => [a.id, a]));
+      const previousAuthById = new Map(providers.map((p) => [p.providerId, p.authStatus]));
       const enriched = records.map((r) => ({
         ...r,
-        authStatus: authById.get(r.providerId),
+        authStatus: authResponse ? authById.get(r.providerId) : previousAuthById.get(r.providerId),
       }));
       setProviders(enriched);
       const nextRegions: Record<string, 'china' | 'global'> = {};
@@ -198,13 +204,16 @@ export function ProvidersSettings() {
       setGateTimeout(
         err instanceof ConnectionTimeoutError || err instanceof ConnectionNotReadyError
       );
-      toast.error('Failed to load providers');
+      if (showLoading) toast.error('Failed to load providers');
     } finally {
       if (generation === loadGenerationRef.current) {
         setLoading(false);
       }
     }
   };
+
+  const loadProvidersRef = useRef(loadProviders);
+  loadProvidersRef.current = loadProviders;
 
   useEffect(() => {
     loadProviders();
@@ -214,10 +223,30 @@ export function ProvidersSettings() {
   }, []);
 
   useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      if (hasLoadedProvidersRef.current) reconnectPendingRef.current = true;
+      return;
+    }
+    if (reconnectPendingRef.current) {
+      reconnectPendingRef.current = false;
+      if (!loadError || autoRetriedRef.current) {
+        loadProvidersRef.current(false);
+      }
+    }
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadProvidersRef.current(!hasLoadedProvidersRef.current);
+    });
+    return () => {
+      unsub();
+    };
+  }, [connectionState.value]);
+
+  useEffect(() => {
     if (connectionState.value !== 'connected' || !loadError) return;
     if (autoRetriedRef.current) return;
     autoRetriedRef.current = true;
-    loadProviders();
+    loadProviders(autoRetryShowsLoadingRef.current);
   }, [connectionState.value, loadError]);
 
   const handleRetry = () => {
@@ -535,7 +564,7 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {loadError && providers.length > 0 && (
+          {loadError && autoRetryShowsLoadingRef.current && providers.length > 0 && (
             <div class="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2">
               <p class="text-sm text-red-300">
                 {sessionExpired
@@ -550,7 +579,7 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {loadError && providers.length === 0 ? (
+          {loadError && autoRetryShowsLoadingRef.current && providers.length === 0 ? (
             <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-6 text-center">
               <p class="text-sm text-red-300">
                 {sessionExpired ? 'Your session expired.' : 'Failed to load providers.'}

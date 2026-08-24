@@ -372,9 +372,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
     await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
-    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
-      registry: providerRegistry,
-    });
 
     startupTimer.start('provider sync (migrate / custom endpoints / registry)');
     try {
@@ -442,6 +439,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const internalEventBus = createDaemonInternalEventBus();
     unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+    });
+    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
+      registry: providerRegistry,
+      onProviderChanged: () => {
+        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+      },
     });
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;

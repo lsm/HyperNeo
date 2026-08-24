@@ -173,12 +173,16 @@ export interface ProviderHandlerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
 
+function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
+  internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+}
+
 async function clearCacheAndNotifyProvidersChanged(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): Promise<void> {
   const { clearModelsCache } = await import('../model-service.js');
   clearModelsCache();
-  internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+  notifyProvidersChanged(internalEventBus);
 }
 
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
@@ -410,6 +414,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   messageHub.onRequest('providers.setDefault', async (data: { id: string }) => {
     return withProviderLock(async () => {
       providerRepo.setDefaultProvider(data.id);
+      notifyProvidersChanged(internalEventBus);
       return { success: true };
     });
   });
@@ -424,6 +429,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
+      notifyProvidersChanged(internalEventBus);
       return { healthy: false, error: 'Provider not registered' };
     }
 
@@ -434,6 +440,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           healthStatus: 'unhealthy',
           lastHealthCheckAt: Date.now(),
         });
+        notifyProvidersChanged(internalEventBus);
         return { healthy: false, error: 'Provider not available' };
       }
       if (provider instanceof AcpProvider) {
@@ -444,6 +451,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'healthy',
         lastHealthCheckAt: Date.now(),
       });
+      notifyProvidersChanged(internalEventBus);
       return { healthy: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -451,6 +459,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
+      notifyProvidersChanged(internalEventBus);
       return { healthy: false, error };
     }
   });
@@ -496,6 +505,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         }
       })
     );
+    notifyProvidersChanged(internalEventBus);
     return { results };
   });
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
+import { act, render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { ProviderRecord } from '@hyperneo/shared';
 
 const {
@@ -19,6 +19,9 @@ const {
   mockOnConnected,
   mockIsConnected,
   mockReconnect,
+  mockGetHubIfConnected,
+  mockOnEvent,
+  mockUnsubscribe,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -36,6 +39,9 @@ const {
   mockOnConnected: vi.fn(),
   mockIsConnected: vi.fn(),
   mockReconnect: vi.fn(),
+  mockGetHubIfConnected: vi.fn(),
+  mockOnEvent: vi.fn(),
+  mockUnsubscribe: vi.fn(),
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
@@ -67,6 +73,7 @@ vi.mock('../../../lib/connection-manager.ts', () => ({
     onConnected: (timeout?: number) => mockOnConnected(timeout),
     isConnected: () => mockIsConnected(),
     reconnect: () => mockReconnect(),
+    getHubIfConnected: () => mockGetHubIfConnected(),
   },
 }));
 
@@ -131,6 +138,7 @@ vi.mock('../AddProviderModal.tsx', () => ({
     onProviderAdded: () => void;
   }) => (
     <div data-testid="add-provider-modal">
+      <input data-testid="add-modal-input" />
       <button data-testid="add-modal-close" onClick={onClose}>
         Close
       </button>
@@ -254,6 +262,11 @@ describe('ProvidersSettings', () => {
     mockIsConnected.mockReturnValue(false);
     mockReconnect.mockReset();
     mockReconnect.mockResolvedValue(undefined);
+    mockUnsubscribe.mockReset();
+    mockOnEvent.mockReset();
+    mockOnEvent.mockReturnValue(mockUnsubscribe);
+    mockGetHubIfConnected.mockReset();
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
     globalStore.systemState.value = null;
     connectionState.value = 'connecting';
   });
@@ -294,6 +307,203 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('No providers configured');
     });
+  });
+
+  it('refetches providers when providers.changed fires', async () => {
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('2', 'kimi', { displayName: 'Kimi' })],
+      });
+
+    const { container, unmount } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    expect(eventHandler).toBeDefined();
+
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Kimi');
+    });
+    expect(container.textContent).not.toContain('Anthropic');
+
+    unmount();
+    expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps pre-load event failures in the foreground error state', async () => {
+    connectionState.value = 'connected';
+    let resolveInitialLoad: (value: { providers: ProviderRecord[] }) => void;
+    mockListProviders
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitialLoad = resolve;
+          })
+      )
+      .mockRejectedValueOnce(new Error('handler error'))
+      .mockRejectedValueOnce(new Error('retry error'));
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(1));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(3);
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('Failed to load providers.');
+      expect(container.textContent).toContain('Retry');
+    });
+    resolveInitialLoad!({ providers: [] });
+  });
+
+  it('keeps an open provider editor mounted through an event refresh retry', async () => {
+    connectionState.value = 'connected';
+    mockListProviders
+      .mockResolvedValueOnce({ providers: [] })
+      .mockRejectedValueOnce(new Error('handler error'))
+      .mockResolvedValueOnce({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Add Provider'));
+    fireEvent.click(screen.getByText('Add Provider'));
+    const input = screen.getByTestId('add-modal-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'draft key' } });
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+    expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
+    expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
+  });
+
+  it('silently reconciles provider state after reconnecting', async () => {
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('2', 'kimi', { displayName: 'Kimi' })],
+      });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+    fireEvent.click(screen.getByText('Add Provider'));
+    const input = screen.getByTestId('add-modal-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'draft key' } });
+
+    mockGetHubIfConnected.mockReturnValue(null);
+    await act(async () => {
+      connectionState.value = 'disconnected';
+    });
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Kimi');
+    });
+    expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
+    expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
+  });
+
+  it('reconciles after reconnecting when an event refresh exhausts its retry', async () => {
+    connectionState.value = 'connected';
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockRejectedValueOnce(new Error('handler error'))
+      .mockRejectedValueOnce(new Error('retry error'))
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('2', 'kimi', { displayName: 'Kimi' })],
+      });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+    expect(mockToastError).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('Failed to reload providers');
+
+    mockGetHubIfConnected.mockReturnValue(null);
+    await act(async () => {
+      connectionState.value = 'disconnected';
+    });
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(4);
+      expect(container.textContent).toContain('Kimi');
+    });
+    expect(container.textContent).not.toContain('Anthropic');
+  });
+
+  it('uses current OAuth state when an event refresh removes its provider', async () => {
+    const provider = createMockProvider('1', 'anthropic-copilot', {
+      displayName: 'Copilot',
+      authType: 'oauth',
+      available: false,
+    });
+    mockListProviders.mockResolvedValueOnce({ providers: [provider] });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic-copilot',
+          displayName: 'Copilot',
+          isAuthenticated: false,
+          method: 'oauth',
+        },
+      ],
+    });
+    mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Login'));
+    await waitFor(() => expect(screen.getByTestId('oauth-modal')).toBeTruthy());
+
+    mockListProviders.mockResolvedValue({ providers: [] });
+    const eventHandler = mockOnEvent.mock.calls
+      .filter((call) => call[0] === 'providers.changed')
+      .at(-1)?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('oauth-modal')).toBeNull());
   });
 
   it('shows keychain unavailable banner without DB fallback copy', async () => {
@@ -1232,6 +1442,49 @@ describe('ProvidersSettings', () => {
         'Auth status unavailable — showing cached state'
       );
     });
+  });
+
+  it('preserves cached auth status when an event refresh cannot reload it', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [
+        createMockProvider('1', 'openai', {
+          displayName: 'OpenAI',
+          authType: 'oauth',
+          available: true,
+        }),
+      ],
+    });
+    mockListProviderAuthStatus
+      .mockResolvedValueOnce({
+        providers: [
+          {
+            id: 'openai',
+            displayName: 'OpenAI',
+            isAuthenticated: true,
+            method: 'oauth',
+            needsRefresh: true,
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('Auth timeout'));
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Refresh Needed'));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => {
+      expect(mockListProviderAuthStatus).toHaveBeenCalledTimes(2);
+      expect(mockToastWarning).toHaveBeenCalledWith(
+        'Auth status unavailable — showing cached state'
+      );
+    });
+    expect(container.textContent).toContain('Refresh Needed');
   });
 
   it('opens EditorModal when custom endpoint edit is clicked', async () => {

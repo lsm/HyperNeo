@@ -699,11 +699,17 @@ describe('Provider RPC handlers', () => {
         kind: 'built_in',
         authType: 'none',
       });
+      const cachedModels = [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo];
+      setModelsCache(new Map([['global', cachedModels]]));
       const handlers = setup();
 
       await handlers.get('providers.setDefault')!({ id: b.id }, {});
       expect(repo.getProvider(a.id)?.isDefault).toBe(false);
       expect(repo.getProvider(b.id)?.isDefault).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+      expect(getModelsCache().get('global')).toEqual(cachedModels);
     });
   });
 
@@ -1158,6 +1164,9 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('probes the ACP command during provider tests even when models are cached', async () => {
@@ -1227,6 +1236,9 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(false);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
   });
 
@@ -1274,6 +1286,9 @@ describe('Provider RPC handlers', () => {
       expect(anthropic?.healthy).toBe(true);
       expect(openrouter?.healthy).toBe(false);
       expect(openrouter?.error).toBe('Not registered');
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('probes ACP providers during bulk health checks even when models are cached', async () => {
