@@ -605,7 +605,7 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('latest eventId: st-ctx-2');
   });
 
-  it('treats out-of-range occurredAt values as unknown time instead of throwing', () => {
+  it('treats out-of-range occurredAt values as unknown and never ranks them as latest', () => {
     const digest = buildExternalEventDigestMessage([
       {
         eventId: 'bad-1',
@@ -623,7 +623,8 @@ describe('buildExternalEventDigestMessage', () => {
       },
     ]);
     expect(digest).toContain('failure ×2');
-    expect(digest).toContain('unknown time');
+    expect(digest).toContain(`latest 16:00 UTC`);
+    expect(digest).toContain('latest eventId: bad-2');
   });
 
   it('derives per-PR scope for rate-limited events from their annotated topics', () => {
@@ -690,13 +691,14 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).not.toContain('most cancelled');
   });
 
-  it('falls back to a topic line for unknown suffixes', () => {
+  it('falls back to a topic line for unknown suffixes and keeps payload-free events separate', () => {
     const digest = buildExternalEventDigestMessage([
       { eventId: 'u-1', topic: 'github/o/r/pull_request/9.merge_group_polled', prNumber: 9 },
       { eventId: 'u-2', topic: 'github/o/r/pull_request/9.merge_group_polled', prNumber: 9 },
     ]);
     expect(digest).toContain('External events while you were working (2 events, PR #9):');
-    expect(digest).toContain('github/o/r/pull_request/9.merge_group_polled: ×2');
+    expect(digest).toContain('github/o/r/pull_request/9.merge_group_polled: ×1');
+    expect(digest).toContain('latest eventId: u-1');
     expect(digest).toContain('latest eventId: u-2');
   });
 

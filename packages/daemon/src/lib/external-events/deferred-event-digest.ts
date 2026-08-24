@@ -231,24 +231,28 @@ export const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
 
 const DIGEST_SNIPPET_MAX_CHARS = 160;
 
+function validEpochMs(ms: number): number {
+  if (!Number.isFinite(ms)) return Number.NaN;
+  if (Number.isNaN(new Date(ms).getTime())) return Number.NaN;
+  return ms;
+}
+
 function essenceTime(entry: ExternalEventEssenceEntry): number {
   const raw: unknown = entry.occurredAt;
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : Number.NaN;
+  if (typeof raw === 'number') return validEpochMs(raw);
   if (typeof raw === 'string' && raw.trim().length > 0) {
     const parsed = Date.parse(raw);
-    if (Number.isFinite(parsed)) return parsed;
+    if (Number.isFinite(parsed)) return validEpochMs(parsed);
     const numeric = Number(raw);
-    if (Number.isFinite(numeric)) return numeric;
+    if (Number.isFinite(numeric)) return validEpochMs(numeric);
   }
   return Number.NaN;
 }
 
 function digestTimestamp(entry: ExternalEventEssenceEntry, includeDate = false): string {
   const ms = essenceTime(entry);
-  if (!Number.isFinite(ms)) return 'unknown time';
-  const date = new Date(ms);
-  if (Number.isNaN(date.getTime())) return 'unknown time';
-  const iso = date.toISOString();
+  if (Number.isNaN(ms)) return 'unknown time';
+  const iso = new Date(ms).toISOString();
   return `${includeDate ? `${iso.slice(5, 10)} ` : ''}${iso.slice(11, 16)} UTC`;
 }
 
@@ -316,7 +320,9 @@ function digestGroupKey(entry: ExternalEventEssenceEntry, kind: DigestGroupKind)
     case 'reaction':
       return `reaction|${scope}|${entry.body ?? ''}`;
     case 'other':
-      return `other|${entry.topic}|${entry.reviewId ?? entry.context ?? entry.threadId ?? ''}`;
+      return `other|${entry.topic}|${
+        entry.reviewId ?? entry.context ?? entry.threadId ?? `event ${entry.eventId}`
+      }`;
   }
 }
 
@@ -467,7 +473,7 @@ export function buildExternalEventDigestMessage(
     new Set(
       ordered
         .map((entry) => essenceTime(entry))
-        .filter((ms) => Number.isFinite(ms) && !Number.isNaN(new Date(ms).getTime()))
+        .filter((ms) => !Number.isNaN(ms))
         .map((ms) => new Date(ms).toISOString().slice(0, 10))
     ).size > 1;
   const groups = new Map<string, DigestGroup>();
