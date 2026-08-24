@@ -3598,8 +3598,8 @@ describe('QueryRunner', () => {
         terminate: 1,
         notice: 1,
         clear: 1,
-        idle: undefined,
-        stop: undefined,
+        idle: 4,
+        stop: 2,
         ...overrides,
       });
     }
@@ -3723,7 +3723,7 @@ describe('QueryRunner', () => {
         {
           name: 'transient × idle baseline retries once, CONNECTION surfaces on the retry attempt',
           options: { message: TRANSIENT_MSG, consumed: true },
-          expect: routeRetriedOnce(ErrorCategory.CONNECTION),
+          expect: routeRetriedOnce(ErrorCategory.CONNECTION, { terminate: 0 }),
         },
         {
           name: 'transient × interrupted processing blocks the otherwise identical retry',
@@ -3775,8 +3775,8 @@ describe('QueryRunner', () => {
             handle: [1, ErrorCategory.SYSTEM],
             terminalIdle: 1,
             clear: 1,
-            idle: undefined,
-            stop: undefined,
+            idle: 5,
+            stop: 4,
           }),
         },
         {
@@ -3887,8 +3887,8 @@ describe('QueryRunner', () => {
             handle: [1, ErrorCategory.SYSTEM],
             terminalIdle: 1,
             clear: 1,
-            idle: undefined,
-            stop: undefined,
+            idle: 5,
+            stop: 4,
           }),
         },
         {
