@@ -3,6 +3,7 @@ import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { Database } from './storage/database.ts';
+import { stripPersistedDiscovery } from './lib/rpc-handlers/provider-handlers.ts';
 import {
   prefetchAgentMemoryEmbeddingModel,
   abortAgentMemoryEmbeddingModelPrefetch,
@@ -459,7 +460,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         const { recoverDormantProvider } = await import('./lib/model-service.ts');
         return await recoverDormantProvider(providerId);
       },
-      onProviderChanged: () => {
+      onProviderChanged: (providerId) => {
+        const record = db.providers.getProviderByProviderId(providerId);
+        if (record) {
+          const stripped = stripPersistedDiscovery(record.configJson);
+          if (stripped !== record.configJson) {
+            db.providers.updateProvider(record.id, { configJson: stripped });
+          }
+        }
+        void import('./lib/model-service.js').then(({ clearModelsCache }) => {
+          clearModelsCache();
+        });
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });

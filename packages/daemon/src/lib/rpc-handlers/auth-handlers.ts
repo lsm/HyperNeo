@@ -229,6 +229,7 @@ export function setupAuthHandlers(
               log.error(`Provider logout failed for ${providerId}:`, logoutError);
             }
           }
+          await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
           log.error(`Logout failed for ${providerId}:`, readError);
           return {
             success: false,

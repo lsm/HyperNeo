@@ -350,8 +350,16 @@ function buildLastGoodDiscoveredModels(
   let index = 0;
   let truncated = false;
   for (const entry of byId.values()) {
-    const serialized = JSON.stringify(entry);
-    const cost = serialized.length + (models.length === 0 ? 0 : 1);
+    let candidate = entry;
+    let cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
+    if (used + cost > budget && index < curatedCount && entry.name !== undefined) {
+      const bare: CuratedModel = { id: entry.id };
+      const bareCost = JSON.stringify(bare).length + (models.length === 0 ? 0 : 1);
+      if (used + bareCost <= budget) {
+        candidate = bare;
+        cost = bareCost;
+      }
+    }
     if (used + cost > budget) {
       if (index < curatedCount) {
         throw new Error('Provider config has no capacity to retain all curated models');
@@ -359,7 +367,7 @@ function buildLastGoodDiscoveredModels(
       truncated = true;
       break;
     }
-    models.push(entry);
+    models.push(candidate);
     used += cost;
     index++;
   }
@@ -549,6 +557,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             !isUnchangedSavedConfig(providerRepo.getProvider(request.id), persistedConfig);
           const currentRow = providerRepo.getProvider(request.id);
           if (supersededDuringWait) {
+            releaseAppliedProviderSlice(record.providerId);
             if (currentRow && currentRow.configJson === persistedConfig.configJson) {
               providerRepo.updateProvider(request.id, { configJson: record.configJson });
             }
@@ -704,6 +713,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.isEnabled !== undefined;
 
           if (shouldResync) {
+            const strippedConfig = stripPersistedDiscovery(record.configJson);
+            if (strippedConfig !== record.configJson) {
+              record =
+                providerRepo.updateProvider(data.id, { configJson: strippedConfig }) ?? record;
+            }
             if (record.isEnabled === false) {
               if (record.kind === 'built_in') {
                 markBuiltInProviderDisabled(record.providerId);
@@ -718,13 +732,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 data.credentials
               );
               await syncProviderToRegistry(record, creds);
-            }
-            const strippedConfig = stripPersistedDiscovery(
-              providerRepo.getProvider(data.id)?.configJson
-            );
-            if (strippedConfig !== record.configJson) {
-              record =
-                providerRepo.updateProvider(data.id, { configJson: strippedConfig }) ?? record;
             }
           }
 
