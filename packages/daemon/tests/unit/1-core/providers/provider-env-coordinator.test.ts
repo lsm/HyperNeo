@@ -12,7 +12,7 @@ function newCoordinator(): ProviderEnvCoordinator {
 }
 
 async function settledWithinTurns(flag: () => boolean): Promise<boolean> {
-  await Bun.sleep(1);
+  await new Promise((resolve) => setTimeout(resolve, 1));
   return flag();
 }
 
@@ -131,7 +131,7 @@ describe('ProviderEnvCoordinator reentrancy', () => {
     let leaked: Promise<unknown> | undefined;
     await c.runWithLease(OWNER, () => {
       leaked = (async () => {
-        await Bun.sleep(1);
+        await new Promise((resolve) => setTimeout(resolve, 1));
         return c.acquire(READER);
       })();
     });
