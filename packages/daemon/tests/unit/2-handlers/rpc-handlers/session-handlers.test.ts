@@ -371,6 +371,34 @@ describe('Session RPC Handlers — models.list', () => {
   it('returns models with cached=false when forceRefresh is true', {
     timeout: 15_000,
   }, async () => {
+    const stubModel = {
+      id: 'stub-forced-model',
+      name: 'Stub Forced',
+      family: 'stub',
+      provider: 'stub-forced-provider',
+      contextWindow: 1000,
+      description: '',
+      releaseDate: '',
+      available: true,
+    } as ModelInfo;
+    getProviderRegistry().register({
+      id: 'stub-forced-provider',
+      displayName: 'Stub Forced',
+      capabilities: {
+        streaming: false,
+        extendedThinking: false,
+        thinkingModes: 'off',
+        maxContextWindow: 1000,
+        functionCalling: false,
+        vision: false,
+      },
+      isAvailable: () => true,
+      getModels: async () => [stubModel],
+      ownsModel: () => true,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as Provider);
+
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ forceRefresh: true }, {})) as {
@@ -383,6 +411,34 @@ describe('Session RPC Handlers — models.list', () => {
   });
 
   it('returns models with cached=false when useCache is false', { timeout: 15_000 }, async () => {
+    const stubModel = {
+      id: 'stub-nocache-model',
+      name: 'Stub NoCache',
+      family: 'stub',
+      provider: 'stub-nocache-provider',
+      contextWindow: 1000,
+      description: '',
+      releaseDate: '',
+      available: true,
+    } as ModelInfo;
+    getProviderRegistry().register({
+      id: 'stub-nocache-provider',
+      displayName: 'Stub NoCache',
+      capabilities: {
+        streaming: false,
+        extendedThinking: false,
+        thinkingModes: 'off',
+        maxContextWindow: 1000,
+        functionCalling: false,
+        vision: false,
+      },
+      isAvailable: () => true,
+      getModels: async () => [stubModel],
+      ownsModel: () => true,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as Provider);
+
     const handler = messageHubData.handlers.get('models.list');
 
     const result = (await handler!({ useCache: false }, {})) as {

@@ -17,7 +17,7 @@ export interface ProviderFailureChange {
 export type ProviderFailureChangeListener = (change: ProviderFailureChange) => void;
 
 const CREDENTIAL_MESSAGE_PATTERNS: readonly RegExp[] = [
-  /\(http 40[13]\)/i,
+  /\bhttp 40[13]\b/i,
   /authentication_error/i,
   /invalid[ _-]api[ _-]?key/i,
   /invalid acp command/i,

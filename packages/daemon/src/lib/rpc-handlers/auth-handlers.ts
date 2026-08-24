@@ -248,7 +248,12 @@ export function setupAuthHandlers(
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
           }
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        const refused =
+          error instanceof Error &&
+          (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
+        if (!refused) {
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,

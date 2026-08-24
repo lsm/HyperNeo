@@ -772,7 +772,7 @@ export function setupSessionHandlers(
       let didRefresh = forceRefresh;
 
       if (forceRefresh) {
-        await refreshModels();
+        await refreshModels(undefined, { forceRemote: true });
       }
 
       let availableModels = getAvailableModels('global');
