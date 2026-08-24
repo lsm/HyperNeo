@@ -262,6 +262,8 @@ export const DIRECT_STEER_COOLDOWN_MS = 10 * 60_000;
 
 export const DIRECT_STEER_BUFFER_MAX_ENTRIES = 200;
 
+export const DIRECT_STEER_SNIPPET_MAX_CHARS = 2_000;
+
 export const DIRECT_STEER_COOLDOWN_MAP_CAP = 1_000;
 
 function directSteerBufferKey(sessionId: string, eventClass: DirectSteerEventClass): string {
@@ -3483,18 +3485,22 @@ export class TaskAgentManager {
         origin,
       });
       const capFold = await this.enforceDeferredExternalEventCap(sessionId, message);
+      const supersededThisRow =
+        capFold !== null && capFold.supersededUuids.includes(String(messageId));
       if (capFold) {
         this.pruneSupersededDirectSteerEntries(sessionId, capFold.supersededUuids);
       }
-      this.maybeBufferDirectSteer({
-        sessionId,
-        messageId,
-        deferredDbId,
-        messageText: message,
-        processingStatus: state.status,
-        inRateLimitCooldown,
-        parentTaskLimited: parentLimited,
-      });
+      if (!supersededThisRow) {
+        this.maybeBufferDirectSteer({
+          sessionId,
+          messageId,
+          deferredDbId,
+          messageText: message,
+          processingStatus: state.status,
+          inRateLimitCooldown,
+          parentTaskLimited: parentLimited,
+        });
+      }
       if (capFold) {
         this.maybeBufferDirectSteer({
           sessionId,
@@ -3751,24 +3757,36 @@ export class TaskAgentManager {
       sessionId,
       buildDeferredEventDigestEnvelopeText(steering)
     );
-    let steeringDbId: string;
+    const savedDbIds: string[] = [];
     let remainderDbId: string | null = null;
     try {
-      steeringDbId = this.config.db.saveUserMessage(sessionId, steeringRow, 'deferred');
+      savedDbIds.push(this.config.db.saveUserMessage(sessionId, steeringRow, 'deferred'));
       if (remaining.length > 0) {
         const remainderRow = buildSyntheticExternalEventMessage(
           sessionId,
           buildDeferredEventDigestEnvelopeText(remaining)
         );
         remainderDbId = this.config.db.saveUserMessage(sessionId, remainderRow, 'deferred');
+        savedDbIds.push(remainderDbId);
       }
     } catch (err) {
       log.warn(
         `TaskAgentManager: failed to partition a partially cooled fold for session ` +
           `${sessionId}: ${err instanceof Error ? err.message : String(err)}; row stays deferred`
       );
+      if (savedDbIds.length > 0) {
+        this.config.db.updateMessageStatus(savedDbIds, 'consumed');
+        void this.config.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: savedDbIds,
+            status: 'consumed',
+          })
+          .catch(() => {});
+      }
       return null;
     }
+    const steeringDbId = savedDbIds[0]!;
     this.config.db.updateMessageStatus([sourceDbId], 'consumed');
     log.debug(
       `TaskAgentManager: partitioned a mixed fold for session ${sessionId} — ` +
@@ -3914,9 +3932,10 @@ export class TaskAgentManager {
       );
       return;
     }
-    const steerEssences = steerable
-      .flatMap((entry) => entry.essences)
-      .filter((essence) => classifyExternalEventDirectSteer(essence) !== null);
+    const allEssences = steerable.flatMap((entry) => entry.essences);
+    const steerEssences = allEssences.filter(
+      (essence) => classifyExternalEventDirectSteer(essence) !== null
+    );
     if (steerEssences.length === 0) {
       log.debug(
         `TaskAgentManager: direct steer for session ${sessionId} has no direct-class events ` +
@@ -3924,10 +3943,35 @@ export class TaskAgentManager {
       );
       return;
     }
+    const passengerEssences = allEssences.filter(
+      (essence) => classifyExternalEventDirectSteer(essence) === null
+    );
+    if (passengerEssences.length > 0) {
+      const passengerRow = buildSyntheticExternalEventMessage(
+        sessionId,
+        buildDeferredEventDigestEnvelopeText(passengerEssences)
+      );
+      try {
+        const passengerDbId = this.config.db.saveUserMessage(sessionId, passengerRow, 'deferred');
+        await this.publishMessageStatusChanged(sessionId, passengerDbId, 'deferred');
+        log.debug(
+          `TaskAgentManager: re-deferred ${passengerEssences.length} digest-tier passenger ` +
+            `event(s) alongside a mid-turn steer for session ${sessionId}`
+        );
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager: failed to preserve digest-tier passengers for session ` +
+            `${sessionId}: ${err instanceof Error ? err.message : String(err)}; ` +
+            `aborting the steer so no events are lost`
+        );
+        return;
+      }
+    }
     const eventCount = steerEssences.length;
     const steerText = buildExternalEventDigestMessage(steerEssences, {
       title: 'Direct external events while you were working (injected mid-turn)',
-      snippetMaxChars: Number.POSITIVE_INFINITY,
+      snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
+      renderAllReviewBodies: true,
     });
     const message = buildSyntheticExternalEventMessage(sessionId, steerText);
     const steerMessageId = String(message.uuid);

@@ -450,11 +450,17 @@ function digestActionLabel(entry: ExternalEventEssenceEntry): string {
   return ` (${entry.action})`;
 }
 
+interface DigestRenderOptions {
+  snippetMaxChars?: number;
+  renderAllReviewBodies?: boolean;
+}
+
 function renderDigestGroup(
   group: DigestGroup,
   includeDate: boolean,
-  snippetMaxChars = DIGEST_SNIPPET_MAX_CHARS
+  options: DigestRenderOptions = {}
 ): string {
+  const snippetMaxChars = options.snippetMaxChars ?? DIGEST_SNIPPET_MAX_CHARS;
   const events = group.events;
   const latest = events[events.length - 1];
   if (!latest) return '';
@@ -483,6 +489,20 @@ function renderDigestGroup(
       );
     }
     case 'review': {
+      if (options.renderAllReviewBodies && count > 1) {
+        return events
+          .map((event) => {
+            const location = event.path
+              ? ` on ${event.path}${typeof event.line === 'number' ? `:L${event.line}` : ''}`
+              : '';
+            const snippet = digestSnippet(event.body, snippetMaxChars);
+            return (
+              `- Review comment by ${event.actor ?? 'unknown'} at ${digestTimestamp(event, includeDate)}${location}` +
+              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}${digestDetailSuffix(event)}`
+            );
+          })
+          .join('\n');
+      }
       const location = latest.path
         ? ` on ${latest.path}${typeof latest.line === 'number' ? `:L${latest.line}` : ''}`
         : '';
@@ -573,7 +593,12 @@ function digestHeader(
 
 export function buildExternalEventDigestMessage(
   events: ExternalEventEssenceEntry[],
-  options?: { droppedEventCount?: number; title?: string; snippetMaxChars?: number }
+  options?: {
+    droppedEventCount?: number;
+    title?: string;
+    snippetMaxChars?: number;
+    renderAllReviewBodies?: boolean;
+  }
 ): string {
   if (events.length === 0) return '';
   const droppedEventCount = options?.droppedEventCount ?? 0;
@@ -603,11 +628,9 @@ export function buildExternalEventDigestMessage(
     else groups.set(key, { kind, key, events: [entry] });
   }
   const lines: string[] = [];
-  const snippetMaxChars =
-    options?.snippetMaxChars === undefined ? DIGEST_SNIPPET_MAX_CHARS : options.snippetMaxChars;
   for (const kind of DIGEST_GROUP_ORDER) {
     for (const group of groups.values()) {
-      if (group.kind === kind) lines.push(renderDigestGroup(group, includeDate, snippetMaxChars));
+      if (group.kind === kind) lines.push(renderDigestGroup(group, includeDate, { ...options }));
     }
   }
   const footer =

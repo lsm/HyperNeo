@@ -9,6 +9,7 @@ import { buildDeferredEventDigestEnvelopeText } from '../../../../src/lib/extern
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import {
   DIRECT_STEER_BUFFER_MAX_ENTRIES,
+  DIRECT_STEER_SNIPPET_MAX_CHARS,
   TaskAgentManager,
 } from '../../../../src/lib/space/runtime/task-agent-manager';
 
@@ -844,6 +845,176 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     const steerText = rowText(steers[0]!.message);
     expect(steerText).toContain('TAIL_MARKER');
     expect(steerText).not.toContain('…');
+  });
+
+  it('re-defers digest-tier passengers instead of dropping them when steering a mixed fold', async () => {
+    const harness = makeHarness();
+    const essences = [
+      {
+        eventId: 'pax-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        eventType: 'pull_request_review_comment',
+        actor: 'codex[bot]',
+        body: 'bot feedback',
+        commentId: 'c-pax',
+      },
+      {
+        eventId: 'pax-human',
+        topic: 'github/lsm/hyperneo/pull_request/2828.comment_polled',
+        eventType: 'issue_comment',
+        action: 'polled',
+        actor: 'lsm',
+        body: 'HUMAN_NOTE_MARKER',
+        commentId: 'c-pax-human',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    const steerText = rowText(steers[0]!.message);
+    expect(steerText).toContain('pax-review');
+    expect(steerText).not.toContain('HUMAN_NOTE_MARKER');
+
+    const passengerRow = harness.rows.find(
+      (row) => row.status === 'deferred' && rowText(row.message).includes('HUMAN_NOTE_MARKER')
+    );
+    expect(passengerRow).toBeDefined();
+
+    const sourceRow = harness.rows.find(
+      (row) => rowText(row.message).includes('pax-review') && row.dbId !== passengerRow?.dbId
+    );
+    expect(sourceRow?.status).toBe('consumed');
+  });
+
+  it('does not double-admit a row that the cap fold superseded', async () => {
+    const harness = makeHarness();
+    for (let i = 0; i < 100; i++) {
+      harness.rows.push(
+        deferredRowFixture(
+          `seed-db-${i}`,
+          `seed-uuid-${i}`,
+          formatExternalEventEssence(
+            externalEvent('github/lsm/hyperneo/pull_request/2828.check_failed', `seed-${i}`, {
+              eventType: 'check_run',
+              action: 'failed',
+              actor: 'github-actions[bot]',
+              checkName: `Seed ${i}`,
+              conclusion: 'failure',
+            })
+          )
+        )
+      );
+    }
+    const guardEssences = [
+      {
+        eventId: 'guard-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        eventType: 'pull_request_review_comment',
+        actor: 'codex[bot]',
+        body: 'guard feedback',
+        commentId: 'c-guard',
+      },
+      {
+        eventId: 'guard-check',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+        conclusion: 'failure',
+        checkName: 'Guard Check',
+      },
+    ];
+    const guardText = buildDeferredEventDigestEnvelopeText(guardEssences as never);
+    await harness.manager.injectSubSessionMessage(
+      SESSION_ID,
+      guardText,
+      true,
+      undefined,
+      'defer',
+      'system',
+      'env-uuid'
+    );
+
+    await sleep(MAX_BURST_WAIT_MS + 80);
+
+    const steers = steerRows(harness.rows);
+    expect(steers.length).toBeGreaterThanOrEqual(1);
+    const allSteerText = steers.map((row) => rowText(row.message)).join('\n');
+    expect(allSteerText.split('guard feedback').length - 1).toBe(1);
+  });
+
+  it('renders every grouped review-comment body in a direct steer', async () => {
+    const harness = makeHarness();
+    await injectDefer(
+      harness.manager,
+      formatExternalEventEssence(
+        externalEvent(
+          'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+          'reply-first',
+          {
+            eventType: 'pull_request_review_comment',
+            action: 'polled',
+            actor: 'codex[bot]',
+            body: 'FIRST_REPLY_MARKER',
+            commentId: 'thread-1',
+            inReplyToId: '',
+          }
+        )
+      )
+    );
+    await injectDefer(
+      harness.manager,
+      formatExternalEventEssence(
+        externalEvent(
+          'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+          'reply-second',
+          {
+            eventType: 'pull_request_review_comment',
+            action: 'polled',
+            actor: 'codex[bot]',
+            body: 'SECOND_REPLY_MARKER',
+            commentId: 'thread-1',
+            inReplyToId: '',
+          }
+        )
+      )
+    );
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    const steerText = rowText(steers[0]!.message);
+    expect(steerText).toContain('FIRST_REPLY_MARKER');
+    expect(steerText).toContain('SECOND_REPLY_MARKER');
+  });
+
+  it('bounds long bodies with the direct-tier snippet budget and keeps the retrieval id', async () => {
+    const harness = makeHarness();
+    await injectDefer(
+      harness.manager,
+      formatExternalEventEssence(
+        externalEvent('github/lsm/hyperneo/pull_request/2828.review_comment_polled', 'long-evt', {
+          eventType: 'pull_request_review_comment',
+          action: 'polled',
+          actor: 'codex[bot]',
+          body: `${'A'.repeat(DIRECT_STEER_SNIPPET_MAX_CHARS + 500)}TAIL_BEYOND_BUDGET`,
+          commentId: 'c-long-evt',
+          path: 'packages/daemon/src/lib/space/runtime/task-agent-manager.ts',
+          line: 3400,
+          inReplyToId: '',
+        })
+      )
+    );
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    const steerText = rowText(steers[0]!.message);
+    expect(steerText).not.toContain('TAIL_BEYOND_BUDGET');
+    expect(steerText).toContain('…');
+    expect(steerText).toContain('long-evt');
   });
 
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
