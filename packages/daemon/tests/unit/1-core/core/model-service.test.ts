@@ -1602,6 +1602,41 @@ describe('Model Service', () => {
       expect(await isValidModel('kimi-for-coding', 'global', 'kimi')).toBe(false);
     });
 
+    it('keeps capacity-tagged curated models exact without enabling their static prefix parent', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'moonshot-k3-128k' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              ...mockModels,
+              ...KimiProvider.MODELS,
+              {
+                id: 'moonshot-k3-128k',
+                name: 'moonshot-k3-128k',
+                alias: 'moonshot-k3-128k',
+                family: 'kimi',
+                provider: 'kimi',
+                contextWindow: 131_072,
+                preferContextWindowMetadata: true,
+                thinkingModes: 'granular',
+                description: 'moonshot-k3-128k via Kimi',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(
+        getAvailableModels('global')
+          .filter((model) => model.provider === 'kimi')
+          .map((model) => model.id)
+      ).toEqual(['moonshot-k3-128k']);
+    });
+
     it('treats an empty curation as no visible models', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const registry = getProviderRegistry();

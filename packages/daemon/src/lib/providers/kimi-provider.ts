@@ -236,8 +236,14 @@ export class KimiProvider implements Provider {
     );
   }
 
-  private static isCapacityTaggedModelId(modelId: string): boolean {
+  static isCapacityTaggedModelId(modelId: string): boolean {
     return /-(8|32|128)k$/i.test(KimiProvider.normalizeKimiModelId(modelId));
+  }
+
+  private static discoveredThinkingModesFor(modelId: string): 'granular' | 'on' | 'off' {
+    if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.resolveContextWindow(modelId) < 16_384) return 'off';
+    return 'on';
   }
 
   static resolveKimiTitleThinkingConfig(
@@ -428,6 +434,13 @@ export class KimiProvider implements Provider {
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
     if (KimiProvider.isKimiK2Point7Model(modelId)) return 'on';
+    if (
+      this.ownsModel(modelId) &&
+      !KimiProvider.hasOneMContextSuffix(modelId) &&
+      KimiProvider.resolveContextWindow(modelId) < 16_384
+    ) {
+      return 'off';
+    }
     return undefined;
   }
 
@@ -644,7 +657,7 @@ export class KimiProvider implements Provider {
         provider: this.id,
         contextWindow: KimiProvider.resolveContextWindow(model.id),
         preferContextWindowMetadata: true,
-        thinkingModes: KimiProvider.isKimiK3Model(model.id) ? 'granular' : 'on',
+        thinkingModes: KimiProvider.discoveredThinkingModesFor(model.id),
         description: `${model.name ?? model.id} via Kimi`,
         releaseDate: '',
         available: true,

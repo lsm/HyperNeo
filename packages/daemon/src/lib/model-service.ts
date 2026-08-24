@@ -107,8 +107,10 @@ function getCuratedModelIds(providerId: string): Set<string> | undefined {
   );
   for (const curated of curatedModels) {
     curatedIds.add(curated.id);
-    const canonical = findInModels(staticProviderModels, curated.id)?.id;
-    if (canonical) curatedIds.add(canonical);
+    if (!KimiProvider.isCapacityTaggedModelId(curated.id)) {
+      const canonical = findInModels(staticProviderModels, curated.id)?.id;
+      if (canonical) curatedIds.add(canonical);
+    }
   }
   return curatedIds;
 }

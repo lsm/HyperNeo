@@ -514,6 +514,24 @@ describe('KimiProvider', () => {
       });
     });
 
+    it('disables thinking for small-capacity discovered models whose window cannot fit a budget', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([{ data: [{ id: 'moonshot-v1-8k', object: 'model' }] }]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0]).toMatchObject({
+        id: 'moonshot-v1-8k',
+        contextWindow: 8_192,
+        thinkingModes: 'off',
+      });
+      expect(provider.getModelThinkingMode('moonshot-v1-8k')).toBe('off');
+      expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBeUndefined();
+      expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
+    });
+
     it('caches successful discovery and force bypasses the cache', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const { fetchMock } = installModelListFetch([
