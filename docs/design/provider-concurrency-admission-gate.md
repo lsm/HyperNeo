@@ -304,8 +304,18 @@ gate never sees. Re-flagging and admission are two separate rules:
   but the SAME service called by the durable `goalAutomation.execute`
   handler (goal-automation-execute.handler.ts:175-179, enqueued with only
   two retries, goal-automation-service.ts:170-177) takes its job's park
-  shape — treating that invocation as ephemeral would let its retries
-  expire during a reset instead of waking when the account reopens. The
+  shape — and the identity must be CARRIED, not assumed: the handler
+  passes only `{scopeId, evidenceIds, confirmLowConfidence}` and
+  `createFromEvidence` accepts no job context, so the admission
+  interpreter inside the shared service cannot distinguish this call
+  from the transient RPC/tool invocations or construct
+  `{kind:'job', jobKind, jobId}` on its own. The PR3 wiring therefore
+  threads an optional invocation context (the caller's durable job
+  identity) into `createFromEvidence`'s consult — or, equivalently, the
+  handler catches the typed `provider_saturated` denial and parks the
+  job itself — so the durable invocation gets the requeue park instead
+  of the ephemeral typed error, whose retry loop would exhaust the job's
+  two retries during a reset instead of waking when the account reopens. The
   workflow selector stays ephemeral in all cases (its fallback is
   deterministic and selection retriggers naturally)
   (rule-based selection) instead of deferring. These six surfaces (titles +
@@ -1227,7 +1237,15 @@ not inherit):
   choice — on a single-provider installation every ambiguous limit error would
   trigger a fresh call to the already-saturated account outside the registry.
   The classifier therefore skips (and its callers treat the attempt as
-  unrefined) while its selected effective account is saturated or probing.
+  unrefined) while its selected effective account is saturated or
+  **probing WITHOUT a claimable grant** — but it participates in the
+  first-consult/ephemeral-claim contract like any caller: when a probing
+  account holds an unclaimed pending grant, the classifier claims it
+  under its `{kind:'ephemeral'}` identity and resolves it through its
+  already-required lifecycle reports. An account used only as the
+  alternate classifier provider would otherwise loop pending-expiry
+  forever, every invocation abandoning its call while the grant merely
+  expires and re-mints.
   And **the classifier query's own failures arm the registry too**:
   `classifyUncached` currently swallows them
   (`limit-error-llm-classifier.ts:313-315`), so a 429 received by the
@@ -1453,8 +1471,19 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   never-loaded-session job does not burn grants failing to find it; the
   **inbox** wake drains that event through the agents.
 - **Probing release — one probe grant, carried end-to-end, pushing the drain.**
-  After **any** clear (probe rule, timer expiry, or startup reconstruction), the
-  provider mints a single **probe grant — bound at mint time, not by race**:
+  After **any** clear (probe rule or timer expiry), the
+  provider mints a single **probe grant — bound at mint time, not by
+  race**. **Startup reconstruction is NOT in that set**: reconstruction
+  re-enters the persisted record's state verbatim — a saturation row
+  whose `untilMs` is still in the future (authoritative or not) stays
+  saturated with its wake timer re-armed, a closed row stays closed, and
+  a probing row re-mints per its own rule — a grant is minted at
+  reconstruction only when the reconstructed record is already probing,
+  or its timed episode has actually expired by the restart clock.
+  Treating reconstruction as a blanket clear would let a restart mint a
+  probe against an unexpired authoritative reset or a billing closure
+  and permit an upstream call immediately, voiding the persistence
+  contract:
   the registry selects the earliest eligible composite identity from the global
   queue (scanning past retained manual-mode rows), binds the grant to it, and
   publishes the targeted wake for that identity's session only. The wake
@@ -1666,6 +1695,16 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   path — which assumes the holder is merely slow and returns it to the
   lane — would be the only recovery, invalid after deletion or migration
   (a migrated row is no longer eligible under the old key at all).
+  **Orphaned override accounts retire their closure machinery**: a
+  billing closure keyed only by a session-level credential override
+  survives the session's destroy with its waiters removed but the closed
+  row, daily timer, and captured `configRef` still alive — the probe
+  would keep issuing requests with credentials the user removed with
+  the session, or repeatedly fail to resolve a session-backed reference.
+  When deregistration leaves an override-keyed account with no
+  remaining configuration owner, the closure timer is cancelled and the
+  marker row retired (still-configured shared accounts keep theirs —
+  retirement is per-last-owner, not per-waiter).
   Registrations are idempotent insertion-ordered sets, so a parked job
   re-consulting every probe tick cannot accumulate duplicates. Bounded memory by
   construction.
@@ -2001,12 +2040,15 @@ by pre-existing suites):
    registers it, for every direct-start path (V1 `startQueryAndEnqueue`,
    `deliverRowsViaMemoryQueue`, V1 `deliverInjectedMessage`); a grant-holding
    delivery passes. **The `AskUserQuestion` answer restart admits too** —
-   an answer arriving after its query stopped, against an armed registry,
-   starts no fresh streaming query (no provider call), persists its
-   replayable answer record keyed by `toolUseId` BEFORE registering, and
-   the wake — or restart reconstruction, scanning the answer records —
-   re-runs the submission (a restart during the outage does not drop the
-   submitted answer); admitted (open or
+   an answer arriving after its query stopped IS a fresh provider call
+   (`ensureQueryStarted()` precedes the tool-result enqueue,
+   ask-user-question-handler.ts:553-568) and therefore consults: a
+   DENIED restart starts no query at all — and the test asserts the
+   persisted answer record (keyed by `toolUseId`) is written BEFORE the
+   `ensureQueryStarted` call, so the park exists even if the denial
+   arrives mid-start; the wake — or restart reconstruction, scanning the
+   answer records — re-runs the submission (a restart during the outage
+   does not drop the submitted answer); admitted (open or
    grant-holding), it starts and injects as today; a context-reset restart
    path stays exempt.
    **Parked-row linkage** — the P3 park stamps the marker on
@@ -2087,7 +2129,16 @@ by pre-existing suites):
    the persisted probing record reconstructs `probing` (not open),
    re-mints the grant bound to the serialized durable identity or
    pending, and the first post-restart consult queues at the tick
-   instead of admitting concurrently; the credentialless keying pins
+   instead of admitting concurrently; a restart into an UNEXPIRED
+   authoritative episode or a closure mints nothing (reconstruction
+   re-enters the persisted state — no probe until the episode expires or
+   the record is probing); the classifier on a probing account with a
+   pending grant claims it ephemeraly instead of skipping (no
+   pending-expiry loop); a goalAutomation-driven createFromEvidence
+   parks under its durable job identity (the invocation context is
+   threaded, not assumed); an orphaned override-keyed closure loses its
+   timer and row when its last configuration owner deregisters; the
+   credentialless keying pins
    identity-header digests (same base URL, different `Authorization`
    headers — two keys, credential-backed and credentialless alike); a
    probing row restart after a refinement arrived but before the running
