@@ -5,11 +5,6 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration212 } from '../../../../../src/storage/schema/index.ts';
 
-interface RowIdRow {
-  id: string;
-  rowid: number;
-}
-
 describe('Migration 212: stable sdk_messages rowids', () => {
   let testDir: string;
   let db: BunDatabase;
@@ -72,8 +67,8 @@ describe('Migration 212: stable sdk_messages rowids', () => {
 
   test('preserves rowids, rows, indexes, and foreign keys across the rewrite and VACUUM', () => {
     const rowIdsBefore = db
-      .prepare(`SELECT id, rowid FROM sdk_messages ORDER BY rowid`)
-      .all() as RowIdRow[];
+      .prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`)
+      .all() as Array<{ id: string; cursor: number }>;
     const rowsBefore = db
       .prepare(
         `SELECT id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, consumed_seq
@@ -93,7 +88,7 @@ describe('Migration 212: stable sdk_messages rowids', () => {
       .get() as { sql: string };
     expect(tableSql.sql).toContain('seq INTEGER PRIMARY KEY');
     expect(tableSql.sql).toContain('id TEXT NOT NULL UNIQUE');
-    expect(db.prepare(`SELECT id, rowid FROM sdk_messages ORDER BY rowid`).all()).toEqual(
+    expect(db.prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`).all()).toEqual(
       rowIdsBefore
     );
     expect(
