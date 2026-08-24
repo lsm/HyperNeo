@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
+import { act, render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { ProviderRecord } from '@hyperneo/shared';
 
 const {
@@ -19,6 +19,9 @@ const {
   mockOnConnected,
   mockIsConnected,
   mockReconnect,
+  mockGetHubIfConnected,
+  mockOnEvent,
+  mockUnsubscribe,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -36,6 +39,9 @@ const {
   mockOnConnected: vi.fn(),
   mockIsConnected: vi.fn(),
   mockReconnect: vi.fn(),
+  mockGetHubIfConnected: vi.fn(),
+  mockOnEvent: vi.fn(),
+  mockUnsubscribe: vi.fn(),
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
@@ -67,6 +73,7 @@ vi.mock('../../../lib/connection-manager.ts', () => ({
     onConnected: (timeout?: number) => mockOnConnected(timeout),
     isConnected: () => mockIsConnected(),
     reconnect: () => mockReconnect(),
+    getHubIfConnected: () => mockGetHubIfConnected(),
   },
 }));
 
@@ -254,6 +261,11 @@ describe('ProvidersSettings', () => {
     mockIsConnected.mockReturnValue(false);
     mockReconnect.mockReset();
     mockReconnect.mockResolvedValue(undefined);
+    mockUnsubscribe.mockReset();
+    mockOnEvent.mockReset();
+    mockOnEvent.mockReturnValue(mockUnsubscribe);
+    mockGetHubIfConnected.mockReset();
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
     globalStore.systemState.value = null;
     connectionState.value = 'connecting';
   });
@@ -294,6 +306,37 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('No providers configured');
     });
+  });
+
+  it('refetches providers when providers.changed fires', async () => {
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('2', 'kimi', { displayName: 'Kimi' })],
+      });
+
+    const { container, unmount } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    expect(eventHandler).toBeDefined();
+
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Kimi');
+    });
+    expect(container.textContent).not.toContain('Anthropic');
+
+    unmount();
+    expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it('shows keychain unavailable banner without DB fallback copy', async () => {

@@ -214,6 +214,17 @@ export function ProvidersSettings() {
   }, []);
 
   useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadProviders();
+    });
+    return () => {
+      unsub();
+    };
+  }, [connectionState.value]);
+
+  useEffect(() => {
     if (connectionState.value !== 'connected' || !loadError) return;
     if (autoRetriedRef.current) return;
     autoRetriedRef.current = true;
