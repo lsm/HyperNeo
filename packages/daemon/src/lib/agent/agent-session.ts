@@ -269,7 +269,7 @@ export class AgentSession
   private taskNotificationRequeryEpisodeToken = 0;
   private taskNotificationRequeryAwaitingSdkIdle = false;
   private taskNotificationRequeryBusyInterruptGeneration: number | null = null;
-  private taskNotificationRequerySuppressFlushWhileObserving = false;
+  private taskNotificationRequeryObservingResultDepth = 0;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -1419,7 +1419,7 @@ export class AgentSession
     }
     const observingResult = message.type === 'result';
     if (observingResult) {
-      this.taskNotificationRequerySuppressFlushWhileObserving = true;
+      this.taskNotificationRequeryObservingResultDepth += 1;
     }
     try {
       await this.messageHandler.handleMessage(message);
@@ -1427,8 +1427,11 @@ export class AgentSession
       this.observeTaskNotificationResult(message);
     } finally {
       if (observingResult) {
-        this.taskNotificationRequerySuppressFlushWhileObserving = false;
-        if (this.getQueryGeneration() === queryGeneration) {
+        this.taskNotificationRequeryObservingResultDepth -= 1;
+        if (
+          this.taskNotificationRequeryObservingResultDepth === 0 &&
+          this.getQueryGeneration() === queryGeneration
+        ) {
           this.flushPendingTaskNotificationRequery();
         }
       }
@@ -1576,7 +1579,7 @@ export class AgentSession
   }
 
   private flushPendingTaskNotificationRequery(): void {
-    if (this.taskNotificationRequerySuppressFlushWhileObserving) return;
+    if (this.taskNotificationRequeryObservingResultDepth > 0) return;
     if (!this.taskNotificationRequeryPending) return;
     this.taskNotificationRequeryPending = false;
     const delayMs = this.taskNotificationRequeryPendingDelayMs ?? 0;
@@ -2865,7 +2868,7 @@ export class AgentSession
     }
     this.messageHandler.cancelSuppressedResultWait();
     this.clearDeliveryTurnStall();
-    this.clearTaskNotificationRequeryTimer();
+    this.resetTaskNotificationRequery();
     for (const unsub of this.deliveryErrorSubs) {
       try {
         unsub();
