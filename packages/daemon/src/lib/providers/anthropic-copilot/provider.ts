@@ -422,7 +422,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return this.storedCredentialToken;
     }
 
-    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
+    if (
+      this.tokenCache &&
+      Date.now() < this.tokenCache.expiresAt &&
+      (!propagateStoredCredentialError || this.tokenCache.token)
+    ) {
       return this.tokenCache.token;
     }
 
