@@ -84,6 +84,24 @@ interface TokenCacheEntry {
 }
 
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
+const RUNTIME_SHUTDOWN_WAIT_MS = 10_000;
+
+function delay(ms: number): Promise<undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    timer.unref?.();
+  });
+}
+
+function awaitServerStartBounded(
+  starting: Promise<EmbeddedServer> | undefined
+): Promise<EmbeddedServer | undefined> {
+  if (!starting) return Promise.resolve(undefined);
+  return Promise.race([
+    starting.catch((): EmbeddedServer | undefined => undefined),
+    delay(RUNTIME_SHUTDOWN_WAIT_MS),
+  ]);
+}
 
 export class AnthropicToCopilotBridgeProvider implements Provider {
   readonly id = 'anthropic-copilot';
@@ -103,6 +121,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   private shuttingDown = false;
   private loggedOut = false;
+  private restartGeneration = 0;
   private observedCuratedCatalog = false;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
@@ -459,9 +478,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       throw refusal;
     }
 
-    await this.serverStarting?.catch(() => {});
-    await this.stopServerAndClient();
     this.loggedOut = true;
+    const starting = this.serverStarting;
+    await awaitServerStartBounded(starting);
+    if (starting !== undefined && this.serverStarting === starting) {
+      this.serverStarting = undefined;
+    }
+    await this.stopServerAndClient();
   }
 
   private freshCachedExternalSource(): string | undefined {
@@ -493,7 +516,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
-    await this.serverStarting?.catch(() => {});
+    await awaitServerStartBounded(this.serverStarting);
     await this.stopServerAndClient();
   }
 
@@ -557,13 +580,15 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async restartServerForCurrentCredentials(): Promise<EmbeddedServer> {
-    while (!this.shuttingDown) {
+    const generation = ++this.restartGeneration;
+    while (!this.shuttingDown && !this.loggedOut) {
+      if (generation !== this.restartGeneration) break;
       await this.stopServerAndClient();
-      if (this.shuttingDown) break;
+      if (this.shuttingDown || this.loggedOut || generation !== this.restartGeneration) break;
       const credentialsVersion = this.credentialsVersion;
       try {
         const server = await this.createServer(credentialsVersion);
-        if (this.shuttingDown) {
+        if (this.shuttingDown || this.loggedOut || generation !== this.restartGeneration) {
           await server.stop().catch(() => {});
           break;
         }
@@ -573,7 +598,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         }
         await server.stop().catch(() => {});
       } catch (error) {
-        if (!this.shuttingDown && credentialsVersion === this.credentialsVersion) {
+        if (
+          !this.shuttingDown &&
+          !this.loggedOut &&
+          credentialsVersion === this.credentialsVersion
+        ) {
           throw error;
         }
       }
@@ -876,9 +905,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         env: buildCopilotEnv(env),
       });
       await client.start();
-      if (credentialsVersion !== this.credentialsVersion) {
+      if (credentialsVersion !== this.credentialsVersion || this.shuttingDown || this.loggedOut) {
         await client.stop().catch(() => {});
-        throw new Error('GitHub Copilot credentials changed during client startup');
+        throw new Error('GitHub Copilot client startup was superseded');
       }
       this.clientCache = client;
       this.clientCredentialsVersion = credentialsVersion;

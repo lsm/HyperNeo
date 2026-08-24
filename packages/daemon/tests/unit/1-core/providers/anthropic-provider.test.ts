@@ -492,6 +492,97 @@ describe('AnthropicProvider', () => {
       const models = await provider.getModels();
       expect(models).toEqual([]);
     });
+
+    it('clears the model cache when credentials are replaced', async () => {
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+      provider.setModelCache([
+        {
+          id: 'cached',
+          name: 'Cached',
+          alias: 'cached',
+          family: 'sonnet' as const,
+          provider: 'anthropic' as const,
+          contextWindow: 100000,
+          description: 'Cached',
+          releaseDate: '',
+          available: true,
+        },
+      ]);
+
+      provider.setCredentials({ type: 'api_key', apiKey: '' });
+
+      const models = await provider.getModels();
+      expect(models).toEqual([]);
+    });
+
+    it('discards an in-flight SDK load when credentials change mid-flight', async () => {
+      let loadCount = 0;
+      let releaseFirstLoad:
+        | ((models: Array<{ value: string; displayName: string; description: string }>) => void)
+        | null = null;
+      class MockMcpServer {
+        readonly _registeredTools: Record<string, object> = {};
+        connect(): void {}
+        disconnect(): void {}
+      }
+      mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+        query: () => {
+          loadCount++;
+          return {
+            interrupt: mock(async () => {}),
+            supportedModels: () =>
+              new Promise<Array<{ value: string; displayName: string; description: string }>>(
+                (resolve) => {
+                  if (loadCount === 1) {
+                    releaseFirstLoad = resolve;
+                  } else {
+                    resolve([
+                      { value: 'opus', displayName: 'Opus', description: 'Opus 4.6 · Test' },
+                    ]);
+                  }
+                }
+              ),
+          };
+        },
+        interrupt: mock(async () => {}),
+        createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => ({
+          type: 'sdk' as const,
+          name: _options.name,
+          version: '1.0.0',
+          tools: _options.tools ?? [],
+          instance: new MockMcpServer(),
+        })),
+        tool: mock((name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+          name,
+          description,
+          inputSchema,
+          handler,
+        })),
+      }));
+
+      const providerWithInFlightLoad = new AnthropicProvider();
+      providerWithInFlightLoad.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+
+      const firstLoad = providerWithInFlightLoad.getModels();
+      for (let i = 0; i < 50 && loadCount < 1; i++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      expect(loadCount).toBe(1);
+
+      providerWithInFlightLoad.setCredentials({ type: 'api_key', apiKey: 'second-key' });
+      releaseFirstLoad?.([
+        { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 4.5 · Test' },
+      ]);
+      await expect(firstLoad).rejects.toThrow('credentials changed during model discovery');
+      expect((providerWithInFlightLoad as unknown as Record<string, unknown>)['modelCache']).toBe(
+        null
+      );
+
+      const reloaded = await providerWithInFlightLoad.getModels();
+
+      expect(loadCount).toBe(2);
+      expect(reloaded.map((model) => model.id)).toEqual(['opus']);
+    });
   });
 
   describe('convertSdkModels foreign-id filter', () => {

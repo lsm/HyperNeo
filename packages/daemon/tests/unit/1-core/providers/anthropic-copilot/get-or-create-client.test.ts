@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 type StartRecord = { resolve: () => void; reject: (err: Error) => void };
 const startCalls = vi.hoisted(() => [] as StartRecord[]);
+const stopCalls = vi.hoisted(() => [] as unknown[]);
 
 vi.mock('@github/copilot-sdk', () => {
   class MockCopilotClient {
@@ -14,7 +18,9 @@ vi.mock('@github/copilot-sdk', () => {
       });
     }
 
-    async stop(): Promise<void> {}
+    async stop(): Promise<void> {
+      stopCalls.push(this);
+    }
 
     async listModels(): Promise<unknown[]> {
       return [];
@@ -31,6 +37,7 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
 
   beforeEach(() => {
     startCalls.length = 0;
+    stopCalls.length = 0;
     provider = new AnthropicToCopilotBridgeProvider('/tmp', {});
   });
 
@@ -87,6 +94,82 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     expect(startCalls).toHaveLength(1);
     startCalls[0].resolve();
     await expect(p2).resolves.toBeDefined();
+  });
+
+  it('stops the client and leaves it uncached when shutdown lands during start()', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+    const state = provider as unknown as Record<string, unknown>;
+
+    const clientPromise = getOrCreate('gho_test_token');
+    expect(startCalls).toHaveLength(1);
+
+    state['shuttingDown'] = true;
+    startCalls[0].resolve();
+
+    await expect(clientPromise).rejects.toThrow('superseded');
+    expect(state['clientCache']).toBeUndefined();
+    expect(stopCalls).toHaveLength(1);
+  });
+
+  it('stops the client and leaves it uncached when logout lands during start()', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+    const state = provider as unknown as Record<string, unknown>;
+    const version = state['credentialsVersion'] as number;
+
+    const clientPromise = getOrCreate('gho_test_token');
+    expect(startCalls).toHaveLength(1);
+
+    state['loggedOut'] = true;
+    startCalls[0].resolve();
+
+    await expect(clientPromise).rejects.toThrow('superseded');
+    expect(state['clientCache']).toBeUndefined();
+    expect(stopCalls).toHaveLength(1);
+    expect(state['credentialsVersion']).toBe(version);
+  });
+
+  it('rejects a client that finishes starting after a real logout completes', async () => {
+    const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-logout-late-'));
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+    try {
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      const state = p as unknown as Record<string, unknown>;
+
+      const logoutPromise = p.logout();
+      for (let i = 0; i < 50; i++) {
+        await Promise.resolve();
+      }
+
+      const getOrCreate = (
+        p as unknown as {
+          getOrCreateClient(token?: string): Promise<unknown>;
+        }
+      ).getOrCreateClient.bind(p);
+      const clientPromise = getOrCreate('gho_test_token');
+      expect(startCalls).toHaveLength(1);
+
+      await logoutPromise;
+      startCalls[0].resolve();
+
+      await expect(clientPromise).rejects.toThrow('superseded');
+      expect(state['clientCache']).toBeUndefined();
+      expect(stopCalls).toHaveLength(1);
+    } finally {
+      fs.rmSync(authDir, { recursive: true, force: true });
+    }
   });
 
   it('propagates start() failure through ensureServerStarted()', async () => {

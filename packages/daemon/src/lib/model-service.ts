@@ -611,6 +611,64 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
   clearProviderRetry(providerId);
 }
 
+export type ProviderRecoveryOutcome = 'no-op' | 'recovered' | 'failed';
+
+export async function recoverDormantProvider(providerId: string): Promise<ProviderRecoveryOutcome> {
+  if (getProviderFailure(providerId)?.errorKind !== 'credential') return 'no-op';
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) return 'no-op';
+
+  clearProviderRetry(providerId);
+  provider.clearModelCache?.();
+
+  const generationAtStart = providerRetryGeneration;
+  const failureAtStart = getProviderFailure(providerId);
+  const probeSeq = ++modelLoadSequence;
+  const result = await raceProviderProbe(
+    loadProviderModels(provider),
+    PROVIDER_RETRY_PROBE_TIMEOUT_MS
+  );
+  if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    if (providerRetryGeneration === generationAtStart) {
+      armProviderRetryTimer(providerId);
+      return 'failed';
+    }
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    if (providerRetryGeneration !== generationAtStart) {
+      return getProviderFailure(providerId) ? 'failed' : 'no-op';
+    }
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      unavailableProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
+    return 'failed';
+  }
+  const currentFailure = getProviderFailure(providerId);
+  if (providerRetryGeneration !== generationAtStart && currentFailure !== failureAtStart) {
+    return currentFailure ? 'failed' : 'no-op';
+  }
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+  if (providerRetryGeneration !== generationAtStart) {
+    return 'recovered';
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  return 'recovered';
+}
+
 function isCacheStale(cacheKey: string): boolean {
   const timestamp = cacheTimestamps.get(cacheKey);
   if (!timestamp) return true;

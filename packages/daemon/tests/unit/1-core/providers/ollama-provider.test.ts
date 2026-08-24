@@ -256,6 +256,41 @@ describe('OllamaProvider', () => {
     expect(status.error).toContain('OLLAMA_API_KEY');
   });
 
+  it('clears a stale auth error when the effective credential is replaced', async () => {
+    const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    provider.setCredentials({ type: 'api_key', apiKey: 'bad-stored-key' });
+
+    await provider.getModels();
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+
+    const status = await provider.getAuthStatus();
+    expect(status.error).toBeUndefined();
+    expect(status.isAuthenticated).toBe(true);
+  });
+
+  it('keeps a stale auth error while an environment key shadows the replacement', async () => {
+    process.env.OLLAMA_API_KEY = 'bad-local-key';
+    const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await provider.getModels();
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+  });
+
   it('routes Ollama shorthands and cloud-tagged gpt-oss models to the matching provider', () => {
     const local = new OllamaProvider({ kind: 'local' });
     const cloud = new OllamaProvider({ kind: 'cloud' });

@@ -446,11 +446,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
-    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
+    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges((change) => {
+      credentialManager.markProviderHealth(
+        change.providerId,
+        change.record === null ? 'healthy' : 'unhealthy'
+      );
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
       registry: providerRegistry,
+      recoverDormantProvider: async (providerId) => {
+        const { recoverDormantProvider } = await import('./lib/model-service.ts');
+        return await recoverDormantProvider(providerId);
+      },
       onProviderChanged: () => {
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
@@ -1089,7 +1097,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
-        oauthRefreshScheduler.stop();
+        await oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');
