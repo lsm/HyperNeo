@@ -287,7 +287,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
     const unsubscribeEarlyStructuredLogs = subscribeToStructuredLogs((event) => {
       earlyLogEvidenceService.capture(event);
-      if (event.level === 'warn' || event.level === 'error' || event.level === 'fatal') {
+      if (event.level === 'fatal') {
         earlyLogEvidenceService.flush();
       }
     });
