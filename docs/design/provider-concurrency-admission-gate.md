@@ -527,12 +527,16 @@ gate never sees. Re-flagging and admission are two separate rules:
   before `lastPollTime` persists (polling-service.ts:132) re-polls the same
   object and normalization mints yet another fresh UUID
   (event-normalizer.ts:10-11), so anything less stable than the upstream
-  tuple defeats the delivery-record dedupe — and the inbox
-  entries **register as durable background waiters** — drained on **any**
-  clear of their account key (normal timer/probe clears included, via the
-  same wake that drains the background queue), not only by the
-  credential-change hook (which covers the billing-closed case).
-  **No ingest path parks at all — both sources are ungated**: the raw
+  tuple defeats the delivery-record dedupe. **No ingest path parks at
+  all — both sources are ungated**, and the store's entries are delivery
+  records, NOT background waiters: waiter registration exists only for
+  the legacy `processEvent` workflow's actual mid-flow park (the
+  grantless-between-stages arm) — registering polled entries broadly
+  would replay an already-published extension event through a second
+  workflow after recovery, consuming grants and duplicating downstream
+  work — and the credential-change re-admission hook still covers
+  whatever that legacy arm parks (the billing-closed case included).
+  **Restating the ungated rule**: the raw
   webhook AND the polled row publish at ingest regardless of provider
   state (the ungated rule above — `context.publisher.publish` durably
   stores the event, then notifies `SpaceRuntime`,
@@ -708,6 +712,16 @@ never promote it (the user's retry is lost and a bound grant stalls on an
 undeliverable identity). The settle is therefore a single
 consumed→deferred transition (or the existing retry path to `'enqueued'`
 followed by defer, both steps inside one registration transaction) —
+**writing the row's original admission origin**: the episode passes
+`executeRateLimitAutoRetry` only `{ uuid, content }`
+(agent-session.ts:931-963) and the original `queue_reason` was cleared at
+prompt yield, so this branch has no information from which to choose
+`provider_saturated_p1` vs `_p2` — defaulting to P1 would bypass the
+injection pipeline's parent-task/cooldown/context-reset gates, to P2
+would misroute ordinary user sends. The yield-boundary marker clear
+therefore **persists the row's last admission origin** (a shadow of the
+arm the queueing used, carried on the row/episode record), and the P4
+settle writes the matching marker value —
 then registers the row, letting the wake path re-promote. The retry
 callback's boolean contract (started / not-started) cannot express this —
 `false` would push the watchdog into its startup-retry loop and eventually
@@ -850,7 +864,15 @@ issuers never do. **Custom endpoints add their baseUrl to the authority**:
 two credential-backed custom endpoints of the same resolved type routinely
 share a literal placeholder or locally managed key while their `baseUrl`
 values point at unrelated upstreams — for custom endpoints the key is
-`digest(family + ':' + canonicalBaseUrl + ':' + credential)` — the
+`digest(family + ':' + canonicalBaseUrl + ':' + credential + ':' +
+digest(identityHeaders))` — the SAME identity-header digest the
+credentialless rule uses, because the bridges spread `config.headers`
+AFTER the generated API-key authentication
+(openai-chat-bridge/server.ts:749-752,
+anthropic-messages-bridge/server.ts:188-194): two records with one base
+URL and a placeholder `apiKey` but different overriding `Authorization`
+or tenant headers send as different identities and must not share a key
+(absent identity headers digest to a constant and change nothing) — the
 `baseUrl` component canonicalized through the SAME provider-specific
 base-authority normalization the request builders apply (whitespace and
 trailing-slash trimming, terminal request paths such as
@@ -987,7 +1009,14 @@ reference the account would stay closed until manual Retry or a
 credential change — written on arm, updated on refine, **and not
 deleted at clear: a clear transitions the row to a probing record**
 (`kind: 'probing'`, the grant's bound identity serialized — `null` for a
-pending/empty-backlog grant — plus the lease deadline), because the
+pending/empty-backlog grant — plus the lease deadline **and any recorded
+refinement** (`resetAtMs` + token) captured while the running probe
+holds a consumed grant, because that evidence lives only in the
+in-memory episode: a restart after the refinement arrives but before the
+probe terminates would re-mint the probe without it, and a subsequent 429
+would re-arm from the short ladder instead of the authoritative refined
+deadline — the row carries it until the reconstructed probe resolves),
+because the
 `probeGrant` is in-memory and the holder's queue marker clears at
 prompt yield: a restart while an empty-backlog pending grant exists, or
 while the final granted probe is running, would otherwise find neither
@@ -2015,7 +2044,9 @@ by pre-existing suites):
    signaling the provider-queued state distinctly, settles the row
    deferred with the marker through the atomic consumed-to-deferred
    transition (a plain defer on a consumed row changes nothing and
-   registers an undeliverable identity), registers; fallback-switched session (different provider)
+   registers an undeliverable identity), writing the row's original
+   admission origin (the yield-clear persists it; the P4 marker matches
+   the arm that queued it), registers; fallback-switched session (different provider)
    unaffected; the **provider-retry branch** classifies before deciding
    the retry — a bracketed GLM limit reports to the registry at attempt 0, a
    consult denial falls through to the existing `:1258` assessment (the watchdog
@@ -2058,7 +2089,10 @@ by pre-existing suites):
    pending, and the first post-restart consult queues at the tick
    instead of admitting concurrently; the credentialless keying pins
    identity-header digests (same base URL, different `Authorization`
-   headers — two keys); a provider-wake load of a never-loaded session
+   headers — two keys, credential-backed and credentialless alike); a
+   probing row restart after a refinement arrived but before the running
+   probe terminates still re-arms at the authoritative refined deadline
+   (the refinement persists with the row); a provider-wake load of a never-loaded session
    does not fire the blanket deferred replay (only the bound identity
    moves); an OAuth re-key moves the probing record, grant, and
    in-flight associations with the registrations. An ACP variant pins the
