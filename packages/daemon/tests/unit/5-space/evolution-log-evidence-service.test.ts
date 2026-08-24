@@ -493,6 +493,25 @@ describe('EvolutionLogEvidenceService', () => {
     expect(evolutionRepo.listEvidence(scopeId)[0].summary).toContain('kept warning');
   });
 
+  it('does not let non-matching events evict pattern-matched evidence', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'], patterns: [/^payment:/] }],
+      maxBufferedEvents: 5,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'payment: kept failure' }));
+    for (let i = 0; i < 20; i++) {
+      service.capture(createEvent({ level: 'warn', message: `unrelated noise ${i}` }));
+    }
+
+    await service.flushAsync();
+
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(1);
+    expect(evolutionRepo.listEvidence(scopeId)[0].summary).toContain('payment:');
+  });
+
   it('does not double-write evidence when flush interrupts an active drain', async () => {
     const sleepSync = (ms: number): void => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

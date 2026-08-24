@@ -55,25 +55,19 @@ export class EvolutionLogEvidenceService {
   private drainItem: DrainItem | null = null;
   private retryDelayMs: number | null = null;
   private busyRetryCount = 0;
-  private captureLevels: ReadonlySet<StructuredLogLevel> | null = null;
 
   constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
   capture(event: StructuredLogEvent): void {
-    if (!this.getCaptureLevels().has(event.level)) return;
+    if (this.deps.subscriptions) {
+      if (!this.deps.subscriptions.some((s) => matchesSubscription(s, event))) return;
+    } else if (!DEFAULT_CAPTURE_LEVELS.has(event.level)) {
+      return;
+    }
     this.buffer.push(event);
     this.scheduleDrain();
     const max = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
     if (this.buffer.length > max) this.buffer.splice(0, this.buffer.length - max);
-  }
-
-  private getCaptureLevels(): ReadonlySet<StructuredLogLevel> {
-    if (this.captureLevels === null) {
-      this.captureLevels = this.deps.subscriptions
-        ? new Set(this.deps.subscriptions.flatMap((subscription) => subscription.levels))
-        : DEFAULT_CAPTURE_LEVELS;
-    }
-    return this.captureLevels;
   }
 
   scheduleDrain(): void {
