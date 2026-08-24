@@ -14,6 +14,7 @@ import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
+import { SpaceAgentNotificationService } from '../../../../src/lib/space/runtime/space-agent-notification-service';
 import type { Database } from '../../../../src/storage/database';
 
 const ZERO_USAGE = {
@@ -157,6 +158,16 @@ describe('task-notification requery policy', () => {
       ).toEqual({ action: 'escalate' });
     });
 
+    it('treats a completed terminal reason as model activity, not an error', () => {
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          attempts: 3,
+          message: buildResultMessage({ terminal_reason: 'completed' }),
+        })
+      ).toEqual({ action: 'reset' });
+    });
+
     it('holds on non-result and nested-result messages', () => {
       expect(
         resolveTaskNotificationRequery({ ...base, message: { type: 'user' } as SDKMessage })
@@ -296,17 +307,8 @@ describe('SpaceAgentNotificationService needs-attention acknowledgement', () => 
         return () => {};
       },
     };
-    const { SpaceAgentNotificationService } =
-      require('../../../../src/lib/space/runtime/space-agent-notification-service') as {
-        SpaceAgentNotificationService: new (config: {
-          internalEventBus: unknown;
-          sessionFactory: unknown;
-          sessionId: string;
-          spaceId: string;
-        }) => { subscribe: () => () => void };
-      };
     const service = new SpaceAgentNotificationService({
-      internalEventBus: bus,
+      internalEventBus: bus as unknown as InternalEventBus<DaemonInternalEventMap>,
       sessionFactory: { injectMessage },
       sessionId: 'coord-session',
       spaceId: 'space-1',
@@ -1598,6 +1600,83 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     holder.release?.();
     await oldCall;
     expect(continueCalls()).toBe(0);
+  });
+
+  it('observes a real result even when an sdk.message subscriber rejects', async () => {
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    const originalHandler = (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage;
+    (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage = async (message: SDKMessage) => {
+      await (originalHandler as (m: SDKMessage) => Promise<void>).call(
+        agentSession.messageHandler,
+        message
+      );
+      if ((message as { type?: string }).type === 'result') {
+        throw new Error('subscriber boom');
+      }
+    };
+
+    await expect(agentSession.onSDKMessage(buildRealSuccessResult())).rejects.toThrow(
+      'subscriber boom'
+    );
+    await settleRequery();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('flushes the surviving episode when the stale handler releases the last guard', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    const originalHandler = (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage;
+    const oldHolder: { release?: () => void } = {};
+    const oldGate = new Promise<void>((resolve) => {
+      oldHolder.release = resolve;
+    });
+    (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage = async (message: SDKMessage) => {
+      if ((message as { uuid?: string }).uuid === 'old-gen-result') {
+        await oldGate;
+        return;
+      }
+      await (originalHandler as (m: SDKMessage) => Promise<void>).call(
+        agentSession.messageHandler,
+        message
+      );
+    };
+
+    const oldCall = agentSession.onSDKMessage({
+      ...buildRealSuccessResult(),
+      uuid: 'old-gen-result',
+    } as unknown as SDKMessage);
+    (
+      agentSession as unknown as { incrementQueryGeneration: () => number }
+    ).incrementQueryGeneration();
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = 1;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    oldHolder.release?.();
+    await oldCall;
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
   });
 
   it('clears a pending re-query timer when the user interrupts', async () => {

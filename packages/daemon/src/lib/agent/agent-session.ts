@@ -1422,16 +1422,20 @@ export class AgentSession
       this.taskNotificationRequeryObservingResultDepth += 1;
     }
     try {
-      await this.messageHandler.handleMessage(message);
+      try {
+        await this.messageHandler.handleMessage(message);
+      } catch (error) {
+        if (this.getQueryGeneration() === queryGeneration) {
+          this.observeTaskNotificationResult(message);
+        }
+        throw error;
+      }
       if (this.getQueryGeneration() !== queryGeneration) return;
       this.observeTaskNotificationResult(message);
     } finally {
       if (observingResult) {
         this.taskNotificationRequeryObservingResultDepth -= 1;
-        if (
-          this.taskNotificationRequeryObservingResultDepth === 0 &&
-          this.getQueryGeneration() === queryGeneration
-        ) {
+        if (this.taskNotificationRequeryObservingResultDepth === 0) {
           this.flushPendingTaskNotificationRequery();
         }
       }

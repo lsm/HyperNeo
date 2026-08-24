@@ -49,10 +49,7 @@ export function resolveTaskNotificationRequery(args: {
     .parent_tool_use_id;
   if (parentToolUseId !== null && parentToolUseId !== undefined) return { action: 'hold' };
   if (!isTopLevelHollowTaskNotificationResult(args.message)) {
-    const isError =
-      (args.message as SDKMessage & { is_error?: unknown }).is_error === true ||
-      typeof (args.message as SDKMessage & { terminal_reason?: unknown }).terminal_reason ===
-        'string';
+    const isError = (args.message as SDKMessage & { is_error?: unknown }).is_error === true;
     if (!isError || args.attempts <= 0) return { action: 'reset' };
   }
   if (args.followUpQueued) return { action: 'hold' };
