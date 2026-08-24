@@ -5838,6 +5838,10 @@ describe('AgentSession', () => {
         null,
         claimGuard
       );
+      if (row.expected === 'awaiting_acceptance' && row.provider === 'acp' && !row.pending) {
+        await waitForQueueEntry(queue);
+        repo.markDeliverySubmittedByUuids(sessionId, [steerUuid]);
+      }
       await settleFeedAck(steerPromise, queue, rowExpectsAdmission(row));
       const outcome = await steerPromise;
       return { db, queue, outcome, admitWithId };
@@ -5850,6 +5854,16 @@ describe('AgentSession', () => {
         delivery: 'enqueued',
         queryPromise: 'present',
         provider: 'anthropic',
+        pending: true,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
+        name: 'superseded claim aborts at processing ahead of ACP pending ownership',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
         pending: true,
         claimGuard: 'superseded',
         expected: 'aborted',
@@ -6156,6 +6170,14 @@ describe('AgentSession', () => {
             expect(
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('consumed');
+          } else if (
+            row.expected === 'awaiting_acceptance' &&
+            row.provider === 'acp' &&
+            !row.pending
+          ) {
+            expect(
+              db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
+            ).toBe('submitted');
           } else if (row.delivery === 'enqueued') {
             expect(
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
