@@ -1275,6 +1275,68 @@ describe('SpaceRuntimeService', () => {
       );
     });
 
+    test('deliverLongHorizonAgentNag reports accepted in legacy delivery mode', async () => {
+      const prevV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+      try {
+        const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+        const createdSession = {
+          ...makeSession(),
+          getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+          ensureQueryStarted: mock(async () => {}),
+          messageQueue: { enqueueWithId: mock(async () => {}) },
+        } as unknown as AgentSession;
+        const sessionManager = makeSessionManager(null);
+        (
+          sessionManager.createSession as Mock<typeof sessionManager.createSession>
+        ).mockImplementation(async () => sessionId);
+        (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(createdSession);
+        const longHorizonAgentRepo = {
+          getById: mock(() => ({
+            id: 'lh-agent-1',
+            spaceId: mockSpace.id,
+            handle: 'lh-agent-1',
+            displayName: 'LH Agent',
+            templateKey: null,
+            status: 'active',
+            sessionId: null,
+            instructions: '',
+            autonomyLevel: null,
+            model: null,
+            thinkingLevel: null,
+            provider: null,
+            settingSources: ['project'],
+            toolPermissions: { tools: [] },
+            createdAt: NOW,
+            updatedAt: NOW,
+          })),
+          update: mock(() => {}),
+          getCoordinator: mock(() => null),
+        } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+        const { reactiveDb } = buildDurableDeliveryReactiveDb();
+        const svc = new SpaceRuntimeService({
+          ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+          reactiveDb,
+          longHorizonAgentRepo,
+        });
+        const result = await svc.deliverLongHorizonAgentNag({
+          spaceId: mockSpace.id,
+          agentId: 'lh-agent-1',
+          message: 'nag',
+          idempotencyKey: 'k',
+        });
+        expect(result).toBe('accepted');
+      } finally {
+        if (prevV2 === undefined) {
+          delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        } else {
+          process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = prevV2;
+        }
+      }
+    });
+
     test('deliverLongHorizonAgentNag returns terminal_failure for an inactive agent', async () => {
       const sessionManager = makeSessionManager(null);
       const longHorizonAgentRepo = {

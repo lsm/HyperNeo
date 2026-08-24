@@ -360,7 +360,7 @@ export class SpaceRuntimeService {
       await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
         terminalizeOnTimeout: false,
       });
-      return 'consumed';
+      return isMessageDeliveryV2Enabled() ? 'consumed' : 'accepted';
     } catch {
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()
