@@ -3,6 +3,7 @@ import {
   getAvailableModels,
   getModelInfo,
   getModelInfoUnfiltered,
+  isCuratedOutModel,
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
@@ -1660,6 +1661,110 @@ describe('Model Service', () => {
 
       expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
       expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
+    });
+  });
+
+  describe('isCuratedOutModel', () => {
+    it('reports a cached model excluded by the provider curation as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('opus', 'anthropic')).toBe(true);
+    });
+
+    it('does not report a curated-in model as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(false);
+    });
+
+    it('reports a known model as curated out under an empty curation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', []);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(true);
+    });
+
+    it('preserves behavior when the provider has no configured curation', async () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('opus', 'anthropic')).toBe(false);
+    });
+
+    it('reports an unknown model as curated out under a configured curation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(true);
+    });
+
+    it('does not report an undiscovered model whose ID is a curated entry as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [
+        { id: 'sonnet' },
+        { id: 'claude-future-model' },
+      ]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(false);
+    });
+
+    it('reports a model known to a different provider as curated out under this provider allowlist', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              ...mockModels,
+              {
+                id: 'glm-5',
+                name: 'GLM 5',
+                alias: 'glm5',
+                family: 'glm',
+                provider: 'glm',
+                contextWindow: 200000,
+                description: 'GLM 5',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModel('glm-5', 'anthropic')).toBe(true);
+    });
+
+    it('reports a static-metadata model excluded by the provider curation as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      expect(isCuratedOutModel('glm-5.1', 'glm')).toBe(true);
+    });
+
+    it('does not report a curated-in static-metadata model when the provider is unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: async () => false,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      await expect(isValidModel('glm-5', 'global', 'glm')).resolves.toBe(false);
+      expect(isCuratedOutModel('glm-5', 'glm')).toBe(false);
     });
   });
 

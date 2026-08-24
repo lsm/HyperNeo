@@ -12,6 +12,7 @@ import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-fi
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { inferProviderForModel } from '../providers/registry';
 import { findInModels } from '../model-service';
 
 export function buildTitleGenerationPrompt(messageText: string): string {
@@ -1017,6 +1018,15 @@ export class SessionLifecycle {
     requestedModel?: string,
     explicitProvider?: string
   ): Promise<{ id: string; provider?: string }> {
+    if (requestedModel && explicitProvider) {
+      const { isCuratedOutModel } = await import('../model-service');
+      if (isCuratedOutModel(requestedModel, explicitProvider)) {
+        throw new Error(
+          `Model '${requestedModel}' is curated out for provider '${explicitProvider}' and cannot be used for a new session`
+        );
+      }
+    }
+
     try {
       const { getAvailableModels } = await import('../model-service');
       const availableModels = getAvailableModels('global');
@@ -1065,6 +1075,15 @@ export class SessionLifecycle {
     }
 
     const fallbackModel = requestedModel || this.config.defaultModel;
+    if (requestedModel && fallbackModel === requestedModel) {
+      const providerId = explicitProvider ?? inferProviderForModel(requestedModel);
+      const { isCuratedOutModel } = await import('../model-service');
+      if (isCuratedOutModel(requestedModel, providerId)) {
+        throw new Error(
+          `Model '${requestedModel}' is curated out for provider '${providerId}' and cannot be used for a new session`
+        );
+      }
+    }
     return { id: fallbackModel };
   }
 }
