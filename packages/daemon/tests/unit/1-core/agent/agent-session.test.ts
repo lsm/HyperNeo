@@ -5760,7 +5760,7 @@ describe('AgentSession', () => {
     ): Promise<{ db: Database; queue: MessageQueue; outcome: unknown }> {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
-      if (row.provider === 'acp') session.config.provider = 'acp';
+      session.config.provider = row.provider;
       db.createSession(session);
       const repo = db.getSDKMessageRepo();
       if (row.delivery !== 'missing') {
@@ -5859,6 +5859,36 @@ describe('AgentSession', () => {
         expected: 'aborted',
       },
       {
+        name: 'superseded claim aborts at waiting_for_input before the status ladder',
+        status: 'waiting_for_input',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
+        name: 'superseded claim aborts at rate_limit_cooldown before the status ladder',
+        status: 'rate_limit_cooldown',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
+        name: 'superseded claim aborts at interrupted before the status ladder',
+        status: 'interrupted',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'superseded',
+        expected: 'aborted',
+      },
+      {
         name: 'queued parks regardless of delivery validity, live query, ACP provider, and pending steer',
         status: 'queued',
         delivery: 'consumed',
@@ -5909,6 +5939,16 @@ describe('AgentSession', () => {
         expected: 'promote',
       },
       {
+        name: 'waiting_for_input promotes ahead of ACP pending ownership',
+        status: 'waiting_for_input',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
         name: 'rate_limit_cooldown promotes through the fallback',
         status: 'rate_limit_cooldown',
         delivery: 'enqueued',
@@ -5919,12 +5959,32 @@ describe('AgentSession', () => {
         expected: 'promote',
       },
       {
+        name: 'rate_limit_cooldown promotes ahead of ACP pending ownership',
+        status: 'rate_limit_cooldown',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
         name: 'interrupted promotes through the fallback',
         status: 'interrupted',
         delivery: 'enqueued',
         queryPromise: 'present',
         provider: 'anthropic',
         pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'interrupted promotes ahead of ACP pending ownership',
+        status: 'interrupted',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
         claimGuard: 'held',
         expected: 'promote',
       },
@@ -5967,6 +6027,26 @@ describe('AgentSession', () => {
         pending: false,
         claimGuard: 'held',
         expected: 'promote',
+      },
+      {
+        name: 'processing promotes an absent-query ACP steer ahead of ownership',
+        status: 'processing',
+        delivery: 'enqueued',
+        queryPromise: 'absent',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'processing aborts an invalid ACP steer ahead of ownership',
+        status: 'processing',
+        delivery: 'consumed',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'aborted',
       },
       {
         name: 'ACP with an already-pending steer returns awaiting_acceptance without admitting a fresh feed',
@@ -6133,7 +6213,8 @@ describe('AgentSession', () => {
           'Steer target query ended before the SDK consumed the steer'
         );
         expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
-        expect(queue.size()).toBe(1);
+        expect(queue.hasPendingOrClaimed(steerUuid)).toBe(true);
+        expect(queue.hasYielded(steerUuid)).toBe(false);
       } finally {
         db.close();
       }
