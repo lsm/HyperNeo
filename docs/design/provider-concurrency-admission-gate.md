@@ -194,9 +194,13 @@ title generation runs its own SDK query outside the message pipeline
 sessions on a saturated account would otherwise each fire a title query the
 gate never sees. Re-flagging and admission are two separate rules:
 
-- **Re-flag** happens only after the granted delivery's probe turn completes
-  cleanly (not at promotion, which happens while the provider is still
-  probing), when the session still needs a title.
+- **Re-flag** happens after **any successful delivery whose queueing suppressed
+  title generation** — the granted delivery's clean probe turn, but equally an
+  ordinary turn from a provider-change re-admission onto an already-open
+  account (which never becomes a probe); keying only to probe turns would leave
+  migrated sessions untitled forever. (Not at promotion, which happens while
+  the provider is still probing; and the title job's own consult still
+  applies.) Re-flag when the session still needs a title.
 - **The title job has its own admission interpreter.** Title generation is
   lowest-priority background work: it admits **only when the account is fully
   open — not saturated and not probing** — and never holds or competes for a
@@ -215,7 +219,15 @@ gate never sees. Re-flagging and admission are two separate rules:
   title request can be the call that trips the cap, and the registry must learn
   it. This keeps background titling strictly behind the user-visible drain:
   chat deliveries consume grants and wake each other; title jobs wait for full
-  openness. This is the
+  openness. **The same interpreter covers the Space background provider
+  queries** — `evolution-conversation-analysis-service.ts:289-296`,
+  `evolution-episode-service.ts:754-761`, and `llm-workflow-selector.ts:56-61`
+  each invoke the SDK directly on the configured Space/default provider: they
+  defer while their effective account is saturated or probing (no grant
+  competition — same fully-open-only rule as titles) and classify/report their
+  failures via `reportLimitError`. These four surfaces (titles + the three
+  Space jobs) are v1's roster of out-of-pipeline provider callers; any new
+  direct `query(...)` caller joins them by convention. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -432,8 +444,14 @@ primitives #2661/#2664 shipped — **not** the watchdog's trip gate (whose
 `give-up`/`surface-billing` arms encode episode-retry semantics the registry must
 not inherit):
 
-- `assessment.billingTerminal` → **do not arm** (no `untilMs` exists; the session
-  watchdog owns surfacing the manual-retry pause).
+- `assessment.billingTerminal` → arms a **non-timed `closed` state** at provider
+  scope: no `untilMs` exists (the session watchdog still owns surfacing the
+  manual-retry pause), but leaving the registry open would let every sibling
+  keep issuing doomed calls to an exhausted account — contrary to Decision 2's
+  all-limits-arm rule. `closed` admits nothing and clears only on a
+  credential/account change (the same re-admission hooks as provider changes);
+  it has no probe and no ladder. This reconciles the old "do not arm" exception
+  with the provider-wide admission objective.
 - `resetAtMs` present (bounded by `MAX_RESET_HORIZON_MS`, the same check
   `decideRateLimitTrip` makes) → `untilMs = cooldownFromReset(resetAtMs).retryAtMs`
   (`limit-error-classifier.ts:185-194`). Authoritative: nothing clears it early.
@@ -559,7 +577,12 @@ longer ladder step for no reason. Mirrors the watchdog's
   (`D/src/lib/agent/query-mode-handler.ts:39-108`) is *not* the wake path. The
   queue arm also stamps the row with a **`queue_reason` marker** — a new nullable
   `queue_reason` column on `sdk_messages` (`'provider_saturated'` when queued by
-  this gate, NULL otherwise), one migration. The existing `origin` column cannot
+  this gate, NULL otherwise), one migration — and **registration carries the
+  saturation episode token the decision read**: if a clear lands between the
+  consult and the insert/register (the clear sees no registration and opens the
+  provider), the token no longer matches at registration and the row
+  immediately re-admits instead of waiting for a wake that already fired.
+  Interleaving pinned in the test plan. The existing `origin` column cannot
   carry it: the schema constrains `origin` to `NULL | 'human' | 'system'`
   (`D/src/storage/schema/index.ts:199`), so a new value would fail the CHECK, and
   overloading it would discard the row's human/system semantics anyway.
@@ -568,21 +591,21 @@ longer ladder step for no reason. Mirrors the watchdog's
   (`D/src/lib/internal-event-bus.ts:116-135`), while session handlers are
   subscribed under their session id — so the registry does **not** publish one
   provider-wide event (it would land in `__global__` and reach zero per-session
-  subscribers). When saturation clears, the registry enumerates its registered
-  session ids and publishes `provider.concurrency.open {sessionId, providerId}`
-  **once per registered session**; `event-subscription-setup.ts` (the wiring that
-  binds `query.trigger` at `:103-110`) subscribes each session, and the handler
-  re-runs the **full P1 admission per registered uuid** — manual-mode gate
-  included: a session switched to manual after queueing keeps its registrations
-  deferred and retained, and drain selection **scans past retained entries**
-  (a skipped manual row consumes neither the successor grant nor the wake; the
-  earliest *eligible* entry is selected) — then promotes through the existing
-  per-uuid promotion
-  path (the mechanism behind `session.messages.promotePending`,
-  `session-handlers.ts:1126-1182`: deferred → enqueued → delivery job). A single
-  `__global__` subscriber enumerating the registry is the equivalent alternative;
-  per-session publish is chosen because the registry already holds exactly that
-  set.
+  subscribers). **The wake has exactly one recipient: the session of the
+  grant-bound FIFO identity** (below) — with a single outstanding grant,
+  waking every registered session would load inactive sessions and scan their
+  queues for a grant none of them holds, and the per-session broadcast from
+  earlier drafts contradicted the mint-bound contract. The registry publishes
+  `provider.concurrency.open {sessionId, providerId, messageUuid}` for that
+  session only; `event-subscription-setup.ts` (the wiring that binds
+  `query.trigger` at `:103-110`) subscribes each session, and the handler
+  re-runs the **full P1 admission for the bound uuid only** — manual-mode gate
+  included: if the bound row's session has switched to manual, the row is
+  retained and the grant re-binds to the next eligible identity (scan-past,
+  same as drain selection) — then promotes through the existing per-uuid
+  promotion path (the mechanism behind `session.messages.promotePending`,
+  `session-handlers.ts:1126-1182`: deferred → enqueued → delivery job; the
+  enqueued wake arm below for parked rows).
 - **Probing release — one probe grant, carried end-to-end, pushing the drain.**
   After **any** clear (probe rule, timer expiry, or startup reconstruction), the
   provider mints a single **probe grant — bound at mint time, not by race**:
@@ -804,7 +827,12 @@ by pre-existing suites):
    provider-wide payload reaches zero per-session subscribers;
    `internal-event-bus.ts:116-135`); **probe grant lifecycle** — mint at first
    admitting consult, honored by downstream consults for the same delivery
-   (the end-to-end pass that prevents the self-deadlock), **bound at mint to
+   (the end-to-end pass that prevents the self-deadlock), registration is
+   episode-token-conditional (a clear landing between consult and register
+   re-admits immediately), the wake reaches only the bound identity's session
+   (manual-mode bound row → retain and re-bind next eligible), billing-terminal
+   arms the non-timed closed state cleared only by credential change,
+   **bound at mint to
    the FIFO head** (an unbound A2 cannot steal B1's grant), batching disabled
    while saturated-or-probing (a granted delivery is single-identity),
    consumed at prompt yield, ended by its own turn's clean completion (a second pre-arm completion
@@ -851,8 +879,12 @@ by pre-existing suites):
    clean probe turn); the title-job interpreter — denial at
    `handleSessionTitleGeneration` parks at the saturation deadline (probe tick
    while probing), no grant is held or consumed, admission only when fully
-   open, the re-enqueued job succeeds once open, and title-query failures are
+   open, the re-enqueued job succeeds once open, the title re-flag fires after
+   any successful delivery that suppressed it (probe or provider-change
+   migration alike), title-query failures are
    classified and reported with the title query's own effective account key,
+   and the Space background queries (evolution analysis/episode,
+   llm-workflow-selector) defer while saturated and report their limits,
    registry registered; unsaturated → outbox path byte-for-byte today's behavior
    (PR1 pins).
 5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
