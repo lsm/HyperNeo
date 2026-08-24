@@ -1257,8 +1257,23 @@ describe('Session RPC Handlers — session.update model curation', () => {
     expect(updateSession).toHaveBeenCalledWith('s1', { metadata: { title: 'Pinned' } });
   });
 
-  it('allows an unknown model write, mirroring create-time passthrough', async () => {
+  it('rejects an unknown model write under a curated provider, mirroring create', async () => {
     getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(
+      handler!({ sessionId: 's1', config: { model: 'claude-future-model' } }, {})
+    ).rejects.toThrow("Model 'claude-future-model' is curated out for provider 'anthropic'");
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows an unknown model write whose ID is a curated entry', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [
+      { id: 'sonnet' },
+      { id: 'claude-future-model' },
+    ]);
     setModelsCache(new Map([['global', anthropicModels]]));
 
     const handler = messageHubData.handlers.get('session.update');

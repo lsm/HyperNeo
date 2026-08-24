@@ -952,7 +952,11 @@ export function isCuratedOutModel(
       idOrAlias
     );
 
-  return knownModel !== undefined && !curatedIds.has(knownModel.id);
+  if (knownModel) {
+    return !curatedIds.has(knownModel.id);
+  }
+
+  return !curatedIds.has(idOrAlias);
 }
 
 export async function resolveModelAlias(

@@ -646,6 +646,7 @@ describe('SessionLifecycle', () => {
     describe('model curation', () => {
       afterEach(() => {
         getProviderRegistry().setCuratedModels('kimi', undefined);
+        getProviderRegistry().setCuratedModels('anthropic', undefined);
       });
 
       it('rejects a curated-out model requested under an explicit provider', async () => {
@@ -673,8 +674,18 @@ describe('SessionLifecycle', () => {
         );
       });
 
-      it('keeps unknown-model passthrough under a curated provider', async () => {
+      it('rejects an unknown model under a curated provider', async () => {
         getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await expect(
+          lifecycle.create({ config: { provider: 'kimi', model: 'totally-custom-model-x' } })
+        ).rejects.toThrow("Model 'totally-custom-model-x' is curated out for provider 'kimi'");
+
+        expect(createdSessions).toEqual([]);
+      });
+
+      it('creates with an undiscovered model whose ID is a curated entry', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'totally-custom-model-x' }]);
 
         await lifecycle.create({ config: { provider: 'kimi', model: 'totally-custom-model-x' } });
 
@@ -715,19 +726,17 @@ describe('SessionLifecycle', () => {
           );
         });
 
-        it('keeps unknown-model passthrough without a provider', async () => {
+        it('rejects an unknown model without a provider under a curated inferred provider', async () => {
           getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
           setModelsCache(new Map());
 
-          await lifecycle.create({ config: { model: 'totally-custom-model-x' } });
-
-          expect(mockDb.createSession).toHaveBeenCalledWith(
-            expect.objectContaining({
-              config: expect.objectContaining({
-                model: 'totally-custom-model-x',
-              }),
-            })
+          await expect(
+            lifecycle.create({ config: { model: 'totally-custom-model-x' } })
+          ).rejects.toThrow(
+            "Model 'totally-custom-model-x' is curated out for provider 'anthropic'"
           );
+
+          expect(createdSessions).toEqual([]);
         });
       });
     });

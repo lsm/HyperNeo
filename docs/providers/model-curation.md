@@ -42,16 +42,19 @@ and `session.update` rejects a config write — changing `config.model`,
 `config.provider`, or both — that would leave the session on a curated-out
 model/provider pair, including the provider-only case where the kept model is
 curated out for the incoming provider. Both gates use `isCuratedOutModel`
-(`packages/daemon/src/lib/model-service.ts`): a model counts as curated-out
-only when the provider has a configured curation, the model resolves through
-that provider's unfiltered raw cache or unfiltered static metadata, and the
-resolved model's canonical ID is not in the curated list. The check reads the
-curation list directly rather than going through `isValidModel`, so provider
-availability (for example a missing API key) never flips a curated-in model
-into curated-out. A model the daemon does not know at all (for example an
-arbitrary model ID for a custom provider) is not treated as curated-out —
-explicit-provider passthrough for unknown models is unchanged, with or
-without curation.
+(`packages/daemon/src/lib/model-service.ts`): a configured curation is an
+allowlist. A model counts as curated-out when the provider has a configured
+curation and the model is not in it — resolved through the provider's
+unfiltered raw cache or unfiltered static metadata when known (so provider
+availability, for example a missing API key, never flips a curated-in model
+into curated-out), and by the requested ID itself when the daemon does not
+know the model at all. An undiscovered model whose ID is a curated entry is
+therefore allowed, while any other unknown ID under a curated provider is
+rejected — this also covers providers whose catalogs are synthesized from
+the curated list (ACP), where a model removed from curation would otherwise
+become unknowable. Without a configured curation nothing is gated, so
+arbitrary model IDs for custom providers keep the explicit-provider
+passthrough unchanged.
 
 `session.update` additionally permits rewriting the session's own current
 model and provider verbatim, so read-modify-write clients round-tripping a

@@ -1695,15 +1695,26 @@ describe('Model Service', () => {
       expect(isCuratedOutModel('opus', 'anthropic')).toBe(false);
     });
 
-    it('does not report an unknown model as curated out', async () => {
+    it('reports an unknown model as curated out under a configured curation', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(true);
+    });
+
+    it('does not report an undiscovered model whose ID is a curated entry as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [
+        { id: 'sonnet' },
+        { id: 'claude-future-model' },
+      ]);
       setModelsCache(new Map([['global', mockModels]]));
 
       expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(false);
     });
 
-    it('does not report a model known to a different provider as curated out', async () => {
+    it('reports a model known to a different provider as curated out under this provider allowlist', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
       setModelsCache(
@@ -1728,7 +1739,7 @@ describe('Model Service', () => {
         ])
       );
 
-      expect(isCuratedOutModel('glm-5', 'anthropic')).toBe(false);
+      expect(isCuratedOutModel('glm-5', 'anthropic')).toBe(true);
     });
 
     it('reports a static-metadata model excluded by the provider curation as curated out', async () => {
