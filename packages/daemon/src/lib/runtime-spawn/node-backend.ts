@@ -51,7 +51,11 @@ export function createNodeSpawn(): SpawnFn {
         resolve(code ?? -1);
       };
       child.on('exit', (code) => settle(code));
-      child.on('error', () => settle(null));
+      child.on('error', () => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        settle(null);
+      });
     });
 
     return {
