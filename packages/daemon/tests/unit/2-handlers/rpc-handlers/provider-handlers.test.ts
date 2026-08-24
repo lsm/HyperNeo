@@ -699,6 +699,8 @@ describe('Provider RPC handlers', () => {
         kind: 'built_in',
         authType: 'none',
       });
+      const cachedModels = [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo];
+      setModelsCache(new Map([['global', cachedModels]]));
       const handlers = setup();
 
       await handlers.get('providers.setDefault')!({ id: b.id }, {});
@@ -707,6 +709,7 @@ describe('Provider RPC handlers', () => {
       expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
         sessionId: 'global',
       });
+      expect(getModelsCache().get('global')).toEqual(cachedModels);
     });
   });
 

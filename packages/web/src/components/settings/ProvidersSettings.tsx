@@ -235,7 +235,7 @@ export function ProvidersSettings() {
       }
     }
     const unsub = hub.onEvent('providers.changed', () => {
-      loadProvidersRef.current(false);
+      loadProvidersRef.current(!hasLoadedProvidersRef.current);
     });
     return () => {
       unsub();

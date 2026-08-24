@@ -340,6 +340,38 @@ describe('ProvidersSettings', () => {
     expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps pre-load event failures in the foreground error state', async () => {
+    connectionState.value = 'connected';
+    let resolveInitialLoad: (value: { providers: ProviderRecord[] }) => void;
+    mockListProviders
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitialLoad = resolve;
+          })
+      )
+      .mockRejectedValueOnce(new Error('handler error'))
+      .mockRejectedValueOnce(new Error('retry error'));
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(1));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(3);
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('Failed to load providers.');
+      expect(container.textContent).toContain('Retry');
+    });
+    resolveInitialLoad!({ providers: [] });
+  });
+
   it('keeps an open provider editor mounted through an event refresh retry', async () => {
     connectionState.value = 'connected';
     mockListProviders
