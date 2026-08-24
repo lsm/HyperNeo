@@ -804,8 +804,10 @@ by pre-existing suites):
    provider-wide payload reaches zero per-session subscribers;
    `internal-event-bus.ts:116-135`); **probe grant lifecycle** — mint at first
    admitting consult, honored by downstream consults for the same delivery
-   (the end-to-end pass that prevents the self-deadlock), consumed at query
-   start, ended by its own query's clean completion (a second pre-arm completion
+   (the end-to-end pass that prevents the self-deadlock), **bound at mint to
+   the FIFO head** (an unbound A2 cannot steal B1's grant), batching disabled
+   while saturated-or-probing (a granted delivery is single-identity),
+   consumed at prompt yield, ended by its own turn's clean completion (a second pre-arm completion
    arriving mid-probe must NOT release), re-armed by its 429, and released by
    non-limit termination; the lease applies only to an unconsumed grant (a
    running probe is never lease-expired into stacking concurrent probes); a
@@ -846,7 +848,8 @@ by pre-existing suites):
    clean probe turn); the title-job interpreter — denial at
    `handleSessionTitleGeneration` parks at the saturation deadline (probe tick
    while probing), no grant is held or consumed, admission only when fully
-   open, and the re-enqueued job succeeds once open,
+   open, the re-enqueued job succeeds once open, and title-query failures are
+   classified and reported with the title query's own effective account key,
    registry registered; unsaturated → outbox path byte-for-byte today's behavior
    (PR1 pins).
 5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
