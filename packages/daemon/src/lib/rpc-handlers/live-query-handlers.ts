@@ -2475,70 +2475,47 @@ selected_ids AS (
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
 ),
--- Visible window: the newest N selected rows, oldest-first for rendering.
--- Rows whose UI state must survive regardless of age are pinned OUTSIDE the
--- limit (#2900 review): unresolved hyperneo_action cards (the task pane's
--- resolution controls) and user deliveries still in flight (queued/processing/
--- retrying badges), which sdk_rows deliberately admits beyond the turn cutoff.
-windowed_rows AS (
+-- Visible window: the newest N selected rows, oldest-first for rendering, with
+-- rows whose UI state must survive regardless of age pinned OUTSIDE the limit
+-- (#2900 review): the newest row of every session (a quiet agent in a busy
+-- multi-agent task must not vanish from the thread), unresolved hyperneo_action
+-- cards (the task pane's resolution controls), and user deliveries still in
+-- flight (queued/processing/retrying badges, which sdk_rows deliberately admits
+-- beyond the turn cutoff).
+ranked_rows AS (
   SELECT
-    j.id,
-    j.sessionId,
-    j.kind,
-    j.role,
-    j.label,
-    j.nodeExecutionId,
-    j.taskId,
-    j.taskTitle,
-    j.messageType,
-    j.content,
-    j.origin,
-    j.deliveryState,
-    j.createdAt,
-    j.turnIndex,
-    j.parentToolUseId,
-    j.insOrder
+    j.id AS id,
+    j.sessionId AS sessionId,
+    j.kind AS kind,
+    j.role AS role,
+    j.label AS label,
+    j.nodeExecutionId AS nodeExecutionId,
+    j.taskId AS taskId,
+    j.taskTitle AS taskTitle,
+    j.messageType AS messageType,
+    j.content AS content,
+    j.origin AS origin,
+    j.deliveryState AS deliveryState,
+    j.createdAt AS createdAt,
+    j.turnIndex AS turnIndex,
+    j.parentToolUseId AS parentToolUseId,
+    j.insOrder AS insOrder,
+    ROW_NUMBER() OVER (ORDER BY j.createdAt DESC, j.insOrder DESC) AS overallRank,
+    ROW_NUMBER() OVER (
+      PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
+    ) AS sessionRank,
+    (
+      (
+        j.messageType = 'hyperneo_action'
+        AND COALESCE(
+          CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
+          1
+        ) = 0
+      )
+      OR (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
+    ) AS pinned
   FROM joined j
   JOIN selected_ids s ON s.id = j.id
-  WHERE NOT (
-    j.messageType = 'hyperneo_action'
-    AND COALESCE(
-      CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
-      1
-    ) = 0
-  )
-    AND NOT (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
-  ORDER BY j.createdAt DESC, j.insOrder DESC
-  LIMIT ?
-),
-pinned_rows AS (
-  SELECT
-    j.id,
-    j.sessionId,
-    j.kind,
-    j.role,
-    j.label,
-    j.nodeExecutionId,
-    j.taskId,
-    j.taskTitle,
-    j.messageType,
-    j.content,
-    j.origin,
-    j.deliveryState,
-    j.createdAt,
-    j.turnIndex,
-    j.parentToolUseId,
-    j.insOrder
-  FROM joined j
-  JOIN selected_ids s ON s.id = j.id
-  WHERE (
-    j.messageType = 'hyperneo_action'
-    AND COALESCE(
-      CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
-      1
-    ) = 0
-  )
-    OR (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
 )
 SELECT
   id,
@@ -2557,11 +2534,10 @@ SELECT
   turnIndex,
   parentToolUseId,
   insOrder
-FROM (
-  SELECT * FROM windowed_rows
-  UNION ALL
-  SELECT * FROM pinned_rows
-)
+FROM ranked_rows
+WHERE overallRank <= ?
+  OR sessionRank = 1
+  OR pinned
 ORDER BY createdAt ASC, insOrder ASC
 `.trim();
 

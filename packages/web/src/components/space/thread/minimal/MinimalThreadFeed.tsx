@@ -2205,15 +2205,6 @@ function SystemTurn({
         <span class="text-[11px] text-slate-500">{formatClock(turn.createdAt)}</span>
       </div>
       <div class="mt-1 text-xs text-slate-200">{turn.body}</div>
-      {turn.isTruncated && onExpandMessage ? (
-        <button
-          type="button"
-          class="mt-1.5 text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-200"
-          onClick={() => onExpandMessage(turn.messageId as string | number)}
-        >
-          Show full message
-        </button>
-      ) : null}
     </div>
   );
 
@@ -2240,6 +2231,15 @@ function SystemTurn({
       ) : (
         <div data-testid="minimal-thread-system">{card}</div>
       )}
+      {turn.isTruncated && onExpandMessage ? (
+        <button
+          type="button"
+          class="mt-1.5 text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-200"
+          onClick={() => onExpandMessage(turn.messageId as string | number)}
+        >
+          Show full message
+        </button>
+      ) : null}
     </div>
   );
 }

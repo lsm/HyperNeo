@@ -4924,6 +4924,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
     test('compact window keeps unresolved action rows and in-flight deliveries when they age out', () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+      insertSession('quiet-agent-session', 'worker', '{"status":"processing"}');
+      sessionTaskIds.set('quiet-agent-session', taskId);
 
       insertSdkMessageAt(
         'action-old-unresolved',
@@ -4960,6 +4962,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
         insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
       }
+      insertSdkMessageAt('quiet-only-row', 'quiet-agent-session', now + 500, 'assistant');
 
       backfillConversationTurns();
       const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
@@ -4968,8 +4971,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const ids = rows.map((r) => r.id);
       expect(ids).toContain('action-old-unresolved');
       expect(ids).toContain('queued-old');
+      expect(ids).toContain('quiet-only-row');
       expect(ids).not.toContain('action-old-resolved');
-      expect(rows.length).toBe(5);
+      expect(rows.length).toBe(6);
     });
 
     test('compact rows expose contentBytes and contentTruncated for oversized messages', () => {
