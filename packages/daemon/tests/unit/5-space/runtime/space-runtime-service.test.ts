@@ -2035,9 +2035,7 @@ describe('SpaceRuntimeService', () => {
           ownerCalls += 1;
           return ownerCalls >= 3 ? ownerB : ownerA;
         }),
-        getById: mock((id: string) =>
-          buildLongHorizonAgent({ id, handle: id, displayName: id })
-        ),
+        getById: mock((id: string) => buildLongHorizonAgent({ id, handle: id, displayName: id })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const goalService = {

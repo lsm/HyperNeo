@@ -1288,14 +1288,12 @@ export class SpaceRuntimeService {
     if (!repo || !this.config.enableGoalOutcomeWake) return;
     try {
       for (const notification of repo.listPending()) {
-        try {
-          if (!(await this.isSpaceWakeable(notification.spaceId))) continue;
-          await this.deliverGoalOutcomeWake(notification);
-        } catch (err) {
+        if (!(await this.isSpaceWakeable(notification.spaceId))) continue;
+        void this.deliverGoalOutcomeWake(notification).catch((err) => {
           log.warn(
             `Outcome wake recovery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
           );
-        }
+        });
       }
     } catch (err) {
       log.error('SpaceRuntimeService: recoverPendingOutcomeNotifications failed:', err);
