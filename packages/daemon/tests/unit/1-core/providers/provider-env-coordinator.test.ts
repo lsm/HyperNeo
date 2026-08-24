@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  ProviderEnvCoordinator,
-  type ProviderEnvLeaseToken,
-} from '../../../../src/lib/providers/provider-env-coordinator';
+import { ProviderEnvCoordinator } from '../../../../src/lib/providers/provider-env-coordinator';
 
 const OWNER = 'query-runner';
 const READER = 'anthropic.isAvailable';
@@ -36,12 +33,13 @@ describe('ProviderEnvCoordinator lease', () => {
     const c = newCoordinator();
     const token = await c.acquire(OWNER);
     expect(c.isLeaseHeld()).toBe(true);
-    expect(c.activeToken()).toBe(token);
+    expect(c.activeHolder()).toEqual({ id: token.id, enrolledAs: OWNER });
     const foreign = await newCoordinator().acquire(OWNER);
     expect(() => c.release(foreign)).toThrow('non-holder');
+    await expect(c.acquire(READER, c.activeHolder())).rejects.toThrow('stale lease token');
     c.release(token);
     expect(c.isLeaseHeld()).toBe(false);
-    expect(c.activeToken()).toBeNull();
+    expect(c.activeHolder()).toBeNull();
   });
 
   it('queues a second acquirer until the holder releases, FIFO across waiters', async () => {
@@ -93,18 +91,19 @@ describe('ProviderEnvCoordinator reentrancy', () => {
 
   it('keeps the lease held until the outermost release', async () => {
     const c = newCoordinator();
+    const outer = await c.acquire(OWNER);
+    const nested = await c.acquire(READER, outer);
+    c.release(nested);
+    expect(c.isLeaseHeld()).toBe(true);
     let waiterAcquired = false;
-    let waiter: Promise<ProviderEnvLeaseToken> | undefined;
-    await c.runWithLease(OWNER, async () => {
-      await c.runWithLease(READER, () => {});
-      waiter = c.acquire(READER).then((t) => {
-        waiterAcquired = true;
-        return t;
-      });
-      expect(await settledWithinTurns(() => waiterAcquired)).toBe(false);
+    const waiter = c.acquire(READER).then((t) => {
+      waiterAcquired = true;
+      return t;
     });
+    expect(await settledWithinTurns(() => waiterAcquired)).toBe(false);
+    c.release(outer);
+    c.release(await waiter);
     expect(waiterAcquired).toBe(true);
-    c.release(await waiter!);
     expect(c.isLeaseHeld()).toBe(false);
   });
 

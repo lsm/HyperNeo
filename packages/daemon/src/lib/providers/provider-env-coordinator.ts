@@ -40,8 +40,9 @@ export class ProviderEnvCoordinator {
     return this.current !== null;
   }
 
-  activeToken(): ProviderEnvLeaseToken | null {
-    return this.current?.token ?? null;
+  activeHolder(): ProviderEnvLeaseToken | null {
+    const token = this.current?.token ?? null;
+    return token ? { id: token.id, enrolledAs: token.enrolledAs } : null;
   }
 
   async acquire(
