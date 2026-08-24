@@ -796,6 +796,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     startupPhase('HTTP/WS server bound — createDaemonApp init complete');
+    const openMessageSearchMergeGate = (): void => db.startMessageSearchMerges();
+    void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });

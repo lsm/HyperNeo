@@ -578,6 +578,10 @@ export class Database {
     return this.core.getDbPath();
   }
 
+  startMessageSearchMerges(): void {
+    this.core.startMessageSearchMerges();
+  }
+
   getJobQueueRepo(): JobQueueRepository {
     return this.jobQueueRepo;
   }
