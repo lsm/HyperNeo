@@ -1046,6 +1046,33 @@ export function isCuratedOutModel(
   return !curatedIds.has(idOrAlias);
 }
 
+export function isModelExcludedByCuration(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) {
+    return false;
+  }
+
+  const curatedIds = new Set(curatedModels.map((model) => model.id));
+
+  const rawModels = readCachedModels(cacheKey);
+  const knownModel =
+    (rawModels &&
+      findInModels(
+        rawModels.filter((model) => model.provider === providerId),
+        idOrAlias
+      )) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+
+  return !knownModel || !curatedIds.has(knownModel.id);
+}
+
 export async function resolveModelAlias(
   idOrAlias: string,
   cacheKey: string,

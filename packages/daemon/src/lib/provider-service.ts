@@ -256,7 +256,10 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     let providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
-    if (provider && isCuratedOutModel(providerModelId, providerId)) {
+    if (
+      provider &&
+      !(await this.preferVisibleCuratedModel(providerId, provider, providerModelId))
+    ) {
       const visibleModelId = await this.getVisibleProviderDefaultModelId(providerId, provider);
       if (!visibleModelId) return null;
       providerModelId = visibleModelId;

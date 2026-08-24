@@ -36,7 +36,7 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { Logger } from '../logger';
-import { getSessionModelInfo, isCuratedOutModel } from '../model-service';
+import { getSessionModelInfo, isModelExcludedByCuration } from '../model-service';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -299,7 +299,7 @@ export class QueryOptionsBuilder {
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
-      if (isCuratedOutModel(config.fallbackModel, providerId)) {
+      if (isModelExcludedByCuration(config.fallbackModel, providerId)) {
         this.logger.warn(
           `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
         );
@@ -313,6 +313,8 @@ export class QueryOptionsBuilder {
         sdkFallbackModel = fallbackContext.getSdkModelId();
       }
     }
+
+    const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
 
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
@@ -381,10 +383,12 @@ export class QueryOptionsBuilder {
 
       canUseTool: this.canUseTool,
       onUserDialog: async (request) => {
+        const liveFallbackModel = this.ctx.session.config.fallbackModel;
         if (
           request.dialogKind === 'refusal_fallback_prompt' &&
-          config.fallbackModel &&
-          !isCuratedOutModel(config.fallbackModel, providerId)
+          liveFallbackModel &&
+          liveFallbackModel === configuredFallbackModel &&
+          !isModelExcludedByCuration(liveFallbackModel, providerId)
         ) {
           return { behavior: 'completed', result: { continue: true } };
         }
@@ -553,7 +557,7 @@ export class QueryOptionsBuilder {
       }
 
       const fallbackModel = this.ctx.session.config.fallbackModel;
-      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
+      if (fallbackModel && !isModelExcludedByCuration(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);

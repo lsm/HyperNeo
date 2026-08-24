@@ -4,6 +4,7 @@ import {
   getModelInfo,
   getModelInfoUnfiltered,
   isCuratedOutModel,
+  isModelExcludedByCuration,
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
@@ -1765,6 +1766,25 @@ describe('Model Service', () => {
 
       await expect(isValidModel('glm-5', 'global', 'glm')).resolves.toBe(false);
       expect(isCuratedOutModel('glm-5', 'glm')).toBe(false);
+    });
+  });
+
+  describe('isModelExcludedByCuration', () => {
+    it('excludes curated-out models, catalog-missing models, and unknown ids under a curation', () => {
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isModelExcludedByCuration('opus', 'anthropic')).toBe(true);
+      expect(isModelExcludedByCuration('ghost-model', 'anthropic')).toBe(true);
+      expect(isModelExcludedByCuration('sonnet', 'anthropic')).toBe(false);
+      expect(isModelExcludedByCuration('opus', 'glm')).toBe(false);
+    });
+
+    it('is a no-op when the provider has no configured curation', () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isModelExcludedByCuration('opus', 'anthropic')).toBe(false);
+      expect(isModelExcludedByCuration('ghost-model', 'anthropic')).toBe(false);
     });
   });
 

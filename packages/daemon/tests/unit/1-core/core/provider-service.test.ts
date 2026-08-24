@@ -596,6 +596,17 @@ describe('ProviderService', () => {
       expect(model).toBe('translated-1');
     });
 
+    it('falls back to a visible curated model when a listed title override leaves the catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-turbo' }, { id: 'title-1' }]);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-9');
+
+      expect(model).toBe('translated-1');
+    });
+
     it('returns null when curation is explicitly empty', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

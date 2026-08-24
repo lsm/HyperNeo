@@ -143,6 +143,18 @@ describe('QueryOptionsBuilder', () => {
         expect(options.supportedDialogKinds).toBeUndefined();
       });
 
+      it('drops a fallback that stays curated-listed but is missing from the model catalog', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
+        try {
+          mockSession.config.fallbackModel = 'ghost-fallback';
+          const options = await builder.build();
+          expect(options.fallbackModel).toBeUndefined();
+          expect(options.supportedDialogKinds).toBeUndefined();
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
+
       it('keeps a fallback model that survives curation', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
         mockSession.config.fallbackModel = 'haiku';
@@ -183,6 +195,19 @@ describe('QueryOptionsBuilder', () => {
         } finally {
           getProviderRegistry().setCuratedModels('anthropic', undefined);
         }
+      });
+
+      it('declines the refusal dialog when the session fallback changes during a turn', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        mockSession.config.fallbackModel = 'opus';
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
       });
     });
 
