@@ -359,7 +359,7 @@ describe('Provider RPC handlers', () => {
       expect(listRemoteModels).not.toHaveBeenCalled();
     });
 
-    it('preserves ACP command parity and leaves saved and cached state unchanged', async () => {
+    it('preserves ACP override parity and leaves saved and cached state unchanged', async () => {
       const fixture = `${process.execPath} ${process.cwd()}/tests/fixtures/mock-acp-server.ts`;
       const created = repo.createProvider({
         providerId: 'acp',
@@ -400,8 +400,10 @@ describe('Provider RPC handlers', () => {
       setModelsCache(new Map([['global', globalModels]]));
       const handlers = setup();
 
-      const request = { id: created.id, options: { command: `  ${fixture}  ` } };
-      const canonical = await handlers.get('providers.listRemoteModels')!(request, {});
+      const canonical = await handlers.get('providers.listRemoteModels')!(
+        { id: created.id, options: { command: `  ${fixture}  ` } },
+        {}
+      );
       const legacy = await handlers.get('providers.fetchAcpModels')!(
         { id: created.id, command: fixture },
         {}
@@ -414,6 +416,30 @@ describe('Provider RPC handlers', () => {
       expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['acp-cached']);
       expect(getModelsCache().get('global')).toEqual(globalModels);
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('uses persisted and explicit environment commands through the canonical route', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      process.env.HYPERNEO_ACP_COMMAND = 'hyperneo-env-acp-binary';
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'hyperneo-saved-acp-binary' }),
+      });
+      const handlers = setup();
+      const handler = handlers.get('providers.listRemoteModels')!;
+
+      try {
+        await expect(handler({ id: created.id }, {})).rejects.toThrow('hyperneo-saved-acp-binary');
+        await expect(handler({ id: created.id, options: { command: '' } }, {})).rejects.toThrow(
+          'hyperneo-env-acp-binary'
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
     });
   });
 
