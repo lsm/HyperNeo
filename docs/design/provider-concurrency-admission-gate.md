@@ -258,14 +258,19 @@ of `deliverInjectedMessage` all reach `ensureQueryStarted()` directly
 (`D/src/lib/agent/query-lifecycle-manager.ts:432-525`). Rather than enumerating
 them, the consult sits at **`ensureQueryStarted` itself — the common provider-start
 boundary every delivery path crosses** — with the handler-level V2 consult kept as
-the cheaper early park. A denial there has no job to park: the delivery settles
-its row back to `'deferred'` with the `queue_reason` marker and registers it (V2
-surfaces this as the recovery-pending park instead, upstream). A delivery holding
-the probe grant passes. Without the boundary consult, startup/manual pending
-replay and a Space injection that passed P2 just before a sibling armed saturation
-could still start their provider calls — voiding the enforcement claim in the
-documented rollback mode (`docs/features/message-delivery-v2.md`) and the replay
-paths alike.
+the cheaper early park. `ensureQueryStarted` today takes only an optional
+`AbortSignal`, and `deliverRowsViaMemoryQueue` calls it once before iterating a
+batch — so the boundary gains an **explicit delivery-identity parameter** (the
+message uuid / batch head the start serves): it is what names the grant holder on
+admit and the row to defer-and-register on denial, and batch callers pass their
+per-uuid identity (calling the boundary per row where they currently call it
+once). A denial there has no job to park: the delivery settles its row back to
+`'deferred'` with the `queue_reason` marker and registers it (V2 surfaces this as
+the recovery-pending park instead, upstream). A delivery holding the probe grant
+passes. Without the boundary consult, startup/manual pending replay and a Space
+injection that passed P2 just before a sibling armed saturation could still start
+their provider calls — voiding the enforcement claim in the documented rollback
+mode (`docs/features/message-delivery-v2.md`) and the replay paths alike.
 
 Together these are the backstop that makes races convergent:
 
@@ -283,12 +288,18 @@ decisions at the tail).
 
 `executeRateLimitAutoRetry` (`D/src/lib/agent/agent-session.ts:931-970`) starts a
 query directly, bypassing the message pipeline. It consults the same core; when
-saturated, it skips the start, settles the episode's row back to `'deferred'`, and
-registers it, letting the wake path re-promote. This closes the last uncoordinated
-provider-call starter. (The fallback arm — `switchAndRetryForFallback` — is exempt
-by construction: it has already switched the session's provider, and admission is
-always evaluated against the *current* `session.config.provider`, so a
-fallback-switched session escapes the saturated provider's queue on its next
+saturated, it skips the start, settles the episode's row back to `'deferred'` with
+the marker, and registers it, letting the wake path re-promote. The retry
+callback's boolean contract (started / not-started) cannot express this —
+`false` would push the watchdog into its startup-retry loop and eventually
+`startupExhausted`, `true` would `notifyResume` as though a query started — so
+the callback's result widens to `started | parked`, and `parked` makes the
+watchdog relinquish its cooldown timer without startup retries and without
+`notifyResume`: the registry now owns that row's wake. This closes the last
+uncoordinated provider-call starter. (The fallback arm — `switchAndRetryForFallback`
+— is exempt by construction: it has already switched the session's provider, and
+admission is always evaluated against the *current* `session.config.provider`, so
+a fallback-switched session escapes the saturated provider's queue on its next
 admission.)
 
 ### The pure core
@@ -353,7 +364,7 @@ id otherwise (the common case: one credential-store entry per provider).
 | `saturation` | `{ untilMs, kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch) | admission facts, wake timer |
 | `inFlight` | count per provider | `reportQueryStart` / `reportQueryEnd` (query-runner + ACP runner) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | `Map<sessionId, insertion-ordered uuid set>` (idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release, registration cleanup, provider-change re-admission |
-| `probeGrant` | `{ messageUuid, leaseUntilMs } \| null` per provider | first admitting consult after a clear; consumed at query start; released on non-limit termination or lease expiry | downstream consults (same delivery passes), probe resolution |
+| `probeGrant` | `{ messageUuid, leaseUntilMs } \| null` per provider | first admitting consult after a clear; consumed at query start; **the lease bounds only the unconsumed grant** (mint → start) — a consumed grant resolves solely on its query's termination; unconsumed-grant expiry re-mints for the next consult | downstream consults (same delivery passes), probe resolution |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
@@ -362,7 +373,9 @@ column on `sdk_messages` (migration) that makes queue linkage restart-safe.
 
 ### Saturation derivation — consuming the classifier and the ladder
 
-`reportLimitError(providerId, assessment, now)` arms saturation from an
+`reportLimitError(accountKey, assessment, now)` — the **effective
+provider-account key** of State ownership, not the bare provider id — arms
+saturation from an
 `assessLimitError` result (`LimitErrorAssessment` from
 `D/src/lib/agent/limit-error-classifier.ts:114-183`), reusing exactly the
 primitives #2661/#2664 shipped — **not** the watchdog's trip gate (whose
@@ -410,7 +423,7 @@ not inherit):
   (`fireLlmRefinement`, `rate-limit-watchdog.ts:256-317`) can upgrade an ambiguous
   ladder-armed error to a multi-hour parsed reset — but as wired it extends only
   the originating session's cooldown. The accepted refinement is forwarded to the
-  registry (`reportRefinedReset(providerId, resetAtMs)` from the same wiring that
+  registry (`reportRefinedReset(accountKey, resetAtMs)` from the same wiring that
   owns `classifyUnknownLimit`): it replaces a ladder-derived `untilMs` (never
   shortening a structured/parsed reset) and reschedules the wake timer, so sibling
   sessions are not woken into a limit the system already knows is still active.
@@ -441,14 +454,19 @@ or an ACP-cleared saturation would probe once and stay probing forever.
 within the same window produce N `reportLimitError` calls; reports arriving while
 saturated extend `untilMs` to the max but do **not** advance `charge` — otherwise
 ten concurrent 429s would jump straight to the ladder's 4-hour cap
-(`ladderIndex = min(retryCount, lastIndex)`) off one transient blip. `charge`
-advances when arming from a clear state, and resets on the **first clean
-completion observed after any clear** — probe-clear *or* timer-expiry (a
-`chargeResetArmed` flag set at clear time; the next clean completion consumes it).
-Resetting only on probe-clears would miss the common path: timer expiry clears
-first, the probe request then succeeds on an already-clear registry, and nothing
-resets — later unrelated episodes would march to the 4-hour cap. Mirrors the
-watchdog's `retryCount` / `freeWait` distinction at provider scope.
+(`ladderIndex = min(retryCount, lastIndex)`) off one transient blip. A
+**reset-bearing report upgrades a ladder episode**: it converts the active
+episode to authoritative, non-probe-clearable reset state (extending only
+`untilMs` would keep the 60-second probe clear armed against a limit now known
+to carry a reset). `charge` advances when arming from a clear state, and
+`chargeResetArmed` — set at any clear — is consumed **only by the outstanding
+probe's own clean completion**, the same identity check probe resolution uses: a
+pre-arm sibling completing after the clear must not erase the episode's charge
+before the granted probe's verdict, or a re-arm under continued saturation would
+fall back to the first ladder step instead of escalating. The timer-expiry path
+still resets: expiry clears → successor probe granted → its clean completion
+consumes the flag. Mirrors the watchdog's `retryCount` / `freeWait` distinction
+at provider scope.
 
 ### Queue and wake
 
@@ -480,34 +498,44 @@ watchdog's `retryCount` / `freeWait` distinction at provider scope.
   `__global__` subscriber enumerating the registry is the equivalent alternative;
   per-session publish is chosen because the registry already holds exactly that
   set.
-- **Probing release — one probe grant, carried end-to-end.** After **any** clear
-  (probe rule, timer expiry, or startup reconstruction), the provider mints a
-  single **probe grant**. The first admitting consult receives it, keyed by that
-  delivery's message uuid; every downstream consult for the *same* delivery —
-  the V2 claim, the V1 start, the retry — admits on the grant, so one logical
-  delivery passes all backstops instead of deadlocking against its own probing
-  state. The grant is consumed at provider query start, entering an
-  outstanding-probe state under a **bounded lease**; the probe resolves exactly
-  three ways: its query's clean completion ends probing (capacity proven — the
-  next admission is a normal admit), its classified 429 re-arms saturation, and
-  any other termination (interrupt, session destroy, non-limit error, lease
-  expiry) releases the permit for the next consult. All other consults while
-  probing queue at a short probe tick. Without this rule, every path that
-  consults a clear snapshot simultaneously recreates the herd the gate exists to
-  prevent: N parked V2 jobs requeued to one deadline and claimed up to 64-wide by
-  the delivery processor (`D/src/app.ts:307-318`), a backlog wake promoting every
-  registered uuid, or post-restart reconstruction firing independently in several
-  sessions.
+- **Probing release — one probe grant, carried end-to-end, pushing the drain.**
+  After **any** clear (probe rule, timer expiry, or startup reconstruction), the
+  provider mints a single **probe grant**. The first admitting consult receives
+  it, keyed by that delivery's message uuid; every downstream consult for the
+  *same* delivery — the V2 claim, the V1 start, the retry — admits on the grant,
+  so one logical delivery passes all backstops instead of deadlocking against its
+  own probing state. The grant is consumed at provider query start; the probe
+  resolves exactly three ways: its query's clean completion **mints the successor
+  grant and wakes the next queued delivery** (the drain is *pushed* — the
+  remaining deferred rows have no jobs polling, so nothing else would ever
+  re-run their admission; the pace continues one-at-a-time until no registrations
+  remain, then the provider is fully open), its classified 429 re-arms saturation,
+  and any other termination (interrupt, session destroy, non-limit error)
+  releases the permit for the next consult. A **lease bounds only the
+  unconsumed grant** (mint → start): provider turns legitimately stream for
+  long, so a consumed grant resolves solely on its own query's termination —
+  lease-expiring a running probe would stack concurrent probes and defeat the
+  one-at-a-time recovery. All other consults while probing queue at a short
+  probe tick. Without this rule, every path that consults a clear snapshot
+  simultaneously recreates the herd the gate exists to prevent: N parked V2 jobs
+  requeued to one deadline and claimed up to 64-wide by the delivery processor
+  (`D/src/app.ts:307-318`), a backlog wake promoting every registered uuid, or
+  post-restart reconstruction firing independently in several sessions.
 - **Restart reconstruction:** the `queue_reason` marker rebuilds the queue. At
   session startup, beside `scheduleInitialPendingMessageReplay`
-  (`agent-session.ts:671-682`), rows with `queue_reason = 'provider_saturated'`
-  **and `send_status = 'deferred'`** are re-registered; rows without the marker
-  (manual-mode, user-deferred) are untouched, and historical rows that left the
-  queue are invisible because the marker is cleared on exit (below). The first
-  reconstructed registration mints the probe grant, so the restart drain is
-  serialized by the same one-at-a-time release — one probe query runs, the rest
-  wait for its resolution. Saturation *state* is still lost, so that probe may
-  pay one discovery 429 — bounded, one charge.
+  (`agent-session.ts:671-682`), rows carrying the marker are re-registered —
+  both `'deferred'` rows and **`'enqueued'` rows parked by a P3 denial** (a
+  parked V2 job stays `'enqueued'` with a durable requeued job and no deferred
+  twin, so a deferred-only filter would miss exactly the rows whose shared
+  `retryAt` could otherwise release as a 64-wide post-restart wave); rows
+  without the marker (manual-mode, user-deferred) are untouched, and historical
+  rows that left the queue are invisible because the marker is cleared on exit
+  (below). The P3 park therefore stamps the marker on the parked `'enqueued'`
+  row. The first reconstructed registration mints the probe grant, so the
+  restart drain is serialized by the same one-at-a-time release — one probe
+  query runs (a parked job's next claim holding the grant), the rest wait for
+  its resolution. Saturation *state* is still lost, so that probe may pay one
+  discovery 429 — bounded, one charge.
 - **Marker clearing on exit.** Every transition that moves a provider-queued row
   out of its queued state — promotion to `'enqueued'`, terminal `'consumed'` /
   `'failed'` — clears `queue_reason` in the same statement as the
@@ -632,7 +660,13 @@ by pre-existing suites):
    (the end-to-end pass that prevents the self-deadlock), consumed at query
    start, ended by its own query's clean completion (a second pre-arm completion
    arriving mid-probe must NOT release), re-armed by its 429, and released by
-   non-limit termination and lease expiry; evidence expiry at arm time; the
+   non-limit termination; the lease applies only to an unconsumed grant (a
+   running probe is never lease-expired into stacking concurrent probes); a
+   clean completion **mints the successor grant and wakes the next queued
+   delivery** until the backlog is exhausted (the drain is pushed, not
+   rediscovered); a reset-bearing report **upgrades an active ladder episode**
+   to non-probe-clearable reset state; `chargeResetArmed` is consumed only by
+   the outstanding probe's completion; evidence expiry at arm time; the
    clean-completion flag derived from turn classification, not iteration
    fulfillment; **keying** — distinct `providerConfig` overrides (apiKey /
    baseUrl) produce distinct provider keys; **idempotent registration** — a
@@ -654,15 +688,20 @@ by pre-existing suites):
    `driveDeliveryTurn` call; after clear, re-claim delivers; a parked-job wave
    variant (N jobs requeued to one deadline) pins the probing re-park at the probe
    tick — one delivers per probe resolution, not N at the deadline. Boundary
-   (`ensureQueryStarted`) — a saturated denial settles the row back to
-   `'deferred'` with the `queue_reason` marker and registers it, for every
-   direct-start path (V1 `startQueryAndEnqueue`, `deliverRowsViaMemoryQueue`, V1
-   `deliverInjectedMessage`); a grant-holding delivery passes. **Marker exit** —
-   promotion and terminal transitions clear `queue_reason` in the same statement;
-   reconstruction registers only `send_status = 'deferred'` rows.
-7. **Interpreter — retry consult (P4):** saturated auto-retry skips the start,
-   settles the row deferred, registers; fallback-switched session (different
-   provider) unaffected; the **provider-retry branch** classifies before deciding
+   (`ensureQueryStarted`, carrying the delivery identity) — a saturated denial
+   settles the row back to `'deferred'` with the `queue_reason` marker and
+   registers it, for every direct-start path (V1 `startQueryAndEnqueue`,
+   `deliverRowsViaMemoryQueue`, V1 `deliverInjectedMessage`); a grant-holding
+   delivery passes. **Parked-row linkage** — the P3 park stamps the marker on
+   the parked `'enqueued'` row, and restart reconstruction registers marker rows
+   in both states, so a post-restart claim wave still meets a minted probe
+   grant. **Marker exit** — promotion and terminal transitions clear
+   `queue_reason` in the same statement.
+7. **Interpreter — retry consult (P4):** saturated auto-retry returns the
+   widened `parked` callback outcome — the watchdog relinquishes its timer
+   without startup retries and without `notifyResume` — settles the row deferred
+   with the marker, registers; fallback-switched session (different provider)
+   unaffected; the **provider-retry branch** classifies before deciding
    the retry — a bracketed GLM limit reports to the registry at attempt 0, a
    consult denial falls through to the existing `:1258` assessment (the watchdog
    arms; no bare skip-and-return), and each recursive re-entry consults admission.
@@ -712,11 +751,13 @@ by pre-existing suites):
    in its own cooldown defers with today's reason and is not wake-registered; its
    own watchdog owns recovery. Recorded so the gate list is not read as a complete
    saturation policy — same caveat class as pilot 7's parked-task asymmetry.
-5. **The registry is provider-keyed, not endpoint- or model-keyed.** Custom
-   endpoints (many base URLs under one provider id) and per-model caps share one
-   saturation record. The key is the seam a refinement changes; v1 accepts the
-   coarse key because credentials — the thing concurrency caps attach to — are
-   per-provider.
+5. **The account key is still coarser than endpoint- or model-level.** The
+   fingerprint distinguishes `providerConfig` apiKey/baseUrl overrides — the
+   case where one provider id fronts independent accounts — but custom
+   endpoints sharing one configured key and per-model caps under one account
+   still share a saturation record. Every registry method takes the same
+   effective account key (computed once per query beside `resolvedProviderId`),
+   so no caller can mix bare-provider and account-scoped records.
 6. **`inFlight` is bookkeeping until caps exist.** v1 never gates on it
    (`configuredCap` is null); it exists so the cap follow-up changes one constant
    plus a settings reader, and so the probe rule has a completion signal.
