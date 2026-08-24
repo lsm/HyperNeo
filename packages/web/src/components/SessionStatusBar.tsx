@@ -303,6 +303,7 @@ export default function SessionStatusBar({
     availableModels,
     providerAuthStatuses,
     currentModelInfo?.provider,
+    currentModelInfo?.id,
     modelSearchQuery
   );
   const groupedFilteredModels = groupModelsByProvider(filteredModels);
@@ -391,8 +392,9 @@ export default function SessionStatusBar({
                       const authStatus = providerAuthStatuses.get(provider);
                       const isAuthenticated = authStatus?.isAuthenticated;
                       const needsRefresh = authStatus?.needsRefresh ?? false;
+                      const isTransient = authStatus?.errorKind === 'transient';
                       const availabilityTone: IndicatorTone =
-                        isAuthenticated === undefined
+                        isAuthenticated === undefined || isTransient
                           ? 'neutral'
                           : !isAuthenticated
                             ? 'danger'

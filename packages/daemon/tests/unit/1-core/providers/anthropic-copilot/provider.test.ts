@@ -230,6 +230,81 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(status.isAuthenticated).toBe(false);
     });
 
+    it('classifies malformed stored credentials as transient', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
+      fs.writeFileSync(path.join(authDir, 'auth.json'), '{invalid json');
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+
+      try {
+        const status = await p.getAuthStatus();
+
+        expect(status.isAuthenticated).toBe(false);
+        expect(status.errorKind).toBe('transient');
+      } finally {
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps availability resilient when stored credentials are malformed', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
+      fs.writeFileSync(path.join(authDir, 'auth.json'), '{invalid json');
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+
+      try {
+        await expect(p.isAvailable()).resolves.toBe(false);
+        await expect(p.getAuthStatus()).resolves.toMatchObject({
+          isAuthenticated: false,
+          errorKind: 'transient',
+        });
+        await expect(p.getCredentials()).resolves.toBeNull();
+      } finally {
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+
+    it('uses a fallback token when stored credentials are malformed', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
+      fs.writeFileSync(path.join(authDir, 'auth.json'), '{invalid json');
+      const p = new AnthropicToCopilotBridgeProvider(
+        '/tmp',
+        { COPILOT_GITHUB_TOKEN: 'gho_env' },
+        authDir
+      );
+
+      try {
+        await expect(p.getAuthStatus()).resolves.toMatchObject({ isAuthenticated: true });
+        await expect(p.isAvailable()).resolves.toBe(true);
+      } finally {
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+
+    it('treats a missing stored credentials file as logged out', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+
+      try {
+        const status = await p.getAuthStatus();
+
+        expect(status.isAuthenticated).toBe(false);
+        expect(status.errorKind).toBeUndefined();
+      } finally {
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+
     it('reports authenticated when COPILOT_GITHUB_TOKEN env var is set (same discovery chain as isAvailable)', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
       spyOn(

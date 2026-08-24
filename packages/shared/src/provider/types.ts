@@ -86,6 +86,8 @@ export interface Provider {
 
   getCachedModels?(): ModelInfo[] | null;
 
+  hasCuratedModelList?(): boolean;
+
   listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
 
   ownsModel(modelId: string): boolean;

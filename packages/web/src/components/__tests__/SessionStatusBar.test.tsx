@@ -878,4 +878,97 @@ describe('SessionStatusBar', () => {
       expect(dropdown.querySelector('.bg-green-500')).toBeTruthy();
     });
   });
+
+  describe('Model Dropdown — errorKind-aware availability', () => {
+    function renderWithAuthStatus(
+      providers: Array<{ id: string; isAuthenticated: boolean; errorKind?: string }>
+    ) {
+      mockGetHubIfConnected.mockReturnValue({
+        request: vi.fn().mockImplementation((method: string) => {
+          if (method === 'auth.providers') {
+            return Promise.resolve({
+              providers: providers.map((p) => ({ displayName: p.id, ...p })),
+            });
+          }
+          return Promise.resolve(null);
+        }),
+        onEvent: vi.fn(() => () => {}),
+        onConnection: vi.fn(() => () => {}),
+        isConnected: vi.fn(() => true),
+      });
+
+      return render(<SessionStatusBar {...defaultProps} />);
+    }
+
+    async function openModelDropdown(container: HTMLElement) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      const modelButton = container.querySelector(
+        '.control-btn[title*="Switch Model"]'
+      ) as HTMLButtonElement;
+      fireEvent.click(modelButton);
+    }
+
+    it('renders a transient failure as neutral, not danger', async () => {
+      const { container } = renderWithAuthStatus([
+        { id: 'anthropic', isAuthenticated: false, errorKind: 'transient' },
+      ]);
+
+      await openModelDropdown(container);
+
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-red-500')).toBeFalsy();
+    });
+
+    it('renders a degraded tone for an authenticated provider with a transient failure', async () => {
+      const { container } = renderWithAuthStatus([
+        { id: 'anthropic', isAuthenticated: true, errorKind: 'transient' },
+      ]);
+
+      await openModelDropdown(container);
+
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-green-500')).toBeFalsy();
+    });
+
+    it('renders a definitive credential failure as danger', async () => {
+      const { container } = renderWithAuthStatus([
+        { id: 'anthropic', isAuthenticated: false, errorKind: 'credential' },
+      ]);
+
+      await openModelDropdown(container);
+
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.querySelector('.bg-red-500')).toBeTruthy();
+    });
+
+    it('keeps a transiently failed provider selectable', async () => {
+      const { container } = renderWithAuthStatus([
+        { id: 'anthropic', isAuthenticated: false, errorKind: 'transient' },
+      ]);
+
+      await openModelDropdown(container);
+
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.textContent).toContain('Opus 4.5');
+      expect(dropdown.textContent).toContain('Sonnet 4.5');
+      expect(dropdown.textContent).toContain('Haiku 4.5');
+    });
+
+    it('blocks non-current models of the active provider under a definitive failure', async () => {
+      const { container } = renderWithAuthStatus([
+        { id: 'anthropic', isAuthenticated: false, errorKind: 'credential' },
+      ]);
+
+      await openModelDropdown(container);
+
+      const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
+      expect(dropdown.textContent).toContain('Sonnet 4.5');
+      expect(dropdown.textContent).not.toContain('Opus 4.5');
+      expect(dropdown.textContent).not.toContain('Haiku 4.5');
+    });
+  });
 });
