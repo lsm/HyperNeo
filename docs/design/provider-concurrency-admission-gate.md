@@ -408,16 +408,19 @@ gate never sees. Re-flagging and admission are two separate rules:
   payloads through the same store; a token-less webhook-only
   installation has no backstop, and the guarantee is qualified accordingly
   (today's catch path still 200s, which would silently drop the
-  event even when local persistence is healthy). The callback must complete quickly either way — GitHub
-  would otherwise time out and retry — and **the raw webhook payload is
+  event even when local persistence is healthy). The callback must complete quickly either way — a GitHub timeout is
+  itself a FAILED delivery (no automatic redelivery; manual or
+  API-driven only, per caveat 9 — treating it as a retry backstop would
+  hide permanent loss in exactly the token-less installations with no
+  sweep) — and **the raw webhook payload is
   persisted for exact replay**: poll-derived events are
   not a substitute — normalization synthesizes actions (`updated`) that
   differ from webhook actions (`opened`/`closed`/`synchronize`), so replaying
   via the next poll would route differently or be filtered out entirely.
-  The provider-queue **inbox is therefore poll-path and downstream-agent
-  territory**: poll-path events park at ingest (their agents run there),
-  and webhook-derived agent work parks at P2 under its own identity —
-  the raw webhook itself never parks. Deduplication still makes
+  Neither source parks at ingest: the raw webhook AND the polled row
+  publish immediately (the ungated rule above), and any downstream agent
+  work the Space routing triggers parks at P2 under its own identity.
+  Deduplication still makes
   **both sources converge on one upstream identity**: the store records the
   upstream resource tuple (event/repo/row-id/`updated_at`) as a secondary
   index beside its source-specific key, and deduplication uses **two key
@@ -657,12 +660,19 @@ provider call — before enqueueing the tool result
 (ask-user-question-handler.ts:524-568); treating it as an already-live steer
 would let every session answering a question bypass the serialized probe
 lane while a sibling has armed saturation. This restart therefore carries a
-**transient admission identity** — `{kind:'restart', sessionId, toolUseId}`,
-named by the pending question's `toolUseId` (the answer itself is in-memory
-today and a crash loses it either way, so a transient registration adds no
-new loss) — and a denial parks instead of starting: no `ensureQueryStarted`,
-the answer stays in the handler's queued map, the identity registers in the
-chat lane, and the wake re-runs the submission against the retained answer.
+**durable admission identity** — `{kind:'restart', sessionId, toolUseId}`,
+named by the pending question's `toolUseId` — and **persists before
+parking**, following the same durability rule as every other
+not-yet-persisted delivery: today the answer's in-memory window ends the
+moment the tool result is enqueued, but an admission denial deliberately
+extends it across the provider outage (minutes to indefinite), during
+which a restart would drop the user's submitted answer. The park
+therefore first writes a **replayable answer record** (the pending
+question's stored state extended with the submitted tool-result payload,
+keyed by `toolUseId`), then registers `{kind:'restart'}` in the
+chat lane against it — and a denial skips `ensureQueryStarted` and
+returns; the wake (or restart reconstruction, which scans the answer
+records) re-runs the submission against the persisted answer.
 A boundary denial for a delivery-identified caller has no job to park: the
 delivery settles its row back to
 `'deferred'` with the `queue_reason` marker and registers it (V2 surfaces this as
@@ -688,8 +698,17 @@ decisions at the tail).
 
 `executeRateLimitAutoRetry` (`D/src/lib/agent/agent-session.ts:931-970`) starts a
 query directly, bypassing the message pipeline. It consults the same core; when
-saturated, it skips the start, settles the episode's row back to `'deferred'` with
-the marker, and registers it, letting the wake path re-promote. The retry
+saturated, it skips the start and settles the episode's row back to
+`'deferred'` with the marker — **through an atomic consumed-to-deferred
+transition**: the failed provider call already admitted its prompt, so the
+row is normally `'consumed'` (`markDeliveryConsumedByUuid`), and the plain
+defer helper accepts only `'enqueued'` rows — applying it to a consumed row
+changes nothing while registering a terminal row whose targeted wake can
+never promote it (the user's retry is lost and a bound grant stalls on an
+undeliverable identity). The settle is therefore a single
+consumed→deferred transition (or the existing retry path to `'enqueued'`
+followed by defer, both steps inside one registration transaction) —
+then registers the row, letting the wake path re-promote. The retry
 callback's boolean contract (started / not-started) cannot express this —
 `false` would push the watchdog into its startup-retry loop and eventually
 `startupExhausted`, `true` would `notifyResume` as though a query started — so
@@ -1954,8 +1973,11 @@ by pre-existing suites):
    `deliverRowsViaMemoryQueue`, V1 `deliverInjectedMessage`); a grant-holding
    delivery passes. **The `AskUserQuestion` answer restart admits too** —
    an answer arriving after its query stopped, against an armed registry,
-   starts no fresh streaming query (no provider call), the answer stays
-   queued, and the wake re-runs the submission; admitted (open or
+   starts no fresh streaming query (no provider call), persists its
+   replayable answer record keyed by `toolUseId` BEFORE registering, and
+   the wake — or restart reconstruction, scanning the answer records —
+   re-runs the submission (a restart during the outage does not drop the
+   submitted answer); admitted (open or
    grant-holding), it starts and injects as today; a context-reset restart
    path stays exempt.
    **Parked-row linkage** — the P3 park stamps the marker on
@@ -1990,8 +2012,10 @@ by pre-existing suites):
    `session.rate_limit_resume`, task-agent-manager.ts:390-410 — an unmatched
    pause would keep the parent task restricted and its injections hitting
    `parentTaskLimited` after the registry already owns the row) while
-   signaling the provider-queued state distinctly, settles the row deferred
-   with the marker, registers; fallback-switched session (different provider)
+   signaling the provider-queued state distinctly, settles the row
+   deferred with the marker through the atomic consumed-to-deferred
+   transition (a plain defer on a consumed row changes nothing and
+   registers an undeliverable identity), registers; fallback-switched session (different provider)
    unaffected; the **provider-retry branch** classifies before deciding
    the retry — a bracketed GLM limit reports to the registry at attempt 0, a
    consult denial falls through to the existing `:1258` assessment (the watchdog
