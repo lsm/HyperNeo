@@ -362,7 +362,10 @@ export function setupSessionHandlers(
         existingConfig?.provider ??
         (currentModel ? inferProviderForModel(currentModel) : undefined);
       const effectiveModel = configUpdate.model ?? currentModel;
-      const providerId = configUpdate.provider ?? currentProvider;
+      const providerId =
+        configUpdate.provider ??
+        existingConfig?.provider ??
+        (effectiveModel ? inferProviderForModel(effectiveModel) : undefined);
       const rewritesOwnPair =
         existingConfig !== undefined &&
         effectiveModel === currentModel &&

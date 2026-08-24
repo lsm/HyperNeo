@@ -1157,6 +1157,13 @@ describe('Session RPC Handlers — session.update model curation', () => {
       provider: 'anthropic-copilot',
       contextWindow: 128000,
     },
+    {
+      id: 'gpt-5.4',
+      name: 'GPT 5.4',
+      alias: 'gpt-5.4',
+      provider: 'anthropic-codex',
+      contextWindow: 400000,
+    },
   ] as ModelInfo[];
 
   beforeEach(async () => {
@@ -1321,6 +1328,34 @@ describe('Session RPC Handlers — session.update model curation', () => {
     expect(updateSession).toHaveBeenCalledWith('s1', {
       config: { model: 'opus', maxTokens: 456 },
     });
+  });
+
+  it('rejects a cross-family model-only update on a providerless session using the incoming model provider', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.1' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'sonnet';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(handler!({ sessionId: 's1', config: { model: 'gpt-5.4' } }, {})).rejects.toThrow(
+      "Model 'gpt-5.4' is curated out for provider 'anthropic-codex'"
+    );
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows a cross-family model-only update when the incoming model is curated in', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'sonnet';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'gpt-5.4' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'gpt-5.4' } });
   });
 });
 
