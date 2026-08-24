@@ -486,6 +486,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       for (const state of nonIdleStates) {
         handler = new SDKMessageHandler(createContext());
         await handler.handleMessage(thinkingTokensMessage(120));
+        await handler.handleMessage(thinkingAssistantMessage(`stamp-${state}`));
         await handler.handleMessage(sessionState(state));
 
         expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
@@ -496,6 +497,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           usesSessionStateChangedTurnEnd: true,
           expectsSessionStateIdleAfterResult: true,
           currentThinkingTokensEstimate: 120,
+          lastStampedThinkingTokensEstimate: 120,
         });
       }
     });
@@ -1021,12 +1023,44 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
     });
 
-    it('a failed save of an ordinary result performs no transition and leaves flags untouched', async () => {
-      saveSDKMessageSpy.mockReturnValueOnce(false);
+    it('a failed save with a primed mode and verdict leaves them untouched and still blocks replay', async () => {
+      await handler.handleMessage(errorResult('save-fail-prime-error'));
+      await handler.handleMessage(sessionState('running'));
+      const primedFlags = {
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        lastResultWasSuccess: false,
+      };
+      expect(readFlags(handler)).toEqual(primedFlags);
+      setIdleSpy.mockClear();
+      beginTerminalIdleSpy.mockClear();
 
-      await handler.handleMessage(successResult('save-fail-plain'));
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+      await handler.handleMessage(successResult('save-fail-primed'));
 
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(readFlags(handler)).toEqual(primedFlags);
+
+      await handler.handleMessage(sessionState('idle'));
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy.mock.calls[0]).toEqual([]);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a rejected publication of the first non-idle event leaves the mode flags unset', async () => {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(sessionState('running'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual(resetFlags);
