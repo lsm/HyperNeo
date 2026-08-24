@@ -389,7 +389,12 @@ gate never sees. Re-flagging and admission are two separate rules:
   The **webhook path**
   reprocessed by the next poll either (dual owners would duplicate room
   messages); the **webhook path interpreter sits on the ACTIVE
-  route**: production requests to `/webhook/github/space` are dispatched to
+  route** — and the delivery-semantics design from here through the
+  caveat-9 sweep (raw-event store, dedupe keys, conditional
+  acknowledgment, reconciliation) belongs to the SPLIT CHAIN recorded
+  under Sequencing: it gates no provider call and is not part of C5's
+  PRs; it is specified here because this is where the analysis lives:
+  production requests to `/webhook/github/space` are dispatched to
   `GitHubEventExtension`'s registered handler
   (github-event-extension.ts:277-278 → `:663`), NOT to
   `GitHubService.handleWebhook` (github-service.ts:203) — a repo-wide
@@ -995,12 +1000,12 @@ equal, so the common case shares one key.
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
 Registry state is in-memory; the durable additions — one migration family
-in C5-PR3 — are: the `queue_reason` and monotonic queue-sequence columns on
+in C5-PR3, each piece storage an ACTUAL provider waiter needs — are: the
+`queue_reason`, `admission_arm`, and monotonic queue-sequence columns on
 `sdk_messages` (linkage and FIFO order restart-safe; reconstruction sorts by
 the sequence, pinned); `provider_park`/`provider_park_seq` on the
-job-queue rows (background-waiter linkage and ordering); the raw-event
-inbox table (payload + stable replay key + ingest sequence + per-event
-delivery-record state); the persisted shared sequence allocator's
+job-queue rows (background-waiter linkage and ordering); the persisted
+shared sequence allocator's
 counter row; and the **per-account saturation marker row** (key, kind,
 `untilMs`/closed, charge, the episode's **clearability provenance —
 `authoritative` (parsed/structured reset, non-probe-clearable) vs ladder
@@ -1341,15 +1346,20 @@ initially empty backlog *or* a drain whose registrations all exit non-cleanly
 probe identity either); otherwise the next independent episode inherits the
 advanced charge and starts at a longer ladder step for no reason. **Such a
 clear does not fully open the account**: it enters `probing` with a
-**pending grant (`identity: null`)** — and the **`claimPendingGrant` CAS at
-the first admission consult of any kind is the sole path out of pending**.
-The registration append is itself such a consult: a P1 sender has
-already returned with `queue_until` before it persists and registers its
-deferred row, so the append immediately re-runs admission, and that
-consult claims the pending grant atomically for the
-just-registered identity and the row is admitted directly (its promotion
-runs at once), never parked behind a grant only lease expiry could
-recover; durable first arrivals behave exactly like ephemeral ones, and
+**pending grant (`identity: null`)** — and ONE rule governs it: **every
+admission consult, initial or re-admission, runs `claimPendingGrant`
+first** (the CAS from the core contract; there is no separate
+post-registration-only claiming flow). The two orderings fall out of that
+single rule: (a) a consult arriving while the pending grant exists
+claims it atomically and admits immediately — the sender dispatches
+through the ordinary outbox path, never parking at all; (b) a sender
+whose consult PRECEDED the clear (denied while probing, its admission
+generation stamped) persists and registers its deferred row, and the
+generation-conditional re-admission that the registration itself
+triggers is a consult like any other — it claims the still-pending
+grant and admits directly (promotion runs at once), never parked behind
+a grant only lease expiry could recover. Durable first arrivals behave
+exactly like ephemeral ones, and
 post-clear sends serialize exactly as backlog drains do; fully
 open requires a probe to have resolved cleanly. **Ephemeral callers can
 claim it too**: the pending grant binds to the first arriving admission
@@ -1409,7 +1419,12 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   fires). All interleavings pinned in the test plan. The existing `origin` column cannot
   carry it: the schema constrains `origin` to `NULL | 'human' | 'system'`
   (`D/src/storage/schema/index.ts:199`), so a new value would fail the CHECK, and
-  overloading it would discard the row's human/system semantics anyway.
+  overloading it would discard the row's human/system semantics anyway —
+  the admission-arm shadow therefore gets its OWN nullable
+  `admission_arm` column in the same migration (written whenever the
+  provider gate queues a row, cleared with the marker at yield, and read
+  by P4's settle to recreate the correct marker), not an overload of
+  `queue_reason` or `origin`.
 - **Waking, routed per session:** the internal event bus routes by
   `data.sessionId ?? data.namespaceId ?? __global__`
   (`D/src/lib/internal-event-bus.ts:116-135`), while session handlers are
@@ -1518,8 +1533,12 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   queued delivery** (the drain is *pushed* — the remaining deferred rows have no
   jobs polling, so nothing else would ever re-run their admission; the pace
   continues one-at-a-time until no registrations remain, then the provider is
-  fully open — and **every successor mint rewrites the persisted probing row**
-  with the new holder and lease, so a mid-drain restart reconstructs the
+  fully open — and **every successor mint rewrites the persisted probing
+  row** with the new holder and lease — as does every **chat preemption
+  of a background grant** (the rebind changes the authoritative holder,
+  and a restart after rebind-but-before-yield must not reconstruct the
+  background identity while the chat queue is nonempty; the rewrite is
+  atomic with the rebind) — so a mid-drain restart reconstructs the
   successor's serialized lane; the row is deleted only when a clean probe
   resolves with NO successor remaining), its classified 429 re-arms saturation (whose timer wakes the
   queue), and any other termination — interrupt, session destroy, non-limit
@@ -1712,7 +1731,13 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
 ### What does NOT change
 
 - `RateLimitWatchdog` and `ProcessingStateManager` keep owning the *session's*
-  cooldown, banner, fallback ladder, and episode retries, unchanged. The registry
+  cooldown, banner, fallback ladder, and episode retries — the ownership
+  split is unchanged, but the watchdog itself is NOT untouched: P4 widens
+  its retry callback to `started | not_started | parked`, the closure flow
+  adds `manual | automatic` origin tracking, the `surface-billing` trip
+  arms the retryable billing-closed pause, and a failed manual probe
+  restores it (all specified above; listed here so "unchanged" is never
+  read as "no diff"). The registry
   is additive provider-scoped state consulted at admission; it never writes session
   state.
 - `TaskAgentManager.limitedSessionsByTask` keeps its task-scoped role (it reacts to
@@ -1771,6 +1796,15 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   P1's core is unaffected (persist seam is not chain I's territory). Implementation
   order should follow whichever chain lands first; the cores are seam-agnostic by
   construction.
+- **Split out — the GitHub delivery-semantics redesign:** the raw-event
+  store, cross-source dedupe (per-source keys, canonical projection,
+  payload pairing), the conditional webhook acknowledgment, the
+  caveat-9 reconciliation sweep, and the poller's watermark-durability
+  rule enforce NO provider admission — both ingest paths are ungated and
+  the legacy agent workflow has no production caller — so that machinery
+  moves to its own chain (this document's GitHub sections remain its
+  specified seed); C5 keeps only what a provider waiter touches. The
+  split is deliberate: C5-PR3 is already the largest PR in the chain.
 - **Versus chain C1 (stuck-provider recovery):** disjoint files except
   `model-service`/provider listing, which this design does not touch. C1-PR3's
   provider retry timers and this registry are siblings (both daemon-scoped
@@ -1782,7 +1816,7 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier/closure-probe interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the raw-event inbox (payload, upstream-tuple secondary index, ingest sequence, per-event delivery records), the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes incl. the closed kind's resolvable `configRef`, its repository, and the reconstruction wiring that re-enters saturation/closed/probing from it, including probing-record reconstruction with grant re-minting (bound to the serialized durable identity or pending), without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier/closure-probe interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes incl. the closed kind's resolvable `configRef`, its repository, and the reconstruction wiring that re-enters saturation/closed/probing from it, including probing-record reconstruction with grant re-minting (bound to the serialized durable identity or pending), without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -1821,7 +1855,11 @@ by pre-existing suites):
    recursive retry falls through with `_lastConsumedUserMessage` intact);
    per-event poll rollback (the watermark advances only past durably
    published events — a failed store commit re-observes next tick, and
-   completed events are not reprocessed); the
+   completed events are not reprocessed; the dedupe-key, watermark, and
+   webhook-ack bullets in this cluster belong to the SPLIT
+   delivery-semantics chain's suite — C5's registry suite keeps the
+   admission-semantics pins: the one-event-one-grant boundary and the
+   agents' consults); the
    **source-appropriate dedupe keys** — two same-second same-action webhook
    deliveries (distinct `X-GitHub-Delivery` ids) both ingest, two
    same-second same-action poll observations of DIFFERENT states both
@@ -2223,7 +2261,8 @@ by pre-existing suites):
    watchdog never learns about sibling 429s. That isolation is deliberate (the
    session has no episode to recover); the observability follow-up owns surfacing
    provider state to the UI.
-9. **Webhook durability has no upstream backstop.** A non-2xx webhook
+9. **Webhook durability has no upstream backstop** (recorded for the
+   split delivery-semantics chain; not a C5-PR3 deliverable). A non-2xx webhook
    acknowledgment is failure *signaling*, not a retry queue — GitHub records
    the delivery as failed and redelivers only on manual or API-driven action.
    The design's ladder is therefore: the conditional ack's in-process commit
