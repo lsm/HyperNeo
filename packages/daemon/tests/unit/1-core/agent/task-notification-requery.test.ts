@@ -771,6 +771,78 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     ]);
   });
 
+  it('discards restart failures that land after the episode was reset', async () => {
+    const ensureQueryStarted = mock(async () => {
+      agentSession.resetTaskNotificationRequery();
+      throw new Error('restart boom');
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('clears the SDK-idle latch when the query is replaced', async () => {
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    (
+      agentSession as unknown as { incrementQueryGeneration: () => number }
+    ).incrementQueryGeneration();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('ignores continuation delivery failures that land after a reset', async () => {
+    const holder: { reject?: (error: Error) => void } = {};
+    enqueueSpy = mock(
+      () =>
+        new Promise<void>((_, reject) => {
+          holder.reject = reject;
+        })
+    );
+    (agentSession.messageQueue as unknown as { enqueueWithId: typeof enqueueSpy }).enqueueWithId =
+      enqueueSpy;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    agentSession.resetTaskNotificationRequery();
+    holder.reject?.(new Error('late queue timeout'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('waits out the stopped query teardown window before restarting', async () => {
+    const ensureQueryStarted = mock(async () => 'started' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(ensureQueryStarted.mock.calls.length).toBe(0);
+
+    agentSession.queryPromise = null;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+    expect(continueCalls()).toBe(1);
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());

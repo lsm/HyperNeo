@@ -1376,6 +1376,7 @@ export class AgentSession
 
   incrementQueryGeneration(): number {
     const next = ++this._queryGeneration;
+    this.taskNotificationRequeryAwaitingSdkIdle = false;
     if (this.deliveryResponseObserver?.pendingStart) {
       this.deliveryResponseObserver.generation = next;
       this.deliveryResponseObserver.pendingStart = false;
@@ -1573,6 +1574,10 @@ export class AgentSession
       return;
     }
     if (!this.messageQueue.isRunning() || !this.queryPromise) {
+      if (!this.messageQueue.isRunning() && this.queryPromise) {
+        this.scheduleTaskNotificationRequery(200);
+        return;
+      }
       if (this.session.config.queryMode === 'manual') {
         this.logger.warn(
           `task-notification requery: query is not live for manual-mode session ` +
@@ -1603,6 +1608,7 @@ export class AgentSession
         }
         this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
       } catch (error) {
+        if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
         this.logger.warn(
           `task-notification requery: could not restart the dead query for session ` +
             `${this.session.id}: ${error instanceof Error ? error.message : String(error)}`
@@ -1627,6 +1633,7 @@ export class AgentSession
         TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE
       );
     } catch (error) {
+      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       this.logger.warn(
         `task-notification requery: bare-continue delivery failed for session ${this.session.id}: ` +
           `${error instanceof Error ? error.message : String(error)}`
