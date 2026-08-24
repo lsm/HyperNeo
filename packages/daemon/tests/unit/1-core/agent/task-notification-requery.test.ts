@@ -442,6 +442,27 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(2);
   });
 
+  it('preserves retry backoff when a hollow result is deferred to session_state_changed: idle', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = 2;
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await agentSession.stateManager.setProcessing('prior-turn', 'initializing');
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(continueCalls()).toBe(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(continueCalls()).toBe(1);
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());

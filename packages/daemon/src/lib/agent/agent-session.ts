@@ -262,6 +262,7 @@ export class AgentSession
   private taskNotificationRequeryExhausted = false;
   private taskNotificationRequeryTimer: ReturnType<typeof setTimeout> | null = null;
   private taskNotificationRequeryPending = false;
+  private taskNotificationRequeryPendingDelayMs: number | null = null;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -1421,6 +1422,7 @@ export class AgentSession
     } else {
       this.clearTaskNotificationRequeryTimer();
       this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = decision.delayMs;
     }
   }
 
@@ -1457,21 +1459,29 @@ export class AgentSession
     this.taskNotificationRequeryAttempts = 0;
     this.taskNotificationRequeryExhausted = false;
     this.taskNotificationRequeryPending = false;
+    this.taskNotificationRequeryPendingDelayMs = null;
   }
 
   private flushPendingTaskNotificationRequery(): void {
     if (!this.taskNotificationRequeryPending) return;
     this.taskNotificationRequeryPending = false;
-    if (this.stateManager.getState().status !== 'idle') return;
+    const delayMs = this.taskNotificationRequeryPendingDelayMs ?? 0;
+    this.taskNotificationRequeryPendingDelayMs = null;
     if (
       this._isCleaningUp ||
       this.isLimitRecoveryPending() ||
       this.stateManager.getState().status === 'rate_limit_cooldown'
     ) {
       this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = delayMs;
       return;
     }
-    void this.runTaskNotificationRequeryContinue();
+    if (this.stateManager.getState().status !== 'idle') {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = delayMs;
+      return;
+    }
+    this.scheduleTaskNotificationRequery(delayMs);
   }
 
   private async runTaskNotificationRequeryContinue(): Promise<void> {
