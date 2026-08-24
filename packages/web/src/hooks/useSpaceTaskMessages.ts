@@ -389,7 +389,6 @@ export function useSpaceTaskMessages(
                   ...row,
                   content: sdkMessage,
                   contentTruncated: false,
-                  contentBytes: sdkMessage.length,
                 }
               : row
           )
