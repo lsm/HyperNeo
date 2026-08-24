@@ -5012,6 +5012,79 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(content[0].text.length).toBeLessThanOrEqual(1201);
     });
 
+    test('compact previews cap bulk payloads but keep structure and descriptor fields', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      insertSdkMessageAt(
+        'bulk-write',
+        sessionId,
+        now + 1000,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'bulk-write',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-1',
+                name: 'Write',
+                input: { file_path: '/tmp/big.ts', content: 'x'.repeat(5000) },
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu-1',
+                content: [
+                  {
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: 'image/png',
+                      data: 'QUFB'.repeat(2000),
+                    },
+                  },
+                ],
+              },
+              { type: 'text', text: `done ${'y'.repeat(3000)}` },
+            ],
+          },
+        }
+      );
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 5) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      const row = rows.find((r) => r.id === 'bulk-write');
+      expect(row).toBeDefined();
+      expect(row!.contentTruncated).toBe(true);
+      expect((row!.content as string).length).toBeLessThan((row!.contentBytes as number) / 4);
+
+      const parsed = JSON.parse(row!.content as string) as Record<string, unknown>;
+      const blocks = (parsed.message as Record<string, unknown>).content as Array<
+        Record<string, unknown>
+      >;
+
+      const toolUse = blocks[0] as { input: Record<string, unknown> };
+      expect(toolUse.input.file_path).toBe('/tmp/big.ts');
+      expect((toolUse.input.content as string).length).toBeLessThanOrEqual(1201);
+
+      const toolResult = blocks[1] as {
+        content: Array<Record<string, unknown>>;
+      };
+      const image = toolResult.content[0] as { source: Record<string, unknown> };
+      expect(image.source.type).toBe('base64');
+      expect(image.source.media_type).toBe('image/png');
+      expect(image.source.data).toBe('');
+
+      expect((blocks[2].text as string).length).toBeLessThanOrEqual(1201);
+    });
+
     test('windowed compact feed emits delta removals when rows age out', async () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

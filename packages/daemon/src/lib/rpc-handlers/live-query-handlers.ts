@@ -61,44 +61,39 @@ const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
 const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD = 2048;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX = 1200;
-const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX = 20;
-const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_OBJECT_MAX = 25;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS = '…';
 const MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES = 16 * 1024 * 1024;
 
-function compactPreviewValue(value: unknown, path: string[]): unknown {
-  if (value === null || typeof value === 'boolean' || typeof value === 'number') {
-    return value;
-  }
-  if (typeof value === 'string') {
-    if (value.length <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX) {
-      return value;
-    }
-    return `${value.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`;
+function capPreviewString(value: string): string {
+  return value.length <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX
+    ? value
+    : `${value.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`;
+}
+
+function projectCompactPreview(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    return typeof value === 'string' ? capPreviewString(value) : value;
   }
   if (Array.isArray(value)) {
-    const key = path[path.length - 1] ?? '';
-    const isCommandList = key === 'commands';
-    const limit = isCommandList
-      ? value.length
-      : Math.min(value.length, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX);
-    const out: unknown[] = [];
-    for (let i = 0; i < limit; i += 1) {
-      out.push(compactPreviewValue(value[i], [...path, String(i)]));
-    }
-    return out;
+    return value.map(projectCompactPreview);
   }
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>);
-    const limit = Math.min(entries.length, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_OBJECT_MAX);
-    const out: Record<string, unknown> = {};
-    for (let i = 0; i < limit; i += 1) {
-      const [k, v] = entries[i];
-      out[k] = compactPreviewValue(v, [...path, k]);
-    }
-    return out;
+  const obj = value as Record<string, unknown>;
+  if (
+    obj.type === 'image' &&
+    obj.source &&
+    typeof obj.source === 'object' &&
+    typeof (obj.source as Record<string, unknown>).data === 'string'
+  ) {
+    return {
+      ...obj,
+      source: { ...(obj.source as Record<string, unknown>), data: '' },
+    };
   }
-  return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(obj)) {
+    out[key] = projectCompactPreview(v);
+  }
+  return out;
 }
 
 function buildCompactMessagePreview(raw: string): {
@@ -118,8 +113,7 @@ function buildCompactMessagePreview(raw: string): {
       contentTruncated: true,
     };
   }
-  const previewValue = compactPreviewValue(parsed, []);
-  const preview = JSON.stringify(previewValue);
+  const preview = JSON.stringify(projectCompactPreview(parsed));
   return { preview, contentBytes, contentTruncated: true };
 }
 
