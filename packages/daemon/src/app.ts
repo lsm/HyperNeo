@@ -688,7 +688,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
-    startupTimer.start('space runtime ready + HTTP/WS server bind');
+    startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);

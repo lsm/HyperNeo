@@ -169,7 +169,7 @@ let globalConfig: LoggerConfig = {
 };
 
 const structuredLogSubscribers = new Set<StructuredLogSubscriber>();
-let previousLoggerConsoleTimestamp: number | null = null;
+let previousLoggerConsoleTime: number | null = null;
 let consoleCaptureRestore: (() => void) | null = null;
 let consoleCaptureRefCount = 0;
 let suppressConsoleCapture = false;
@@ -394,7 +394,7 @@ export class Logger {
     consoleMethod: 'debug' | 'info' | 'warn' | 'error',
     args: unknown[]
   ): void {
-    const event = emitStructuredLogEvent({
+    emitStructuredLogEvent({
       level: structuredLevel,
       args,
       source: 'logger',
@@ -403,12 +403,11 @@ export class Logger {
     });
     const formatted = this.formatMessage(logLevel, args);
     if (this.consoleDeltas) {
+      const consoleTime = performance.now();
       const delta =
-        previousLoggerConsoleTimestamp === null
-          ? 0
-          : event.timestamp - previousLoggerConsoleTimestamp;
-      previousLoggerConsoleTimestamp = event.timestamp;
-      formatted.push(`+${delta}ms`);
+        previousLoggerConsoleTime === null ? 0 : consoleTime - previousLoggerConsoleTime;
+      previousLoggerConsoleTime = consoleTime;
+      formatted.push(`+${Math.round(delta)}ms`);
     }
     withConsoleLogCaptureSuppressed(() => {
       console[consoleMethod](...formatted);
