@@ -77,6 +77,16 @@ describe('DeepSeekProvider', () => {
     expect(provider.ownsModel('deepseek-r1:latest')).toBe(false);
   });
 
+  it('falls back to the default model for IDs outside the DeepSeek family', () => {
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'test-key' });
+
+    expect(provider.ownsModel('glm-5')).toBe(false);
+
+    const config = provider.buildSdkConfig('glm-5');
+    expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(DeepSeekProvider.DEFAULT_MODEL);
+    expect(provider.translateModelIdForSdk('glm-5')).toBe('claude-sonnet-4-6[1m]');
+  });
+
   describe('listRemoteModels', () => {
     function installModelListFetch(respond: (call: number) => Response | Promise<Response>) {
       let call = 0;

@@ -374,7 +374,7 @@ describe('KimiProvider', () => {
       expect(provider.getDefaultRegion()).toBe('global');
     });
 
-    it('matches supported prefix aliases and filters IDs Kimi cannot route yet', async () => {
+    it('matches supported prefix aliases and surfaces unknown Kimi-family IDs as themselves', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       installModelListFetch([
         {
@@ -382,6 +382,7 @@ describe('KimiProvider', () => {
             { id: 'moonshot-k3-preview', object: 'model' },
             { id: 'moonshot-v1-32k', object: 'model' },
             { id: 'kimi-k4', object: 'model' },
+            { id: 'gpt-4o', object: 'model' },
           ],
         },
       ]);
@@ -389,13 +390,23 @@ describe('KimiProvider', () => {
 
       const models = await provider.listRemoteModels();
 
-      expect(models).toHaveLength(2);
+      expect(models).toHaveLength(3);
       expect(models[0]).toMatchObject({
         id: 'kimi-k3[1m]',
         contextWindow: 1_048_576,
         thinkingModes: 'granular',
       });
       expect(models[1]).toEqual(KimiProvider.MODELS[3]);
+      expect(models[2]).toMatchObject({
+        id: 'kimi-k4',
+        name: 'kimi-k4',
+        alias: 'kimi-k4',
+        family: 'kimi',
+        provider: 'kimi',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+        available: true,
+      });
     });
 
     it('caches successful discovery and force bypasses the cache', async () => {
@@ -464,6 +475,44 @@ describe('KimiProvider', () => {
       expect(provider.ownsModel('default')).toBe(false);
       expect(provider.ownsModel('glm-5')).toBe(false);
       expect(provider.ownsModel('claude-sonnet-4-5')).toBe(false);
+    });
+  });
+
+  describe('discovered model routing acceptance', () => {
+    beforeEach(() => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = new KimiProvider();
+    });
+
+    it('routes a discovered Kimi-family ID to itself instead of the region default', () => {
+      expect(provider.ownsModel('kimi-k4')).toBe(true);
+
+      const config = provider.buildSdkConfig('kimi-k4');
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k4');
+      expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k4');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k4');
+      expect(config.envVars.CLAUDE_CODE_SUBAGENT_MODEL).toBe('kimi-k4');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      expect(provider.translateModelIdForSdk('kimi-k4')).toBe('kimi-k4');
+    });
+
+    it('keeps discovered IDs on themselves in the global region', () => {
+      const config = provider.buildSdkConfig('kimi-k4', { region: 'global' });
+
+      expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.moonshot.ai/anthropic');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k4');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k4');
+    });
+
+    it('keeps foreign and colon-tagged IDs on the region default', () => {
+      expect(provider.ownsModel('gpt-4o')).toBe(false);
+      expect(provider.ownsModel('abab6.5s-chat')).toBe(false);
+      expect(provider.ownsModel('kimi-k4:latest')).toBe(false);
+
+      const config = provider.buildSdkConfig('gpt-4o');
+
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
   });
 

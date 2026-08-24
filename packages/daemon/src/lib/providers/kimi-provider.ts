@@ -223,6 +223,18 @@ export class KimiProvider implements Provider {
     );
   }
 
+  private static isDiscoveredKimiModelId(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    if (id.includes(':')) return false;
+    return (
+      id === 'kimi' ||
+      id === 'k3' ||
+      id.startsWith('kimi-') ||
+      id.startsWith('moonshot-') ||
+      id.startsWith('k3-')
+    );
+  }
+
   static resolveKimiTitleThinkingConfig(
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
@@ -374,7 +386,8 @@ export class KimiProvider implements Provider {
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
       id === 'kimi-for-coding-highspeed' ||
-      id.startsWith('moonshot-')
+      id.startsWith('moonshot-') ||
+      KimiProvider.isDiscoveredKimiModelId(modelId)
     );
   }
 
@@ -437,6 +450,9 @@ export class KimiProvider implements Provider {
       id.startsWith('moonshot-')
     ) {
       return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
+    }
+    if (KimiProvider.isDiscoveredKimiModelId(modelId)) {
+      return modelId;
     }
     return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
   }
@@ -546,7 +562,23 @@ export class KimiProvider implements Provider {
         }
       }
     }
-    return prefixMatch?.model ?? null;
+    if (prefixMatch) return prefixMatch.model;
+    if (KimiProvider.isDiscoveredKimiModelId(model.id)) {
+      return {
+        id: model.id,
+        name: model.name ?? model.id,
+        alias: model.id,
+        family: 'kimi',
+        provider: this.id,
+        contextWindow: KimiProvider.resolveContextWindow(model.id),
+        preferContextWindowMetadata: true,
+        thinkingModes: 'on',
+        description: `${model.name ?? model.id} via Kimi`,
+        releaseDate: '',
+        available: true,
+      };
+    }
+    return null;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
