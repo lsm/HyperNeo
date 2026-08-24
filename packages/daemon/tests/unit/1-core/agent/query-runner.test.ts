@@ -2356,21 +2356,32 @@ describe('QueryRunner', () => {
 
     async function runTerminalFailure(
       errorMessage: string,
-      overrides: Partial<QueryRunnerContext> = {}
-    ): Promise<QueryRunnerContext> {
+      overrides: Partial<QueryRunnerContext> = {},
+      seedRunner?: (runner: QueryRunner) => void
+    ): Promise<{ ctx: QueryRunnerContext; outcome: string }> {
       buildSpy.mockRejectedValue(new Error(errorMessage));
       const ctx = createContext(overrides);
       runner = new QueryRunner(ctx);
+      if (seedRunner) {
+        seedRunner(runner);
+      }
       runner.start();
-      await ctx.queryPromise?.catch(() => {});
-      return ctx;
+      const settled = ctx.queryPromise?.then(
+        (): string => 'resolved',
+        (error: unknown): string => String(error)
+      );
+      const outcome = (await settled) as string;
+      return { ctx, outcome };
     }
 
     it('suppresses terminal publication and idle when a cooldown is scheduled', async () => {
       const onRateLimitExhausted = mock(async (): Promise<boolean> => true);
 
-      const ctx = await runTerminalFailure('429 Too Many Requests', { onRateLimitExhausted });
+      const { ctx, outcome } = await runTerminalFailure('429 Too Many Requests', {
+        onRateLimitExhausted,
+      });
 
+      expect(outcome).toBe('resolved');
       expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(handleErrorSpy).not.toHaveBeenCalled();
@@ -2411,8 +2422,11 @@ describe('QueryRunner', () => {
           }
         );
 
-        await runTerminalFailure(testCase.errorMessage, { onRateLimitExhausted });
+        const { outcome } = await runTerminalFailure(testCase.errorMessage, {
+          onRateLimitExhausted,
+        });
 
+        expect(outcome).toBe('resolved');
         expect(handoffArgs.length).toBe(1);
         expect(handoffArgs[0]?.[0]).toBe(`Error: ${testCase.errorMessage}`);
         expect(handoffArgs[0]?.[1]).toBeNull();
@@ -2478,10 +2492,11 @@ describe('QueryRunner', () => {
         route.push('idle');
       });
 
-      await runTerminalFailure('429 Too Many Requests', {
+      const { outcome } = await runTerminalFailure('429 Too Many Requests', {
         onRateLimitExhausted: mock(async (): Promise<boolean> => false),
       });
 
+      expect(outcome).toBe('resolved');
       expect(route).toEqual(['begin', 'handle', 'idle', 'idle']);
       expect(handleErrorSpy).toHaveBeenCalledWith(
         'test-session-id',
@@ -2494,8 +2509,9 @@ describe('QueryRunner', () => {
     });
 
     it('degrades to the terminal route when no handoff callback is wired', async () => {
-      await runTerminalFailure('429 Too Many Requests');
+      const { outcome } = await runTerminalFailure('429 Too Many Requests');
 
+      expect(outcome).toBe('resolved');
       expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
       expect(handleErrorSpy).toHaveBeenCalledWith(
         'test-session-id',
@@ -2511,8 +2527,11 @@ describe('QueryRunner', () => {
     it('never consults the handoff for non-limit failures', async () => {
       const onRateLimitExhausted = mock(async (): Promise<boolean> => true);
 
-      await runTerminalFailure('terminal query failure', { onRateLimitExhausted });
+      const { outcome } = await runTerminalFailure('terminal query failure', {
+        onRateLimitExhausted,
+      });
 
+      expect(outcome).toBe('resolved');
       expect(onRateLimitExhausted).not.toHaveBeenCalled();
       expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
       expect(handleErrorSpy).toHaveBeenCalledWith(
@@ -2535,14 +2554,31 @@ describe('QueryRunner', () => {
       });
       const abortController = new AbortController();
 
-      const ctx = await runTerminalFailure('429 Too Many Requests', {
-        onRateLimitExhausted: mock(async (): Promise<boolean> => true),
-        queryObject: { close: closeQuery } as unknown as QueryRunnerContext['queryObject'],
-        queryAbortController: abortController,
-        processExitedPromise: Promise.resolve(),
-        resetProcessExitedPromise: resetExitedPromise,
-      });
+      const { ctx, outcome } = await runTerminalFailure(
+        '429 Too Many Requests',
+        {
+          onRateLimitExhausted: mock(async (): Promise<boolean> => true),
+          queryObject: { close: closeQuery } as unknown as QueryRunnerContext['queryObject'],
+          queryAbortController: abortController,
+          processExitedPromise: Promise.resolve(),
+          resetProcessExitedPromise: resetExitedPromise,
+        },
+        (seeded) => {
+          (
+            seeded as unknown as {
+              _lastConsumedUserMessage: unknown;
+              _consumedUserMessages: Map<number, Array<{ uuid: string; content: string }>>;
+            }
+          )._lastConsumedUserMessage = null;
+          (
+            seeded as unknown as {
+              _consumedUserMessages: Map<number, Array<{ uuid: string; content: string }>>;
+            }
+          )._consumedUserMessages.set(1, [{ uuid: 'g1-msg', content: 'turn prompt' }]);
+        }
+      );
 
+      expect(outcome).toBe('resolved');
       expect(closeQuery).toHaveBeenCalledTimes(1);
       expect(ctx.queryObject).toBeNull();
       expect(abortController.signal.aborted).toBe(true);
@@ -2555,27 +2591,64 @@ describe('QueryRunner', () => {
       expect(ctx.queryPromise).toBeNull();
       const runnerPrivate = runner as unknown as {
         _lastConsumedUserMessage: unknown;
-        _consumedUserMessages: Map<number, unknown>;
+        _consumedUserMessages: Map<number, Array<{ uuid: string; content: string }>>;
       };
       expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
       expect(runnerPrivate._consumedUserMessages.size).toBe(0);
     });
 
     it('isLimitRecoveryPending gates only the finalizer idle, not the catch route', async () => {
-      await runTerminalFailure('terminal query failure', { isLimitRecoveryPending: () => true });
+      const route: string[] = [];
+      beginTerminalIdleSpy.mockImplementation(() => {
+        route.push('begin');
+      });
+      handleErrorSpy.mockImplementation(async () => {
+        route.push('handle');
+      });
+      setIdleSpy.mockImplementation(async () => {
+        route.push('idle');
+      });
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
-      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
-      expect(setIdleSpy.mock.calls.length).toBe(1);
+      const { outcome } = await runTerminalFailure('terminal query failure', {
+        isLimitRecoveryPending: () => true,
+        processExitedPromise: Promise.resolve(),
+        resetProcessExitedPromise: mock(function (this: {
+          processExitedPromise: Promise<void> | null;
+        }) {
+          this.processExitedPromise = null;
+          route.push('boundary');
+        }),
+      });
+
+      expect(outcome).toBe('resolved');
+      expect(route).toEqual(['begin', 'handle', 'idle', 'boundary']);
     });
 
     it('skips the finalizer idle while status is rate_limit_cooldown', async () => {
       getStateSpy.mockReturnValue({ status: 'rate_limit_cooldown' });
+      const route: string[] = [];
+      beginTerminalIdleSpy.mockImplementation(() => {
+        route.push('begin');
+      });
+      handleErrorSpy.mockImplementation(async () => {
+        route.push('handle');
+      });
+      setIdleSpy.mockImplementation(async () => {
+        route.push('idle');
+      });
 
-      await runTerminalFailure('terminal query failure');
+      const { outcome } = await runTerminalFailure('terminal query failure', {
+        processExitedPromise: Promise.resolve(),
+        resetProcessExitedPromise: mock(function (this: {
+          processExitedPromise: Promise<void> | null;
+        }) {
+          this.processExitedPromise = null;
+          route.push('boundary');
+        }),
+      });
 
-      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
-      expect(setIdleSpy.mock.calls.length).toBe(1);
+      expect(outcome).toBe('resolved');
+      expect(route).toEqual(['begin', 'handle', 'idle', 'boundary']);
     });
   });
 
@@ -2617,7 +2690,10 @@ describe('QueryRunner', () => {
 
     type ConsumedEntry = { uuid: string; content: string };
 
-    function createLiturgyContext(events: string[]): QueryRunnerContext {
+    function createLiturgyContext(events: string[]): {
+      ctx: QueryRunnerContext;
+      markQueueStopped: () => void;
+    } {
       const queueIsRunning = mock((): boolean => false);
       const queryObject = {
         close: mock((): void => {
@@ -2625,7 +2701,7 @@ describe('QueryRunner', () => {
         }),
       } as unknown as QueryRunnerContext['queryObject'];
 
-      return {
+      const ctx: QueryRunnerContext = {
         session: mockSession,
         db: mockDb,
         messageHub: mockMessageHub,
@@ -2703,6 +2779,10 @@ describe('QueryRunner', () => {
         onModelsFetched: onModelsFetchedSpy,
         onMarkApiSuccess: onMarkApiSuccessSpy,
       };
+      return {
+        ctx,
+        markQueueStopped: () => queueIsRunning.mockReturnValue(false),
+      };
     }
 
     function installLiturgyAccessors(
@@ -2745,11 +2825,12 @@ describe('QueryRunner', () => {
       consumedEntries?: ConsumedEntry[];
       lastConsumedUuid?: string;
       withResumeConsumer?: boolean;
+      stopQueueAfterFirstBuild?: boolean;
       overrides?: Partial<QueryRunnerContext>;
     }): Promise<{ events: string[]; notices: LiturgyNotice[]; ctx: QueryRunnerContext }> {
       const events: string[] = [];
       const notices: LiturgyNotice[] = [];
-      const ctx = createLiturgyContext(events);
+      const { ctx, markQueueStopped } = createLiturgyContext(events);
       const getTimer = installLiturgyAccessors(ctx, events);
       if (config.withResumeConsumer) {
         ctx.consumePendingResumeSessionAt = () => {
@@ -2758,14 +2839,18 @@ describe('QueryRunner', () => {
         };
       }
       Object.assign(ctx, config.overrides);
-      ctx.startupTimeoutTimer = setTimeout(() => {}, 60000);
-      ctx.originalEnvVars = { ANTHROPIC_API_KEY: 'sk-test-key' };
+      const seededTimer = setTimeout(() => {}, 60000);
+      ctx.startupTimeoutTimer = seededTimer;
+      ctx.originalEnvVars = { ANTHROPIC_API_KEY: 'sk-original-key' };
       events.length = 0;
 
       let buildCount = 0;
       buildSpy.mockImplementation(async () => {
         buildCount += 1;
         events.push(`build#${buildCount}`);
+        if (config.stopQueueAfterFirstBuild === true && buildCount === 1) {
+          markQueueStopped();
+        }
         const error = new Error(config.errorMessage);
         if (config.errorName) error.name = config.errorName;
         throw error;
@@ -2793,13 +2878,21 @@ describe('QueryRunner', () => {
         };
       }
 
+      const clearedHandles: Array<Parameters<typeof clearTimeout>[0]> = [];
+      const originalClearTimeout = clearTimeout;
+      globalThis.clearTimeout = ((id?: Parameters<typeof clearTimeout>[0]) => {
+        clearedHandles.push(id);
+        originalClearTimeout(id);
+      }) as typeof clearTimeout;
       try {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
       } finally {
+        globalThis.clearTimeout = originalClearTimeout;
         const leftoverTimer = getTimer();
-        if (leftoverTimer) clearTimeout(leftoverTimer);
+        if (leftoverTimer) originalClearTimeout(leftoverTimer);
       }
+      expect(clearedHandles).toContain(seededTimer);
 
       return { events, notices, ctx };
     }
@@ -2807,6 +2900,7 @@ describe('QueryRunner', () => {
     it('startup-timeout arm replays consumed prompts through the queue front', async () => {
       const { events, notices } = await runLiturgyRow({
         errorMessage: 'SDK startup timeout - query aborted',
+        stopQueueAfterFirstBuild: true,
         consumedEntries: [
           { uuid: 'u1', content: 'prompt A' },
           { uuid: 'u2', content: 'prompt B' },
@@ -2821,6 +2915,7 @@ describe('QueryRunner', () => {
         'procs.terminate',
         'query.close',
         'exit.reset',
+        'queue.start',
         'enqueue:u2:prepend',
         'enqueue:u1:prepend',
         'display',
@@ -2950,6 +3045,7 @@ describe('QueryRunner', () => {
       expect(notices.length).toBe(1);
       expect(notices[0]?.markAsError).toBe(false);
       expect(notices[0]?.text).toContain('provider is temporarily unavailable');
+      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-original-key');
     });
 
     it('unmatched AbortError arm clears only the queue', async () => {
@@ -2972,6 +3068,7 @@ describe('QueryRunner', () => {
         'idle',
       ]);
       expect(notices).toEqual([]);
+      expect(process.env.ANTHROPIC_API_KEY).toBe('sk-original-key');
     });
 
     it('api-validation route begins terminal idle before its marked display', async () => {
