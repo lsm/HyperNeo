@@ -3971,9 +3971,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ]);
         expect(fullRows.map((row) => row.id)).toEqual([
           'visible',
-          'operational-commands_changed',
-          'operational-session_state_changed',
           'operational-thinking_tokens',
+          'operational-session_state_changed',
+          'operational-commands_changed',
         ]);
       });
 
