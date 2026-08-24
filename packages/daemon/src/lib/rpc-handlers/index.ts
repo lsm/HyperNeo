@@ -93,6 +93,7 @@ import type { JobQueueRepository } from '../../storage/repositories/job-queue-re
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
+import { GOAL_OUTCOME_WAKE_ENABLED } from '../space/runtime/goal-outcome-wake-flag';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers';
@@ -660,7 +661,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     evolutionEpisodeService,
     artifactProfile,
     outcomeNotificationRepo,
-    enableGoalOutcomeWake: true,
+    enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,
   });
   deliverOutcomeWake = (notification) => {
     void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
