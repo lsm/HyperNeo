@@ -3961,11 +3961,24 @@ export class TaskAgentManager {
     const passengerEssences = allEssences.filter(
       (essence) => classifyExternalEventDirectSteer(essence) === null
     );
+    const carriedDropped = steerable.reduce(
+      (sum, entry) => sum + (entry.droppedEventCount ?? 0),
+      0
+    );
+    let passengerDbId: string | null = null;
+    const discardPassengerCopy = (): void => {
+      if (!passengerDbId) return;
+      this.config.db.updateMessageStatus([passengerDbId], 'consumed');
+      void this.config.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId,
+          messageIds: [passengerDbId],
+          status: 'consumed',
+        })
+        .catch(() => {});
+      passengerDbId = null;
+    };
     if (passengerEssences.length > 0) {
-      const carriedDropped = steerable.reduce(
-        (sum, entry) => sum + (entry.droppedEventCount ?? 0),
-        0
-      );
       const passengerRow = buildSyntheticExternalEventMessage(
         sessionId,
         buildDeferredEventDigestEnvelopeText(
@@ -3974,7 +3987,7 @@ export class TaskAgentManager {
         )
       );
       try {
-        const passengerDbId = this.config.db.saveUserMessage(sessionId, passengerRow, 'deferred');
+        passengerDbId = this.config.db.saveUserMessage(sessionId, passengerRow, 'deferred');
         await this.publishMessageStatusChanged(sessionId, passengerDbId, 'deferred');
         log.debug(
           `TaskAgentManager: re-deferred ${passengerEssences.length} digest-tier passenger ` +
@@ -3994,6 +4007,7 @@ export class TaskAgentManager {
       title: 'Direct external events while you were working (injected mid-turn)',
       snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
       renderAllReviewBodies: true,
+      ...(carriedDropped > 0 ? { droppedEventCount: carriedDropped } : {}),
     });
     const message = buildSyntheticExternalEventMessage(sessionId, steerText);
     const steerMessageId = String(message.uuid);
@@ -4005,6 +4019,7 @@ export class TaskAgentManager {
         `TaskAgentManager: failed to persist direct steer row for session ${sessionId}: ` +
           `${err instanceof Error ? err.message : String(err)}; rows stay deferred`
       );
+      discardPassengerCopy();
       return;
     }
     try {
@@ -4022,6 +4037,7 @@ export class TaskAgentManager {
         .getSDKMessageRepo()
         .markDeliveryFailedByUuid(sessionId, steerMessageId);
       if (failedDbId) await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+      discardPassengerCopy();
       return;
     }
     const sourceDbIds = steerable.map((entry) => entry.dbId);

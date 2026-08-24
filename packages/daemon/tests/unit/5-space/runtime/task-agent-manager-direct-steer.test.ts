@@ -1059,6 +1059,70 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steerText).toContain('long-evt');
   });
 
+  it('reports the omission count in an all-direct steer', async () => {
+    const harness = makeHarness();
+    const essences = [
+      {
+        eventId: 'alldirect-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        eventType: 'pull_request_review_comment',
+        actor: 'codex[bot]',
+        body: 'bot feedback',
+        commentId: 'c-alldirect',
+      },
+      {
+        eventId: 'alldirect-check',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+        conclusion: 'failure',
+        checkName: 'All Direct Check',
+      },
+    ];
+    await injectDefer(
+      harness.manager,
+      JSON.stringify({ type: 'external_event_digest', events: essences, droppedEventCount: 7 })
+    );
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    expect(rowText(steers[0]!.message)).toContain('7 older events were omitted');
+  });
+
+  it('discards the passenger copy when steer setup fails after it was persisted', async () => {
+    const harness = makeHarness();
+    harness.setFailJobEnqueue(true);
+    const essences = [
+      {
+        eventId: 'rollback-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        eventType: 'pull_request_review_comment',
+        actor: 'codex[bot]',
+        body: 'bot feedback rollback',
+        commentId: 'c-rollback',
+      },
+      {
+        eventId: 'rollback-human',
+        topic: 'github/lsm/hyperneo/pull_request/2828.comment_polled',
+        eventType: 'issue_comment',
+        action: 'polled',
+        actor: 'lsm',
+        body: 'ROLLBACK_HUMAN_NOTE',
+        commentId: 'c-rollback-human',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const humanDeferredRows = harness.rows.filter(
+      (row) => row.status === 'deferred' && rowText(row.message).includes('ROLLBACK_HUMAN_NOTE')
+    );
+    expect(humanDeferredRows).toHaveLength(1);
+    expect(harness.rows.find((row) => row.status === 'failed')).toBeDefined();
+    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+  });
+
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
     const harness = makeHarness();
     await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'rev-first'));
