@@ -48,6 +48,7 @@
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/ack-selection.ts": ["exports"],
+    "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
     "packages/daemon/src/lib/db-query/scope-config.ts": ["exports"],
     "packages/daemon/src/lib/external-events/topic-trie.ts": ["exports"],
