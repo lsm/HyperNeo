@@ -5312,7 +5312,18 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             throw new Error('No agent identity available for inactivity config');
           }
           const cfg = config.inactivityConfigRepo?.getByAgent(config.spaceId, config.myAgentId);
-          return { content: [{ type: 'text' as const, text: JSON.stringify(cfg ?? null) }] };
+          const claim = config.inactivityClaimRepo?.getByAgent(config.spaceId, config.myAgentId);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  config: cfg ?? null,
+                  degraded: claim?.degraded ?? false,
+                }),
+              },
+            ],
+          };
         }
       ),
       tool(

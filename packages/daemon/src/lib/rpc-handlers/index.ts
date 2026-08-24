@@ -688,9 +688,37 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     inactivityConfigRepo: spaceAgentInactivityConfigRepo,
     inactivityClaimRepo: spaceAgentInactivityClaimRepo,
     inactivityRunNow: (spaceId, agentId) => {
-      setTimeout(() => {
-        void spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId).catch(() => {});
-      }, 5000);
+      void (async () => {
+        const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
+        const db = deps.db.getDatabase();
+        const deadline = Date.now() + 120_000;
+        while (Date.now() < deadline) {
+          if (sessionId !== null && sessionId !== undefined) {
+            const row = db
+              .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
+              .get(sessionId) as { processing_state?: string | null } | null;
+            let status = 'idle';
+            try {
+              const parsed = row?.processing_state
+                ? (JSON.parse(row.processing_state) as { status?: unknown })
+                : null;
+              if (parsed && typeof parsed.status === 'string') status = parsed.status;
+            } catch {}
+            if (
+              status !== 'processing' &&
+              status !== 'queued' &&
+              status !== 'running' &&
+              status !== 'waiting_for_input'
+            ) {
+              break;
+            }
+          } else {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+        await spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId).catch(() => {});
+      })();
       return Promise.resolve();
     },
   });
@@ -707,11 +735,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return null;
         const db = deps.db.getDatabase();
         const sessionRow = db
-          .prepare(`SELECT created_at, processing_state FROM sessions WHERE id = ?`)
+          .prepare(`SELECT created_at, status, processing_state FROM sessions WHERE id = ?`)
           .get(agent.sessionId) as {
           created_at?: string | number;
+          status?: string | null;
           processing_state?: string | null;
         } | null;
+        if (
+          sessionRow !== null &&
+          (sessionRow.status === 'archived' || sessionRow.status === 'ended')
+        ) {
+          return null;
+        }
         const consumedRow = db
           .prepare(
             `SELECT MAX(timestamp) AS ts FROM sdk_messages
