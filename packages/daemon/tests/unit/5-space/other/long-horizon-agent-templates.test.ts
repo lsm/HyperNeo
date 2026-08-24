@@ -55,6 +55,23 @@ describe('long-horizon agent templates', () => {
     );
   });
 
+  test('coordinator teaches the fallback-reviewer duty (MC5-B2)', () => {
+    const coordinator = getLongHorizonAgentTemplates().find(
+      (template) => template.key === 'coordinator.default'
+    );
+    expect(coordinator?.instructions).toContain('fallback reviewer');
+    expect(coordinator?.instructions).toContain('review_goal_outcome');
+  });
+
+  test('marketing is the first ownership-loop dogfood profile (MC5-B2)', () => {
+    const marketing = getLongHorizonAgentTemplates().find(
+      (template) => template.key === 'marketing.default'
+    );
+    expect(marketing?.instructions).toContain('trigger_goal_task');
+    expect(marketing?.instructions).toContain('review_goal_outcome');
+    expect(marketing?.instructions).toContain('follow-up tasks');
+  });
+
   test('returns cloned template data', () => {
     const [template] = getLongHorizonAgentTemplates();
     const statuses = template.suggestedEventSubscriptions[0].filter.statuses as string[];

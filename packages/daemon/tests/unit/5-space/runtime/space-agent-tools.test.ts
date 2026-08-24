@@ -2697,6 +2697,79 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
     expect(out.success).toBe(false);
     expect(out.error).toContain('notification_id');
   });
+
+  test('marketing dogfood loop: delegate, terminal report, discovery review, follow-up (MC5-B2)', async () => {
+    const owner = ctx.longHorizonAgentRepo.create({
+      id: 'lh-marketing',
+      spaceId: ctx.spaceId,
+      handle: '@marketing',
+      displayName: 'Marketing',
+    });
+    const goal = goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Launch positioning refresh',
+      primaryOwnerAgentId: owner.id,
+    });
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: owner.id,
+    });
+
+    const delegated = JSON.parse(
+      (await handlers.trigger_goal_task({ goal_id: goal.id })).content[0].text
+    );
+    expect(delegated.success).toBe(true);
+    const delegatedTask = delegated.task as { id: string; goalId: string };
+    expect(delegatedTask.goalId).toBe(goal.id);
+
+    const terminal = goalService.handleTaskTerminal(delegatedTask.id, {
+      updates: {
+        status: 'done',
+        startedAt: Date.now(),
+        result: JSON.stringify({ summary: 'Drafted three positioning options' }),
+      },
+    });
+    expect(terminal?.notification).not.toBeNull();
+
+    const projected = JSON.parse(
+      (await handlers.list_goal_tasks({ goal_id: goal.id })).content[0].text
+    );
+    expect(projected.tasks.map((t: { id: string }) => t.id)).toContain(delegatedTask.id);
+
+    const discovery = JSON.parse((await handlers.review_goal_outcome({})).content[0].text);
+    expect(discovery.discovery).toBe(true);
+    expect(discovery.notifications.map((n: { id: string }) => n.id)).toEqual([
+      terminal?.notification?.id,
+    ]);
+
+    const reviewed = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          notification_id: terminal?.notification?.id,
+          goal_id: goal.id,
+          task_id: delegatedTask.id,
+          summary: 'Positioning options drafted; picking direction next',
+          next_steps: ['Pick the lead positioning option'],
+          observations: [{ key: 'options_drafted', value: 3 }],
+        })
+      ).content[0].text
+    );
+    expect(reviewed.success).toBe(true);
+    expect(reviewed.goal.summary).toBe('Positioning options drafted; picking direction next');
+    expect(reviewed.goal.metrics.options_drafted).toBe(3);
+
+    const followUp = JSON.parse(
+      (
+        await handlers.create_standalone_task({
+          title: 'Pick lead positioning option',
+          description: 'Review the three drafted options and choose the lead direction.',
+        })
+      ).content[0].text
+    );
+    expect(followUp.success).toBe(true);
+    expect(ctx.taskRepo.getTask(followUp.task.id)?.title).toBe('Pick lead positioning option');
+  });
 });
 
 describe('createSpaceAgentToolHandlers — Forge tools', () => {
