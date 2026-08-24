@@ -1,11 +1,11 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
-import type { SettingsManager } from '../settings-manager';
-import type { Database } from '../../storage/database';
-import type { McpImportService } from '../mcp';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
-import { withVoiceCredentialLock } from './voice-credential-lock';
+import type { SettingsManager } from '../settings-manager.ts';
+import type { Database } from '../../storage/database.ts';
+import type { McpImportService } from '../mcp/index.ts';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
@@ -13,7 +13,7 @@ export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
 ): Promise<void> {
   applyProviderModelAllowlistsToEnv(allowlists);
-  const { clearModelsCache } = await import('../model-service');
+  const { clearModelsCache } = await import('../model-service.ts');
   clearModelsCache();
 }
 
@@ -100,7 +100,7 @@ export function registerSettingsHandlers(
           );
           const { syncCustomEndpointProviders } = await import('../providers/factory.js');
           await syncCustomEndpointProviders(endpointsToSync);
-          const { clearModelsCache } = await import('../model-service');
+          const { clearModelsCache } = await import('../model-service.ts');
           clearModelsCache();
         }
         internalEventBus.publishAsync('settings.updated', {
@@ -177,7 +177,7 @@ export function registerSettingsHandlers(
         );
         const { syncCustomEndpointProviders } = await import('../providers/factory.js');
         await syncCustomEndpointProviders(endpointsToSync);
-        const { clearModelsCache } = await import('../model-service');
+        const { clearModelsCache } = await import('../model-service.ts');
         clearModelsCache();
       }
       internalEventBus.publishAsync('settings.updated', {
@@ -207,7 +207,7 @@ export function registerSettingsHandlers(
       }
 
       const workspacePath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
-      effectiveSettings = new (await import('../settings-manager')).SettingsManager(
+      effectiveSettings = new (await import('../settings-manager.ts')).SettingsManager(
         db,
         workspacePath
       );

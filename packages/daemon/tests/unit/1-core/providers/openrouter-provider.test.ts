@@ -372,4 +372,31 @@ describe('OpenRouterProvider', () => {
     const provider = new OpenRouterProvider();
     expect(provider.capabilities.maxContextWindow).toBe(1_000_000);
   });
+
+  it('discards discovery results that cross a credential change', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = mock(
+      (_url: RequestInfo | URL, _init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    ) as unknown as typeof fetch;
+    const provider = new OpenRouterProvider(process.env, fetchMock);
+
+    const discovery = provider.listRemoteModels({ force: true });
+    while (!resolveFetch) {
+      await Promise.resolve();
+    }
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'sk-or-replacement' });
+    resolveFetch(
+      new Response(JSON.stringify({ data: [{ id: 'anthropic/claude-sonnet-4.6' }] }), {
+        status: 200,
+      })
+    );
+
+    await expect(discovery).rejects.toThrow('credentials changed during model discovery');
+    expect((provider as unknown as Record<string, unknown>)['modelCache']).toBeNull();
+  });
 });

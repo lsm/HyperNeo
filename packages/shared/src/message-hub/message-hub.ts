@@ -350,7 +350,7 @@ export class MessageHub {
   }
 
   private async handleIncomingRequest(message: HubMessage): Promise<void> {
-    const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
+    const clientId = (message as import('./protocol.ts').HubMessageWithMetadata).clientId;
 
     if (message.method === 'channel.join' || message.method === 'channel.leave') {
       if (this.router) {

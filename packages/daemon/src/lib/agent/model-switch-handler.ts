@@ -5,24 +5,24 @@ import type {
   CurrentModelInfo,
   MessageHub,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import type { ErrorManager } from '../error-manager';
-import { ErrorCategory } from '../error-manager';
-import type { Logger } from '../logger';
-import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import type { ErrorManager } from '../error-manager.ts';
+import { ErrorCategory } from '../error-manager.ts';
+import type { Logger } from '../logger.ts';
+import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
-import { inferProviderForModel } from '../providers/registry';
+import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager';
-import type { ContextTracker } from './context-tracker';
-import type { MessageQueue } from './message-queue';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { QueryLifecycleManager } from './query-lifecycle-manager';
-import { AcpQueryAdapter } from '../acp/acp-query-adapter';
-import { disposeAcpSessions } from '../acp/acp-model-fetcher';
-import { AcpProvider } from '../providers/acp-provider';
-import type { QueryLike } from './query-like';
+import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager.ts';
+import type { ContextTracker } from './context-tracker.ts';
+import type { MessageQueue } from './message-queue.ts';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
+import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
+import { AcpProvider } from '../providers/acp-provider.ts';
+import type { QueryLike } from './query-like.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;

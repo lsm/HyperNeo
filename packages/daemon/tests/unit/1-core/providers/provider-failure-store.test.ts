@@ -24,6 +24,11 @@ describe('provider failure classification', () => {
     );
   });
 
+  it('classifies remote model endpoint 401/403 rejections as credential', () => {
+    expect(classifyProviderFailureMessage('Endpoint returned HTTP 401')).toBe('credential');
+    expect(classifyProviderFailureMessage('Endpoint returned HTTP 403')).toBe('credential');
+  });
+
   it('classifies raw SDK authentication errors as credential', () => {
     expect(
       classifyProviderFailureMessage(

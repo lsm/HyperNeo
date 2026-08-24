@@ -1,14 +1,15 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils';
+import type { SpawnFn } from '../../runtime-spawn/index.ts';
+import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils.ts';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,
   isSecondaryRateLimitError,
   RATE_LIMIT_MIN_BACKOFF_MS,
-} from './rate-limit-detector';
-import type { ConnectorOutcome } from './connectors/connector';
+} from './rate-limit-detector.ts';
+import type { ConnectorOutcome } from './connectors/connector.ts';
 
 export const DEFAULT_GH_LOOKUP_TIMEOUT_MS = 30_000;
 
@@ -99,7 +100,7 @@ export function pickRateLimitResetEpoch(
 
 export async function fetchRateLimitResetEpoch(
   cwd: string,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   timeoutMs: number,
   host?: string,
   resource?: 'core' | 'graphql'
@@ -141,7 +142,7 @@ export async function fetchRateLimitResetEpoch(
 export async function runGhJson(
   args: string[],
   cwd: string,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   options?: {
     timeoutMs?: number;
     hostHint?: string;

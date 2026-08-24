@@ -1,4 +1,4 @@
-import type { Database } from '../../storage/database';
+import type { Database } from '../../storage/database.ts';
 import type {
   AppMcpServer,
   McpServerConfig,
@@ -11,7 +11,7 @@ import {
   resolveMcpServers,
   scopeChainForSession,
   type ResolveMcpServersSession,
-} from './resolve-mcp-servers';
+} from './resolve-mcp-servers.ts';
 
 export type { ValidationResult } from '@hyperneo/shared';
 

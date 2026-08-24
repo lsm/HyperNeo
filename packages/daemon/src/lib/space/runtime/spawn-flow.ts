@@ -7,11 +7,11 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
-import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline';
-import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution';
-import { resolveWorkflowNodeSlot } from './spawn-slot-resolution';
-import { stagedRun, type StagedRunOutcome } from './staged-run';
-import { validateExecutionAgainstWorkflow } from './workflow-node-execution-validation';
+import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
+import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
+import { resolveWorkflowNodeSlot } from './spawn-slot-resolution.ts';
+import { stagedRun, type StagedRunOutcome } from './staged-run.ts';
+import { validateExecutionAgainstWorkflow } from './workflow-node-execution-validation.ts';
 
 export interface IndexedSessionInspection {
   sessionId: string | null;

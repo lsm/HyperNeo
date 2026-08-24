@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
 import {
   recordProviderFailure,
@@ -253,6 +253,108 @@ describe('AnthropicProvider', () => {
       providerWithCreds.clearModelCache();
 
       await expect(providerWithCreds.getModels()).rejects.toThrow('SDK unavailable');
+    });
+  });
+
+  describe('listRemoteModels', () => {
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+    });
+
+    const cachedModels = [
+      {
+        id: 'cached-sonnet',
+        name: 'Cached Sonnet',
+        alias: 'cached-sonnet',
+        family: 'sonnet' as const,
+        provider: 'anthropic' as const,
+        contextWindow: 200000,
+        description: 'Cached',
+        releaseDate: '',
+        available: true,
+      },
+    ];
+    const refreshedModels = [
+      {
+        id: 'refreshed-opus',
+        name: 'Refreshed Opus',
+        alias: 'refreshed-opus',
+        family: 'opus' as const,
+        provider: 'anthropic' as const,
+        contextWindow: 200000,
+        description: 'Refreshed',
+        releaseDate: '',
+        available: true,
+      },
+    ];
+
+    it('reuses cached models unless force refreshes and replaces the cache', async () => {
+      const loadModels = spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      ).mockResolvedValue(refreshedModels as never);
+      const clearCache = spyOn(provider, 'clearModelCache');
+      provider.setModelCache(cachedModels);
+
+      expect(await provider.listRemoteModels()).toEqual(cachedModels);
+      expect(loadModels).not.toHaveBeenCalled();
+
+      expect(await provider.listRemoteModels({ force: true })).toEqual(refreshedModels);
+      expect(clearCache).toHaveBeenCalledTimes(1);
+      expect(loadModels).toHaveBeenCalledTimes(1);
+
+      expect(await provider.listRemoteModels()).toEqual(refreshedModels);
+      expect(loadModels).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects cached and forced discovery when credentials are no longer available', async () => {
+      const loadModels = spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      );
+      provider.setModelCache(cachedModels);
+      delete process.env.ANTHROPIC_API_KEY;
+
+      await expect(provider.listRemoteModels()).rejects.toThrow('not authenticated');
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow('not authenticated');
+      expect(loadModels).not.toHaveBeenCalled();
+    });
+
+    it('propagates a forced SDK failure instead of serving the stale cache', async () => {
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      ).mockRejectedValue(new Error('SDK refresh failed') as never);
+      provider.setModelCache(cachedModels);
+
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+        'SDK refresh failed'
+      );
+      await expect(provider.getModels()).rejects.toThrow('SDK refresh failed');
+    });
+
+    it('discards discovery results that cross a credential change', async () => {
+      let resolveModels: ((models: typeof refreshedModels) => void) | undefined;
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      ).mockImplementation(
+        () =>
+          new Promise<typeof refreshedModels>((resolve) => {
+            resolveModels = resolve;
+          }) as never
+      );
+
+      const discovery = provider.listRemoteModels({ force: true });
+      while (!resolveModels) {
+        await Promise.resolve();
+      }
+
+      provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+      resolveModels(refreshedModels);
+
+      await expect(discovery).rejects.toThrow('credentials changed during model discovery');
+      expect((provider as unknown as Record<string, unknown>)['modelCache']).toBeNull();
     });
   });
 

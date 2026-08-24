@@ -1,5 +1,5 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { backfillSessionCounters, createSessionCounters } from './session-counters';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
 
 export function runMigration198(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;

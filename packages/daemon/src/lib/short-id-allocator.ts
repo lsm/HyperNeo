@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../storage/sqlite-compat.ts';
 import { SHORT_ID_PREFIX, formatShortId } from '@hyperneo/shared';
 
 export class ShortIdAllocator {

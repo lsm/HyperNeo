@@ -1,5 +1,5 @@
-import { Database as BunDatabase } from './sqlite-compat';
-import { Logger } from '../lib/logger';
+import { Database as BunDatabase } from './sqlite-compat.ts';
+import { Logger } from '../lib/logger.ts';
 import type {
   Session,
   GlobalToolsConfig,
@@ -12,82 +12,85 @@ import type {
 } from '@hyperneo/shared';
 import type { GoalStatus, RoomGoal } from '@hyperneo/shared/types/neo';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { DatabaseCore } from './database-core';
-import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability';
-import { ShortIdAllocator } from '../lib/short-id-allocator';
-export { ShortIdAllocator } from '../lib/short-id-allocator';
-import { SessionRepository } from './repositories/session-repository';
-import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository';
-import { SettingsRepository } from './repositories/settings-repository';
-import { GitHubMappingRepository } from './repositories/github-mapping-repository';
+import { DatabaseCore } from './database-core.ts';
+import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import { ShortIdAllocator } from '../lib/short-id-allocator.ts';
+export { ShortIdAllocator } from '../lib/short-id-allocator.ts';
+import { SessionRepository } from './repositories/session-repository.ts';
+import { SDKMessageRepository, type SendStatus } from './repositories/sdk-message-repository.ts';
+import { SettingsRepository } from './repositories/settings-repository.ts';
+import { GitHubMappingRepository } from './repositories/github-mapping-repository.ts';
 import {
   InboxItemRepository,
   type CreateInboxItemParams,
   type InboxItemFilter,
-} from './repositories/inbox-item-repository';
+} from './repositories/inbox-item-repository.ts';
 import {
   GoalRepository,
   type CreateGoalParams,
   type UpdateGoalParams,
-} from './repositories/goal-repository';
-import { JobQueueRepository } from './repositories/job-queue-repository';
-import { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
-import { TaskRepository } from './repositories/task-repository';
-import { SpaceTaskRepository } from './repositories/space-task-repository';
-import { NodeExecutionRepository } from './repositories/node-execution-repository';
-import { McpEnablementRepository } from './repositories/mcp-enablement-repository';
-import { SkillRepository } from './repositories/skill-repository';
-import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
-import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-transformers';
-import { AgentMemoryRepository } from './repositories/agent-memory-repository';
-import { EvolutionRepository } from './repositories/evolution-repository';
-import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
-import { ProviderRepository } from './repositories/provider-repository';
-import type { ReactiveDatabase } from './reactive-database';
+} from './repositories/goal-repository.ts';
+import { JobQueueRepository } from './repositories/job-queue-repository.ts';
+import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
+import { TaskRepository } from './repositories/task-repository.ts';
+import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
+import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
+import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
+import { SkillRepository } from './repositories/skill-repository.ts';
+import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
+import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-transformers.ts';
+import { AgentMemoryRepository } from './repositories/agent-memory-repository.ts';
+import { EvolutionRepository } from './repositories/evolution-repository.ts';
+import { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
+import { ProviderRepository } from './repositories/provider-repository.ts';
+import type { ReactiveDatabase } from './reactive-database.ts';
 
-export type { SendStatus } from './repositories/sdk-message-repository';
-export type { SQLiteValue } from './types';
-export type { CreateInboxItemParams, InboxItemFilter } from './repositories/inbox-item-repository';
+export type { SendStatus } from './repositories/sdk-message-repository.ts';
+export type { SQLiteValue } from './types.ts';
+export type {
+  CreateInboxItemParams,
+  InboxItemFilter,
+} from './repositories/inbox-item-repository.ts';
 export type {
   CreateGoalParams,
   UpdateGoalParams,
   CreateExecutionParams,
   UpdateExecutionParams,
-} from './repositories/goal-repository';
-export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository';
-export type { Job, EnqueueParams } from './repositories/job-queue-repository';
-export { JobQueueProcessor } from './job-queue-processor';
+} from './repositories/goal-repository.ts';
+export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository.ts';
+export type { Job, EnqueueParams } from './repositories/job-queue-repository.ts';
+export { JobQueueProcessor } from './job-queue-processor.ts';
 export type {
   JobHandler,
   JobHandlerContext,
   JobQueueProcessorOptions,
-} from './job-queue-processor';
+} from './job-queue-processor.ts';
 
 // @public - Library export
-export { GoalRepository } from './repositories/goal-repository';
-export { TaskRepository } from './repositories/task-repository';
-export { SpaceAgentRepository } from './repositories/space-agent-repository';
-export { SpaceAgentInboxRepository } from './repositories/space-agent-inbox-repository';
+export { GoalRepository } from './repositories/goal-repository.ts';
+export { TaskRepository } from './repositories/task-repository.ts';
+export { SpaceAgentRepository } from './repositories/space-agent-repository.ts';
+export { SpaceAgentInboxRepository } from './repositories/space-agent-inbox-repository.ts';
 export type {
   SpaceAgentInboxMessageRecord,
   SpaceAgentInboxMessageStatus,
-} from './repositories/space-agent-inbox-repository';
-export { AppMcpServerRepository } from './repositories/app-mcp-server-repository';
-export { McpEnablementRepository } from './repositories/mcp-enablement-repository';
-export { SkillRepository } from './repositories/skill-repository';
-export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository';
-export { AgentMemoryRepository } from './repositories/agent-memory-repository';
-export { EvolutionRepository } from './repositories/evolution-repository';
-export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository';
-export { ProviderRepository } from './repositories/provider-repository';
-export { WorkflowHookStateRepository } from './repositories/workflow-hook-state-repository';
-export type { WorkflowHookStatePatch } from './repositories/workflow-hook-state-repository';
-export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository';
+} from './repositories/space-agent-inbox-repository.ts';
+export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
+export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
+export { SkillRepository } from './repositories/skill-repository.ts';
+export { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
+export { AgentMemoryRepository } from './repositories/agent-memory-repository.ts';
+export { EvolutionRepository } from './repositories/evolution-repository.ts';
+export { GoalAutomationCursorRepository } from './repositories/goal-automation-cursor-repository.ts';
+export { ProviderRepository } from './repositories/provider-repository.ts';
+export { WorkflowHookStateRepository } from './repositories/workflow-hook-state-repository.ts';
+export type { WorkflowHookStatePatch } from './repositories/workflow-hook-state-repository.ts';
+export type { GoalAutomationCursor } from './repositories/goal-automation-cursor-repository.ts';
 export type {
   AgentMemoryEntry,
   AgentMemorySearchResult,
-} from './repositories/agent-memory-repository';
-export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository';
+} from './repositories/agent-memory-repository.ts';
+export type { WorkspaceHistoryRow } from './repositories/workspace-history-repository.ts';
 export type {
   ProviderRecord,
   CreateProviderParams,

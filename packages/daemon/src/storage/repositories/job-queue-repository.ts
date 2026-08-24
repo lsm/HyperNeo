@@ -1,6 +1,6 @@
 import { generateUUID } from '@hyperneo/shared';
-import { withBusyRetry } from '../busy-retry';
-import type { Database as BunDatabase } from '../sqlite-compat';
+import { withBusyRetry } from '../busy-retry.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 

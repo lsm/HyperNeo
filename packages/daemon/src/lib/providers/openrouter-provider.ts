@@ -135,6 +135,8 @@ export class OpenRouterProvider implements Provider {
   private modelCache: ModelInfo[] | null = null;
   private lastAuthError: string | undefined;
   private credentials: ProviderCredentials | null = null;
+  private credentialsVersion = 0;
+  private credentialSignature: string | undefined;
 
   clearModelCache(): void {
     this.modelCache = null;
@@ -146,8 +148,13 @@ export class OpenRouterProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.credentialsVersion++;
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
-    this.clearModelCache();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -194,9 +201,19 @@ export class OpenRouterProvider implements Provider {
     if (!this.isAvailable()) return [];
     if (this.modelCache) return this.modelCache;
 
+    const credentialsVersion = this.credentialsVersion;
     try {
-      return await this.fetchModels();
+      const models = await this.fetchModels();
+      if (credentialsVersion !== this.credentialsVersion) {
+        this.clearModelCache();
+        throw new Error('OpenRouter credentials changed during model discovery');
+      }
+      return models;
     } catch (error) {
+      if (credentialsVersion !== this.credentialsVersion) {
+        this.clearModelCache();
+        throw error;
+      }
       if (error instanceof OpenRouterModelAuthError) return [];
       const fallback = this.getConfiguredAllowedModels();
       this.modelCache = fallback.length > 0 ? fallback : OpenRouterProvider.FALLBACK_MODELS;
@@ -207,7 +224,13 @@ export class OpenRouterProvider implements Provider {
   async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
     if (!this.isAvailable()) return [];
     if (!options?.force && this.modelCache) return this.modelCache;
-    return this.fetchModels();
+    const credentialsVersion = this.credentialsVersion;
+    const models = await this.fetchModels();
+    if (credentialsVersion !== this.credentialsVersion) {
+      this.clearModelCache();
+      throw new Error('OpenRouter credentials changed during model discovery');
+    }
+    return models;
   }
 
   ownsModel(modelId: string): boolean {

@@ -1,6 +1,6 @@
 import type { MessageHub, NodeExecutionStatus } from '@hyperneo/shared';
-import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 
 export function setupNodeExecutionHandlers(
   messageHub: MessageHub,

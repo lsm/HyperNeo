@@ -4,15 +4,15 @@ import type {
   ReferenceSearchResult,
   ResolvedReference,
 } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import type { ReactiveDatabase } from '../../storage/reactive-database';
-import { TaskRepository } from '../../storage/repositories/task-repository';
-import { GoalRepository } from '../../storage/repositories/goal-repository';
-import type { ShortIdAllocator } from '../short-id-allocator';
-import type { FileIndex } from '../file-index';
-import { FileManager } from '../file-manager';
-import { Logger } from '../logger';
+import type { SessionManager } from '../session-manager.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
+import { TaskRepository } from '../../storage/repositories/task-repository.ts';
+import { GoalRepository } from '../../storage/repositories/goal-repository.ts';
+import type { ShortIdAllocator } from '../short-id-allocator.ts';
+import type { FileIndex } from '../file-index.ts';
+import { FileManager } from '../file-manager.ts';
+import { Logger } from '../logger.ts';
 import { join, normalize, relative } from 'node:path';
 
 const log = new Logger('reference-handlers');

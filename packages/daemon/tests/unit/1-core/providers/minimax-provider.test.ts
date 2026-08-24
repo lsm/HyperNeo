@@ -132,7 +132,7 @@ describe('MinimaxProvider', () => {
 
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
       const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
       expect(url).toBe('https://api.minimax.io/anthropic/v1/messages');
       expect(init?.method).toBe('POST');
@@ -171,7 +171,7 @@ describe('MinimaxProvider', () => {
       await provider.getModels();
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
   });
 

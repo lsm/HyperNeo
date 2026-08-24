@@ -5,7 +5,7 @@ import type {
   HttpExternalEventExtension,
   Route,
   RpcExternalEventExtension,
-} from './types';
+} from './types.ts';
 
 export class ExternalEventExtensionManager {
   private extensions = new Map<string, ExternalEventExtension>();

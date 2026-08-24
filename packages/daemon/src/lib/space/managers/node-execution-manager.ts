@@ -1,12 +1,12 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
   NodeExecutionStatus,
   UpdateNodeExecutionParams,
 } from '@hyperneo/shared';
-import { isReservedWorkflowAgentName } from './space-workflow-manager';
+import { isReservedWorkflowAgentName } from './space-workflow-manager.ts';
 
 export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeExecutionStatus[]> =
   {

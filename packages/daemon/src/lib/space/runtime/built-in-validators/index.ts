@@ -1,11 +1,11 @@
-import { registerBuiltInValidator } from '../built-in-validator-registry';
+import { registerBuiltInValidator } from '../built-in-validator-registry.ts';
 import {
   createCodexApprovalValidator,
   createPrMergedValidator,
   createReviewPostedValidator,
-} from '../connectors/presets';
-import { createPostApprovalOnlyValidator } from './post-approval-only-validator';
-import { createPrReadyValidator } from './pr-ready-validator';
+} from '../connectors/presets.ts';
+import { createPostApprovalOnlyValidator } from './post-approval-only-validator.ts';
+import { createPrReadyValidator } from './pr-ready-validator.ts';
 
 export function registerProductionBuiltInValidators(): void {
   registerBuiltInValidator('pr_ready', createPrReadyValidator());

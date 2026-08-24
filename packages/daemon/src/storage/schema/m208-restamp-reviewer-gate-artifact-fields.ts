@@ -1,7 +1,7 @@
-import { Logger } from '../../lib/logger';
-import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
-import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
-import type { Database as BunDatabase } from '../sqlite-compat';
+import { Logger } from '../../lib/logger.ts';
+import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
+import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const log = new Logger('migration-208');
 

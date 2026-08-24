@@ -1,5 +1,5 @@
-import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager';
-import { computeAgentTemplateHash } from './agent-template-hash';
+import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager.ts';
+import { computeAgentTemplateHash } from './agent-template-hash.ts';
 import type { SpaceWorkerAgent } from '@hyperneo/shared';
 import {
   QA_SYSTEM_CONTRACT,

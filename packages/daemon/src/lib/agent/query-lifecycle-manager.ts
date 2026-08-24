@@ -1,24 +1,24 @@
 import type { MessageContent, Session, MessageHub, HyperNeoActionMessage } from '@hyperneo/shared';
-import type { QueryLike } from './query-like';
+import type { QueryLike } from './query-like.ts';
 import { generateUUID } from '@hyperneo/shared';
-import type { MessageQueue } from './message-queue';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { SDKMessageHandler } from './sdk-message-handler';
-import type { InterruptHandler } from './interrupt-handler';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import type { ErrorManager } from '../error-manager';
-import { ErrorCategory } from '../error-manager';
-import { Logger } from '../logger';
+import type { MessageQueue } from './message-queue.ts';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { SDKMessageHandler } from './sdk-message-handler.ts';
+import type { InterruptHandler } from './interrupt-handler.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import type { ErrorManager } from '../error-manager.ts';
+import { ErrorCategory } from '../error-manager.ts';
+import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery';
+import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
   migrateSDKSessionFile,
   getSDKSessionFilePath,
-} from '../sdk-session-file-manager';
+} from '../sdk-session-file-manager.ts';
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
@@ -47,16 +47,18 @@ export interface QueryLifecycleManagerContext {
   queryAbortController: AbortController | null;
   terminateTrackedAgentProcesses(options?: {
     forceDelayMs?: number;
-    processes?: Array<[number, import('./query-runner').TrackedAgentProcess]>;
+    processes?: Array<[number, import('./query-runner.ts').TrackedAgentProcess]>;
     noPidProcesses?: unknown[];
   }): void;
-  snapshotTrackedAgentProcesses(): Array<[number, import('./query-runner').TrackedAgentProcess]>;
+  snapshotTrackedAgentProcesses(): Array<[number, import('./query-runner.ts').TrackedAgentProcess]>;
   snapshotNoPidTrackedProcesses?(): unknown[];
   refreshProcessExitedPromise?(): void;
 
   pendingRestartReason: 'settings.local.json' | null;
 
   startStreamingQuery(): Promise<void>;
+
+  resetTaskNotificationRequery?(): void;
 
   setCleaningUp(value: boolean): void;
   cleanupEventSubscriptions(): void;
@@ -278,6 +280,7 @@ export class QueryLifecycleManager {
 
     try {
       messageHandler.resetCircuitBreaker();
+      this.ctx.resetTaskNotificationRequery?.();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       await this.stop();
@@ -321,6 +324,7 @@ export class QueryLifecycleManager {
     } = this.ctx;
 
     this.ctx.messageHandler.cancelSuppressedResultWait();
+    this.ctx.resetTaskNotificationRequery?.();
 
     if (!this.ctx.queryObject && !this.ctx.queryPromise) {
       messageQueue.clear();

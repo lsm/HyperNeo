@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type {
   AppSkill,
   AppSkillConfig,
@@ -6,7 +6,7 @@ import type {
   SkillValidationStatus,
   UpdateSkillParams,
 } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 
 interface SkillRow {
   id: string;

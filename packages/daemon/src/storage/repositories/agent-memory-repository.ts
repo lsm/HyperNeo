@@ -1,6 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { AgentMemoryEntry, AgentMemorySearchResult } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 
 export type { AgentMemoryEntry, AgentMemorySearchResult };
 

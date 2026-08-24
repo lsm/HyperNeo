@@ -28,7 +28,7 @@ describe('DeepSeekProvider', () => {
       'deepseek-v4-flash',
     ]);
     expect(DeepSeekProvider.MODELS.every((model) => model.contextWindow === 1_000_000)).toBe(true);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/anthropic/v1/messages');
   });
 
@@ -200,8 +200,6 @@ describe('DeepSeekProvider', () => {
     });
 
     it('clears the discovery cache when credentials change', async () => {
-      const provider = new DeepSeekProvider({});
-      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
       const fetchImpl = installModelListFetch(
         async (call) =>
           new Response(
@@ -209,6 +207,8 @@ describe('DeepSeekProvider', () => {
             { status: 200 }
           )
       );
+      const provider = new DeepSeekProvider({});
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
 
       expect((await provider.listRemoteModels())[0]?.id).toBe('deepseek-v5');
       provider.setCredentials({ type: 'api_key', apiKey: 'second-key' });

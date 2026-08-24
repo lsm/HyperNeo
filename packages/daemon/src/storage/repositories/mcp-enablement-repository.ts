@@ -1,6 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { McpEnablementOverride, McpEnablementScopeType } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 
 interface EnablementRow {
   scope_type: string;

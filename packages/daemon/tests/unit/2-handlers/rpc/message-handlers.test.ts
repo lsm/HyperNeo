@@ -633,6 +633,7 @@ describe('Message RPC Handlers', () => {
 					task_id TEXT
 				);
 				CREATE TABLE message_search_content (
+					id INTEGER PRIMARY KEY,
 					kind TEXT,
 					source_id TEXT,
 					message_id TEXT,
@@ -649,14 +650,14 @@ describe('Message RPC Handlers', () => {
 					title,
 					body,
 					content='message_search_content',
-					content_rowid='rowid',
+					content_rowid='id',
 					detail=column,
 					tokenize = 'unicode61'
 				);
 				CREATE TRIGGER message_search_content_ai
 				AFTER INSERT ON message_search_content BEGIN
 					INSERT INTO message_search_fts(rowid, title, body)
-					VALUES (new.rowid, new.title, new.body);
+					VALUES (new.id, new.title, new.body);
 				END;
 			`);
       sqlite

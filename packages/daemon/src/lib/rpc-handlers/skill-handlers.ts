@@ -5,9 +5,9 @@ import type {
   UpdateSkillParams,
   InstallSkillFromGitParams,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SkillsManager } from '../skills-manager';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SkillsManager } from '../skills-manager.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('skill-handlers');
 

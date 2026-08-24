@@ -1,10 +1,10 @@
 import type { Session } from '@hyperneo/shared';
-import type { QueryLike } from './query-like';
+import type { QueryLike } from './query-like.ts';
 import { flattenSDKSlashCommands, type SlashCommand } from '@hyperneo/shared/sdk';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import type { Logger } from '../logger';
-import { getBuiltInCommandNames } from '../built-in-commands';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import type { Logger } from '../logger.ts';
+import { getBuiltInCommandNames } from '../built-in-commands.ts';
 
 export interface SlashCommandManagerContext {
   readonly session: Session;

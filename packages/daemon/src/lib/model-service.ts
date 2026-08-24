@@ -1,5 +1,5 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
-import type { QueryLike } from './agent/query-like';
+import type { QueryLike } from './agent/query-like.ts';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import {
@@ -131,12 +131,15 @@ function filterModelsByCuration(models: ModelInfo[]): ModelInfo[] {
   });
 }
 
-function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
+function mergeWithFallbackModels(
+  providerModels: ModelInfo[],
+  unavailableProviders?: ReadonlySet<string>
+): ModelInfo[] {
   const modelMap = new Map<string, ModelInfo>();
   const registry = getProviderRegistry();
 
   for (const model of FALLBACK_MODELS) {
-    if (registry.has(model.provider)) {
+    if (registry.has(model.provider) && !unavailableProviders?.has(model.provider)) {
       modelMap.set(`${model.provider}:${model.id}`, model);
     }
   }
@@ -166,6 +169,8 @@ let providerRetryGeneration = 0;
 let modelLoadSequence = 0;
 
 const providerAppliedSeq = new Map<string, number>();
+
+const refreshModes = new Map<string, boolean>();
 
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
@@ -216,11 +221,13 @@ function applyRefreshedModels(
   cacheKey: string,
   fetchedModels: ModelInfo[],
   previousModels: ModelInfo[] | undefined,
-  supersededProviderIds: string[] = []
+  supersededProviderIds: string[] = [],
+  preservePreviousOnShrink = true,
+  unavailableProviders?: ReadonlySet<string>
 ): void {
   if (fetchedModels.length > 0) {
-    const mergedModels = mergeWithFallbackModels(fetchedModels);
-    if (previousModels && previousModels.length > mergedModels.length) {
+    const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
+    if (preservePreviousOnShrink && previousModels && previousModels.length > mergedModels.length) {
       const superseded = new Set(supersededProviderIds);
       const retainedPrevious = previousModels.filter((m) => !superseded.has(m.provider));
       const supersededSlices = mergedModels.filter((m) => superseded.has(m.provider));
@@ -233,12 +240,15 @@ function applyRefreshedModels(
     cacheTimestamps.set(cacheKey, Date.now());
     return;
   }
-  if (!previousModels || previousModels.length === 0) {
-    const registry = getProviderRegistry();
-    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
-    cacheTimestamps.set(cacheKey, Date.now());
+  if (preservePreviousOnShrink && previousModels && previousModels.length > 0) {
+    return;
   }
+  const registry = getProviderRegistry();
+  const filteredFallbacks = FALLBACK_MODELS.filter(
+    (m) => registry.has(m.provider) && !unavailableProviders?.has(m.provider)
+  );
+  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+  cacheTimestamps.set(cacheKey, Date.now());
 }
 
 async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
@@ -266,6 +276,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
     } catch {}
   })();
 
+  refreshModes.set(cacheKey, false);
   refreshInProgress.set(cacheKey, refreshPromise);
   void refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
 }
@@ -275,6 +286,7 @@ function releaseRefreshState(cacheKey: string, refreshPromise: Promise<void>): v
     return;
   }
   refreshInProgress.delete(cacheKey);
+  refreshModes.delete(cacheKey);
   if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
     cacheGeneration.delete(cacheKey);
   }
@@ -296,8 +308,10 @@ interface ModelsLoadResult {
   loadedProviderIds: string[];
   supersededProviderIds: string[];
   failures: ProviderLoadFailure[];
+  unavailableProviderIds: string[];
   loadSeq: number;
   providerIds: string[];
+  forcedDiscoveryError?: unknown;
 }
 
 function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
@@ -335,12 +349,18 @@ function fallbackModelsFor(provider: Provider): ModelInfo[] {
   return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
 }
 
-async function loadProviderModels(provider: Provider): Promise<ProviderModelLoadResult> {
+async function loadProviderModels(
+  provider: Provider,
+  options?: { forceRemote?: boolean }
+): Promise<ProviderModelLoadResult> {
   try {
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
-    const models = await provider.getModels();
+    const models =
+      options?.forceRemote && provider.listRemoteModels
+        ? await provider.listRemoteModels({ force: true })
+        : await provider.getModels();
     if (
       models.length > 0 ||
       provider.hasCuratedModelList?.() ||
@@ -358,7 +378,9 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
   }
 }
 
-async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
+async function loadModelsFromProviders(options?: {
+  forceRemote?: boolean;
+}): Promise<ModelsLoadResult> {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
     initializeProviders();
@@ -370,7 +392,7 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const loadSeq = ++modelLoadSequence;
 
   const results = await Promise.allSettled(
-    providers.map((provider) => loadProviderModels(provider))
+    providers.map((provider) => loadProviderModels(provider, options))
   );
 
   const allModels: ModelInfo[] = [];
@@ -378,6 +400,8 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const loadedProviderIds: string[] = [];
   const supersededProviderIds: string[] = [];
   const failures: ProviderLoadFailure[] = [];
+  const unavailableProviderIds: string[] = [];
+  let forcedDiscoveryError: unknown;
   results.forEach((result, index) => {
     const provider = providers[index];
     /* v8 ignore next 2 */
@@ -390,11 +414,21 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
       return;
     }
     allModels.push(...result.value.models);
-    if (result.value.status === 'failed' && result.value.error !== undefined) {
-      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+    if (result.value.status === 'failed') {
+      if (result.value.error !== undefined) {
+        failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+        if (
+          options?.forceRemote &&
+          provider.listRemoteModels &&
+          forcedDiscoveryError === undefined
+        ) {
+          forcedDiscoveryError = result.value.error;
+        }
+      }
       return;
     }
     if (result.value.status === 'unavailable') {
+      unavailableProviderIds.push(provider.id);
       return;
     }
     succeededProviderIds.push(provider.id);
@@ -409,8 +443,10 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
     loadedProviderIds,
     supersededProviderIds,
     failures,
+    unavailableProviderIds,
     loadSeq,
     providerIds: providers.map((provider) => provider.id),
+    forcedDiscoveryError,
   };
 }
 
@@ -562,6 +598,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
       succeededProviderIds: [],
       loadedProviderIds: [],
       supersededProviderIds: [],
+      unavailableProviderIds: [],
       failures: [{ providerId, ...classifyProviderFailure(error) }],
       loadSeq: probeSeq,
       providerIds: [providerId],
@@ -642,15 +679,29 @@ export async function initializeModels(): Promise<void> {
     }
   })();
 
+  refreshModes.set(cacheKey, false);
   refreshInProgress.set(cacheKey, refreshPromise);
   await refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
 }
 
-function clearProviderModelCaches(): void {
+function clearProviderModelCaches(forceRemote = false): void {
   const registry = getProviderRegistry();
   for (const provider of registry.getAll()) {
+    if (forceRemote && provider.listRemoteModels) {
+      continue;
+    }
     if (provider.clearModelCache) {
       provider.clearModelCache();
+    }
+  }
+}
+
+function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
+  const registry = getProviderRegistry();
+  for (const failure of result.failures) {
+    const provider = registry.get(failure.providerId);
+    if (provider?.listRemoteModels && !provider.hasCuratedModelList?.()) {
+      provider.clearModelCache?.();
     }
   }
 }
@@ -661,6 +712,7 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
+    refreshModes.delete(cacheKey);
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
@@ -675,6 +727,7 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.clear();
     cacheTimestamps.clear();
     refreshInProgress.clear();
+    refreshModes.clear();
     clearProviderModelCaches();
     pendingProviderSlices.clear();
     for (const key of inFlightKeys) {
@@ -699,20 +752,32 @@ export function markRefreshAttemptedFor(providerIds: string[]): void {
   }
 }
 
-export async function refreshModels(signal?: AbortSignal): Promise<void> {
+export async function refreshModels(
+  signal?: AbortSignal,
+  options?: { forceRemote?: boolean }
+): Promise<void> {
   const cacheKey = 'global';
+  const forceRemote = options?.forceRemote ?? false;
 
-  const inProgress = refreshInProgress.get(cacheKey);
-  if (inProgress) {
-    await inProgress;
-    if (signal?.aborted) {
+  for (;;) {
+    const inProgress = refreshInProgress.get(cacheKey);
+    if (!inProgress) break;
+    const joinedForced = refreshModes.get(cacheKey) ?? false;
+    const generationAtJoin = cacheGeneration.get(cacheKey) ?? 0;
+    let joinError: unknown;
+    try {
+      await inProgress;
+    } catch (error) {
+      joinError = error;
+    }
+    if (!forceRemote || signal?.aborted) {
       return;
     }
-  }
-
-  if (refreshInProgress.has(cacheKey)) {
-    await refreshInProgress.get(cacheKey);
-    return;
+    const superseded = (cacheGeneration.get(cacheKey) ?? 0) !== generationAtJoin;
+    if (!superseded && joinedForced) {
+      if (joinError !== undefined) throw joinError;
+      return;
+    }
   }
   if (signal?.aborted) {
     return;
@@ -720,21 +785,43 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
 
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
   const previousModels = modelsCache.get(cacheKey);
-  clearProviderModelCaches();
+  clearProviderModelCaches(forceRemote);
 
   const refreshPromise = (async () => {
     if (signal?.aborted) {
       return;
     }
-    const result = await loadModelsFromProviders();
+    const result = await loadModelsFromProviders({ forceRemote });
     if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
       return;
     }
     const current = pruneSupersededProviders(result);
     applyProviderLoadOutcome(current);
-    applyRefreshedModels(cacheKey, current.models, previousModels, current.supersededProviderIds);
+    if (current.forcedDiscoveryError !== undefined) {
+      clearFailedStrictProviderCaches(current);
+      if (current.loadedProviderIds.length > 0) {
+        applyRefreshedModels(
+          cacheKey,
+          current.models,
+          undefined,
+          current.supersededProviderIds,
+          false,
+          new Set(current.unavailableProviderIds)
+        );
+      }
+      throw current.forcedDiscoveryError;
+    }
+    applyRefreshedModels(
+      cacheKey,
+      current.models,
+      previousModels,
+      current.supersededProviderIds,
+      !forceRemote,
+      forceRemote ? new Set(current.unavailableProviderIds) : undefined
+    );
   })();
 
+  refreshModes.set(cacheKey, forceRemote);
   refreshInProgress.set(cacheKey, refreshPromise);
   await refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
 }
@@ -942,6 +1029,37 @@ export async function isValidModel(
   } catch {
     return false;
   }
+}
+
+export function isCuratedOutModel(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) {
+    return false;
+  }
+
+  const curatedIds = new Set(curatedModels.map((model) => model.id));
+
+  const rawModels = readCachedModels(cacheKey);
+  const knownModel =
+    (rawModels &&
+      findInModels(
+        rawModels.filter((model) => model.provider === providerId),
+        idOrAlias
+      )) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+
+  if (knownModel) {
+    return !curatedIds.has(knownModel.id);
+  }
+
+  return !curatedIds.has(idOrAlias);
 }
 
 export async function resolveModelAlias(

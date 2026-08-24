@@ -1,6 +1,6 @@
-import type { ExternalEvent } from '../types';
-import { Logger } from '../../logger';
-import { checkRunTopicAction } from './github-check-run-fields';
+import type { ExternalEvent } from '../types.ts';
+import { Logger } from '../../logger.ts';
+import { checkRunTopicAction } from './github-check-run-fields.ts';
 
 const log = new Logger('github-normalizer');
 

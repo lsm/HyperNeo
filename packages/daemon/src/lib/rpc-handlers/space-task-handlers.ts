@@ -11,14 +11,14 @@ import {
   type UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceTaskManager } from '../space/managers/space-task-manager';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router';
-import { arraysEqual } from '../utils/array-utils';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router.ts';
+import { arraysEqual } from '../utils/array-utils.ts';
 
 const log = new Logger('space-task-handlers');
 

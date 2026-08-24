@@ -1,7 +1,7 @@
-import { getConfig } from './src/config';
-import { createDaemonApp } from './src/app';
-import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger';
-import { installProcessFatalLogging } from './src/lib/process-fatal-logger';
+import { getConfig } from './src/config.ts';
+import { createDaemonApp } from './src/app.ts';
+import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger.ts';
+import { installProcessFatalLogging } from './src/lib/process-fatal-logger.ts';
 
 let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
 

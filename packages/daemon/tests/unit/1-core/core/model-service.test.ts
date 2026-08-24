@@ -3,6 +3,7 @@ import {
   getAvailableModels,
   getModelInfo,
   getModelInfoUnfiltered,
+  isCuratedOutModel,
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
@@ -1717,6 +1718,110 @@ describe('Model Service', () => {
     });
   });
 
+  describe('isCuratedOutModel', () => {
+    it('reports a cached model excluded by the provider curation as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('opus', 'anthropic')).toBe(true);
+    });
+
+    it('does not report a curated-in model as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(false);
+    });
+
+    it('reports a known model as curated out under an empty curation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', []);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(true);
+    });
+
+    it('preserves behavior when the provider has no configured curation', async () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('opus', 'anthropic')).toBe(false);
+    });
+
+    it('reports an unknown model as curated out under a configured curation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(true);
+    });
+
+    it('does not report an undiscovered model whose ID is a curated entry as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [
+        { id: 'sonnet' },
+        { id: 'claude-future-model' },
+      ]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(false);
+    });
+
+    it('reports a model known to a different provider as curated out under this provider allowlist', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              ...mockModels,
+              {
+                id: 'glm-5',
+                name: 'GLM 5',
+                alias: 'glm5',
+                family: 'glm',
+                provider: 'glm',
+                contextWindow: 200000,
+                description: 'GLM 5',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModel('glm-5', 'anthropic')).toBe(true);
+    });
+
+    it('reports a static-metadata model excluded by the provider curation as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      expect(isCuratedOutModel('glm-5.1', 'glm')).toBe(true);
+    });
+
+    it('does not report a curated-in static-metadata model when the provider is unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: async () => false,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      await expect(isValidModel('glm-5', 'global', 'glm')).resolves.toBe(false);
+      expect(isCuratedOutModel('glm-5', 'glm')).toBe(false);
+    });
+  });
+
   describe('getAvailableModels', () => {
     beforeEach(() => {
       const testCache = new Map<string, ModelInfo[]>();
@@ -2942,6 +3047,390 @@ describe('Model Service', () => {
   });
 
   describe('refreshModels', () => {
+    it('uses strict forced discovery when the provider supports it', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const calls: unknown[] = [];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          throw new Error('resilient path should not run');
+        },
+        listRemoteModels: async (options?: unknown) => {
+          calls.push(options);
+          return [{ ...mockModels[0], provider: 'remote-provider' }];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(calls).toEqual([{ force: true }]);
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider' }),
+      ]);
+    });
+
+    it('replaces a larger cache after successful forced discovery', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          throw new Error('resilient path should not run');
+        },
+        listRemoteModels: async () => [{ ...mockModels[0], provider: 'remote-provider' }],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider', id: 'sonnet' }),
+      ]);
+    });
+
+    it('propagates and records forced discovery failures', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => mockModels,
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Remote discovery failed'
+      );
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getProviderFailure('remote-provider')).toEqual(
+        expect.objectContaining({ errorKind: 'transient', message: 'Remote discovery failed' })
+      );
+    });
+
+    it('keeps curated capability-provider caches intact when forced discovery fails', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let clearCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        hasCuratedModelList: () => true,
+        clearModelCache: () => {
+          clearCalls++;
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Remote discovery failed'
+      );
+      expect(clearCalls).toBe(0);
+
+      await refreshModels();
+      expect(clearCalls).toBe(1);
+    });
+
+    it('clears non-curated provider caches when forced discovery fails', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let clearCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        clearModelCache: () => {
+          clearCalls++;
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Remote discovery failed'
+      );
+      expect(clearCalls).toBe(1);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('treats an empty curated remote catalog as a successful load', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        hasCuratedModelList: () => true,
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getProviderFailure('remote-provider')).toBeUndefined();
+    });
+
+    it('rejects a forced refresh when strict discovery returns an empty catalog', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Provider returned no models'
+      );
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getProviderFailure('remote-provider')).toEqual(
+        expect.objectContaining({
+          errorKind: 'transient',
+          message: 'Provider returned no models',
+        })
+      );
+    });
+
+    it('publishes successful providers when a mixed forced refresh fails', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const refreshedModel: ModelInfo = {
+        ...mockModels[0],
+        id: 'copilot-fresh',
+        provider: 'mixed-success',
+      };
+      registry.register({
+        id: 'mixed-success',
+        getModels: async () => [],
+        listRemoteModels: async () => [refreshedModel],
+        hasCuratedModelList: () => true,
+        clearModelCache: () => {},
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      registry.register({
+        id: 'mixed-failure',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Mixed discovery failed');
+        },
+        clearModelCache: () => {},
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Mixed discovery failed'
+      );
+
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ id: 'copilot-fresh', provider: 'mixed-success' }),
+      ]);
+    });
+
+    it('preserves the prior cache when a forced failure has no loaded providers', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'unavailable-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+      registry.register({
+        id: 'failing-provider',
+        getModels: async () => [],
+        clearModelCache: () => {},
+        listRemoteModels: async () => {
+          throw new Error('Solo discovery failed');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Solo discovery failed'
+      );
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('does not inherit a forced failure when a resilient refresh joins it', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      const forced = refreshModels(undefined, { forceRemote: true });
+      const resilient = refreshModels();
+
+      await expect(forced).rejects.toThrow('Remote discovery failed');
+      await expect(resilient).resolves.toBeUndefined();
+    });
+
+    it('runs strict discovery after joining a resilient replacement refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, clearModelsCache } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let resolveGetModels: (() => void) | undefined;
+      let forcedCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          await new Promise<void>((resolve) => {
+            resolveGetModels = resolve;
+          });
+          return [];
+        },
+        listRemoteModels: async () => {
+          forcedCalls++;
+          return [{ ...mockModels[0], provider: 'remote-provider' }];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      clearModelsCache();
+      const resilient = refreshModels();
+      while (!resolveGetModels) {
+        await Promise.resolve();
+      }
+      const forced = refreshModels(undefined, { forceRemote: true });
+      resolveGetModels();
+
+      await resilient;
+      await forced;
+
+      expect(forcedCalls).toBe(1);
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider' }),
+      ]);
+    });
+
+    it('reruns strict discovery when the joined forced refresh was superseded', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, clearModelsCache } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const resolvers: Array<(models: ModelInfo[]) => void> = [];
+      let calls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          calls++;
+          return new Promise<ModelInfo[]>((resolve) => {
+            resolvers.push(resolve);
+          });
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      clearModelsCache();
+      const first = refreshModels(undefined, { forceRemote: true });
+      while (resolvers.length < 1) {
+        await Promise.resolve();
+      }
+      const second = refreshModels(undefined, { forceRemote: true });
+      clearModelsCache();
+      resolvers[0]?.([{ ...mockModels[0], provider: 'remote-provider' }]);
+      await expect(first).resolves.toBeUndefined();
+
+      while (resolvers.length < 2) {
+        await Promise.resolve();
+      }
+      resolvers[1]?.([{ ...mockModels[0], provider: 'remote-provider' }]);
+      await second;
+
+      expect(calls).toBe(2);
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider' }),
+      ]);
+    });
+
+    it('drops previous models when a forced refresh succeeds with nothing', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('excludes unavailable providers from forced-refresh fallbacks', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('excludes unavailable providers from fallbacks merged into nonempty forced refreshes', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [{ ...mockModels[0], provider: 'remote-provider' }],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'remote-provider')).toBe(true);
+      expect(models.some((m) => m.provider === 'anthropic')).toBe(false);
+    });
+
     it('should preserve both provider entries for shared model IDs after refresh', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
@@ -3308,22 +3797,29 @@ describe('Model Service', () => {
       expect(getAvailableModels('global').some((model) => model.provider === 'acp')).toBe(false);
     });
 
-    it('propagates a recorded probe rejection into the provider auth status', async () => {
-      const fetchImpl = mock(
-        async () => new Response('unauthorized', { status: 401 })
-      ) as unknown as typeof fetch;
-      const glm = new GlmProvider({ GLM_API_KEY: 'invalid-key' }, fetchImpl);
+    it('propagates a recorded remote rejection into the provider auth status', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
-      getProviderRegistry().register(glm);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'glm',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Endpoint returned HTTP 401');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
 
-      await refreshProviderModels();
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Endpoint returned HTTP 401'
+      );
 
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
 
-      const status = await glm.getAuthStatus();
+      const status = await new GlmProvider({ GLM_API_KEY: 'invalid-key' }).getAuthStatus();
       expect(status.isAuthenticated).toBe(false);
       expect(status.errorKind).toBe('credential');
-      expect(status.error).toBe('Z.ai API key rejected (HTTP 401)');
+      expect(status.error).toBe('Endpoint returned HTTP 401');
     });
 
     it('notifies failure-change listeners once per transition during refreshes', async () => {
@@ -3443,56 +3939,67 @@ describe('Model Service', () => {
   });
 
   describe('probe-based provider failures (fallback)', () => {
-    it('serves a provider via the static fallback when its getModels probe rejects', async () => {
+    it('records and propagates a forced remote credential failure', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
 
-      const registry = getProviderRegistry();
-      registry.register({
-        id: 'anthropic',
-        getModels: async () => [mockModels[0]],
+      getProviderRegistry().register({
+        id: 'glm',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Endpoint returned HTTP 401');
+        },
         isAvailable: async () => true,
-      } as ProviderLike);
+      } as unknown as ProviderLike);
 
-      const rejectingFetch = (async () =>
-        new Response(null, { status: 401 })) as unknown as typeof fetch;
-      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, rejectingFetch));
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Endpoint returned HTTP 401'
+      );
 
-      await refreshModels();
-
-      const models = getAvailableModels('global');
-      expect(models.some((m) => m.provider === 'anthropic')).toBe(true);
-      expect(models.filter((m) => m.provider === 'glm').map((m) => m.id)).toEqual(
-        GlmProvider.MODELS.map((m) => m.id)
+      expect(getAvailableModels('global')).toEqual([]);
+      expect(getProviderFailure('glm')).toEqual(
+        expect.objectContaining({
+          errorKind: 'credential',
+          message: 'Endpoint returned HTTP 401',
+        })
       );
     });
 
-    it('keeps the provider listed via fallback and still refreshes once the probe succeeds', async () => {
+    it('refreshes successfully after a forced remote failure recovers', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
 
       let upstreamAccepts = false;
-      const mutableFetch = (async () =>
-        new Response(null, { status: upstreamAccepts ? 200 : 401 })) as unknown as typeof fetch;
-
+      const glmModel: ModelInfo = { ...mockModels[0], id: 'glm-5', provider: 'glm' };
       const registry = getProviderRegistry();
       registry.register({
         id: 'anthropic',
         getModels: async () => [mockModels[0]],
         isAvailable: async () => true,
       } as ProviderLike);
-      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, mutableFetch));
+      registry.register({
+        id: 'glm',
+        getModels: async () => [glmModel],
+        listRemoteModels: async () => {
+          if (!upstreamAccepts) throw new Error('Endpoint returned HTTP 401');
+          return [glmModel];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
 
-      await refreshModels();
-      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(true);
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Endpoint returned HTTP 401'
+      );
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
 
       upstreamAccepts = true;
-      await refreshModels();
+      await refreshModels(undefined, { forceRemote: true });
 
       const models = getAvailableModels('global');
       expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(true);
+      expect(getProviderFailure('glm')).toBeUndefined();
     });
 
     it('treats an empty getModels result from an available provider as a failed fetch', async () => {

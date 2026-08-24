@@ -1,6 +1,6 @@
 import type { MessageHub, SpaceGoalStatus } from '@hyperneo/shared';
-import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service';
-import type { SpaceManager } from '../space/managers/space-manager';
+import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
 
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;

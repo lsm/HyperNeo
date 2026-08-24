@@ -1,5 +1,5 @@
-import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
   asMessageDeliveryPayload,
   buildBatchedDeliveryContent,
@@ -10,9 +10,9 @@ import {
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
-} from '../agent/message-delivery';
-import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics';
-import { Logger } from '../logger';
+} from '../agent/message-delivery.ts';
+import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics.ts';
+import { Logger } from '../logger.ts';
 
 export interface MessageDeliveryHandlerDeps {
   jobQueue: JobQueueRepository;

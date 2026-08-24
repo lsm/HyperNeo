@@ -4,17 +4,17 @@ import type {
   QuestionDraftResponse,
   Session,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
 import type {
   CanUseTool,
   HookCallback,
   PermissionResult,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { MessageQueue } from './message-queue';
-import { Logger } from '../logger';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { MessageQueue } from './message-queue.ts';
+import { Logger } from '../logger.ts';
 
 export interface AskUserQuestionHandlerContext {
   readonly session: Session;
