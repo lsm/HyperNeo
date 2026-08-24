@@ -805,7 +805,10 @@ export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo 
     for (const model of models) {
       for (const rawPrefix of model.providerAliasPrefixes ?? []) {
         const prefix = rawPrefix.toLowerCase();
-        if (normalized.startsWith(prefix) && (!bestPrefix || prefix.length > bestPrefix.length)) {
+        if (
+          (normalized === prefix || normalized.startsWith(`${prefix}-`)) &&
+          (!bestPrefix || prefix.length > bestPrefix.length)
+        ) {
           bestPrefix = { model, length: prefix.length };
         }
       }
@@ -909,6 +912,18 @@ export async function isValidModel(
     STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
   );
   if (!findInModels(staticProviderModels, idOrAlias)) {
+    const curatedIds = getCuratedModelIds(providerId);
+    if (curatedIds === undefined || curatedIds.has(idOrAlias)) {
+      const provider = getProviderRegistry().get(providerId);
+      if (
+        provider &&
+        typeof provider.listRemoteModels === 'function' &&
+        typeof provider.ownsModel === 'function' &&
+        provider.ownsModel(idOrAlias)
+      ) {
+        return true;
+      }
+    }
     return false;
   }
 

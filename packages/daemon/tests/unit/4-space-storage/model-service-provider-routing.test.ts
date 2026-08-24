@@ -112,7 +112,6 @@ const kimiModels: ModelInfo[] = [
     name: 'Kimi For Coding',
     alias: 'kimi',
     providerAliases: ['KIMI', 'kimi-k2.7-code'],
-    providerAliasPrefixes: ['moonshot-'],
     family: 'kimi',
     provider: 'kimi',
     contextWindow: 262_144,
@@ -184,10 +183,8 @@ describe('Model Service — provider routing', () => {
 
       expect(byUpperAlias?.id).toBe('kimi-for-coding');
       expect(byUpperAlias?.contextWindow).toBe(262144);
-      expect(byMoonshotAlias?.id).toBe('kimi-for-coding');
-      expect(byMoonshotAlias?.contextWindow).toBe(262144);
-      expect(byUnlistedMoonshotAlias?.id).toBe('kimi-for-coding');
-      expect(byUnlistedMoonshotAlias?.contextWindow).toBe(262144);
+      expect(byMoonshotAlias).toBeNull();
+      expect(byUnlistedMoonshotAlias).toBeNull();
     });
 
     it('returns null when Kimi alias is requested for a different provider', async () => {
@@ -235,8 +232,10 @@ describe('Model Service — provider routing', () => {
 
     it('resolves Kimi provider aliases to canonical model ID', async () => {
       expect(await resolveModelAlias('KIMI', 'global', 'kimi')).toBe('kimi-for-coding');
-      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('kimi-for-coding');
-      expect(await resolveModelAlias('moonshot-v1-256k', 'global', 'kimi')).toBe('kimi-for-coding');
+      expect(await resolveModelAlias('Moonshot-v1-32k', 'global', 'kimi')).toBe('Moonshot-v1-32k');
+      expect(await resolveModelAlias('moonshot-v1-256k', 'global', 'kimi')).toBe(
+        'moonshot-v1-256k'
+      );
     });
 
     it('returns alias as-is when no matching model found for the specified provider', async () => {
@@ -304,8 +303,27 @@ describe('Model Service — provider routing', () => {
 
     it('validates Kimi provider aliases case-insensitively', async () => {
       expect(await isValidModel('KIMI', 'global', 'kimi')).toBe(true);
-      expect(await isValidModel('Moonshot-v1-32k', 'global', 'kimi')).toBe(true);
-      expect(await isValidModel('moonshot-v1-256k', 'global', 'kimi')).toBe(true);
+      expect(await isValidModel('Moonshot-v1-32k', 'global', 'kimi')).toBe(false);
+      expect(await isValidModel('moonshot-v1-256k', 'global', 'kimi')).toBe(false);
+    });
+
+    it('validates provider-owned discovered IDs for discovery-capable providers', async () => {
+      const discoveryProvider: Provider = {
+        ...makeStubProvider('discovery-kimi', []),
+        listRemoteModels: async () => [],
+        ownsModel: (modelId: string) => modelId.startsWith('kimi-') && !modelId.includes(':'),
+      };
+      getProviderRegistry().register(discoveryProvider);
+
+      expect(await isValidModel('kimi-k4', 'global', 'discovery-kimi')).toBe(true);
+      expect(await isValidModel('moonshot-k4', 'global', 'discovery-kimi')).toBe(false);
+
+      getProviderRegistry().setCuratedModels('discovery-kimi', [{ id: 'kimi-k3' }]);
+      expect(await isValidModel('kimi-k3', 'global', 'discovery-kimi')).toBe(true);
+      expect(await isValidModel('kimi-k4', 'global', 'discovery-kimi')).toBe(false);
+
+      getProviderRegistry().setCuratedModels('discovery-kimi', undefined);
+      expect(await isValidModel('kimi-k4', 'global', 'discovery-kimi')).toBe(true);
     });
 
     it('rejects Kimi provider aliases for other providers', async () => {

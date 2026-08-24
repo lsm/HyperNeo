@@ -425,6 +425,8 @@ describe('KimiProvider', () => {
           data: [
             { id: 'k3-preview', object: 'model' },
             { id: 'kimi-k4[1m]', object: 'model' },
+            { id: 'moonshot-k30', object: 'model' },
+            { id: 'kimi-k2.7-code[1m]', object: 'model' },
           ],
         },
       ]);
@@ -432,7 +434,7 @@ describe('KimiProvider', () => {
 
       const models = await provider.listRemoteModels();
 
-      expect(models).toHaveLength(2);
+      expect(models).toHaveLength(4);
       expect(models[0]).toMatchObject({
         id: 'k3-preview',
         contextWindow: 262_144,
@@ -440,6 +442,16 @@ describe('KimiProvider', () => {
       });
       expect(models[1]).toMatchObject({
         id: 'kimi-k4[1m]',
+        contextWindow: 1_048_576,
+        thinkingModes: 'on',
+      });
+      expect(models[2]).toMatchObject({
+        id: 'moonshot-k30',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+      });
+      expect(models[3]).toMatchObject({
+        id: 'kimi-k2.7-code[1m]',
         contextWindow: 1_048_576,
         thinkingModes: 'on',
       });
@@ -583,6 +595,18 @@ describe('KimiProvider', () => {
       expect(KimiProvider.isKimiK3Model('kimi-k30')).toBe(false);
       expect(KimiProvider.isKimiK3Model('k330')).toBe(false);
       expect(provider.getModelThinkingMode('kimi-k30')).toBeUndefined();
+    });
+
+    it('keeps boundary-crossing moonshot IDs and suffixed known IDs on themselves', () => {
+      expect(provider.buildSdkConfig('moonshot-k30').envVars.ANTHROPIC_MODEL).toBe('moonshot-k30');
+      expect(provider.translateModelIdForSdk('moonshot-k30')).toBe('moonshot-k30');
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-k30')).toBeUndefined();
+      expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBeUndefined();
+
+      const suffixed = provider.buildSdkConfig('kimi-k2.7-code[1m]');
+      expect(suffixed.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code[1m]');
+      expect(suffixed.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+      expect(provider.translateModelIdForSdk('kimi-k2.7-code[1m]')).toBe('kimi-k2.7-code[1m]');
     });
 
     it('keeps foreign and colon-tagged IDs on the region default', () => {
@@ -1241,8 +1265,7 @@ describe('KimiProvider', () => {
         budgetTokens: 16000,
       });
       expect(KimiProvider.resolveKimiTitleThinkingConfig('moonshot-v1-32k')).toEqual({
-        type: 'enabled',
-        budgetTokens: 16000,
+        type: 'disabled',
       });
     });
 

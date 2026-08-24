@@ -218,8 +218,7 @@ export class KimiProvider implements Provider {
       id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
-      id === 'kimi-for-coding-highspeed' ||
-      id.startsWith('moonshot-')
+      id === 'kimi-for-coding-highspeed'
     );
   }
 
@@ -404,10 +403,18 @@ export class KimiProvider implements Provider {
 
   private static canonicalizeModelId(modelId: string): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    if (id === 'k3-256k' || id === 'kimi-k3-256k' || id.startsWith('moonshot-k3-256k')) {
+    if (
+      id === 'k3-256k' ||
+      id === 'kimi-k3-256k' ||
+      id === 'moonshot-k3-256k' ||
+      id.startsWith('moonshot-k3-256k-')
+    ) {
       return 'k3-256k';
     }
-    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3[1m]';
+    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3' || id.startsWith('moonshot-k3-')) {
+      return 'kimi-k3[1m]';
+    }
+    if (KimiProvider.hasOneMContextSuffix(modelId)) return modelId;
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
@@ -434,11 +441,19 @@ export class KimiProvider implements Provider {
     } else {
       useLegacy = region !== 'global';
     }
-    if (id === 'k3-256k' || id === 'kimi-k3-256k' || id.startsWith('moonshot-k3-256k')) {
+    if (
+      id === 'k3-256k' ||
+      id === 'kimi-k3-256k' ||
+      id === 'moonshot-k3-256k' ||
+      id.startsWith('moonshot-k3-256k-')
+    ) {
       return useLegacy ? 'k3-256k' : 'kimi-k3-256k';
     }
-    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
+    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3' || id.startsWith('moonshot-k3-')) {
       return (useLegacy ? 'k3' : 'kimi-k3') + (oneM ? '[1m]' : '');
+    }
+    if (oneM) {
+      return modelId;
     }
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {
       return useLegacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
@@ -553,17 +568,24 @@ export class KimiProvider implements Provider {
         (identifier) => KimiProvider.normalizeKimiModelId(identifier) === normalized
       );
     });
-    if (exactMatch) return exactMatch;
+    const exactMatchLosesSuffix =
+      exactMatch !== undefined &&
+      KimiProvider.hasOneMContextSuffix(model.id) &&
+      !KimiProvider.hasOneMContextSuffix(exactMatch.id);
+    if (exactMatch && !exactMatchLosesSuffix) return exactMatch;
     let prefixMatch: { model: ModelInfo; length: number } | undefined;
     for (const candidate of KimiProvider.MODELS) {
       for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {
         const prefix = KimiProvider.normalizeKimiModelId(rawPrefix);
-        if (normalized.startsWith(prefix) && (!prefixMatch || prefix.length > prefixMatch.length)) {
+        if (
+          (normalized === prefix || normalized.startsWith(`${prefix}-`)) &&
+          (!prefixMatch || prefix.length > prefixMatch.length)
+        ) {
           prefixMatch = { model: candidate, length: prefix.length };
         }
       }
     }
-    if (prefixMatch) return prefixMatch.model;
+    if (prefixMatch && KimiProvider.isKimiK3Model(model.id)) return prefixMatch.model;
     if (KimiProvider.isDiscoveredKimiModelId(model.id)) {
       return {
         id: model.id,
