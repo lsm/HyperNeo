@@ -37,7 +37,11 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { getSessionModelInfo, isModelExcludedByCuration } from '../model-service.ts';
+import {
+  getSessionModelInfo,
+  isCuratedOutModel,
+  isModelExcludedByCuration,
+} from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
@@ -1308,12 +1312,19 @@ export class SDKMessageHandler {
     if (!fallbackModel || session.config.model === fallbackModel) return;
     const providerId = session.config.provider ?? 'anthropic';
     const configuredFallbackModel = session.config.fallbackModel;
-    if (await isModelExcludedByCuration(fallbackModel, providerId)) return;
+    const primaryModelBeforeGuard = session.config.model;
+    const sessionScopedProvider = Boolean(
+      session.config.providerConfig?.apiKey || session.config.providerConfig?.baseUrl
+    );
+    const fallbackExcluded = sessionScopedProvider
+      ? isCuratedOutModel(fallbackModel, providerId)
+      : await isModelExcludedByCuration(fallbackModel, providerId);
+    if (fallbackExcluded) return;
     const liveConfig = this.ctx.session.config;
     if (
       (liveConfig.provider ?? 'anthropic') !== providerId ||
       liveConfig.fallbackModel !== configuredFallbackModel ||
-      liveConfig.model === fallbackModel
+      liveConfig.model !== primaryModelBeforeGuard
     ) {
       this.logger.warn(
         `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`

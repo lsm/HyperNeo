@@ -248,7 +248,7 @@ export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
-  private effectiveFallbackSourceModel?: string;
+  private effectiveFallbackCaptured = false;
   private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
 
@@ -305,7 +305,13 @@ export class QueryOptionsBuilder {
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
-      if (await isModelExcludedByCuration(config.fallbackModel, providerId)) {
+      const sessionScopedProvider = Boolean(
+        config.providerConfig?.apiKey || config.providerConfig?.baseUrl
+      );
+      const fallbackExcluded = sessionScopedProvider
+        ? isCuratedOutModel(config.fallbackModel, providerId)
+        : await isModelExcludedByCuration(config.fallbackModel, providerId);
+      if (fallbackExcluded) {
         this.logger.warn(
           `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
         );
@@ -321,7 +327,7 @@ export class QueryOptionsBuilder {
     }
 
     const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
-    this.effectiveFallbackSourceModel = config.fallbackModel;
+    this.effectiveFallbackCaptured = true;
     this.effectiveFallbackModel = configuredFallbackModel;
 
     const systemPromptConfig = this.buildSystemPrompt();
@@ -396,7 +402,14 @@ export class QueryOptionsBuilder {
         if (!fallbackAtRequest || fallbackAtRequest !== configuredFallbackModel) {
           return { behavior: 'cancelled' };
         }
-        if (await isModelExcludedByCuration(fallbackAtRequest, providerId)) {
+        const sessionScopedProvider = Boolean(
+          this.ctx.session.config.providerConfig?.apiKey ||
+            this.ctx.session.config.providerConfig?.baseUrl
+        );
+        const fallbackExcluded = sessionScopedProvider
+          ? isCuratedOutModel(fallbackAtRequest, providerId)
+          : await isModelExcludedByCuration(fallbackAtRequest, providerId);
+        if (fallbackExcluded) {
           return { behavior: 'cancelled' };
         }
         const configAfter = this.ctx.session.config;
@@ -570,11 +583,9 @@ export class QueryOptionsBuilder {
         }
       }
 
-      const configuredFallback = this.ctx.session.config.fallbackModel;
-      const fallbackModel =
-        configuredFallback === this.effectiveFallbackSourceModel
-          ? this.effectiveFallbackModel
-          : configuredFallback;
+      const fallbackModel = this.effectiveFallbackCaptured
+        ? this.effectiveFallbackModel
+        : this.ctx.session.config.fallbackModel;
       if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);

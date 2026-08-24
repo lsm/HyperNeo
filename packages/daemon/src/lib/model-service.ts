@@ -1089,9 +1089,7 @@ export async function resolveVisibleCanonicalModelId(
     return liveModels.some((model) => model.id === cachedId) ? cachedId : null;
   }
   if (liveModels === null) return null;
-  return (
-    liveModels.find((model) => model.id === idOrAlias || model.alias === idOrAlias)?.id ?? null
-  );
+  return findInModels(liveModels, idOrAlias)?.id ?? null;
 }
 
 export async function isModelExcludedByCuration(

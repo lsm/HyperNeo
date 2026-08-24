@@ -1826,6 +1826,7 @@ describe('Model Service', () => {
 
       await expect(isModelExcludedByCuration('ollama-qwen', 'ollama')).resolves.toBe(false);
       await expect(isModelExcludedByCuration('qwen3', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('QWEN3', 'ollama')).resolves.toBe(false);
       await expect(isModelExcludedByCuration('llama3', 'ollama')).resolves.toBe(true);
       await expect(isModelExcludedByCuration('ollama-ghost', 'ollama')).resolves.toBe(true);
     });

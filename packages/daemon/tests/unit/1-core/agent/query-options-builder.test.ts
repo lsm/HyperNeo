@@ -210,6 +210,20 @@ describe('QueryOptionsBuilder', () => {
         expect(response).toEqual({ behavior: 'cancelled' });
       });
 
+      it('validates a session-scoped provider fallback against the curated set only', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
+        try {
+          mockSession.config.fallbackModel = 'ghost-fallback';
+          mockSession.config.providerConfig = { apiKey: 'sk-session-scoped' };
+          const options = await builder.build();
+          expect(options.fallbackModel).toBeDefined();
+          expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
       it('declines the refusal dialog when the fallback changes during the async curation check', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
         try {
@@ -990,6 +1004,31 @@ describe('QueryOptionsBuilder', () => {
         mockSession.config.thinkingLevel = 'off';
 
         await builder.build();
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+
+        expect(result.thinking).toBeUndefined();
+      } finally {
+        process.env.KIMI_API_KEY = '';
+        process.env.KIMI_BASE_URL = '';
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      }
+    });
+
+    it('keeps the thinking derivation tied to the fallback captured at build', async () => {
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      process.env.KIMI_API_KEY = 'test-kimi-key';
+      process.env.KIMI_BASE_URL = 'http://127.0.0.1:9';
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-k3';
+        mockSession.config.fallbackModel = 'k3';
+        mockSession.config.thinkingLevel = 'off';
+
+        await builder.build();
+        mockSession.config.fallbackModel = 'kimi-k2.7-code';
+
         const result = builder.addSessionStateOptions(
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
