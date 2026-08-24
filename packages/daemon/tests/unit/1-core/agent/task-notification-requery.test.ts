@@ -1196,6 +1196,68 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(0);
   });
 
+  it('latches the SDK-busy protocol before awaiting message subscribers', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = 1;
+    const originalHandler = (agentSession.messageHandler as unknown as { handleMessage: unknown })
+      .handleMessage;
+    const holder: { release?: () => void } = {};
+    (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage = async (message: SDKMessage) => {
+      if (
+        (message as { subtype?: string }).subtype === 'session_state_changed' &&
+        (message as { state?: string }).state === 'busy'
+      ) {
+        await new Promise<void>((resolve) => {
+          holder.release = resolve;
+        });
+        return;
+      }
+      await (originalHandler as (m: SDKMessage) => Promise<void>).call(
+        agentSession.messageHandler,
+        message
+      );
+    };
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    const busyDone = agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(continueCalls()).toBe(0);
+
+    holder.release?.();
+    await busyDone;
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('skips the fallback when the target space acknowledges the escalation', async () => {
+    publishSpy.mockImplementation(
+      async (event?: unknown, payload?: { handledBySpaceService?: boolean }) => {
+        if (event === 'space.workflowRun.needsAttention' && payload) {
+          payload.handledBySpaceService = true;
+        }
+        return { delivered: 1, failures: [] };
+      }
+    );
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
+      undefined
+    );
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());

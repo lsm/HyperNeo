@@ -1409,6 +1409,13 @@ export class AgentSession
 
   async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     const queryGeneration = this.getQueryGeneration();
+    if (
+      this.session.config.provider !== 'acp' &&
+      isSDKSessionStateChangedMessage(message) &&
+      message.state !== 'idle'
+    ) {
+      this.taskNotificationRequeryAwaitingSdkIdle = true;
+    }
     await this.messageHandler.handleMessage(message);
     if (this.getQueryGeneration() !== queryGeneration) return;
     this.observeTaskNotificationResult(message);
@@ -1760,14 +1767,15 @@ export class AgentSession
         `session=${this.session.id} run=${event.runId} task=${event.taskId}`
     );
     try {
-      const published = await this.internalEventBus.publish('space.workflowRun.needsAttention', {
+      const payload = {
         ...event,
-      });
-      const delivered = (published as { delivered?: number } | null | undefined)?.delivered;
-      if (delivered === 0) {
+        handledBySpaceService: false,
+      } as typeof event & import('../internal-event-bus').InternalEventPayload;
+      await this.internalEventBus.publish('space.workflowRun.needsAttention', payload);
+      if (!payload.handledBySpaceService) {
         this.logger.warn(
-          `task-notification requery: needs-attention escalation had no subscriber for session ` +
-            `${this.session.id}; surfacing a recoverable session error instead`
+          `task-notification requery: needs-attention escalation had no handler for space ` +
+            `${event.spaceId}; surfacing a recoverable session error instead`
         );
         await this.surfaceTaskNotificationRequeryExhaustionError(attempts);
       }

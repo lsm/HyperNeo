@@ -100,6 +100,7 @@ export class SpaceAgentNotificationService {
         'space.workflowRun.needsAttention',
         (event) => {
           if (event.spaceId !== this.spaceId) return;
+          event.handledBySpaceService = true;
           void this.notify(formatWorkflowRunNeedsAttention(event, this.autonomyLevel));
         },
         {

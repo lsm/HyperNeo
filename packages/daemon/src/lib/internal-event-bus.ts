@@ -376,6 +376,7 @@ export interface SpaceWorkflowRunNeedsAttentionEvent {
   reason: string;
   retriesExhausted: number;
   timestamp: string;
+  handledBySpaceService?: boolean;
 }
 
 export interface SpaceTaskAwaitingApprovalEvent {
