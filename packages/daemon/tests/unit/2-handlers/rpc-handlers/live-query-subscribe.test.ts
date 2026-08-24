@@ -168,15 +168,6 @@ function createDb() {
 			result TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS space_github_events (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			task_id TEXT,
-			state TEXT,
-			summary TEXT NOT NULL DEFAULT '',
-			external_url TEXT NOT NULL DEFAULT '',
-			occurred_at INTEGER NOT NULL
 		)
 	`);
   return db;
@@ -410,12 +401,17 @@ describe('setupLiveQueryHandlers', () => {
 
   test('spaceTaskMessage.get reconstructs GitHub event rows for expansion', async () => {
     insertSpaceTask(db, taskId);
+    const nowTs = Date.now();
     db.exec(
       `INSERT INTO space_github_events (
-        id, space_id, task_id, state, summary, external_url, occurred_at
+        id, space_id, task_id, source, delivery_id, event_type, action, repo_owner,
+        repo_name, pr_number, pr_url, actor, actor_type, summary, external_url,
+        occurred_at, dedupe_key, raw_payload, state, created_at, updated_at
       ) VALUES (
-        'gh-expand-1', 'space-test-1', '${taskId}', 'delivered',
-        'PR merged', 'https://github.com/lsm/HyperNeo/pull/2901', ${Date.now()}
+        'gh-expand-1', 'space-test-1', '${taskId}', 'webhook', 'del-1', 'pull_request',
+        'closed', 'lsm', 'HyperNeo', 2901, 'https://github.com/lsm/HyperNeo/pull/2901',
+        'lsm', 'user', 'PR merged', 'https://github.com/lsm/HyperNeo/pull/2901',
+        ${nowTs}, 'dedupe-gh-expand-1', '{}', 'delivered', ${nowTs}, ${nowTs}
       )`
     );
     const result = (await setup.callHandler('spaceTaskMessage.get', {
