@@ -559,7 +559,8 @@ export function createSpaceTables(db: BunDatabase): void {
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
-			id TEXT PRIMARY KEY,
+			seq INTEGER PRIMARY KEY,
+			id TEXT NOT NULL UNIQUE,
 			session_id TEXT NOT NULL,
 			message_type TEXT NOT NULL,
 			message_subtype TEXT,

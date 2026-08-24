@@ -7,6 +7,7 @@ import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/
 
 // knip-ignore-next-line
 export { runMigrations } from './migrations';
+export { reclaimPendingMigrationSpace } from './migration-space-reclaim';
 // knip-ignore-next-line
 export { runMigration12 } from './migrations';
 // knip-ignore-next-line
@@ -108,7 +109,12 @@ export { runMigration138 } from './migrations';
 // knip-ignore-next-line
 export { runMigration139 } from './migrations';
 // knip-ignore-next-line
-export { configureMessageSearchFts, runMigration141 } from './migrations';
+export {
+  configureMessageSearchFts,
+  runMigration141,
+  runMigration211,
+  runMigration212,
+} from './migrations';
 // knip-ignore-next-line
 export { runMigration142 } from './migrations';
 // knip-ignore-next-line
@@ -184,7 +190,8 @@ export function createTables(db: BunDatabase): void {
 
   db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
-        id TEXT PRIMARY KEY,
+        seq INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
         session_id TEXT NOT NULL,
         message_type TEXT NOT NULL,
         message_subtype TEXT,

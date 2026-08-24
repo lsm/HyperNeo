@@ -24,18 +24,30 @@ import { runMigration207 } from './m207-restamp-reviewer-review-modes';
 import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields';
 import { runMigration209 } from './m209-drop-inbox-agent-fk';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import {
+  findPendingMigrationSpaceReclaims,
+  type MigrationSpaceReclaimRequest,
+} from './migration-space-reclaim';
 
-export function runMigrations(db: BunDatabase, createBackup: () => void): void {
+export function runMigrations(
+  db: BunDatabase,
+  createBackup: () => void
+): MigrationSpaceReclaimRequest[] {
   ensureMigrationMarkersTable(db);
   seedHistoricalMigrationMarkers(db);
 
   let backupCreated = false;
+  const rewriteMigrationKeys = new Set<string>();
   const ensureBackup = (): void => {
     if (backupCreated) return;
     createBackup();
     backupCreated = true;
   };
   const run = (key: string, migration: () => void): void => {
+    runMarkedMigration(db, key, migration, ensureBackup);
+  };
+  const rewrite = (key: string, migration: () => void): void => {
+    rewriteMigrationKeys.add(key);
     runMarkedMigration(db, key, migration, ensureBackup);
   };
 
@@ -55,7 +67,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(8), () => runMigration8(db));
 
-  run(migrationMarkerKey(9), () => runMigration9(db));
+  rewrite(migrationMarkerKey(9), () => runMigration9(db));
 
   run(migrationMarkerKey(10), () => runMigration10(db));
 
@@ -63,19 +75,19 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(12), () => runMigration12(db));
 
-  run(migrationMarkerKey(13), () => runMigration13(db));
+  rewrite(migrationMarkerKey(13), () => runMigration13(db));
 
-  run('migration_room_cleanup', () => runMigrationRoomCleanup(db));
+  rewrite('migration_room_cleanup', () => runMigrationRoomCleanup(db));
 
-  run(migrationMarkerKey(14), () => runMigration14(db));
+  rewrite(migrationMarkerKey(14), () => runMigration14(db));
 
-  run(migrationMarkerKey(15), () => runMigration15(db));
+  rewrite(migrationMarkerKey(15), () => runMigration15(db));
 
-  run(migrationMarkerKey(16), () => runMigration16(db));
+  rewrite(migrationMarkerKey(16), () => runMigration16(db));
 
-  run(migrationMarkerKey(17), () => runMigration17(db));
+  rewrite(migrationMarkerKey(17), () => runMigration17(db));
 
-  run(migrationMarkerKey(18), () => runMigration18(db));
+  rewrite(migrationMarkerKey(18), () => runMigration18(db));
 
   run(migrationMarkerKey(19), () => runMigration19(db));
 
@@ -83,11 +95,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(21), () => runMigration21(db));
 
-  run(migrationMarkerKey(22), () => runMigration22(db));
+  rewrite(migrationMarkerKey(22), () => runMigration22(db));
 
   run(migrationMarkerKey(23), () => runMigration23(db));
 
-  run(migrationMarkerKey(24), () => runMigration24(db));
+  rewrite(migrationMarkerKey(24), () => runMigration24(db));
 
   run(migrationMarkerKey(25), () => runMigration25(db));
 
@@ -97,11 +109,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(28), () => runMigration28(db));
 
-  run(migrationMarkerKey(29), () => runMigration29(db));
+  rewrite(migrationMarkerKey(29), () => runMigration29(db));
 
   run(migrationMarkerKey(30), () => runMigration30(db));
 
-  run(migrationMarkerKey(31), () => runMigration31(db));
+  rewrite(migrationMarkerKey(31), () => runMigration31(db));
 
   run(migrationMarkerKey(32), () => runMigration32(db));
 
@@ -117,9 +129,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(38), () => runMigration38(db));
 
-  run(migrationMarkerKey(39), () => runMigration39(db));
+  rewrite(migrationMarkerKey(39), () => runMigration39(db));
 
-  run(migrationMarkerKey(40), () => runMigration40(db));
+  rewrite(migrationMarkerKey(40), () => runMigration40(db));
 
   run(migrationMarkerKey(41), () => runMigration41(db));
 
@@ -127,9 +139,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(43), () => runMigration43(db));
 
-  run(migrationMarkerKey(44), () => runMigration44(db));
+  rewrite(migrationMarkerKey(44), () => runMigration44(db));
 
-  run(migrationMarkerKey(45), () => runMigration45(db));
+  rewrite(migrationMarkerKey(45), () => runMigration45(db));
 
   run(migrationMarkerKey(46), () => runMigration46(db));
 
@@ -137,11 +149,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(48), () => runMigration48(db));
 
-  run(migrationMarkerKey(49), () => runMigration49(db));
+  rewrite(migrationMarkerKey(49), () => runMigration49(db));
 
   run(migrationMarkerKey(50), () => runMigration50(db));
 
-  run(migrationMarkerKey(51), () => runMigration51(db));
+  rewrite(migrationMarkerKey(51), () => runMigration51(db));
 
   run(migrationMarkerKey(52), () => runMigration52(db));
 
@@ -149,9 +161,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(54), () => runMigration54(db));
 
-  run(migrationMarkerKey(55), () => runMigration55(db));
+  rewrite(migrationMarkerKey(55), () => runMigration55(db));
 
-  run(migrationMarkerKey(56), () => runMigration56(db));
+  rewrite(migrationMarkerKey(56), () => runMigration56(db));
 
   run(migrationMarkerKey(57), () => runMigration57(db));
 
@@ -159,39 +171,39 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(59), () => runMigration59(db));
 
-  run(migrationMarkerKey(60), () => runMigration60(db));
+  rewrite(migrationMarkerKey(60), () => runMigration60(db));
 
   run(migrationMarkerKey(61), () => runMigration61(db));
 
-  run(migrationMarkerKey(62), () => runMigration62(db));
+  rewrite(migrationMarkerKey(62), () => runMigration62(db));
 
-  run(migrationMarkerKey(63), () => runMigration63(db));
+  rewrite(migrationMarkerKey(63), () => runMigration63(db));
 
   run(migrationMarkerKey(64), () => runMigration64(db));
 
   run(migrationMarkerKey(65), () => runMigration65(db));
 
-  run(migrationMarkerKey(66), () => runMigration66(db));
+  rewrite(migrationMarkerKey(66), () => runMigration66(db));
 
-  run(migrationMarkerKey(67), () => runMigration67(db));
+  rewrite(migrationMarkerKey(67), () => runMigration67(db));
   run(migrationMarkerKey(68), () => runMigration68(db));
   run(migrationMarkerKey(69), () => runMigration69(db));
   run(migrationMarkerKey(70), () => runMigration70(db));
   run(migrationMarkerKey(71), () => runMigration71(db));
   run(migrationMarkerKey(72), () => runMigration72(db));
-  run(migrationMarkerKey(73), () => runMigration73(db));
+  rewrite(migrationMarkerKey(73), () => runMigration73(db));
 
-  run(migrationMarkerKey(74), () => runMigration74(db));
+  rewrite(migrationMarkerKey(74), () => runMigration74(db));
 
   run(migrationMarkerKey(75), () => runMigration75(db));
 
-  run(migrationMarkerKey(76), () => runMigration76(db));
+  rewrite(migrationMarkerKey(76), () => runMigration76(db));
 
-  run(migrationMarkerKey(77), () => runMigration77(db));
+  rewrite(migrationMarkerKey(77), () => runMigration77(db));
 
   run(migrationMarkerKey(78), () => runMigration78(db));
 
-  run(migrationMarkerKey(79), () => runMigration79(db));
+  rewrite(migrationMarkerKey(79), () => runMigration79(db));
 
   run(migrationMarkerKey(80), () => runMigration80(db));
 
@@ -201,11 +213,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(83), () => runMigration83(db));
 
-  run(migrationMarkerKey(84), () => runMigration84(db));
+  rewrite(migrationMarkerKey(84), () => runMigration84(db));
 
   run(migrationMarkerKey(85), () => runMigration85(db));
 
-  run(migrationMarkerKey(86), () => runMigration86(db));
+  rewrite(migrationMarkerKey(86), () => runMigration86(db));
 
   run(migrationMarkerKey(87), () => runMigration87(db));
 
@@ -231,7 +243,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(98), () => runMigration98(db));
 
-  run(migrationMarkerKey(99), () => runMigration99(db));
+  rewrite(migrationMarkerKey(99), () => runMigration99(db));
 
   run(migrationMarkerKey(100), () => runMigration100(db));
 
@@ -239,9 +251,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(102), () => runMigration102(db));
 
-  run(migrationMarkerKey(103), () => runMigration103(db));
+  rewrite(migrationMarkerKey(103), () => runMigration103(db));
 
-  run(migrationMarkerKey(104), () => runMigration104(db));
+  rewrite(migrationMarkerKey(104), () => runMigration104(db));
 
   run(migrationMarkerKey(105), () => runMigration105(db));
 
@@ -251,7 +263,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(108), () => runMigration108(db));
 
-  run(migrationMarkerKey(109), () => runMigration109(db));
+  rewrite(migrationMarkerKey(109), () => runMigration109(db));
 
   run(migrationMarkerKey(110), () => runMigration110(db));
 
@@ -261,7 +273,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(113), () => runMigration113(db));
 
-  run(migrationMarkerKey(114), () => runMigration114(db));
+  rewrite(migrationMarkerKey(114), () => runMigration114(db));
 
   run(migrationMarkerKey(115), () => runMigration115(db));
 
@@ -281,7 +293,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(123), () => runMigration123(db));
 
-  run(migrationMarkerKey(124), () => runMigration124(db));
+  rewrite(migrationMarkerKey(124), () => runMigration124(db));
 
   run(migrationMarkerKey(125), () => runMigration125(db));
 
@@ -295,7 +307,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(130), () => runMigration130(db));
 
-  run(migrationMarkerKey(131), () => runMigration131(db));
+  rewrite(migrationMarkerKey(131), () => runMigration131(db));
 
   run(migrationMarkerKey(132), () => runMigration132(db));
 
@@ -305,27 +317,27 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(135), () => runMigration135(db));
 
-  run(migrationMarkerKey(136), () => runMigration136(db));
+  rewrite(migrationMarkerKey(136), () => runMigration136(db));
 
   run(migrationMarkerKey(137), () => runMigration137(db));
 
   run(migrationMarkerKey(138), () => runMigration138(db));
 
-  run(migrationMarkerKey(139), () => runMigration139(db));
+  rewrite(migrationMarkerKey(139), () => runMigration139(db));
 
   run(migrationMarkerKey(140), () => runMigration140(db));
 
-  run(migrationMarkerKey(141), () => runMigration141(db));
+  rewrite(migrationMarkerKey(141), () => runMigration141(db));
 
-  run(migrationMarkerKey(142), () => runMigration142(db));
+  rewrite(migrationMarkerKey(142), () => runMigration142(db));
 
-  run(migrationMarkerKey(143), () => runMigration143(db));
+  rewrite(migrationMarkerKey(143), () => runMigration143(db));
 
   run(migrationMarkerKey(144), () => runMigration144(db));
 
   run(migrationMarkerKey(145), () => runMigration145(db));
 
-  run(migrationMarkerKey(146), () => runMigration146(db));
+  rewrite(migrationMarkerKey(146), () => runMigration146(db));
 
   run(migrationMarkerKey(147), () => runMigration147(db));
 
@@ -350,9 +362,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(157), () => runMigration157(db));
 
   run(migrationMarkerKey(158), () => runMigration158(db));
-  run(migrationMarkerKey(159), () => runMigration159(db));
+  rewrite(migrationMarkerKey(159), () => runMigration159(db));
 
-  run(migrationMarkerKey(160), () => runMigration160(db));
+  rewrite(migrationMarkerKey(160), () => runMigration160(db));
 
   run(migrationMarkerKey(161), () => runMigration161(db));
 
@@ -376,7 +388,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   migrateLegacyArtifactsToShapes(db);
 
-  run(migrationMarkerKey(167), () => runMigration167(db));
+  rewrite(migrationMarkerKey(167), () => runMigration167(db));
 
   run(migrationMarkerKey(168), () => runMigration168(db));
 
@@ -404,11 +416,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(180), () => runMigration180(db));
 
-  run(migrationMarkerKey(181), () => runMigration181(db));
+  rewrite(migrationMarkerKey(181), () => runMigration181(db));
 
   run(migrationMarkerKey(182), () => runMigration182(db));
 
-  run(migrationMarkerKey(183), () => runMigration183(db));
+  rewrite(migrationMarkerKey(183), () => runMigration183(db));
 
   run(migrationMarkerKey(184), () => runMigration184(db));
 
@@ -422,7 +434,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(189), () => runMigration189(db));
 
-  run(migrationMarkerKey(190), () => runMigration190(db));
+  rewrite(migrationMarkerKey(190), () => runMigration190(db));
 
   run(migrationMarkerKey(191), () => runMigration191(db));
 
@@ -432,7 +444,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(194), () => runMigration194(db));
 
-  run(migrationMarkerKey(195), () => runMigration195(db));
+  rewrite(migrationMarkerKey(195), () => runMigration195(db));
 
   run(migrationMarkerKey(196), () => runMigration196(db));
 
@@ -459,9 +471,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(207), () => runMigration207(db));
 
   run(migrationMarkerKey(208), () => runMigration208(db));
-  run(migrationMarkerKey(209), () => runMigration209(db));
+  rewrite(migrationMarkerKey(209), () => runMigration209(db));
 
   run(migrationMarkerKey(210), () => runMigration210(db));
+
+  rewrite(migrationMarkerKey(211), () => runMigration211(db));
+
+  rewrite(migrationMarkerKey(212), () => runMigration212(db));
+
+  return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7265,6 +7283,7 @@ function isMessageSearchFtsEmpty(db: BunDatabase): boolean {
 function createMessageSearchContentTable(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS message_search_content (
+			id INTEGER PRIMARY KEY,
 			kind TEXT NOT NULL CHECK(kind IN ('message', 'task')),
 			source_id TEXT NOT NULL,
 			message_id TEXT,
@@ -7276,7 +7295,7 @@ function createMessageSearchContentTable(db: BunDatabase): void {
 			title TEXT,
 			body TEXT,
 			timestamp INTEGER,
-			PRIMARY KEY (kind, source_id)
+			UNIQUE (kind, source_id)
 		)
 	`);
 }
@@ -7287,7 +7306,7 @@ function createMessageSearchFtsTable(db: BunDatabase): void {
 			title,
 			body,
 			content='message_search_content',
-			content_rowid='rowid',
+			content_rowid='id',
 			detail=column,
 			tokenize = 'unicode61'
 		)
@@ -7299,23 +7318,23 @@ function createMessageSearchSyncTriggers(db: BunDatabase): void {
 		CREATE TRIGGER IF NOT EXISTS message_search_content_ai
 		AFTER INSERT ON message_search_content BEGIN
 			INSERT INTO message_search_fts(rowid, title, body)
-			VALUES (new.rowid, new.title, new.body);
+			VALUES (new.id, new.title, new.body);
 		END
 	`);
   db.exec(`
 		CREATE TRIGGER IF NOT EXISTS message_search_content_ad
 		AFTER DELETE ON message_search_content BEGIN
 			INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
-			VALUES ('delete', old.rowid, old.title, old.body);
+			VALUES ('delete', old.id, old.title, old.body);
 		END
 	`);
   db.exec(`
 		CREATE TRIGGER IF NOT EXISTS message_search_content_au
 		AFTER UPDATE OF title, body ON message_search_content BEGIN
 			INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
-			VALUES ('delete', old.rowid, old.title, old.body);
+			VALUES ('delete', old.id, old.title, old.body);
 			INSERT INTO message_search_fts(rowid, title, body)
-			VALUES (new.rowid, new.title, new.body);
+			VALUES (new.id, new.title, new.body);
 		END
 	`);
 }
@@ -7912,6 +7931,7 @@ export function runMigration141(db: BunDatabase): void {
   const hasOptimizedFts =
     ftsSql?.includes("content='message_search_content'") && ftsSql.includes('detail=column');
   createMessageSearchContentTable(db);
+  ensureStableMessageSearchIds(db);
   if (!hasOptimizedFts) {
     dropMessageSearchTriggers(db);
     db.exec(`DROP TABLE IF EXISTS message_search_fts`);
@@ -7928,6 +7948,120 @@ function dropMessageSearchTriggers(db: BunDatabase): void {
   db.exec(`DROP TRIGGER IF EXISTS message_search_content_ai`);
   db.exec(`DROP TRIGGER IF EXISTS message_search_content_ad`);
   db.exec(`DROP TRIGGER IF EXISTS message_search_content_au`);
+}
+
+export function runMigration211(db: BunDatabase): void {
+  const createReclaims = `
+    CREATE TABLE IF NOT EXISTS migration_space_reclaims (
+      migration_key TEXT PRIMARY KEY,
+      reclaimed_at INTEGER NOT NULL
+    )
+  `;
+  if (tableExists(db, 'message_search_content')) {
+    ensureStableMessageSearchIds(db);
+  }
+  db.exec(createReclaims);
+}
+
+export function runMigration212(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  const storedSql = tableCreateSql(db, 'sdk_messages');
+  if (!!storedSql && /\bseq\s+INTEGER\s+PRIMARY KEY\b/i.test(storedSql)) return;
+
+  const columns = (
+    db.prepare(`PRAGMA table_xinfo('sdk_messages')`).all() as Array<{
+      name: string;
+      hidden: number;
+    }>
+  ).filter((column) => column.hidden === 0 && column.name !== 'seq');
+  const columnNames = columns.map((column) => column.name);
+  const indexRows = db
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sdk_messages' AND sql IS NOT NULL`
+    )
+    .all() as Array<{ sql: string }>;
+  const triggerRows = db
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'sdk_messages' AND sql IS NOT NULL`
+    )
+    .all() as Array<{ sql: string }>;
+
+  const newSql = (storedSql ?? '')
+    .replace(
+      /CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?"?sdk_messages"?/i,
+      'CREATE TABLE sdk_messages_m212_new'
+    )
+    .replace(/\bid\s+TEXT\s+PRIMARY\s+KEY\b/i, 'seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE');
+
+  const foreignKeys = (
+    db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
+  )?.foreign_keys;
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(newSql);
+    db.exec(`
+      INSERT INTO sdk_messages_m212_new (seq, ${columnNames.join(', ')})
+      SELECT rowid, ${columnNames.join(', ')}
+      FROM sdk_messages
+    `);
+    db.exec(`DROP TABLE sdk_messages`);
+    db.exec(`ALTER TABLE sdk_messages_m212_new RENAME TO sdk_messages`);
+    for (const index of indexRows) {
+      db.exec(index.sql);
+    }
+    for (const trigger of triggerRows) {
+      db.exec(trigger.sql);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
+  }
+}
+
+function ensureStableMessageSearchIds(db: BunDatabase): void {
+  const contentSql = tableCreateSql(db, 'message_search_content');
+  const hasStableContentId = !!contentSql && /\bid\s+INTEGER\s+PRIMARY KEY\b/i.test(contentSql);
+  const ftsSql = tableCreateSql(db, 'message_search_fts');
+  const hasStableFtsId = ftsSql?.includes("content_rowid='id'");
+  if (hasStableContentId && (hasStableFtsId || !ftsSql)) return;
+
+  const foreignKeys = (
+    db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
+  )?.foreign_keys;
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    dropMessageSearchTriggers(db);
+    db.exec(`DROP TABLE IF EXISTS message_search_fts`);
+    if (!hasStableContentId) {
+      db.exec(`ALTER TABLE message_search_content RENAME TO message_search_content_stable_old`);
+      createMessageSearchContentTable(db);
+      db.exec(`
+        INSERT INTO message_search_content (
+          kind, source_id, message_id, session_id, task_id, space_id, task_number,
+          message_type, title, body, timestamp
+        )
+        SELECT
+          kind, source_id, message_id, session_id, task_id, space_id, task_number,
+          message_type, title, body, timestamp
+        FROM message_search_content_stable_old
+      `);
+      db.exec(`DROP TABLE message_search_content_stable_old`);
+    }
+    createMessageSearchFtsTable(db);
+    createMessageSearchSyncTriggers(db);
+    db.exec(`INSERT INTO message_search_fts(message_search_fts) VALUES('rebuild')`);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
+  }
 }
 
 export function runMigration133(db: BunDatabase): void {

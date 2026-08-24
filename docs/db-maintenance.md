@@ -131,13 +131,20 @@ pre-vacuum backup copy to reclaim its disk.
 
 ## What is handled automatically
 
+- **Rewrite migrations:** migrations that rebuild tables are declared with `rewrite(...)` in the
+  migration runner. After those migrations commit and before normal daemon services start,
+  the daemon runs `VACUUM main` when the freelist is nonempty, verifies that it reaches zero,
+  truncates the WAL, and records the rewrite markers as reclaimed. A reclaim interrupted by a
+  concurrent WAL reader defers instead of blocking startup, and any failed or interrupted
+  reclaim remains pending and is retried on the next startup. Future table rewrites must use
+  this declaration.
 - **Stats:** plain `PRAGMA optimize` on every clean daemon shutdown — the periodic,
   connection-aware form SQLite recommends for long-lived connections
   (`packages/daemon/src/storage/database-core.ts`, `DatabaseCore.close()`).
 - **WAL growth:** SQLite's default auto-checkpoint keeps the WAL bounded during operation,
   and clean shutdown truncates it.
-- **Space reuse:** free pages left by deletes are reused for future writes before the file
-  grows again — but never returned to the OS without VACUUM.
+- **Space reuse:** free pages left by ordinary deletes are reused for future writes before the
+  file grows again. Automatic `VACUUM` is limited to declared rewrite migrations.
 
 `auto_vacuum` is deliberately not enabled: it must be set before the DB is populated (or
 followed by a full VACUUM anyway), only returns trailing pages, and adds write overhead.
