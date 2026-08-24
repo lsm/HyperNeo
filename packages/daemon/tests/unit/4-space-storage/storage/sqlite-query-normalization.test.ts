@@ -28,6 +28,16 @@ describe('normalizeSQLiteQuery', () => {
     );
   });
 
+  test('consumes underscore digit separators inside numeric literals', () => {
+    expect(
+      normalizeSQLiteQuery('SELECT * FROM t WHERE a = 123_456 AND b = 0xCA_FE AND c = 1_000.5')
+    ).toBe('select * from t where a = ? and b = ? and c = ?');
+    expect(createSQLiteQueryDescriptor('SELECT * FROM t WHERE a = 123_456').fingerprint).toBe(
+      createSQLiteQueryDescriptor('SELECT * FROM t WHERE a = 7').fingerprint
+    );
+    expect(JSON.stringify(createSQLiteQueryDescriptor('SELECT 123_456'))).not.toContain('456');
+  });
+
   test('canonicalizes bind placeholders of every style', () => {
     expect(
       normalizeSQLiteQuery(

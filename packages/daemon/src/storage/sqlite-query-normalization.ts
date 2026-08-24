@@ -59,6 +59,10 @@ function consumeUntil(sql: string, start: number, terminator: string, escape: st
   return i;
 }
 
+function isNumericSeparator(sql: string, i: number, digitAt: (ch: string) => boolean): boolean {
+  return sql[i] === '_' && digitAt(sql[i + 1] ?? '');
+}
+
 function consumeNumber(sql: string, start: number): number {
   const n = sql.length;
   let i = start;
@@ -68,19 +72,19 @@ function consumeNumber(sql: string, start: number): number {
     isHexDigit(sql[i + 2] ?? '')
   ) {
     i += 2;
-    while (i < n && isHexDigit(sql[i])) i += 1;
+    while (i < n && (isHexDigit(sql[i]) || isNumericSeparator(sql, i, isHexDigit))) i += 1;
     return i;
   }
-  while (i < n && isDigit(sql[i])) i += 1;
+  while (i < n && (isDigit(sql[i]) || isNumericSeparator(sql, i, isDigit))) i += 1;
   if (sql[i] === '.') {
     i += 1;
-    while (i < n && isDigit(sql[i])) i += 1;
+    while (i < n && (isDigit(sql[i]) || isNumericSeparator(sql, i, isDigit))) i += 1;
   }
   if (sql[i] === 'e' || sql[i] === 'E') {
     const exponentSign = sql[i + 1] === '+' || sql[i + 1] === '-' ? i + 2 : i + 1;
     if (isDigit(sql[exponentSign] ?? '')) {
       i = exponentSign;
-      while (i < n && isDigit(sql[i])) i += 1;
+      while (i < n && (isDigit(sql[i]) || isNumericSeparator(sql, i, isDigit))) i += 1;
     }
   }
   return i;

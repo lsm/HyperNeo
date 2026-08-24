@@ -59,6 +59,9 @@ if (isBun) {
 
     // @ts-expect-error — alias narrowed to the cached, observed prepare result
     override query(sql: string): BunStatement {
+      if (TRANSACTION_CONTROL_SQL_PATTERN.test(sql)) {
+        return super.query(sql) as BunStatement;
+      }
       return this.prepare(sql);
     }
 
