@@ -25,7 +25,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
         status: 200,
       });
     });
-    const server = createOllamaNativeBridgeServer({
+    const server = await createOllamaNativeBridgeServer({
       baseUrl: 'http://ollama.test',
       headers: { 'x-api-key': 'reverse-proxy-secret', 'x-tenant': 'acme' },
       fetchImpl: fetchMock as typeof fetch,
@@ -52,7 +52,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
         status: 200,
       });
     });
-    const server = createOllamaNativeBridgeServer({
+    const server = await createOllamaNativeBridgeServer({
       baseUrl: 'http://ollama.test',
       modelContextWindow: 32768,
       fetchImpl: fetchMock as typeof fetch,
@@ -78,7 +78,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
         status: 200,
       });
     });
-    const server = createOllamaNativeBridgeServer({
+    const server = await createOllamaNativeBridgeServer({
       baseUrl: 'http://ollama.test',
       toolUseSupported: false,
       fetchImpl: fetchMock as typeof fetch,
@@ -105,7 +105,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
         status: 200,
       });
     });
-    const server = createOllamaNativeBridgeServer({
+    const server = await createOllamaNativeBridgeServer({
       baseUrl: 'http://ollama.test',
       toolUseSupported: true,
       fetchImpl: fetchMock as typeof fetch,
@@ -143,7 +143,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
           { status: 200 }
         )
     );
-    const server = createOllamaNativeBridgeServer({
+    const server = await createOllamaNativeBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -169,7 +169,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
           status: 200,
         })
     );
-    const server = createOllamaNativeBridgeServer({
+    const server = await createOllamaNativeBridgeServer({
       baseUrl: 'http://ollama.test',
       hostname: '127.0.0.1',
       fetchImpl: fetchMock as typeof fetch,
@@ -188,7 +188,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
           status: 200,
         });
       });
-      const server = createOllamaNativeBridgeServer({
+      const server = await createOllamaNativeBridgeServer({
         baseUrl: 'http://ollama.test/api/chat',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -213,7 +213,7 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
           status: 200,
         });
       });
-      const server = createOllamaNativeBridgeServer({
+      const server = await createOllamaNativeBridgeServer({
         baseUrl: 'http://ollama.test/api/chat/',
         fetchImpl: fetchMock as typeof fetch,
       });
