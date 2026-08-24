@@ -168,6 +168,15 @@ function createDb() {
 			result TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_github_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			state TEXT,
+			summary TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL
 		)
 	`);
   return db;
@@ -397,6 +406,35 @@ describe('setupLiveQueryHandlers', () => {
     await expect(
       setup.callHandler('spaceTaskMessage.get', { taskId: 'missing-task', messageId: 'msg-1' })
     ).rejects.toThrow('Unauthorized');
+  });
+
+  test('spaceTaskMessage.get reconstructs GitHub event rows for expansion', async () => {
+    insertSpaceTask(db, taskId);
+    db.exec(
+      `INSERT INTO space_github_events (
+        id, space_id, task_id, state, summary, external_url, occurred_at
+      ) VALUES (
+        'gh-expand-1', 'space-test-1', '${taskId}', 'delivered',
+        'PR merged', 'https://github.com/lsm/HyperNeo/pull/2901', ${Date.now()}
+      )`
+    );
+    const result = (await setup.callHandler('spaceTaskMessage.get', {
+      taskId,
+      messageId: 'gh-expand-1',
+    })) as { sdkMessage: string };
+    expect(JSON.parse(result.sdkMessage)).toEqual({
+      type: 'user',
+      uuid: 'gh-expand-1',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '[GitHub] PR merged\nhttps://github.com/lsm/HyperNeo/pull/2901',
+          },
+        ],
+      },
+    });
   });
 
   test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {

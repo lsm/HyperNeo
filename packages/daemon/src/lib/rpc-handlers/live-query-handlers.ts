@@ -4060,6 +4060,9 @@ export function setupLiveQueryHandlers(
   const stmtSpaceTaskMessage = db.prepare(
     'SELECT sdk_message FROM sdk_messages WHERE id = ? AND task_id = ?'
   );
+  const stmtSpaceGithubEvent = db.prepare(
+    'SELECT id, summary, external_url FROM space_github_events WHERE id = ? AND task_id = ?'
+  );
 
   messageHub.onRequest('spaceTaskMessage.get', async (data) => {
     const { taskId, messageId } = data as { taskId?: unknown; messageId?: unknown };
@@ -4073,15 +4076,36 @@ export function setupLiveQueryHandlers(
       throw new Error(`Unauthorized: space task "${taskId}" not found`);
     }
     const row = stmtSpaceTaskMessage.get(messageId, taskId) as { sdk_message: string } | undefined;
-    if (!row) {
+    let sdkMessage: string | null = row?.sdk_message ?? null;
+    if (sdkMessage === null) {
+      const githubEvent = stmtSpaceGithubEvent.get(messageId, taskId) as
+        | { id: string; summary: string; external_url: string }
+        | undefined;
+      if (githubEvent) {
+        sdkMessage = JSON.stringify({
+          type: 'user',
+          uuid: githubEvent.id,
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `[GitHub] ${githubEvent.summary}\n${githubEvent.external_url}`,
+              },
+            ],
+          },
+        });
+      }
+    }
+    if (sdkMessage === null) {
       throw new Error('Message not found');
     }
-    if (Buffer.byteLength(row.sdk_message, 'utf8') > MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES) {
+    if (Buffer.byteLength(sdkMessage, 'utf8') > MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES) {
       throw new Error(
         `spaceTaskMessage.get: message "${messageId}" exceeds the expansion size limit`
       );
     }
-    return { sdkMessage: row.sdk_message };
+    return { sdkMessage };
   });
 
   const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
