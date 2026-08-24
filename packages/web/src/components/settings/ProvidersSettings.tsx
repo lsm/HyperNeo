@@ -109,7 +109,10 @@ export function ProvidersSettings() {
     () => new URLSearchParams(window.location.search).get('reason') === 'session_expired'
   );
   const loadGenerationRef = useRef(0);
+  const hasLoadedProvidersRef = useRef(false);
+  const reconnectPendingRef = useRef(false);
   const autoRetriedRef = useRef(false);
+  const autoRetryShowsLoadingRef = useRef(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -140,6 +143,7 @@ export function ProvidersSettings() {
 
   const loadProviders = async (showLoading = true) => {
     const generation = ++loadGenerationRef.current;
+    autoRetryShowsLoadingRef.current = showLoading;
     try {
       if (showLoading) setLoading(true);
       setLoadError(false);
@@ -155,6 +159,7 @@ export function ProvidersSettings() {
       ]);
       if (generation !== loadGenerationRef.current) return;
       autoRetriedRef.current = false;
+      hasLoadedProvidersRef.current = true;
       if (sessionExpired) {
         setSessionExpired(false);
         const params = new URLSearchParams(window.location.search);
@@ -206,6 +211,9 @@ export function ProvidersSettings() {
     }
   };
 
+  const loadProvidersRef = useRef(loadProviders);
+  loadProvidersRef.current = loadProviders;
+
   useEffect(() => {
     loadProviders();
     return () => {
@@ -215,20 +223,27 @@ export function ProvidersSettings() {
 
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
+    if (!hub) {
+      if (hasLoadedProvidersRef.current) reconnectPendingRef.current = true;
+      return;
+    }
+    if (reconnectPendingRef.current && !loadError) {
+      reconnectPendingRef.current = false;
+      loadProvidersRef.current(false);
+    }
     const unsub = hub.onEvent('providers.changed', () => {
-      loadProviders(false);
+      loadProvidersRef.current(false);
     });
     return () => {
       unsub();
     };
-  }, [connectionState.value, oauthFlow, sessionExpired]);
+  }, [connectionState.value]);
 
   useEffect(() => {
     if (connectionState.value !== 'connected' || !loadError) return;
     if (autoRetriedRef.current) return;
     autoRetriedRef.current = true;
-    loadProviders();
+    loadProviders(autoRetryShowsLoadingRef.current);
   }, [connectionState.value, loadError]);
 
   const handleRetry = () => {

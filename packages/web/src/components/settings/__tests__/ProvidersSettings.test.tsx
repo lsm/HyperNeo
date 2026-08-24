@@ -340,14 +340,12 @@ describe('ProvidersSettings', () => {
     expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps an open provider editor mounted during an event refresh', async () => {
-    let resolveRefresh: (value: { providers: ProviderRecord[] }) => void;
-    mockListProviders.mockResolvedValueOnce({ providers: [] }).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveRefresh = resolve;
-        })
-    );
+  it('keeps an open provider editor mounted through an event refresh retry', async () => {
+    connectionState.value = 'connected';
+    mockListProviders
+      .mockResolvedValueOnce({ providers: [] })
+      .mockRejectedValueOnce(new Error('handler error'))
+      .mockResolvedValueOnce({ providers: [] });
 
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Add Provider'));
@@ -360,16 +358,43 @@ describe('ProvidersSettings', () => {
     )?.[1];
     await act(async () => {
       eventHandler();
-      await Promise.resolve();
     });
 
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
     expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
     expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
+  });
 
+  it('silently reconciles provider state after reconnecting', async () => {
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('2', 'kimi', { displayName: 'Kimi' })],
+      });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+    fireEvent.click(screen.getByText('Add Provider'));
+    const input = screen.getByTestId('add-modal-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'draft key' } });
+
+    mockGetHubIfConnected.mockReturnValue(null);
     await act(async () => {
-      resolveRefresh!({ providers: [] });
+      connectionState.value = 'disconnected';
     });
-    expect(mockListProviders).toHaveBeenCalledTimes(2);
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain('Kimi');
+    });
+    expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
+    expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
   });
 
   it('uses current OAuth state when an event refresh removes its provider', async () => {
