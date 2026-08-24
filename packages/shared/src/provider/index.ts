@@ -3,6 +3,7 @@ export type {
   ProviderCapabilities,
   ProviderContext,
   ProviderCredentials,
+  ProviderFailureErrorKind,
   ProviderId,
   ProviderInfo,
   ProviderSdkConfig,
@@ -10,6 +11,7 @@ export type {
   ModelTier,
   ProviderAuthStatusInfo,
   ProviderOAuthFlowData,
+  ListRemoteModelsOptions,
 } from './types.js';
 
 export type {

@@ -62,6 +62,7 @@ describe('QueryRunner', () => {
   let onMarkApiSuccessSpy: ReturnType<typeof mock>;
   let trackAgentProcessSpy: ReturnType<typeof mock>;
   let terminateTrackedAgentProcessesSpy: ReturnType<typeof mock>;
+  let snapshotTrackedAgentProcessesSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -90,6 +91,7 @@ describe('QueryRunner', () => {
 
     trackAgentProcessSpy = mock(() => {});
     terminateTrackedAgentProcessesSpy = mock(() => {});
+    snapshotTrackedAgentProcessesSpy = mock(() => []);
     onSDKMessageSpy = mock(async () => {});
     onSlashCommandsFetchedSpy = mock(async () => {});
     onModelsFetchedSpy = mock(async () => {});
@@ -217,6 +219,7 @@ describe('QueryRunner', () => {
       }),
       trackAgentProcess: trackAgentProcessSpy,
       terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
+      snapshotTrackedAgentProcesses: snapshotTrackedAgentProcessesSpy,
 
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
@@ -381,11 +384,77 @@ describe('QueryRunner', () => {
 
     it('should skip start if query already running', async () => {
       isRunningSpy.mockReturnValue(true);
-      runner = createRunner();
+      runner = createRunner({ queryPromise: new Promise<void>(() => {}) });
 
       await runner.start();
 
       expect(startSpy).not.toHaveBeenCalled();
+      expect(queryGeneration).toBe(0);
+    });
+
+    it('treats a query promise installed by another component as live and skips start', async () => {
+      isRunningSpy.mockReturnValue(true);
+      runner = createRunner({ queryPromise: Promise.resolve() });
+
+      await runner.start();
+
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(queryGeneration).toBe(0);
+    });
+
+    it('force-stops a stale running messageQueue with no live query and starts a fresh query', async () => {
+      isRunningSpy.mockReturnValue(true);
+      const ctx = createContext({ queryPromise: null });
+      runner = new QueryRunner(ctx);
+
+      await runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(stopSpy).toHaveBeenCalled();
+      expect(startSpy).toHaveBeenCalled();
+      expect(queryGeneration).toBe(1);
+      expect(ctx.queryPromise).toBeNull();
+      expect(ctx.queryAbortController).toBeNull();
+    });
+
+    it('force-restarts when a query this runner started has settled but the queue is still running', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      const firstQueryPromise = ctx.queryPromise;
+      await firstQueryPromise?.catch(() => {});
+
+      isRunningSpy.mockReturnValue(true);
+      ctx.queryPromise = firstQueryPromise ?? null;
+
+      await runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(stopSpy).toHaveBeenCalled();
+      expect(queryGeneration).toBe(2);
+    });
+
+    it('terminates orphaned agent processes and drops the stale query object when recovering a stale running queue', async () => {
+      isRunningSpy.mockReturnValue(true);
+      const orphanedProcess = { pid: 4242, kill: mock(() => {}) } as never;
+      const snapshot = [[4242, orphanedProcess]] as never;
+      const ctx = createContext({
+        queryPromise: null,
+        queryObject: { close: mock(() => {}) } as never,
+        snapshotTrackedAgentProcesses: () => snapshot,
+      });
+      runner = new QueryRunner(ctx);
+
+      await runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
+        forceDelayMs: 2000,
+        processes: snapshot,
+      });
+      expect(ctx.queryObject).toBeNull();
+      expect(queryGeneration).toBe(1);
     });
 
     it('should start message queue and increment generation', async () => {

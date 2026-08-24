@@ -537,6 +537,198 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('adopts fresh server kimi region on reload', async () => {
+    const kimiWithRegion = (region: string) =>
+      createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region }),
+      });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    mockTestProvider.mockResolvedValue({ healthy: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe('china');
+    });
+
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('global')] });
+    fireEvent.click(screen.getByText('Test connection'));
+
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe(
+        'global'
+      );
+    });
+  });
+
+  it('preserves an unsaved kimi region selection across reload', async () => {
+    const kimi = createMockProvider('k1', 'kimi', {
+      displayName: 'Kimi',
+      configJson: JSON.stringify({ region: 'china' }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [kimi] });
+    mockTestProvider.mockResolvedValue({ healthy: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    expect(regionSelect().value).toBe('global');
+
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' }), kimi],
+    });
+    fireEvent.click(screen.getByText('Test connection'));
+
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+  });
+
+  it('drops stale kimi region state when the row is absent from a reload', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region: 'china' }),
+        }),
+      ],
+    });
+    mockTestProvider.mockResolvedValue({ healthy: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe('china');
+    });
+
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    fireEvent.click(screen.getByText('Test connection'));
+    await waitFor(() => {
+      expect(container.textContent).toContain('Anthropic');
+      expect(container.querySelector('#kimi-region-k1')).toBeNull();
+    });
+
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => expect(screen.getByText('Test connection')).toBeTruthy());
+
+    mockListProviders.mockResolvedValue({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region: 'global' }),
+        }),
+      ],
+    });
+    fireEvent.click(screen.getByText('Test connection'));
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe(
+        'global'
+      );
+    });
+  });
+
+  it('treats a saved kimi region as synchronized when reload returns a newer server value', async () => {
+    const kimiWithRegion = (region: string) =>
+      createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region }),
+      });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: kimiWithRegion('china') });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith(
+        'k1',
+        { configJson: JSON.stringify({ region: 'global' }) },
+        undefined
+      );
+    });
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+  });
+
+  it('ignores an out-of-order reload that started before a kimi save', async () => {
+    type ProviderList = { providers: (ProviderRecord & { available: boolean })[] };
+    const listFor = (region: string): ProviderList => ({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region }),
+        }),
+        createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' }),
+      ],
+    });
+    let listCall = 0;
+    let releaseStaleLoad: (value: ProviderList) => void;
+    const staleLoad = new Promise<ProviderList>((resolve) => {
+      releaseStaleLoad = resolve;
+    });
+    mockListProviders.mockImplementation(() => {
+      listCall += 1;
+      if (listCall === 2) return staleLoad;
+      return Promise.resolve(listFor(listCall === 1 ? 'china' : 'global'));
+    });
+    let releaseSave: () => void;
+    const saveUpdate = new Promise<{ success: boolean }>((resolve) => {
+      releaseSave = () => resolve({ success: true });
+    });
+    mockUpdateProvider.mockImplementation(() => saveUpdate);
+    let releaseTest: () => void;
+    const testProbe = new Promise<{ healthy: boolean }>((resolve) => {
+      releaseTest = () => resolve({ healthy: true });
+    });
+    mockTestProvider.mockImplementation(() => testProbe);
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    const rowHeaders = () =>
+      Array.from(container.querySelectorAll<HTMLDivElement>('div[class*="cursor-pointer"]'));
+    fireEvent.click(rowHeaders()[0]);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+
+    fireEvent.click(screen.getByText('Save'));
+    fireEvent.click(rowHeaders()[1]);
+    await waitFor(() => expect(screen.getByText('Test connection')).toBeTruthy());
+    fireEvent.click(screen.getByText('Test connection'));
+
+    releaseTest!();
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(2));
+    releaseSave!();
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(rowHeaders().length).toBeGreaterThan(0));
+    fireEvent.click(rowHeaders()[0]);
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+
+    releaseStaleLoad!(listFor('china'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+    const saveButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Save')
+    ) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+  });
+
   it('updates API key for provider', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', authType: 'api_key' }),
