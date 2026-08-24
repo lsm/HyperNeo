@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
   ListRemoteModelsOptions,
   ModelTier,
   Provider,
@@ -134,6 +135,7 @@ export class KimiProvider implements Provider {
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
   private defaultRegion: KimiRegion = 'china';
+  private curatedModels: CuratedModel[] | undefined;
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly modelListCache = new Map<string, RemoteModelListEntry>();
@@ -351,7 +353,26 @@ export class KimiProvider implements Provider {
       type: 'enabled',
       budget_tokens: 16_000,
     });
-    return KimiProvider.MODELS;
+    return this.mergeCuratedModels(KimiProvider.MODELS);
+  }
+
+  setCuratedModels(models: CuratedModel[] | undefined): void {
+    this.curatedModels = models;
+  }
+
+  private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
+    if (!this.curatedModels?.length) return models;
+    const merged = [...models];
+    const present = new Set(merged.map((model) => model.id));
+    for (const curated of this.curatedModels) {
+      if (!this.ownsModel(curated.id)) continue;
+      const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
+      if (info && !present.has(info.id)) {
+        merged.push(info);
+        present.add(info.id);
+      }
+    }
+    return merged;
   }
 
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {

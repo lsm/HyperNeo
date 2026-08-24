@@ -307,7 +307,7 @@ describe('Model Service — provider routing', () => {
       expect(await isValidModel('moonshot-v1-256k', 'global', 'kimi')).toBe(false);
     });
 
-    it('validates provider-owned discovered IDs for discovery-capable providers', async () => {
+    it('validates discovered IDs only through the provider slice, never an ownsModel bypass', async () => {
       const discoveryProvider: Provider = {
         ...makeStubProvider('discovery-kimi', []),
         listRemoteModels: async () => [],
@@ -315,14 +315,23 @@ describe('Model Service — provider routing', () => {
       };
       getProviderRegistry().register(discoveryProvider);
 
-      expect(await isValidModel('kimi-k4', 'global', 'discovery-kimi')).toBe(true);
-      expect(await isValidModel('moonshot-k4', 'global', 'discovery-kimi')).toBe(false);
-
-      getProviderRegistry().setCuratedModels('discovery-kimi', [{ id: 'kimi-k3' }]);
-      expect(await isValidModel('kimi-k3', 'global', 'discovery-kimi')).toBe(true);
       expect(await isValidModel('kimi-k4', 'global', 'discovery-kimi')).toBe(false);
+      expect(await isValidModel('invalid-model-id', 'global', 'anthropic')).toBe(false);
 
-      getProviderRegistry().setCuratedModels('discovery-kimi', undefined);
+      const cache = new Map<string, ModelInfo[]>();
+      cache.set('global', [
+        ...allModels,
+        {
+          id: 'kimi-k4',
+          name: 'Kimi K4',
+          alias: 'kimi-k4',
+          family: 'kimi',
+          provider: 'discovery-kimi',
+          contextWindow: 262_144,
+          available: true,
+        },
+      ]);
+      setModelsCache(cache);
       expect(await isValidModel('kimi-k4', 'global', 'discovery-kimi')).toBe(true);
     });
 

@@ -62,6 +62,34 @@ describe('DeepSeekProvider', () => {
     expect(provider.isAvailable()).toBe(true);
   });
 
+  it('synthesizes curated discovered IDs into the visible model list', async () => {
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    const fetchImpl = mock(
+      async () => new Response('{}', { status: 200 })
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider(process.env, fetchImpl);
+    provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }, { id: 'glm-5' }]);
+
+    const models = await provider.getModels();
+
+    expect(models.map((m) => m.id)).toEqual([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'deepseek-v5',
+    ]);
+    expect(models.find((m) => m.id === 'deepseek-v5')).toMatchObject({
+      name: 'DeepSeek V5',
+      alias: 'deepseek-v5',
+      family: 'deepseek',
+      provider: 'deepseek',
+      contextWindow: 128_000,
+      available: true,
+    });
+
+    provider.setCuratedModels(undefined);
+    expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
+  });
+
   it('maps opus to Pro and other Claude tiers to Flash', () => {
     const provider = new DeepSeekProvider({});
     expect(provider.getModelForTier('opus')).toBe('deepseek-v4-pro');

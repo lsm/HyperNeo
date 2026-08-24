@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
   ListRemoteModelsOptions,
   ModelTier,
   Provider,
@@ -60,6 +61,7 @@ export class DeepSeekProvider implements Provider {
   ];
 
   private credentials: ProviderCredentials | null = null;
+  private curatedModels: CuratedModel[] | undefined;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
@@ -131,7 +133,26 @@ export class DeepSeekProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(DeepSeekProvider.BASE_URL, apiKey);
-    return DeepSeekProvider.MODELS;
+    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
+  }
+
+  setCuratedModels(models: CuratedModel[] | undefined): void {
+    this.curatedModels = models;
+  }
+
+  private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
+    if (!this.curatedModels?.length) return models;
+    const merged = [...models];
+    const present = new Set(merged.map((model) => model.id));
+    for (const curated of this.curatedModels) {
+      if (!this.ownsModel(curated.id)) continue;
+      const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
+      if (info && !present.has(info.id)) {
+        merged.push(info);
+        present.add(info.id);
+      }
+    }
+    return merged;
   }
 
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {

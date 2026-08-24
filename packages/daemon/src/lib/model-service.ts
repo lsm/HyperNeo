@@ -912,18 +912,6 @@ export async function isValidModel(
     STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
   );
   if (!findInModels(staticProviderModels, idOrAlias)) {
-    const curatedIds = getCuratedModelIds(providerId);
-    if (curatedIds === undefined || curatedIds.has(idOrAlias)) {
-      const provider = getProviderRegistry().get(providerId);
-      if (
-        provider &&
-        typeof provider.listRemoteModels === 'function' &&
-        typeof provider.ownsModel === 'function' &&
-        provider.ownsModel(idOrAlias)
-      ) {
-        return true;
-      }
-    }
     return false;
   }
 

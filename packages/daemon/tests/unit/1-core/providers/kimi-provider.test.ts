@@ -114,6 +114,39 @@ describe('KimiProvider', () => {
       expect(models).toEqual([]);
     });
 
+    it('synthesizes curated discovered IDs into the visible model list', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      provider = makeProbeOkProvider();
+      provider.setCuratedModels([
+        { id: 'kimi-k4', name: 'Kimi K4' },
+        { id: 'kimi-for-coding' },
+        { id: 'gpt-4o' },
+      ]);
+
+      const models = await provider.getModels();
+
+      expect(models.map((m) => m.id)).toEqual([
+        'kimi-k3[1m]',
+        'k3-256k',
+        'kimi-k2.7-code-highspeed',
+        'kimi-for-coding',
+        'kimi-k4',
+      ]);
+      const synthesized = models.find((m) => m.id === 'kimi-k4');
+      expect(synthesized).toMatchObject({
+        name: 'Kimi K4',
+        alias: 'kimi-k4',
+        family: 'kimi',
+        provider: 'kimi',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+        available: true,
+      });
+
+      provider.setCuratedModels(undefined);
+      expect(await provider.getModels()).toEqual(KimiProvider.MODELS);
+    });
+
     it('probes the upstream Anthropic-compatible endpoint with the API key', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const fetchImpl = mock(
