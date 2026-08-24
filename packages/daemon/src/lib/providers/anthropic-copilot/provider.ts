@@ -103,6 +103,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   private shuttingDown = false;
   private loggedOut = false;
+  private observedCuratedCatalog = false;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
   private credentialsVersion = 0;
@@ -180,11 +181,15 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
-    if (!(await this.isAvailable())) return [];
+    if (!(await this.isAvailable())) {
+      this.observedCuratedCatalog = false;
+      return [];
+    }
     try {
       await this.ensureServerStarted();
     } catch (err) {
       logger.error('Failed to start embedded Anthropic server:', err);
+      this.observedCuratedCatalog = false;
       return [];
     }
 
@@ -223,10 +228,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   clearModelCache(): void {
     this.dynamicModelsCache = null;
     this.dynamicModelsCacheExpiresAt = 0;
+    this.observedCuratedCatalog = false;
   }
 
   hasCuratedModelList(): boolean {
-    return true;
+    return this.observedCuratedCatalog;
   }
 
   private async fetchRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
@@ -258,6 +264,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     } else {
       this.clearModelCache();
     }
+    this.observedCuratedCatalog = true;
     return mapped;
   }
 

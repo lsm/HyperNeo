@@ -621,8 +621,21 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       );
     });
 
-    it('reports a curated catalog so an empty remote discovery is not a provider failure', () => {
-      expect(provider.hasCuratedModelList()).toBe(true);
+    it('reports a curated catalog only after a successful remote listing', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+      const internals = p as unknown as Record<string, unknown>;
+      expect(p.hasCuratedModelList()).toBe(false);
+
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      internals['clientCache'] = { listModels: async () => [] };
+      internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+
+      expect(await p.listRemoteModels({ force: true })).toEqual([]);
+      expect(p.hasCuratedModelList()).toBe(true);
+
+      spyOn(p, 'ensureServerStarted').mockRejectedValue(new Error('start failed') as never);
+      expect(await p.getModels()).toEqual([]);
+      expect(p.hasCuratedModelList()).toBe(false);
     });
   });
 
