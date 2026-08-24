@@ -672,7 +672,21 @@ export function ProvidersSettings() {
       });
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
-        await hub.request('models.list', { forceRefresh: true });
+        const response = (await hub.request('models.list', { forceRefresh: true })) as {
+          models?: Array<{ id?: string; provider?: string }>;
+        };
+        const providerModels = (response.models ?? []).filter(
+          (model) => model.provider === provider.providerId
+        );
+        const visibleIds = new Set(providerModels.map((model) => model.id));
+        const coherent =
+          models.every((model) => visibleIds.has(model.id)) &&
+          providerModels.every((model) => !!model.id && checkedIds.has(model.id));
+        if (!coherent) {
+          toast.warning(
+            `${provider.displayName} curation saved, but the refreshed model list does not match yet. Try fetching models again.`
+          );
+        }
       }
       await loadProviders();
       toast.success(`${provider.displayName} curation saved`);

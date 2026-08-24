@@ -1961,6 +1961,36 @@ describe('ProvidersSettings', () => {
       const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
       expect(JSON.parse(params.configJson).models).toEqual([{ id: 'kimi-k3', name: 'Kimi K3' }]);
       expect(mockRequest).toHaveBeenCalledWith('models.list', { forceRefresh: true });
+      expect(mockToastWarning).not.toHaveBeenCalled();
+    });
+
+    it('warns when the refreshed model list does not match the saved subset', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+      mockUpdateProvider.mockResolvedValue({ success: true, provider });
+      mockRequest.mockResolvedValue({ models: [{ id: 'kimi-k4', provider: 'kimi' }] });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-k4')
+      );
+
+      const boxes = screen
+        .getByTestId('visible-models-panel')
+        .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[1]);
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled());
+      expect(mockToastWarning).toHaveBeenCalledWith(expect.stringContaining('does not match yet'));
     });
 
     it('shows a confirm and persists an empty curation when saving an empty selection', async () => {
