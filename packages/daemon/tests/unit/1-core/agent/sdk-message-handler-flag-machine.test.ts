@@ -736,6 +736,24 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expectedFlags: resetFlags,
       },
       {
+        name: 'session-state mode with a nested error also defers to the idle event with replay',
+        result: () => errorResult('state-nested-error', { parent_tool_use_id: 'toolu-1' }),
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        afterResult: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        sendIdleEvent: true,
+        expectedIdle: 'plain',
+        expectedReplay: 1,
+        expectedFlags: resetFlags,
+      },
+      {
         name: 'a stale success verdict carried into session-state mode still allows replay on idle',
         prime: async () => {
           await handler.handleMessage(successResult('prime-stale-true'));
@@ -1361,6 +1379,21 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, usesSessionStateChangedTurnEnd: true });
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
+
+      await handler.handleMessage(
+        successResult('mode-only-clear-confirm', { user_message_uuid: 'clear-msg-id' })
+      );
+
+      expect(await wait).toBe('confirmed');
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        lastResultWasSuccess: true,
+      });
     });
 
     it('a failing suppressed setIdle on a result-less idle retains the armed clear', async () => {
@@ -1435,6 +1468,67 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(settled).toBe(null);
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
+    it('a rejecting metadata publication under an armed clear unwinds every flag', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'session.updated') {
+          throw new Error('session.updated subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(successResult('metadata-fail-armed'))).rejects.toThrow(
+        'session.updated subscriber failed'
+      );
+
+      expect(await wait).toBe('reset');
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a failed save of a matching error result under a sent clear unwinds the suppression', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+
+      await handler.handleMessage(errorResult('save-fail-clear-error'));
+
+      expect(await wait).toBe('reset');
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a failed save of a mismatched success retains the armed clear', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'other-msg-id');
+      handler.markClearMessageSent();
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await handler.handleMessage(
+        successResult('save-fail-mismatch', { user_message_uuid: 'unrelated-msg-id' })
+      );
+
+      expect(settled).toBe(null);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         suppressIdleOnNextResult: true,
