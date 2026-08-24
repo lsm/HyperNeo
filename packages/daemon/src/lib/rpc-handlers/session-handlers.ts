@@ -597,17 +597,11 @@ export function setupSessionHandlers(
       throw new Error('Session has no provider configured');
     }
 
-    const { resolveModelAliasUnfiltered, getSessionModelInfo } = await import(
-      '../model-service.js'
-    );
-    const currentModelId = await resolveModelAliasUnfiltered(rawModelId, 'global');
-    const modelInfo = await getSessionModelInfo(
-      { config: { ...agentSession.getSessionData().config, model: currentModelId } },
-      'global'
-    );
+    const { getSessionModelInfo } = await import('../model-service.js');
+    const modelInfo = await getSessionModelInfo(agentSession.getSessionData(), 'global');
 
     return {
-      currentModel: currentModelId,
+      currentModel: modelInfo?.id ?? rawModelId,
       currentProvider: sessionProvider,
       modelInfo,
     };

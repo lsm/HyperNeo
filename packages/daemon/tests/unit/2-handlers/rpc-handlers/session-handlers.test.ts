@@ -278,6 +278,38 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.modelInfo).toMatchObject({ id: 'opus', provider: 'anthropic' });
   });
 
+  it('session.model.get resolves a shared alias to the session provider model', async () => {
+    const models = [
+      { id: 'openrouter/qwen3', name: 'Qwen3', alias: 'qwen3', provider: 'openrouter-test' },
+      { id: 'qwen3:latest', name: 'Qwen3 Local', alias: 'qwen3', provider: 'ollama-test' },
+    ] as ModelInfo[];
+    setModelsCache(new Map([['global', models]]));
+
+    const sessionManager = {
+      getSessionAsync: async () => ({
+        getCurrentModel: () => ({ id: 'qwen3' }),
+        getSessionData: () => ({
+          id: 'session-2',
+          config: { model: 'qwen3', provider: 'ollama-test' },
+        }),
+      }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers: setupForModelGet } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    const hub = createMockMessageHub();
+    setupForModelGet(hub.hub, sessionManager, eventBus, {} as SpaceManager);
+
+    const handler = hub.handlers.get('session.model.get')!;
+    const result = (await handler({ sessionId: 'session-2' }, {})) as {
+      currentModel: string;
+      modelInfo: ModelInfo | null;
+    };
+
+    expect(result.currentModel).toBe('qwen3:latest');
+    expect(result.modelInfo).toMatchObject({ id: 'qwen3:latest', provider: 'ollama-test' });
+  });
+
   it('returns cached models when cache is populated', async () => {
     const testCache = new Map<
       string,
