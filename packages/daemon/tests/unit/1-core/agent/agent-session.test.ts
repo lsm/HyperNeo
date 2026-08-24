@@ -5707,7 +5707,13 @@ describe('AgentSession', () => {
 
     type SteerRow = {
       name: string;
-      status: 'idle' | 'queued' | 'processing';
+      status:
+        | 'idle'
+        | 'queued'
+        | 'processing'
+        | 'waiting_for_input'
+        | 'rate_limit_cooldown'
+        | 'interrupted';
       delivery: 'enqueued' | 'consumed' | 'missing';
       queryPromise: 'present' | 'absent';
       provider: 'acp' | 'anthropic';
@@ -5788,10 +5794,24 @@ describe('AgentSession', () => {
         await agentSession.stateManager.setProcessing(steerUuid);
       } else if (row.status === 'queued') {
         await agentSession.stateManager.setQueued(steerUuid);
+      } else if (row.status === 'interrupted') {
+        await agentSession.stateManager.setInterrupted();
+      } else if (row.status === 'waiting_for_input') {
+        await agentSession.stateManager.setWaitingForInput({
+          toolUseId: 'tool-ask-1',
+          questions: [],
+          askedAt: Date.now(),
+        });
+      } else if (row.status === 'rate_limit_cooldown') {
+        await agentSession.stateManager.setRateLimitCooldown({
+          retryCount: 0,
+          maxRetries: 1,
+          retryAt: Date.now(),
+        });
       }
       const queue = agentSession.messageQueue;
       (queue as unknown as { hasPendingOrInFlight: (id: string) => boolean }).hasPendingOrInFlight =
-        mock(() => row.pending);
+        mock((id: string) => id === steerUuid && row.pending);
       if (row.queryPromise === 'present') {
         agentSession.queryPromise = new Promise<void>(() => {});
       }
@@ -5869,6 +5889,46 @@ describe('AgentSession', () => {
         expected: 'promote',
       },
       {
+        name: 'idle promotes even with a live ACP query and pending ownership',
+        status: 'idle',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'acp',
+        pending: true,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'waiting_for_input promotes through the fallback',
+        status: 'waiting_for_input',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'rate_limit_cooldown promotes through the fallback',
+        status: 'rate_limit_cooldown',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'interrupted promotes through the fallback',
+        status: 'interrupted',
+        delivery: 'enqueued',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
         name: 'processing aborts on a consumed delivery row',
         status: 'processing',
         delivery: 'consumed',
@@ -5883,6 +5943,16 @@ describe('AgentSession', () => {
         status: 'processing',
         delivery: 'missing',
         queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'aborted',
+      },
+      {
+        name: 'processing aborts on an invalid delivery even when no query is live',
+        status: 'processing',
+        delivery: 'consumed',
+        queryPromise: 'absent',
         provider: 'anthropic',
         pending: false,
         claimGuard: 'held',
@@ -5954,9 +6024,7 @@ describe('AgentSession', () => {
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('enqueued');
           }
-          if (!rowExpectsAdmission(row)) {
-            expect(queue.size()).toBe(0);
-          }
+          expect(queue.size()).toBe(0);
         } finally {
           db.close();
         }
