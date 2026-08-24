@@ -24,6 +24,18 @@ describe('provider failure classification', () => {
     );
   });
 
+  it('classifies raw SDK authentication errors as credential', () => {
+    expect(
+      classifyProviderFailureMessage(
+        '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'
+      )
+    ).toBe('credential');
+    expect(classifyProviderFailureMessage('invalid_api_key')).toBe('credential');
+    expect(classifyProviderFailureMessage('Request failed: invalid api key provided')).toBe(
+      'credential'
+    );
+  });
+
   it('classifies probe 5xx responses as transient', () => {
     expect(classifyProviderFailureMessage('Z.ai probe failed (HTTP 500)')).toBe('transient');
     expect(classifyProviderFailureMessage('Z.ai probe failed (HTTP 502)')).toBe('transient');

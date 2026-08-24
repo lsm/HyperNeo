@@ -9,6 +9,7 @@ import type {
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
 import { AcpClient } from '../acp/acp-client';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -181,11 +182,11 @@ export class AcpProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const command = this.getAcpCommand();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!command,
       method: 'api_key',
       error: command ? undefined : 'Set HYPERNEO_ACP_COMMAND to enable ACP agents.',
-    };
+    });
   }
 
   async verifyCommandAvailable(options: { force?: boolean } = {}): Promise<void> {

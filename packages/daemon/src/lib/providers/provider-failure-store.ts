@@ -18,6 +18,8 @@ export type ProviderFailureChangeListener = (change: ProviderFailureChange) => v
 
 const CREDENTIAL_MESSAGE_PATTERNS: readonly RegExp[] = [
   /\(http 40[13]\)/i,
+  /authentication_error/i,
+  /invalid[ _-]api[ _-]?key/i,
   /invalid acp command/i,
   /acp_command not set/i,
   /acp agent process error:.*\b(?:enoent|eacces|enotdir|eisdir)\b/i,

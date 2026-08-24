@@ -218,7 +218,7 @@ describe('AnthropicProvider', () => {
       }
       let _toolBatch: Array<{ name: string; def: object }> = [];
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: async () => ({
+        query: () => ({
           interrupt: async () => {},
           supportedModels: async () => {
             throw new Error('SDK unavailable');
