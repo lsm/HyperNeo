@@ -5,6 +5,7 @@ export const INACTIVITY_WATCHDOG_PREDICATE_VERSION = 1;
 export type InactivityNagSkipReason =
   | 'disabled'
   | 'unconfigured'
+  | 'degraded'
   | 'actor_inactive'
   | 'session_busy'
   | 'delivery_pending'
@@ -19,6 +20,8 @@ export type InactivityNagDecision =
       windowAnchoredAt: number;
       attemptGeneration: number;
       claimKey: string;
+      ownerToken: string | null;
+      configRevision: number | null;
       idleForMs: number;
     };
 
@@ -34,13 +37,18 @@ export interface InactivityWatchdogClaimSnapshot {
   state: 'none' | 'accepted' | 'in_flight';
   windowAnchoredAt: number;
   attemptGeneration: number;
+  ownerToken: string | null;
+  configRevision: number | null;
+  degraded: boolean;
 }
 
 export interface InactivityWatchdogCtx {
   now: number;
   enabled: boolean;
   thresholdMs: number | null;
+  configRevision: number | null;
   agentId: string;
+  callerToken: string | null;
   actor: InactivityWatchdogActorSnapshot | null;
   claim: InactivityWatchdogClaimSnapshot | null;
   decision: InactivityNagDecision | null;
@@ -84,6 +92,10 @@ export function applyWatchdogUnconfiguredGate(ctx: InactivityWatchdogCtx): Inact
     : decided(ctx, { action: 'none', reason: 'unconfigured' });
 }
 
+export function applyDegradedGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
+  return ctx.claim?.degraded ? decided(ctx, { action: 'none', reason: 'degraded' }) : ctx;
+}
+
 export function applyActorInactiveGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
   const actor = ctx.actor;
   if (actor === null) return decided(ctx, { action: 'none', reason: 'actor_inactive' });
@@ -109,6 +121,14 @@ export function applyClaimHeldGate(ctx: InactivityWatchdogCtx): InactivityWatchd
   if (claim === null || claim.state === 'none') return ctx;
   const currentWindow = ctx.actor?.lastActivityAt ?? null;
   if (currentWindow !== null && claim.windowAnchoredAt !== currentWindow) return ctx;
+  if (claim.ownerToken !== null && claim.ownerToken === ctx.callerToken) return ctx;
+  if (
+    claim.configRevision !== null &&
+    ctx.configRevision !== null &&
+    claim.configRevision !== ctx.configRevision
+  ) {
+    return ctx;
+  }
   return decided(ctx, { action: 'none', reason: 'claim_held' });
 }
 
@@ -137,6 +157,8 @@ export function applyNagGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx 
       windowAnchoredAt,
       attemptGeneration,
     }),
+    ownerToken: ctx.callerToken,
+    configRevision: ctx.configRevision,
     idleForMs: ctx.now - actor.lastActivityAt,
   });
 }
@@ -144,6 +166,7 @@ export function applyNagGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx 
 const inactivityWatchdogRun = decisionRun('inactivity-watchdog', [
   applyWatchdogDisabledGate,
   applyWatchdogUnconfiguredGate,
+  applyDegradedGate,
   applyActorInactiveGate,
   applyBusySessionGate,
   applyPendingDeliveryGate,
@@ -166,6 +189,7 @@ export type InactivityNagDeliveryStage =
 export interface InactivityNagWindowReset {
   resetWindow: boolean;
   releaseClaim: boolean;
+  markDegraded: boolean;
   advanceAttemptGeneration: boolean;
   degraded: boolean;
 }
@@ -176,6 +200,7 @@ export function decideNagWindowReset(stage: InactivityNagDeliveryStage): Inactiv
       return {
         resetWindow: false,
         releaseClaim: true,
+        markDegraded: false,
         advanceAttemptGeneration: false,
         degraded: false,
       };
@@ -183,6 +208,7 @@ export function decideNagWindowReset(stage: InactivityNagDeliveryStage): Inactiv
       return {
         resetWindow: false,
         releaseClaim: false,
+        markDegraded: false,
         advanceAttemptGeneration: false,
         degraded: false,
       };
@@ -190,13 +216,15 @@ export function decideNagWindowReset(stage: InactivityNagDeliveryStage): Inactiv
       return {
         resetWindow: true,
         releaseClaim: true,
+        markDegraded: false,
         advanceAttemptGeneration: false,
         degraded: false,
       };
     case 'terminal_failure':
       return {
         resetWindow: false,
-        releaseClaim: true,
+        releaseClaim: false,
+        markDegraded: true,
         advanceAttemptGeneration: true,
         degraded: true,
       };

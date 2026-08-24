@@ -24,12 +24,28 @@ function makeActor(
   };
 }
 
+function makeClaim(
+  overrides: Partial<NonNullable<InactivityWatchdogInput['claim']>> = {}
+): NonNullable<InactivityWatchdogInput['claim']> {
+  return {
+    state: 'accepted',
+    windowAnchoredAt: NOW - THRESHOLD_MS - 1,
+    attemptGeneration: 0,
+    ownerToken: 'scanner-a',
+    configRevision: 7,
+    degraded: false,
+    ...overrides,
+  };
+}
+
 function input(overrides: Partial<InactivityWatchdogInput> = {}): InactivityWatchdogInput {
   return {
     now: NOW,
     enabled: true,
     thresholdMs: THRESHOLD_MS,
+    configRevision: 7,
     agentId: 'agent-1',
+    callerToken: 'scanner-a',
     actor: makeActor(),
     claim: null,
     ...overrides,
@@ -88,6 +104,8 @@ describe('decideInactivityNag', () => {
           windowAnchoredAt: NOW - THRESHOLD_MS - 1,
           attemptGeneration: 0,
         }),
+        ownerToken: 'scanner-a',
+        configRevision: 7,
         idleForMs: THRESHOLD_MS + 1,
       });
     });
@@ -170,73 +188,75 @@ describe('decideInactivityNag', () => {
   });
 
   describe('window-claim semantics', () => {
-    test('skips while a claim is held for the current window', () => {
-      const lastActivityAt = NOW - THRESHOLD_MS - 1;
+    test('skips while a claim is held for the current window by another claimant', () => {
+      expect(decideInactivityNag(input({ claim: makeClaim({ ownerToken: 'scanner-b' }) }))).toEqual(
+        {
+          action: 'none',
+          reason: 'claim_held',
+        }
+      );
+    });
+
+    test('skips while a claim is in flight for the current window by another claimant', () => {
       expect(
         decideInactivityNag(
           input({
-            actor: makeActor({ lastActivityAt }),
-            claim: {
-              state: 'accepted',
-              windowAnchoredAt: lastActivityAt,
-              attemptGeneration: 0,
-            },
+            claim: makeClaim({ state: 'in_flight', ownerToken: 'scanner-b', attemptGeneration: 2 }),
           })
         )
       ).toEqual({ action: 'none', reason: 'claim_held' });
     });
 
-    test('skips while a claim is in flight for the current window', () => {
-      const lastActivityAt = NOW - THRESHOLD_MS - 1;
-      expect(
-        decideInactivityNag(
-          input({
-            actor: makeActor({ lastActivityAt }),
-            claim: {
-              state: 'in_flight',
-              windowAnchoredAt: lastActivityAt,
-              attemptGeneration: 2,
-            },
-          })
-        )
-      ).toEqual({ action: 'none', reason: 'claim_held' });
+    test('admits the claim owner performing an admission recheck', () => {
+      const decision = decideInactivityNag(input({ claim: makeClaim({ state: 'in_flight' }) }));
+      expect(decision.action).toBe('nag');
     });
 
-    test('admits again when lastActivityAt advanced past the claimed window', () => {
+    test('admits when lastActivityAt advanced past the claimed window', () => {
       const decision = decideInactivityNag(
         input({
-          claim: {
-            state: 'accepted',
-            windowAnchoredAt: NOW - THRESHOLD_MS - 501,
-            attemptGeneration: 0,
-          },
+          claim: makeClaim({ ownerToken: 'scanner-b', windowAnchoredAt: NOW - THRESHOLD_MS - 501 }),
         })
       );
       expect(decision.action).toBe('nag');
     });
 
-    test('carries the current attempt generation into the nag claim key', () => {
-      const windowAnchoredAt = NOW - THRESHOLD_MS - 1;
+    test('admits a fresh scan when the watchdog configuration changed since the claim', () => {
       const decision = decideInactivityNag(
         input({
-          actor: makeActor({ lastActivityAt: windowAnchoredAt }),
-          claim: {
-            state: 'none',
-            windowAnchoredAt: 0,
-            attemptGeneration: 3,
-          },
+          configRevision: 8,
+          claim: makeClaim({ ownerToken: 'scanner-b' }),
+        })
+      );
+      expect(decision.action).toBe('nag');
+    });
+
+    test('blocks ordinary scans while a claim is marked degraded', () => {
+      expect(decideInactivityNag(input({ claim: makeClaim({ degraded: true }) }))).toEqual({
+        action: 'none',
+        reason: 'degraded',
+      });
+    });
+
+    test('carries the current attempt generation into the nag claim key', () => {
+      const decision = decideInactivityNag(
+        input({
+          actor: makeActor({ lastActivityAt: NOW - THRESHOLD_MS - 1 }),
+          claim: makeClaim({ state: 'none', attemptGeneration: 3 }),
         })
       );
       expect(decision).toEqual({
         action: 'nag',
         predicateVersion: INACTIVITY_WATCHDOG_PREDICATE_VERSION,
-        windowAnchoredAt,
+        windowAnchoredAt: NOW - THRESHOLD_MS - 1,
         attemptGeneration: 3,
         claimKey: buildInactivityNagClaimKey({
           agentId: 'agent-1',
-          windowAnchoredAt,
+          windowAnchoredAt: NOW - THRESHOLD_MS - 1,
           attemptGeneration: 3,
         }),
+        ownerToken: 'scanner-a',
+        configRevision: 7,
         idleForMs: THRESHOLD_MS + 1,
       });
     });
@@ -248,6 +268,7 @@ describe('decideNagWindowReset', () => {
     expect(decideNagWindowReset('consumed')).toEqual({
       resetWindow: true,
       releaseClaim: true,
+      markDegraded: false,
       advanceAttemptGeneration: false,
       degraded: false,
     });
@@ -257,6 +278,7 @@ describe('decideNagWindowReset', () => {
     expect(decideNagWindowReset('pre_admission_failure')).toEqual({
       resetWindow: false,
       releaseClaim: true,
+      markDegraded: false,
       advanceAttemptGeneration: false,
       degraded: false,
     });
@@ -266,15 +288,17 @@ describe('decideNagWindowReset', () => {
     expect(decideNagWindowReset('accepted')).toEqual({
       resetWindow: false,
       releaseClaim: false,
+      markDegraded: false,
       advanceAttemptGeneration: false,
       degraded: false,
     });
   });
 
-  test('a terminal delivery failure advances the generation into degraded recovery', () => {
+  test('a terminal delivery failure marks the claim degraded and blocks automatic retries', () => {
     expect(decideNagWindowReset('terminal_failure')).toEqual({
       resetWindow: false,
-      releaseClaim: true,
+      releaseClaim: false,
+      markDegraded: true,
       advanceAttemptGeneration: true,
       degraded: true,
     });
