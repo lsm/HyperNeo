@@ -9,6 +9,7 @@ import {
   clearModelsCache,
   getModelsCache,
   setModelsCache,
+  updateProviderModelsInCache,
   getSupportedModelsFromQuery,
   initializeModels,
   getSessionModelInfo,
@@ -143,6 +144,291 @@ describe('Model Service', () => {
 
       const cache = getModelsCache();
       expect(cache.size).toBe(0);
+    });
+  });
+
+  describe('updateProviderModelsInCache', () => {
+    const acpModels: ModelInfo[] = [
+      {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ];
+
+    function seedCache(entries: Record<string, ModelInfo[]>, timestamp?: number) {
+      setModelsCache(new Map(Object.entries(entries)), timestamp);
+    }
+
+    it('replaces the provider slice while preserving other providers', () => {
+      seedCache({
+        global: [...mockModels, { ...acpModels[0], id: 'stale-acp-model', contextWindow: 1000 }],
+      });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+    });
+
+    it('appends the provider models when the cached entry has no slice for the provider', () => {
+      seedCache({ global: mockModels });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('removes the provider slice when the replacement list is empty', () => {
+      seedCache({ global: [...mockModels, ...acpModels] });
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('does not create a missing cache entry', () => {
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(false);
+      expect(getModelsCache().size).toBe(0);
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('retains a provider slice stashed while the cache is missing and merges it into the next refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+    });
+
+    it('replaces the rebuilt provider slice with a retained one on the next refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [{ ...acpModels[0], id: 'acp-default' }],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+    });
+
+    it('drops retained provider slices when the cache is cleared', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+      clearModelsCache();
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('keeps a retained provider slice across repeated rebuilds until superseded', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const providerModel: ModelInfo = { ...acpModels[0], id: 'acp-from-provider' };
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [providerModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+
+      const supersedingModels: ModelInfo[] = [{ ...acpModels[0], id: 'newer-acp-model' }];
+      expect(updateProviderModelsInCache('acp', supersedingModels)).toBe(true);
+
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(supersedingModels);
+    });
+
+    it('skips the post-refresh re-apply when the cache is cleared mid-refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'slow-reapply-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [{ ...acpModels[0], id: 'acp-default', provider: 'slow-reapply-provider' }];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+      clearModelsCache();
+
+      await refreshPromise;
+
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('leaves other cache keys untouched', () => {
+      seedCache(
+        {
+          global: [...mockModels, ...acpModels],
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getAvailableModels('session-123')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('supports an explicit cache key', () => {
+      seedCache(
+        {
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', [], 'session-123');
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('session-123')).toEqual(mockModels);
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('re-applies the provider slice after an in-flight refresh rebuilds the entry', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'slow-splice-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [
+            'slow-splice-model-1',
+            'slow-splice-model-2',
+            'slow-splice-model-3',
+            'slow-splice-model-4',
+          ].map((id) => ({
+            id,
+            name: 'Slow Splice Model',
+            family: 'test',
+            provider: 'slow-splice-provider',
+            contextWindow: 100000,
+            description: 'Slow splice model',
+            releaseDate: '2026-01-01',
+            available: true,
+          }));
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      await refreshPromise;
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
+    });
+
+    it('keeps a stale entry stale so the next read re-triggers a background refresh', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'fresh-model',
+          name: 'Fresh Model',
+          family: 'test',
+          provider: 'fresh-provider',
+          contextWindow: 100000,
+          description: 'Fresh model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'fresh-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels }, Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      getAvailableModels('global');
+
+      const deadline = Date.now() + 3_000;
+      let loadTriggered = false;
+      while (Date.now() < deadline) {
+        if (getModels.mock.calls.length > 0) {
+          loadTriggered = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      const registryState = getProviderRegistry()
+        .getAll()
+        .map((provider) => provider.id)
+        .join(',');
+      expect(
+        loadTriggered,
+        `stale entry should trigger a provider load on read; registry=[${registryState}]`
+      ).toBe(true);
     });
   });
 

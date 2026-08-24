@@ -25,7 +25,7 @@ import type {
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ErrorCategory } from '../error-manager';
-import { getModelsCache, setModelsCache } from '../model-service';
+import { updateProviderModelsInCache } from '../model-service';
 import { getProviderRegistry } from '../providers/factory';
 import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
@@ -1285,25 +1285,13 @@ export class AcpQueryRunner {
     const provider = getProviderRegistry().get('acp');
     if (provider instanceof AcpProvider) {
       provider.setConfigOptions(configOptions);
-      const cache = getModelsCache();
-      const providerModels = provider.getCachedModels();
-      if (providerModels) {
-        const globalModels = cache.get('global') ?? [];
-        cache.set('global', [
-          ...globalModels.filter((model) => model.provider !== 'acp'),
-          ...providerModels,
-        ]);
-      } else {
-        const globalModels = cache.get('global') ?? [];
-        cache.set('global', [
-          ...globalModels.filter((model) => model.provider !== 'acp'),
-          ...AcpProvider.MODELS.map((model) => ({
-            ...model,
-            contextWindow: provider.getContextWindow(),
-          })),
-        ]);
-      }
-      setModelsCache(cache);
+      const providerModels =
+        provider.getCachedModels() ??
+        AcpProvider.MODELS.map((model) => ({
+          ...model,
+          contextWindow: provider.getContextWindow(),
+        }));
+      updateProviderModelsInCache('acp', providerModels);
       this.ctx.internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     }
   }

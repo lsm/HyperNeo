@@ -120,6 +120,22 @@ const cacheGeneration = new Map<string, number>();
 
 const refreshedMissingProviders = new Set<string>();
 
+const pendingProviderSlices = new Map<string, ModelInfo[]>();
+
+function pendingSliceKey(cacheKey: string, providerId: string): string {
+  return `${cacheKey}:${providerId}`;
+}
+
+function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
+  let merged = models;
+  for (const [key, slice] of pendingProviderSlices) {
+    if (!key.startsWith(`${cacheKey}:`)) continue;
+    const providerId = key.slice(cacheKey.length + 1);
+    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+  }
+  return merged;
+}
+
 export async function getSupportedModelsFromQuery(
   queryObject: QueryLike | null,
   cacheKey: string = 'global'
@@ -159,7 +175,7 @@ function applyRefreshedModels(
     if (previousModels && previousModels.length > mergedModels.length) {
       modelsCache.set(cacheKey, previousModels);
     } else {
-      modelsCache.set(cacheKey, mergedModels);
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
     }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
@@ -167,7 +183,7 @@ function applyRefreshedModels(
   if (!previousModels || previousModels.length === 0) {
     const registry = getProviderRegistry();
     const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, filteredFallbacks);
+    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
     cacheTimestamps.set(cacheKey, Date.now());
   }
 }
@@ -342,7 +358,10 @@ export async function initializeModels(): Promise<void> {
       }
       applyProviderLoadOutcome(result);
       if (result.models.length > 0) {
-        const mergedModels = mergeWithFallbackModels(result.models);
+        const mergedModels = mergePendingProviderSlices(
+          cacheKey,
+          mergeWithFallbackModels(result.models)
+        );
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
       } else {
@@ -354,7 +373,7 @@ export async function initializeModels(): Promise<void> {
       }
       const registry = getProviderRegistry();
       const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-      modelsCache.set(cacheKey, filteredFallbacks);
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
       cacheTimestamps.set(cacheKey, Date.now());
     }
   })();
@@ -378,6 +397,9 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
+    for (const key of pendingProviderSlices.keys()) {
+      if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
+    }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
@@ -387,6 +409,7 @@ export function clearModelsCache(cacheKey?: string): void {
     cacheTimestamps.clear();
     refreshInProgress.clear();
     clearProviderModelCaches();
+    pendingProviderSlices.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
@@ -455,6 +478,40 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
     modelsCache.set(key, models);
     cacheTimestamps.set(key, ts);
   }
+}
+
+export function updateProviderModelsInCache(
+  providerId: string,
+  models: ModelInfo[],
+  cacheKey: string = 'global'
+): boolean {
+  const cachedModels = modelsCache.get(cacheKey);
+  if (!cachedModels) {
+    pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+    return false;
+  }
+
+  pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+  modelsCache.set(cacheKey, [
+    ...cachedModels.filter((model) => model.provider !== providerId),
+    ...models,
+  ]);
+  const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
+  const inFlight = refreshInProgress.get(cacheKey);
+  if (inFlight) {
+    inFlight
+      .then(() => {
+        if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtUpdate) return;
+        const current = modelsCache.get(cacheKey);
+        if (!current) return;
+        modelsCache.set(cacheKey, [
+          ...current.filter((model) => model.provider !== providerId),
+          ...models,
+        ]);
+      })
+      .catch(() => {});
+  }
+  return true;
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
