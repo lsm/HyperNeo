@@ -48,5 +48,8 @@
     "oxlint": "1.67.0",
     "tsx": "4.20.3",
     "typescript": "6.0.3"
+  },
+  "resolutions": {
+    "@github/copilot": "1.0.59"
   }
 }
