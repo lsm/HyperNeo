@@ -504,6 +504,9 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('an idle session-state event with no preceding result finishes the turn and resets flags', async () => {
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('idle-prime-stamp'));
+
       await handler.handleMessage(sessionState('idle'));
 
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
@@ -514,6 +517,9 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     it('an idle session-state event with no preceding result obeys the manual no-replay gate', async () => {
       mockSession.config = { ...mockSession.config, queryMode: 'manual' };
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('idle-prime-stamp-manual'));
+
       await handler.handleMessage(sessionState('idle'));
 
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
@@ -541,9 +547,14 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
 
       await handler.handleMessage(sessionState('idle'));
 
+      expect(settled).toBe(null);
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
       expect(setIdleSpy).toHaveBeenCalledWith({
         suppressDeliveryWaiters: true,
@@ -564,9 +575,14 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     it('a result-less idle event with an armed but unsent clear also uses the suppressed transition', async () => {
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000);
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
 
       await handler.handleMessage(sessionState('idle'));
 
+      expect(settled).toBe(null);
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
       expect(setIdleSpy).toHaveBeenCalledWith({
         suppressDeliveryWaiters: true,
@@ -1491,6 +1507,21 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           await handler.handleMessage(thinkingAssistantMessage('thinking-stamp-nested'));
           await handler.handleMessage(
             successResult('thinking-nested', { parent_tool_use_id: 'toolu-1' })
+          );
+        },
+        expectedFlags: {
+          ...resetFlags,
+          currentThinkingTokensEstimate: 120,
+          lastStampedThinkingTokensEstimate: 120,
+        },
+      },
+      {
+        name: 'a nested error result also retains both thinking counters',
+        messages: async () => {
+          await handler.handleMessage(thinkingTokensMessage(120));
+          await handler.handleMessage(thinkingAssistantMessage('thinking-stamp-nested-error'));
+          await handler.handleMessage(
+            errorResult('thinking-nested-error', { parent_tool_use_id: 'toolu-1' })
           );
         },
         expectedFlags: {
