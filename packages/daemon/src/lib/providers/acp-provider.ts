@@ -5,6 +5,7 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
+  CuratedModel,
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
@@ -16,10 +17,7 @@ const ACP_PROBE_TIMEOUT_MS = 10_000;
 
 export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
 
-export interface AcpConfiguredModel {
-  id: string;
-  name?: string;
-}
+export type AcpConfiguredModel = CuratedModel;
 
 export const defaultAcpCommandProbe: AcpCommandProbe = async (
   commandLine: string,
@@ -142,7 +140,7 @@ export class AcpProvider implements Provider {
     }
   }
 
-  setAcpModels(models: AcpConfiguredModel[] | undefined): void {
+  setCuratedModels(models: AcpConfiguredModel[] | undefined): void {
     this.curatedModels = models;
     this.rebuildModelsFromCurated();
   }
@@ -150,24 +148,18 @@ export class AcpProvider implements Provider {
   private rebuildModelsFromCurated(): void {
     const commandIdentity = this.tryGetCommandIdentity();
     if (commandIdentity && this.curatedModels !== undefined) {
-      this.cachedModels =
-        this.curatedModels.length > 0
-          ? this.curatedModels.map((model) => ({
-              id: model.id,
-              name: model.name ?? model.id,
-              alias: model.id,
-              family: 'acp',
-              provider: 'acp',
-              contextWindow: this.getContextWindow(),
-              description: `ACP model ${model.name ?? model.id}`,
-              releaseDate: '2026-01-01',
-              available: true,
-              preferContextWindowMetadata: false,
-            }))
-          : AcpProvider.MODELS.map((model) => ({
-              ...model,
-              contextWindow: this.getContextWindow(),
-            }));
+      this.cachedModels = this.curatedModels.map((model) => ({
+        id: model.id,
+        name: model.name ?? model.id,
+        alias: model.id,
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: this.getContextWindow(),
+        description: `ACP model ${model.name ?? model.id}`,
+        releaseDate: '2026-01-01',
+        available: true,
+        preferContextWindowMetadata: false,
+      }));
       this.cachedModelsCommandIdentity = commandIdentity;
     } else {
       this.cachedModels = null;

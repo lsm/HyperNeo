@@ -45,6 +45,24 @@ function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
   }
 }
 
+function mergeProviderConfig(
+  configJson: string | undefined,
+  patch: Record<string, unknown>
+): string {
+  let base: Record<string, unknown> = {};
+  if (configJson) {
+    try {
+      const parsed: unknown = JSON.parse(configJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      base = {};
+    }
+  }
+  return JSON.stringify({ ...base, ...patch });
+}
+
 function readAcpCommand(provider: EnrichedProvider): string {
   if (!provider.configJson) return '';
   try {
@@ -60,12 +78,14 @@ function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undef
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
     if (!Array.isArray(parsed.models)) return undefined;
-    return parsed.models.flatMap((model) => {
+    if (parsed.models.length === 0) return [];
+    const valid = parsed.models.flatMap((model) => {
       if (!model || typeof model !== 'object') return [];
       const { id, name } = model as { id?: unknown; name?: unknown };
       if (typeof id !== 'string') return [];
       return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
     });
+    return valid.length > 0 ? valid : undefined;
   } catch {
     return undefined;
   }
@@ -90,6 +110,7 @@ export function ProvidersSettings() {
     command: string;
     models?: AcpConfiguredModel[];
     envBacked?: boolean;
+    configJson?: string;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
   const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
@@ -254,7 +275,7 @@ export function ProvidersSettings() {
     setPendingId(provider.id);
     try {
       await updateProvider(provider.id, {
-        configJson: JSON.stringify({ region }),
+        configJson: mergeProviderConfig(provider.configJson, { region }),
       });
       lastSyncedKimiRegions.current = {
         ...lastSyncedKimiRegions.current,
@@ -755,6 +776,7 @@ export function ProvidersSettings() {
                                     command: readAcpCommand(provider),
                                     models: readAcpModels(provider),
                                     envBacked: !readAcpCommand(provider),
+                                    configJson: provider.configJson,
                                   })
                                 }
                                 disabled={isPending}
@@ -877,6 +899,7 @@ export function ProvidersSettings() {
           command={acpEditor.command}
           models={acpEditor.models}
           envBacked={acpEditor.envBacked}
+          configJson={acpEditor.configJson}
           onClose={() => setAcpEditor(null)}
           onSaved={() => {
             setAcpEditor(null);

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
-  parseAcpConfig,
+  parseProviderConfig,
   removeProviderFromRegistry,
   syncProviderToRegistry,
 } from '../../../../src/lib/providers/provider-sync';
@@ -22,7 +22,7 @@ function createMockProvider(overrides: Partial<Provider> = {}): Provider {
   } as Provider;
 }
 
-describe('ACP provider sync', () => {
+describe('provider config sync', () => {
   beforeEach(() => {
     resetProviderFactory();
     resetProviderRegistry();
@@ -35,7 +35,7 @@ describe('ACP provider sync', () => {
 
   it('parses valid command and model configuration', () => {
     expect(
-      parseAcpConfig(
+      parseProviderConfig(
         JSON.stringify({
           command: 'devin acp',
           models: [
@@ -52,8 +52,27 @@ describe('ACP provider sync', () => {
     });
   });
 
+  it('keeps an explicitly empty models list distinct from absent models', () => {
+    expect(parseProviderConfig(JSON.stringify({ command: 'devin acp', models: [] }))).toEqual({
+      command: 'devin acp',
+      models: [],
+    });
+    expect(parseProviderConfig(JSON.stringify({ command: 'devin acp' }))).toEqual({
+      command: 'devin acp',
+    });
+    expect(parseProviderConfig(JSON.stringify({ command: 'devin acp', models: null }))).toEqual({
+      command: 'devin acp',
+    });
+    expect(parseProviderConfig(undefined)).toEqual({});
+  });
+
+  it('treats a nonempty models array with no valid entries as absent', () => {
+    expect(parseProviderConfig(JSON.stringify({ models: [null] }))).toEqual({});
+    expect(parseProviderConfig(JSON.stringify({ models: [{ name: 'missing id' }] }))).toEqual({});
+  });
+
   it('falls back to empty configuration for malformed JSON', () => {
-    expect(parseAcpConfig('{invalid')).toEqual({});
+    expect(parseProviderConfig('{invalid')).toEqual({});
   });
 
   it('applies persisted ACP command and models to the registered provider', async () => {
@@ -78,6 +97,60 @@ describe('ACP provider sync', () => {
 
     expect(provider.getAcpCommand()).toBe('devin acp');
     expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['model-a']);
+  });
+
+  it('applies an empty models curation as no visible models', async () => {
+    const provider = new AcpProvider({}, async () => {});
+    getProviderRegistry().register(provider);
+    const record = {
+      id: 'acp-record',
+      providerId: 'acp',
+      displayName: 'ACP Agent',
+      kind: 'built_in',
+      authType: 'none',
+      isEnabled: true,
+      isDefault: false,
+      sortOrder: 0,
+      configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+      healthStatus: 'unknown',
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies ProviderRecord;
+
+    await syncProviderToRegistry(record);
+
+    expect(provider.getCachedModels()).toEqual([]);
+  });
+
+  it('applies parsed model curation to any provider exposing setCuratedModels', async () => {
+    const setCuratedModels = mock(() => {});
+    const provider = createMockProvider({ id: 'glm', setCuratedModels });
+    getProviderRegistry().register(provider);
+    const recordFor = (configJson: string | undefined) =>
+      ({
+        id: 'glm-record',
+        providerId: 'glm',
+        displayName: 'Z.ai',
+        kind: 'built_in',
+        authType: 'api_key',
+        isEnabled: true,
+        isDefault: false,
+        sortOrder: 0,
+        configJson,
+        healthStatus: 'unknown',
+        createdAt: 1,
+        updatedAt: 1,
+      }) satisfies ProviderRecord;
+
+    await syncProviderToRegistry(recordFor(JSON.stringify({ models: [{ id: 'glm-5' }] })));
+    expect(setCuratedModels).toHaveBeenCalledTimes(1);
+    expect(setCuratedModels).toHaveBeenCalledWith([{ id: 'glm-5' }]);
+
+    await syncProviderToRegistry(recordFor(JSON.stringify({ models: [] })));
+    expect(setCuratedModels).toHaveBeenCalledWith([]);
+
+    await syncProviderToRegistry(recordFor(undefined));
+    expect(setCuratedModels).toHaveBeenCalledWith(undefined);
   });
 });
 

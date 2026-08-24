@@ -83,7 +83,7 @@ describe('fetchAcpModels', () => {
   test('authenticates before creating the discovery session without mutating provider models', async () => {
     const provider = new AcpProvider({}, async () => {});
     provider.setAcpCommand('devin acp');
-    provider.setAcpModels([{ id: 'configured-model' }]);
+    provider.setCuratedModels([{ id: 'configured-model' }]);
 
     const models = await fetchAcpModels(provider, { command: 'devin acp', cwd: '/tmp' });
 

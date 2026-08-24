@@ -85,16 +85,22 @@ vi.mock('../AcpEditorModal.tsx', () => ({
     command,
     models,
     envBacked,
+    configJson,
     onClose,
   }: {
     providerId: string;
     command: string;
-    models: Array<{ id: string }>;
+    models: Array<{ id: string }> | undefined;
     envBacked?: boolean;
+    configJson?: string;
     onClose: () => void;
   }) => (
     <div data-testid="acp-editor-modal">
       <span>{`${providerId}:${command}:${(models ?? []).map((model) => model.id).join(',')}`}</span>
+      <span data-testid="acp-editor-models-state">
+        {models === undefined ? 'absent' : models.length === 0 ? 'empty' : 'set'}
+      </span>
+      <span data-testid="acp-editor-config-json">{configJson ?? ''}</span>
       <span data-testid="acp-editor-env-backed">{envBacked ? 'env' : 'explicit'}</span>
       <button data-testid="acp-editor-close" onClick={onClose}>
         Close
@@ -424,6 +430,38 @@ describe('ProvidersSettings', () => {
     );
   });
 
+  it('treats an all-invalid ACP models array as absent when opening the editor', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({ command: 'devin acp', models: [null] }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Edit'));
+
+    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('absent');
+  });
+
+  it('keeps an explicitly empty ACP models array distinct from absent', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Edit'));
+
+    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('empty');
+  });
+
   it('toggles provider enabled state', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', isEnabled: true }),
@@ -638,6 +676,37 @@ describe('ProvidersSettings', () => {
       );
     });
     await waitFor(() => expect(regionSelect().value).toBe('china'));
+  });
+
+  it('preserves stored config fields when saving a kimi region change', async () => {
+    const kimi = createMockProvider('k1', 'kimi', {
+      displayName: 'Kimi',
+      configJson: JSON.stringify({
+        region: 'china',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [kimi] });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: kimi });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledTimes(1);
+      const [calledId, params] = mockUpdateProvider.mock.calls[0];
+      expect(calledId).toBe('k1');
+      expect(JSON.parse(params.configJson)).toEqual({
+        region: 'global',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      });
+    });
   });
 
   it('ignores an out-of-order reload that started before a kimi save', async () => {
