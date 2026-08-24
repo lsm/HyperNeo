@@ -12,7 +12,6 @@ import {
   type InactivityNagDeliveryOutcome,
   type InactivityWatchdogSessionSnapshot,
 } from '../../../../src/lib/space/agents/inactivity-watchdog-service';
-import { buildInactivityNagClaimKey } from '../../../../src/lib/space/agents/inactivity-watchdog-gates';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -301,7 +300,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
   });
 
-  it('does not deliver or reset a claim replaced by a newer scan revision', async () => {
+  it('releases the claim without delivering when the config revision changes mid-delivery', async () => {
     configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
     let getSpaceCalls = 0;
     const service = new SpaceAgentInactivityWatchdogService({
@@ -319,19 +318,6 @@ describe('SpaceAgentInactivityWatchdogService', () => {
               thresholdMs: THRESHOLD_MS,
               prompt: 'bump',
             });
-            claimRepo.acquire({
-              spaceId,
-              agentId: 'agent-1',
-              claimKey: buildInactivityNagClaimKey({
-                agentId: 'agent-1',
-                windowAnchoredAt: sessionSnapshot.latestConsumedMessageAt!,
-                attemptGeneration: 0,
-              }),
-              windowAnchoredAt: sessionSnapshot.latestConsumedMessageAt!,
-              attemptGeneration: 0,
-              ownerToken: 'scanner-a',
-              configRevision: 2,
-            });
           }
           return { status: 'active', paused: false, stopped: false };
         }),
@@ -346,10 +332,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
-    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
-    expect(claim?.configRevision).toBe(2);
-    expect(claim?.degraded).toBe(false);
-    expect(claim?.state).toBe('accepted');
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
   });
 
   it('reclaims a stale claim left behind by a crashed scanner process', async () => {

@@ -182,17 +182,17 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(newWindow.created).toBe(true);
       expect(newWindow.claim.claimKey).toBe('new-window');
 
-      const newRevision = claimRepo.acquire({
+      const sameWindowRevision = claimRepo.acquire({
         spaceId,
         agentId: 'agent-1',
-        claimKey: 'new-revision',
+        claimKey: 'same-window',
         windowAnchoredAt: 200,
         attemptGeneration: 0,
         ownerToken: 'scanner-c',
         configRevision: 2,
       });
-      expect(newRevision.acquired).toBe(true);
-      expect(newRevision.claim.claimKey).toBe('new-revision');
+      expect(sameWindowRevision.acquired).toBe(false);
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')?.claimKey).toBe('new-window');
     });
 
     it('refuses to replace a live claim with an older window or revision', () => {
@@ -403,8 +403,8 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(claimRepo.getByAgent(spaceId, 'agent-1')?.claimKey).toBe('new');
     });
 
-    it('replaces a same-key claim when only the revision changed', () => {
-      claimRepo.acquire({
+    it('keeps a live same-key claim through a config-only revision bump', () => {
+      const first = claimRepo.acquire({
         spaceId,
         agentId: 'agent-1',
         claimKey: 'k',
@@ -422,8 +422,9 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 2,
       });
-      expect(reacquired.acquired).toBe(true);
-      expect(reacquired.claim.configRevision).toBe(2);
+      expect(reacquired.acquired).toBe(false);
+      expect(reacquired.claim.id).toBe(first.claim.id);
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')?.configRevision).toBe(1);
     });
 
     it('ignores a late reset from a previous owner even when the claim key matches', () => {
@@ -549,7 +550,7 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(claimRepo.releaseStale(spaceId, 'agent-1', Date.now() + 1000)).toBe(false);
     });
 
-    it('ignores a late reset when the claim was replaced with a newer revision', () => {
+    it('ignores a late reset when the claim revision moved on', () => {
       const first = claimRepo.acquire({
         spaceId,
         agentId: 'agent-1',
@@ -559,15 +560,9 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      claimRepo.acquire({
-        spaceId,
-        agentId: 'agent-1',
-        claimKey: 'k',
-        windowAnchoredAt: 100,
-        attemptGeneration: 0,
-        ownerToken: 'scanner-a',
-        configRevision: 2,
-      });
+      db.prepare(`UPDATE space_agent_inactivity_claims SET config_revision = 2 WHERE id = ?`).run(
+        first.claim.id
+      );
       const result = claimRepo.applyReset(spaceId, 'agent-1', first.claim.id, 'k', 'scanner-a', 1, {
         releaseClaim: true,
         markDegraded: false,
