@@ -11,7 +11,9 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { CopilotClient, type ModelInfo as CopilotSdkModelInfo } from '@github/copilot-sdk';
+import { ExternalCredentialSourceError } from './errors.js';
 import { startEmbeddedServer, type EmbeddedServer } from './server.js';
+export { ExternalCredentialSourceError } from './errors.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
@@ -76,8 +78,6 @@ const EXTERNAL_SOURCE_LABELS: Partial<Record<TokenSource, string>> = {
   hosts: 'the gh CLI hosts.yml oauth_token',
 };
 
-export class ExternalCredentialSourceError extends Error {}
-
 interface TokenCacheEntry {
   token: string | undefined;
   expiresAt: number;
@@ -85,6 +85,14 @@ interface TokenCacheEntry {
 }
 
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
+const RUNTIME_SHUTDOWN_WAIT_MS = 10_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
 
 export class AnthropicToCopilotBridgeProvider implements Provider {
   readonly id = 'anthropic-copilot';
@@ -231,7 +239,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       });
     }
     if (starting) {
-      const stale = await starting.catch(() => undefined);
+      const stale = await Promise.race([
+        starting.catch(() => undefined),
+        delay(RUNTIME_SHUTDOWN_WAIT_MS),
+      ]);
       if (stale) {
         await stale.server.stop().catch(() => {});
         await stale.client.stop().catch(() => {});

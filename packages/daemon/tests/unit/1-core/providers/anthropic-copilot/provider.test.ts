@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-const embeddedServerControl = vi.hoisted(() => ({ failNextStart: false }));
+const embeddedServerControl = vi.hoisted(() => ({ failNextStart: false, hangNextStart: false }));
 
 vi.mock('../../../../../src/lib/providers/anthropic-copilot/server', async (importOriginal) => {
   const actual =
@@ -19,6 +19,10 @@ vi.mock('../../../../../src/lib/providers/anthropic-copilot/server', async (impo
       if (embeddedServerControl.failNextStart) {
         embeddedServerControl.failNextStart = false;
         throw new Error('port in use');
+      }
+      if (embeddedServerControl.hangNextStart) {
+        embeddedServerControl.hangNextStart = false;
+        return new Promise<never>(() => {});
       }
       return actual.startEmbeddedServer(...args);
     },
@@ -1225,6 +1229,37 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       const models = await modelsPromise;
       expect(models).toEqual(COPILOT_ANTHROPIC_MODELS);
       expect((p as unknown as Record<string, unknown>)['dynamicModelsCache']).toBeNull();
+    });
+
+    it('bounds shutdown when an in-flight start never settles', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        (() => new Promise(() => {})) as never
+      );
+
+      const started = p.ensureServerStarted();
+      await Promise.resolve();
+
+      jest.useFakeTimers();
+      try {
+        const shutdownPromise = p.shutdown();
+        let settled = false;
+        void shutdownPromise.then(() => {
+          settled = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        jest.advanceTimersByTime(10_000);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await expect(shutdownPromise).resolves.toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+      void started;
     });
   });
 

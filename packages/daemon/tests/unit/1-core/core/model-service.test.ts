@@ -1499,6 +1499,49 @@ describe('Model Service', () => {
       expect(getModelsCache().has('global')).toBe(false);
     });
 
+    it('does not rearm or downgrade a transient rejection that lands after a global clear', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      jest.useFakeTimers();
+      try {
+        let probeCall = 0;
+        let rejectProbe: ((err: Error) => void) | null = null;
+        registerGlmProvider(
+          (): Promise<ModelInfo[]> =>
+            new Promise<ModelInfo[]>((_resolve, reject) => {
+              probeCall++;
+              if (probeCall === 1) {
+                reject(new Error('Request failed (http 401)'));
+              } else {
+                rejectProbe = reject;
+              }
+            })
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        const recovery = recoverDormantProvider('glm');
+        await flushMicrotasks();
+        expect(probeCall).toBe(2);
+
+        clearModelsCache();
+        rejectProbe?.(new Error('fetch failed'));
+        const outcome = await recovery;
+
+        expect(outcome).toBe('failed');
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(120_000);
+        await flushMicrotasks();
+
+        expect(probeCall).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('does not clobber a foreground refresh that overtakes the recovery probe', async () => {
       const { refreshModels, recoverDormantProvider } = await import(
         '../../../../src/lib/model-service'

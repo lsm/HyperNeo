@@ -79,6 +79,7 @@ export class AnthropicProvider implements Provider {
   };
 
   private modelCache: ModelInfo[] | null = null;
+  private modelCacheEpoch = 0;
   private credentials: ProviderCredentials | null = null;
   private readonly capturedAnthropicBaseUrl: string | undefined;
 
@@ -132,8 +133,11 @@ export class AnthropicProvider implements Provider {
       return [];
     }
 
+    const cacheEpoch = this.modelCacheEpoch;
     const models = await this.loadModelsFromSdk();
-    this.modelCache = models;
+    if (cacheEpoch === this.modelCacheEpoch) {
+      this.modelCache = models;
+    }
     return models;
   }
 
@@ -342,10 +346,12 @@ export class AnthropicProvider implements Provider {
 
   setModelCache(models: ModelInfo[]): void {
     this.modelCache = models;
+    this.modelCacheEpoch += 1;
   }
 
   clearModelCache(): void {
     this.modelCache = null;
+    this.modelCacheEpoch += 1;
   }
 }
 

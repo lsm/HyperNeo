@@ -10,7 +10,7 @@ import {
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
-import { ExternalCredentialSourceError } from '../../../../src/lib/providers/anthropic-copilot/provider';
+import { ExternalCredentialSourceError } from '../../../../src/lib/providers/anthropic-copilot/errors';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 

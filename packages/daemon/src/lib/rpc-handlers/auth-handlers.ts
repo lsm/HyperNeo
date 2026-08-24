@@ -22,7 +22,7 @@ import {
   applyRecordedFailureToAuthStatus,
   classifyProviderFailure,
 } from '../providers/provider-failure-store.js';
-import { ExternalCredentialSourceError } from '../providers/anthropic-copilot/provider.js';
+import { ExternalCredentialSourceError } from '../providers/anthropic-copilot/errors.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');

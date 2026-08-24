@@ -589,6 +589,9 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
   }
   const error = result.status === 'failed' ? result.error : undefined;
   if (error !== undefined) {
+    if (providerRetryGeneration !== generationAtStart) {
+      return getProviderFailure(providerId) ? 'failed' : 'no-op';
+    }
     applyProviderLoadOutcome({
       models: [],
       succeededProviderIds: [],
