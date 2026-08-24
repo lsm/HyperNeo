@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 
 const migrationsPath = new URL('../../../../../src/storage/schema/migrations.ts', import.meta.url);
 
+const importedMigrationPattern = /import \{ (\w+)(?: as (\w+))? \} from '\.\/(m[\w-]+)'/g;
+
 interface MigrationCall {
   marker: string;
   functionName: string;
@@ -17,6 +19,18 @@ function migrationCalls(source: string, runner: 'run' | 'rewrite'): MigrationCal
     marker: match[1] ?? '',
     functionName: match[2] ?? '',
   }));
+}
+
+function importedMigrationBodies(source: string): Map<string, string> {
+  const bodies = new Map<string, string>();
+  for (const match of source.matchAll(importedMigrationPattern)) {
+    const localName = match[2] ?? match[1];
+    const moduleUrl = new URL(`./${match[3]}.ts`, migrationsPath);
+    const moduleBodies = functionBodies(readFileSync(moduleUrl, 'utf8'));
+    const exported = moduleBodies.get(match[1]);
+    if (exported && localName) bodies.set(localName, exported);
+  }
+  return bodies;
 }
 
 function functionBodies(source: string): Map<string, string> {
@@ -53,7 +67,7 @@ function reachableBody(functionName: string, bodies: Map<string, string>): strin
 describe('migration rewrite declarations', () => {
   test('every table-rebuilding migration uses the rewrite runner', () => {
     const source = readFileSync(migrationsPath, 'utf8');
-    const bodies = functionBodies(source);
+    const bodies = new Map([...functionBodies(source), ...importedMigrationBodies(source)]);
     const untagged = migrationCalls(source, 'run')
       .filter((call) => {
         const body = reachableBody(call.functionName, bodies);

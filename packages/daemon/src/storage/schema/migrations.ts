@@ -471,7 +471,7 @@ export function runMigrations(
   run(migrationMarkerKey(207), () => runMigration207(db));
 
   run(migrationMarkerKey(208), () => runMigration208(db));
-  run(migrationMarkerKey(209), () => runMigration209(db));
+  rewrite(migrationMarkerKey(209), () => runMigration209(db));
 
   run(migrationMarkerKey(210), () => runMigration210(db));
 
