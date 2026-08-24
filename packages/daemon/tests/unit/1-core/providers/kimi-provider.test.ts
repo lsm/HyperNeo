@@ -439,7 +439,7 @@ describe('KimiProvider', () => {
         family: 'kimi',
         provider: 'kimi',
         contextWindow: 32_768,
-        thinkingModes: 'on',
+        thinkingModes: 'off',
         available: true,
       });
       expect(models[2]).toMatchObject({
@@ -528,7 +528,8 @@ describe('KimiProvider', () => {
         thinkingModes: 'off',
       });
       expect(provider.getModelThinkingMode('moonshot-v1-8k')).toBe('off');
-      expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBeUndefined();
+      expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBe('off');
+      expect(provider.getModelThinkingMode('moonshot-v1-128k')).toBeUndefined();
       expect(provider.getModelThinkingMode('kimi-for-coding')).toBe('on');
     });
 
@@ -546,6 +547,22 @@ describe('KimiProvider', () => {
 
       expect(first).toEqual(cached);
       expect(forced[0]?.id).toBe('kimi-k3[1m]');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps curated synthesis across forced discovery refreshes', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+      provider.setCuratedModels([{ id: 'kimi-k4', name: 'Kimi K4' }]);
+
+      await provider.listRemoteModels();
+      const forced = await provider.listRemoteModels({ force: true });
+
+      expect(forced.map((m) => m.id)).toEqual(['kimi-for-coding', 'kimi-k4']);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
@@ -754,7 +771,7 @@ describe('KimiProvider', () => {
       expect(provider.translateModelIdForSdk('moonshot-k30')).toBe('moonshot-k30');
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k30')).toBeUndefined();
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k3[1m]')?.id).toBe('kimi-k3[1m]');
-      expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBeUndefined();
+      expect(provider.getModelThinkingMode('moonshot-v1-128k')).toBeUndefined();
 
       const suffixed = provider.buildSdkConfig('kimi-k2.7-code[1m]');
       expect(suffixed.envVars.ANTHROPIC_MODEL).toBe('kimi-k2.7-code[1m]');

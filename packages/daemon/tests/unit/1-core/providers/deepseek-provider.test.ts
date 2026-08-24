@@ -199,6 +199,22 @@ describe('DeepSeekProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps curated synthesis across forced discovery refreshes', async () => {
+      process.env.DEEPSEEK_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'deepseek-v4-pro' }] }), { status: 200 })
+      );
+      const provider = new DeepSeekProvider(process.env);
+      provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }]);
+
+      await provider.listRemoteModels();
+      const forced = await provider.listRemoteModels({ force: true });
+
+      expect(forced.map((m) => m.id)).toEqual(['deepseek-v4-pro', 'deepseek-v5']);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
     it('clears the discovery cache when credentials change', async () => {
       const fetchImpl = installModelListFetch(
         async (call) =>

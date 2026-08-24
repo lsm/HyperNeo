@@ -1036,12 +1036,10 @@ export function isCuratedOutModel(
   providerId: string,
   cacheKey: string = 'global'
 ): boolean {
-  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
-  if (curatedModels === undefined) {
+  const curatedIds = getCuratedModelIds(providerId);
+  if (curatedIds === undefined) {
     return false;
   }
-
-  const curatedIds = new Set(curatedModels.map((model) => model.id));
 
   const rawModels = readCachedModels(cacheKey);
   const knownModel =

@@ -733,15 +733,15 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
     });
 
-    it('preserves thinking-off for discovered moonshot models that are not K2.7 aliases', async () => {
+    it('omits thinking entirely for small-capacity discovered moonshot models', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'moonshot-v1-32k';
-      mockSession.config.thinkingLevel = 'off';
+      mockSession.config.thinkingLevel = 'think16k';
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.thinking).toBeUndefined();
     });
 
     it('emits a granular thinking budget for kimi K3 when a level is selected', async () => {

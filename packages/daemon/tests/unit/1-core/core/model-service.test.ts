@@ -1735,6 +1735,15 @@ describe('Model Service', () => {
       expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(false);
     });
 
+    it('keeps the canonical form of a curated alias curated-in for session validation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3' }]);
+      setModelsCache(new Map([['global', [...mockModels, ...KimiProvider.MODELS]]]));
+
+      expect(isCuratedOutModel('kimi-k3[1m]', 'kimi')).toBe(false);
+      expect(isCuratedOutModel('kimi-for-coding', 'kimi')).toBe(true);
+    });
+
     it('reports a known model as curated out under an empty curation', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       getProviderRegistry().setCuratedModels('anthropic', []);

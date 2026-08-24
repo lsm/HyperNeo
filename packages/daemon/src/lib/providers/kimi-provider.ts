@@ -250,7 +250,7 @@ export class KimiProvider implements Provider {
 
   private static discoveredThinkingModesFor(modelId: string): 'granular' | 'on' | 'off' {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
-    if (KimiProvider.resolveContextWindow(modelId) < 16_384) return 'off';
+    if (KimiProvider.resolveContextWindow(modelId) < 65_536) return 'off';
     return 'on';
   }
 
@@ -437,7 +437,7 @@ export class KimiProvider implements Provider {
     if (cacheable) {
       this.discoveryCache.set(fingerprint, discovered);
     }
-    return discovered;
+    return this.mergeCuratedModels(discovered);
   }
 
   ownsModel(modelId: string): boolean {
@@ -468,7 +468,7 @@ export class KimiProvider implements Provider {
     if (
       this.ownsModel(modelId) &&
       !KimiProvider.hasOneMContextSuffix(modelId) &&
-      KimiProvider.resolveContextWindow(modelId) < 16_384
+      KimiProvider.resolveContextWindow(modelId) < 65_536
     ) {
       return 'off';
     }
