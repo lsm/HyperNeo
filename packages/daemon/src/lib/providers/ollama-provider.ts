@@ -157,7 +157,12 @@ export class OllamaProvider implements Provider {
 
   async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
     if (this.kind === 'cloud' && !this.getApiKey()) return [];
-    if (!options?.force && this.modelCache && Date.now() - this.modelCacheAt < 5 * 60_000) {
+    if (
+      !options?.force &&
+      options?.baseUrl === undefined &&
+      this.modelCache &&
+      Date.now() - this.modelCacheAt < 5 * 60_000
+    ) {
       return this.modelCache;
     }
     return this.fetchModels(options?.baseUrl, options?.baseUrl === undefined);
