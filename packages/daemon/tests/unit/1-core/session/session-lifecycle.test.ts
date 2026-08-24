@@ -173,6 +173,7 @@ import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
+import { getProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { AgentSessionFactory, SessionCache } from '../../../../src/lib/session/session-cache';
 import {
   generateBranchName,
@@ -640,6 +641,52 @@ describe('SessionLifecycle', () => {
           }),
         })
       );
+    });
+
+    describe('model curation', () => {
+      afterEach(() => {
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      });
+
+      it('rejects a curated-out model requested under an explicit provider', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await expect(
+          lifecycle.create({ config: { provider: 'kimi', model: 'k3-256k' } })
+        ).rejects.toThrow("Model 'k3-256k' is curated out for provider 'kimi'");
+
+        expect(createdSessions).toEqual([]);
+      });
+
+      it('creates with a curated-in model under an explicit provider', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await lifecycle.create({ config: { provider: 'kimi', model: 'kimi-for-coding' } });
+
+        expect(mockDb.createSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              model: 'kimi-for-coding',
+              provider: 'kimi',
+            }),
+          })
+        );
+      });
+
+      it('keeps unknown-model passthrough under a curated provider', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-for-coding' }]);
+
+        await lifecycle.create({ config: { provider: 'kimi', model: 'totally-custom-model-x' } });
+
+        expect(mockDb.createSession).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              model: 'totally-custom-model-x',
+              provider: 'kimi',
+            }),
+          })
+        );
+      });
     });
 
     it('should create session with roomId', async () => {

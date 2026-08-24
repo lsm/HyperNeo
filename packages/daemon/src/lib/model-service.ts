@@ -928,6 +928,38 @@ export async function isValidModel(
   }
 }
 
+export async function isCuratedOutModel(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): Promise<boolean> {
+  if (getProviderRegistry().getCuratedModels(providerId) === undefined) {
+    return false;
+  }
+
+  if (await isValidModel(idOrAlias, cacheKey, providerId)) {
+    return false;
+  }
+
+  const rawModels = readCachedModels(cacheKey);
+  if (
+    rawModels &&
+    findInModels(
+      rawModels.filter((model) => model.provider === providerId),
+      idOrAlias
+    )
+  ) {
+    return true;
+  }
+
+  return Boolean(
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    )
+  );
+}
+
 export async function resolveModelAlias(
   idOrAlias: string,
   cacheKey: string,
