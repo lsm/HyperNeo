@@ -382,6 +382,16 @@ export class SpaceRuntimeService {
     }
     const agentAfter = this.config.longHorizonAgentRepo?.getById(args.agentId);
     if (!agentAfter || agentAfter.status !== 'active') return 'pre_admission_failure';
+    const sessionState = session.stateManager?.getState().status as string | undefined;
+    if (
+      sessionState === 'processing' ||
+      sessionState === 'queued' ||
+      sessionState === 'running' ||
+      sessionState === 'waiting_for_input' ||
+      sessionState === 'rate_limit_cooldown'
+    ) {
+      return 'pre_admission_failure';
+    }
     const sessionId = session.getSessionData().id;
     try {
       await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
