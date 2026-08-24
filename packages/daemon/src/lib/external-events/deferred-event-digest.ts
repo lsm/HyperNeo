@@ -18,6 +18,9 @@ export interface ExternalEventEssenceEntry {
   state?: string;
   environment?: string;
   description?: string;
+  merged?: boolean;
+  mergedAt?: string;
+  draft?: boolean;
   checkName?: string;
   conclusion?: string;
   commentId?: string;
@@ -52,6 +55,9 @@ const ESSENCE_ENTRY_FIELDS = [
   'inReplyToId',
   'path',
   'line',
+  'merged',
+  'mergedAt',
+  'draft',
 ] as const;
 
 function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
@@ -64,6 +70,7 @@ function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
     const raw = record[field];
     if (typeof raw === 'string' && raw.length > 0) entry[field] = raw;
     else if (typeof raw === 'number' && Number.isFinite(raw)) entry[field] = raw;
+    else if (typeof raw === 'boolean') entry[field] = raw;
   }
   return entry as unknown as ExternalEventEssenceEntry;
 }
@@ -156,7 +163,14 @@ function rowText(row: SDKUserMessage): string {
     .join('\n');
 }
 
+export function isSystemInjectedRow(row: SDKUserMessage): boolean {
+  const inputKind = (row as SDKUserMessage & { inputKind?: unknown }).inputKind;
+  if (inputKind === 'system') return true;
+  return inputKind === undefined && row.isSynthetic === true;
+}
+
 export function parseDeferredDeliveryRow(row: SDKUserMessage): DeferredExternalEventEntry | null {
+  if (!isSystemInjectedRow(row)) return null;
   return parseDeferredExternalEventText(rowText(row));
 }
 
@@ -230,6 +244,13 @@ function digestLinkSuffix(entry: ExternalEventEssenceEntry): string {
   return entry.externalUrl ? ` — ${entry.externalUrl}` : '';
 }
 
+function digestDetailSuffix(entry: ExternalEventEssenceEntry): string {
+  const parts: string[] = [];
+  if (entry.commentId) parts.push(`commentId: ${entry.commentId}`);
+  parts.push(`latest eventId: ${entry.eventId}`);
+  return ` (${parts.join('; ')})`;
+}
+
 function essenceScopeLabel(entry: ExternalEventEssenceEntry): string {
   if (typeof entry.prNumber === 'number') return `PR #${entry.prNumber}`;
   if (entry.repo) return entry.repo;
@@ -299,7 +320,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
         cancelled > count / 2 ? ' (most cancelled, likely superseded by newer pushes)' : '';
       const byConclusion = new Map<string, number>();
       for (const entry of events) {
-        const conclusion = entry.conclusion ?? 'failed';
+        const conclusion = entry.conclusion ?? 'unknown';
         byConclusion.set(conclusion, (byConclusion.get(conclusion) ?? 0) + 1);
       }
       const counts = [...byConclusion.entries()].sort(
@@ -312,7 +333,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       return (
         `- CI check "${latest.checkName ?? 'unknown check'}": ` +
         `${countText}, latest ${digestTimestamp(latest, includeDate)}${mostlyCancelled}` +
-        `${digestLinkSuffix(latest)}`
+        `${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
     }
     case 'review': {
@@ -323,7 +344,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       return (
         `- Review comment${count > 1 ? 's' : ''}${location}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}`
+        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
     }
     case 'pr_comment': {
@@ -331,20 +352,29 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       return (
         `- PR comment${count > 1 ? 's' : ''}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}`
+        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
     }
-    case 'state':
+    case 'state': {
+      const markers = [
+        latest.merged === true ? 'merged' : '',
+        latest.merged === false && latest.state === 'closed' ? 'not merged' : '',
+        latest.draft === true ? 'draft' : '',
+      ]
+        .filter((marker) => marker.length > 0)
+        .join(', ');
       return (
-        `- ${essenceScopeLabel(latest)} state: ${latest.state ?? 'updated'} ` +
+        `- ${essenceScopeLabel(latest)} state: ${latest.state ?? 'updated'}` +
+        `${markers ? ` (${markers})` : ''} ` +
         `(latest poll ${digestTimestamp(latest, includeDate)}, ×${count} polls folded)` +
-        `${digestLinkSuffix(latest)}`
+        `${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
+    }
     case 'reaction':
       return (
         `- Reactions on ${essenceScopeLabel(latest)}: ×${count}, ` +
         `latest ${latest.body ?? 'reaction'} by ${latest.actor ?? 'unknown'} at ` +
-        `${digestTimestamp(latest, includeDate)}${digestLinkSuffix(latest)}`
+        `${digestTimestamp(latest, includeDate)}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
     case 'other': {
       const parts = [`${latest.topic}: ×${count} (latest ${digestTimestamp(latest, includeDate)})`];
@@ -353,8 +383,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       const snippet = digestSnippet(latest.description ?? latest.body);
       if (snippet) parts.push(`"${snippet}"`);
       if (latest.externalUrl) parts.push(latest.externalUrl);
-      parts.push(`latest eventId: ${latest.eventId}`);
-      return `- ${parts.join(' — ')}`;
+      return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
     }
   }
 }

@@ -57,10 +57,12 @@ function deferredRow(
     uuid,
     session_id: SESSION_ID,
     parent_tool_use_id: null,
+    isSynthetic: true,
+    inputKind: 'system',
     dbId,
     timestamp: 0,
     message: { role: 'user', content: [{ type: 'text', text }] },
-  } as SDKUserMessage & { dbId: string; timestamp: number };
+  } as unknown as SDKUserMessage & { dbId: string; timestamp: number };
 }
 
 function makeHarness(existingDeferredRows: Array<SDKUserMessage & { dbId: string }>): {

@@ -72,10 +72,12 @@ function row(dbId: string, uuid: string, text: string): DeferredDeliveryRow {
     uuid,
     session_id: 'session-1',
     parent_tool_use_id: null,
+    isSynthetic: true,
+    inputKind: 'system',
     dbId,
     timestamp: 0,
     message: { role: 'user', content: [{ type: 'text', text }] },
-  } as DeferredDeliveryRow;
+  } as unknown as DeferredDeliveryRow;
 }
 
 function checkText(eventId: string, occurredAt: number, conclusion: string): string {
@@ -195,6 +197,19 @@ describe('parseDeferredDeliveryRow', () => {
     if (entry?.kind !== 'event') return;
     expect(entry.essence.checkName).toBe('Build Binary (linux-x64)');
   });
+
+  it('ignores pasted external-event JSON that did not come from the inject path', () => {
+    const text = checkText('chk-1', at(16), 'failure');
+    const human = {
+      ...row('db-1', 'u-1', text),
+      isSynthetic: false,
+      inputKind: 'human',
+    };
+    expect(parseDeferredDeliveryRow(human)).toBeNull();
+    const partition = partitionDeferredExternalEventRows([human]);
+    expect(partition.digestRows).toHaveLength(0);
+    expect(partition.remainder.map((r) => r.dbId)).toEqual(['db-1']);
+  });
 });
 
 describe('buildExternalEventDigestMessage', () => {
@@ -296,28 +311,33 @@ describe('buildExternalEventDigestMessage', () => {
     expect(lines[0]).toBe('External events while you were working (30 events, PR #2828):');
     expect(lines[1]).toBe(
       '- CI check "Build Binary (linux-x64)": 11 runs (canceled ×6, failure ×5), ' +
-        `latest 16:34 UTC (most cancelled, likely superseded by newer pushes) — ${PR_URL}#check-11`
+        `latest 16:34 UTC (most cancelled, likely superseded by newer pushes) — ` +
+        `${PR_URL}#check-11 (latest eventId: check-11)`
     );
     expect(lines[2]).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
-        `latest by codex[bot] at 16:20 UTC — "latest review body" — ${PR_URL}#rc-3`
+        `latest by codex[bot] at 16:20 UTC — "latest review body" — ` +
+        `${PR_URL}#rc-3 (commentId: rc-3; latest eventId: rc-3)`
     );
     expect(lines[3]).toBe(
       `- Review comment on packages/web/src/app.tsx:L12: ×1, ` +
-        `latest by codex[bot] at 16:25 UTC — "standalone review" — ${PR_URL}#rc-4`
+        `latest by codex[bot] at 16:25 UTC — "standalone review" — ` +
+        `${PR_URL}#rc-4 (commentId: rc-4; latest eventId: rc-4)`
     );
     for (let i = 0; i < 5; i++) {
       const body = i === 4 ? 'latest pr comment' : `pr comment ${i + 1}`;
       expect(lines[4 + i]).toBe(
         `- PR comment: ×1, latest by marcliu at 15:${30 + i} UTC — "${body}" — ` +
-          `${PR_URL}#pc-${i + 1}`
+          `${PR_URL}#pc-${i + 1} (commentId: pc-${i + 1}; latest eventId: pc-${i + 1})`
       );
     }
     expect(lines[9]).toBe(
-      `- PR #2828 state: open (latest poll 16:35 UTC, ×8 polls folded) — ${PR_URL}#st-8`
+      `- PR #2828 state: open (latest poll 16:35 UTC, ×8 polls folded) — ` +
+        `${PR_URL}#st-8 (latest eventId: st-8)`
     );
     expect(lines[10]).toBe(
-      `- Reactions on PR #2828: ×2, latest 🚀 by marcliu at 15:10 UTC — ${PR_URL}#re-2`
+      `- Reactions on PR #2828: ×2, latest 🚀 by marcliu at 15:10 UTC — ` +
+        `${PR_URL}#re-2 (latest eventId: re-2)`
     );
   });
 
@@ -394,6 +414,38 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('PR #7 state: closed');
     expect(digest).toContain('×2 polls folded');
     expect(digest).not.toContain('open');
+  });
+
+  it('marks merged, unmerged, and draft PR states distinctly', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'm-1',
+        topic: 'github/o/r/pull_request/7.polled',
+        prNumber: 7,
+        state: 'closed',
+        merged: true,
+        occurredAt: at(15),
+      },
+      {
+        eventId: 'm-2',
+        topic: 'github/o/r/pull_request/8.polled',
+        prNumber: 8,
+        state: 'closed',
+        merged: false,
+        occurredAt: at(16),
+      },
+      {
+        eventId: 'm-3',
+        topic: 'github/o/r/pull_request/9.polled',
+        prNumber: 9,
+        state: 'open',
+        draft: true,
+        occurredAt: at(17),
+      },
+    ]);
+    expect(digest).toContain('PR #7 state: closed (merged)');
+    expect(digest).toContain('PR #8 state: closed (not merged)');
+    expect(digest).toContain('PR #9 state: open (draft)');
   });
 
   it('does not claim a majority cancellation note when failures dominate', () => {
