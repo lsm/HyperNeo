@@ -76,11 +76,10 @@ function compactPreviewValue(value: unknown, path: string[]): unknown {
     }
     return `${value.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`;
   }
-  const key = path[path.length - 1] ?? '';
-  const parent = path.length >= 2 ? path[path.length - 2] : '';
   if (Array.isArray(value)) {
-    const isSemanticLength = (key === 'content' && parent === 'message') || key === 'commands';
-    const limit = isSemanticLength
+    const key = path[path.length - 1] ?? '';
+    const isCommandList = key === 'commands';
+    const limit = isCommandList
       ? value.length
       : Math.min(value.length, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX);
     const out: unknown[] = [];
