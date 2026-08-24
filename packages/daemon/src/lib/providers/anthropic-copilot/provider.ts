@@ -121,6 +121,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   private shuttingDown = false;
   private loggedOut = false;
+  private restartGeneration = 0;
   private observedCuratedCatalog = false;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
@@ -569,13 +570,15 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async restartServerForCurrentCredentials(): Promise<EmbeddedServer> {
+    const generation = ++this.restartGeneration;
     while (!this.shuttingDown && !this.loggedOut) {
+      if (generation !== this.restartGeneration) break;
       await this.stopServerAndClient();
-      if (this.shuttingDown || this.loggedOut) break;
+      if (this.shuttingDown || this.loggedOut || generation !== this.restartGeneration) break;
       const credentialsVersion = this.credentialsVersion;
       try {
         const server = await this.createServer(credentialsVersion);
-        if (this.shuttingDown || this.loggedOut) {
+        if (this.shuttingDown || this.loggedOut || generation !== this.restartGeneration) {
           await server.stop().catch(() => {});
           break;
         }

@@ -1709,6 +1709,60 @@ describe('logout()', () => {
     await expect(p.ensureServerStarted()).resolves.toBe('http://127.0.0.1:9999');
   });
 
+  it('does not clobber a replacement runtime when an abandoned restart settles after re-login', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    let createCalls = 0;
+    const pendingResolvers: Array<(server: unknown) => void> = [];
+    let replacementStops = 0;
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      (() => {
+        createCalls++;
+        return new Promise((resolve) => {
+          pendingResolvers.push(resolve);
+        });
+      }) as never
+    );
+
+    const abandoned = (
+      p as unknown as { restartServerForCurrentCredentials(): Promise<unknown> }
+    ).restartServerForCurrentCredentials();
+    for (let i = 0; i < 50 && pendingResolvers.length < 1; i++) {
+      await Promise.resolve();
+    }
+    expect(createCalls).toBe(1);
+
+    internals['loggedOut'] = true;
+    internals['serverStarting'] = undefined;
+
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_relogin' });
+    expect(internals['loggedOut']).toBe(false);
+
+    const replacement = p.ensureServerStarted();
+    for (let i = 0; i < 50 && pendingResolvers.length < 2; i++) {
+      await Promise.resolve();
+    }
+    expect(createCalls).toBe(2);
+    const replacementServer = {
+      url: 'http://127.0.0.1:10000',
+      stop: async () => {
+        replacementStops++;
+      },
+    };
+    pendingResolvers[1]?.(replacementServer);
+    await expect(replacement).resolves.toBe('http://127.0.0.1:10000');
+
+    pendingResolvers[0]?.({ url: 'http://127.0.0.1:9999', stop: async () => {} });
+    await expect(abandoned).rejects.toThrow('shutting down');
+
+    for (let i = 0; i < 50; i++) {
+      await Promise.resolve();
+    }
+    expect(internals['serverCache']).toBe(replacementServer);
+    expect(replacementStops).toBe(0);
+    expect(createCalls).toBe(2);
+  });
+
   it('stops the running bridge on logout', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     const internals = p as unknown as Record<string, unknown>;

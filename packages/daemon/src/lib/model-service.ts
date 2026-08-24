@@ -610,6 +610,7 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
   provider.clearModelCache?.();
 
   const generationAtStart = providerRetryGeneration;
+  const failureAtStart = getProviderFailure(providerId);
   const probeSeq = ++modelLoadSequence;
   const result = await raceProviderProbe(
     loadProviderModels(provider),
@@ -641,6 +642,10 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
       providerIds: [providerId],
     });
     return 'failed';
+  }
+  const currentFailure = getProviderFailure(providerId);
+  if (providerRetryGeneration !== generationAtStart && currentFailure !== failureAtStart) {
+    return currentFailure ? 'failed' : 'no-op';
   }
   clearProviderFailure(providerId);
   clearProviderRetry(providerId);
