@@ -256,7 +256,7 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
       return { status: 'unavailable', models: [] };
     }
     const models = await provider.getModels();
-    if (models.length > 0) {
+    if (models.length > 0 || provider.hasCuratedModelList?.()) {
       return { status: 'loaded', models };
     }
     return { status: 'failed', models: fallbackModelsFor(provider) };
