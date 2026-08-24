@@ -97,7 +97,7 @@ export class SpaceAgentInactivityWatchdogService {
     const staleBefore = Date.now() - INACTIVITY_CLAIM_LEASE_MS;
     if (
       claim !== null &&
-      claim.state !== 'none' &&
+      claim.state === 'in_flight' &&
       !claim.degraded &&
       claim.updatedAt <= staleBefore
     ) {

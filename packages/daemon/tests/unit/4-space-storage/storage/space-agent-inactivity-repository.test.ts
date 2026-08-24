@@ -254,7 +254,7 @@ describe('SpaceAgentInactivity repositories', () => {
           advanceAttemptGeneration: false,
         }
       );
-      expect(held?.state).toBe('in_flight');
+      expect(held?.state).toBe('accepted');
       expect(held?.claimKey).toBe('k');
     });
 

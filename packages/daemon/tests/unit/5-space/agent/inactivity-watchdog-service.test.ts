@@ -266,9 +266,24 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     nextOutcome = 'accepted';
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')?.state).toBe('in_flight');
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')?.state).toBe('accepted');
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
+  });
+
+  it('does not reclaim an accepted delivery that outlives the scanner lease', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    nextOutcome = 'accepted';
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    db.prepare(
+      `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
+    ).run(spaceId, 'agent-1');
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    expect(claim?.state).toBe('accepted');
+    expect(claim?.degraded).toBe(false);
   });
 
   it('does not deliver when the config is disabled during the admission recheck', async () => {
@@ -337,7 +352,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
 
   it('reclaims a stale claim left behind by a crashed scanner process', async () => {
     configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
-    claimRepo.acquire({
+    const seeded = claimRepo.acquire({
       spaceId,
       agentId: 'agent-1',
       claimKey: 'inactivity-nag:agent-1:stale:0',
@@ -346,6 +361,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       ownerToken: 'scanner-old',
       configRevision: 1,
     });
+    claimRepo.markInFlight(spaceId, 'agent-1', seeded.claim.claimKey);
     db.prepare(
       `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
     ).run(spaceId, 'agent-1');

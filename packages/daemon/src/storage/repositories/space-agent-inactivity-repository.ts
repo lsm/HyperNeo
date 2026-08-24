@@ -261,7 +261,12 @@ export class SpaceAgentInactivityClaimRepository {
         return null;
       }
       if (!reset.markDegraded && !reset.advanceAttemptGeneration) {
-        return existing;
+        this.db
+          .prepare(
+            `UPDATE space_agent_inactivity_claims SET state = 'accepted', updated_at = ? WHERE id = ?`
+          )
+          .run(now, existing.id);
+        return this.getByAgent(spaceId, agentId);
       }
       this.db
         .prepare(
