@@ -1155,6 +1155,46 @@ describe('Model Service', () => {
       }
     });
 
+    it('prefers an externally updated slice over an in-flight scheduled probe result', async () => {
+      const { refreshModels, updateProviderModelsInCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseProbe = resolve;
+            });
+          }
+          return [glmModel('glm-5-probe-stale')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        updateProviderModelsInCache('glm', [glmModel('glm-5-external')]);
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-external')).toBe(true);
+
+        releaseProbe?.([glmModel('glm-5-probe-stale')]);
+        await flushMicrotasks();
+
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-external']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('releases the probe slot when a foreground load recovers the provider', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();

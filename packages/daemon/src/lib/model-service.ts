@@ -459,12 +459,14 @@ function cancelAllProviderRetries(): void {
 
 function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
   const cacheKey = 'global';
+  const pending = pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId));
+  const slice = pending ?? models;
   const existing = modelsCache.get(cacheKey);
   if (!existing || existing.length === 0) {
-    modelsCache.set(cacheKey, mergeWithFallbackModels(models));
+    modelsCache.set(cacheKey, mergeWithFallbackModels(slice));
     return;
   }
-  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...models]);
+  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...slice]);
 }
 
 const PROVIDER_RETRY_PROBE_TIMEOUT_MS = 30_000;
