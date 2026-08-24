@@ -110,7 +110,7 @@ describe('Migration 212: stable sdk_messages rowids', () => {
     expect(
       db
         .prepare(
-          `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sdk_messages' AND name IN ('idx_sdk_messages_session_timestamp', 'idx_sdk_messages_consumed_seq')`
+          `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sdk_messages' AND name IN ('idx_sdk_messages_session_timestamp', 'idx_sdk_messages_consumed_seq') ORDER BY name`
         )
         .all()
     ).toEqual([
@@ -119,6 +119,12 @@ describe('Migration 212: stable sdk_messages rowids', () => {
     ]);
     expect(db.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
     expect(db.prepare(`PRAGMA integrity_check`).get()).toEqual({ integrity_check: 'ok' });
+    db.prepare(
+      `INSERT INTO sdk_message_replacements (source_message_id, target_uuid, kind) VALUES (?, ?, 'superseded')`
+    ).run('message-01', 'uuid-2');
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_message_replacements`).get()).toEqual({
+      n: 2,
+    });
 
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)

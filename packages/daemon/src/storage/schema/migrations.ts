@@ -7981,10 +7981,12 @@ export function runMigration212(db: BunDatabase): void {
     )
     .all() as Array<{ sql: string }>;
 
-  const newSql = (storedSql ?? '').replace(
-    /\bid\s+TEXT\s+PRIMARY\s+KEY\b/i,
-    'seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE'
-  );
+  const newSql = (storedSql ?? '')
+    .replace(
+      /CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?"?sdk_messages"?/i,
+      'CREATE TABLE sdk_messages_m212_new'
+    )
+    .replace(/\bid\s+TEXT\s+PRIMARY\s+KEY\b/i, 'seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE');
 
   const foreignKeys = (
     db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
@@ -7992,14 +7994,14 @@ export function runMigration212(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN');
   try {
-    db.exec(`ALTER TABLE sdk_messages RENAME TO sdk_messages_m212_old`);
-    db.exec(newSql.replace(/CREATE TABLE\s+"?sdk_messages"?/i, 'CREATE TABLE sdk_messages'));
+    db.exec(newSql);
     db.exec(`
-      INSERT INTO sdk_messages (seq, ${columnNames.join(', ')})
+      INSERT INTO sdk_messages_m212_new (seq, ${columnNames.join(', ')})
       SELECT rowid, ${columnNames.join(', ')}
-      FROM sdk_messages_m212_old
+      FROM sdk_messages
     `);
-    db.exec(`DROP TABLE sdk_messages_m212_old`);
+    db.exec(`DROP TABLE sdk_messages`);
+    db.exec(`ALTER TABLE sdk_messages_m212_new RENAME TO sdk_messages`);
     for (const index of indexRows) {
       db.exec(index.sql);
     }
