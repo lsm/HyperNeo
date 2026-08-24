@@ -210,16 +210,25 @@ gate never sees. Re-flagging and admission are two separate rules:
   denial returns the same parked shape P3 uses — `requeue(job.id, retryAt)`
   with `retryAt` = the saturation deadline, or the probe tick while probing —
   so the job retries through the ordinary queue instead of throwing into the
-  job-queue default retry. **Failures feed back**:
-  `generateTitleFromMessage` swallows SDK errors into a fallback title, so the
-  interpreter classifies title-query results/errors itself (`assessLimitError`
-  on the error text/status) and reports via `reportLimitError` with the title
+  job-queue default retry. **Failures feed back — and are
+  surfaced**: `generateTitleFromMessage` currently swallows the SDK exception
+  into a fallback title (`session-lifecycle.ts:914-922`) and
+  `handleSessionTitleGeneration` discards even that (`session-title.handler.ts:17-19`
+  returns `{ generated: true }` unconditionally), so the PR3 wiring extends the
+  lifecycle result to a structured `{ title, fellBack, error? }` — the
+  handler then runs `assessLimitError` on the original error text/status and
+  reports via `reportLimitError` with the title
   query's **actual effective account key** (title generation may resolve a
   different provider than the session's chat provider) before falling back — a
   title request can be the call that trips the cap, and the registry must learn
   it. This keeps background titling strictly behind the user-visible drain:
   chat deliveries consume grants and wake each other; title jobs wait for full
-  openness. **The same interpreter covers the Space background provider
+  openness — **and full openness does not release the background wave at
+  once**: when the last chat registration completes, any accumulated parked
+  background jobs (titles, Space jobs, GitHub agents) release through the
+  same one-at-a-time grant machinery — background identities join the FIFO
+  tail and each admits on its own grant resolution — so a 64-wide title herd
+  cannot hit the just-recovered account. **The same interpreter covers the Space background provider
   queries** — `evolution-conversation-analysis-service.ts:289-296`,
   `evolution-episode-service.ts:754-761`, and `llm-workflow-selector.ts:56-61`
   each invoke the SDK directly on the configured Space/default provider: they
@@ -236,9 +245,17 @@ gate never sees. Re-flagging and admission are two separate rules:
   (rule-based selection) instead of deferring. These six surfaces (titles +
   three Space jobs + `github/router-agent.ts:198-244` and
   `github/security-agent.ts:147-204`, which `DaemonApp` supplies with the same
-  stored session credentials, `app.ts:536-566` — the GitHub agents get the
-  durable-job park shape) are v1's roster of out-of-pipeline provider callers;
-  any new direct `query(...)` caller joins them by convention. This is the
+  stored session credentials, `app.ts:536-566`) are v1's roster of
+  out-of-pipeline provider callers; any new direct `query(...)` caller joins
+  them by convention. The GitHub agents' denial shape **splits by invocation**:
+  the poll path (a durable tick) skips the agent work this tick — the next
+  scheduled poll retries naturally, no park needed; the **webhook path**
+  (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
+  callback — no job, no `job.id`) processes the event **without** agent
+  analysis (records the raw event, skips the LLM triage) and answers the
+  webhook immediately (the callback must complete — GitHub would otherwise
+  retry the delivery); the skipped analysis is picked up by the next poll
+  once the account reopens. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -322,7 +339,17 @@ batch — so the boundary gains an **optional delivery-identity parameter** (the
 message uuid / batch head the start serves): it is what names the grant holder
 on admit and the row to defer-and-register on denial, and batch callers pass
 their per-uuid identity (calling the boundary per row where they currently call
-it once). **Identity-less callers are exempt**: `ensureQueryStarted` is not
+it once). **Not-yet-persisted deliveries are a distinct case**: the V1
+injection paths (`deliverInjectedMessage`,
+`injection-delivery-steps.ts:148-156`; the long-term-agent V1 path,
+`space-runtime-service.ts:572-575`) call `ensureQueryStarted` *before*
+inserting their SDK row — there is no row to settle or register on denial, and
+the message exists only in the caller's memory. For these the boundary returns
+a **typed `provider_parked` outcome** to the caller instead of settling a row:
+the caller holds its in-memory message and re-runs the inject when the wake
+arrives (the registry registers the caller's intent via a synthetic identity,
+same mechanism as title jobs), or the caller persists the deferred row itself
+if it has that capability. **Identity-less callers are exempt**: `ensureQueryStarted` is not
 exclusively a delivery boundary — `AskUserQuestionHandler` calls it before
 injecting an unpersisted tool result into the live query, and context-reset /
 restart paths call it with no message row; those starts ride existing
@@ -387,7 +414,7 @@ interface ProviderAdmissionFacts {
 }
 type ProviderAdmission =
   | { action: 'admit' }
-  | { action: 'queue_until'; untilMs: number; reason: 'saturated' | 'probing' | 'slot_pressure' };
+  | { action: 'queue_until'; untilMs: number | null; reason: 'closed' | 'saturated' | 'probing' | 'slot_pressure' };
 ```
 
 `decideProviderAdmission(facts)` is pure and synchronous (`.end`, never
@@ -437,7 +464,16 @@ e.g. `KimiProvider.buildSdkConfig` selects distinct China/global endpoints from
 it — and a keyed digest of the API key, never the key itself). An absent
 `providerConfig` and an effectively-default one must hash equal, so the
 common case (one credential-store entry per provider, no overrides) shares one
-key instead of splitting traffic that reaches the same account.
+key instead of splitting traffic that reaches the same account. And the
+provider-id **prefix is dropped when the upstream identity is explicit**: two
+configured provider records can route to the same upstream endpoint with the
+same credential (the custom-endpoint model allows distinct ids with identical
+`baseUrl`/`apiKey`, `custom-endpoint.ts:23-30`) — one concurrency-limited
+account. The key is therefore the **canonical upstream identity** (normalized
+`baseUrl` + credential digest) whenever the effective configuration carries
+an explicit endpoint, with the provider id filling in only for
+default-endpoint providers (e.g. built-in Anthropic with stored credentials)
+— so endpoint X's limit stops endpoint Y's calls to the same account.
 
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
@@ -589,7 +625,14 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
 
 - **Registering:** every queue arm appends a composite `(sessionId, messageUuid)`
   entry to a **single global insertion-ordered queue** (per-session indices exist
-  only for wake routing and deregistration). Release order is the global arrival
+  only for wake routing and deregistration), and the append stamps a
+  **monotonic queue sequence** alongside the `queue_reason` marker (same
+  migration) — the durable order key. In-memory order can diverge from row
+  age (an older preexisting row P3-parks after a newer message registered),
+  and neither row id nor message timestamp reconstructs registration order,
+  so restart reconstruction orders the scan by the persisted sequence; without
+  it the daemon-start enumeration could mint the first grant to the wrong
+  head and reverse the promised cross-session FIFO. Release order is the global arrival
   order: per-session grouping alone would let a session with a large backlog
   monopolize the one-at-a-time drain while earlier messages from other sessions
   wait. Scope is per message, not per session, so the wake never
@@ -598,12 +641,16 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   (`D/src/lib/agent/query-mode-handler.ts:39-108`) is *not* the wake path. The
   queue arm also stamps the row with a **`queue_reason` marker** — a new nullable
   `queue_reason` column on `sdk_messages` (`'provider_saturated'` when queued by
-  this gate, NULL otherwise), one migration — and **registration carries the
-  saturation episode token the decision read**: if a clear lands between the
-  consult and the insert/register (the clear sees no registration and opens the
-  provider), the token no longer matches at registration and the row
-  immediately re-admits instead of waiting for a wake that already fired.
-  Interleaving pinned in the test plan. The existing `origin` column cannot
+  this gate, NULL otherwise), one migration — and **registration carries an
+  admission generation: a counter covering every admission-state transition
+  (arm, clear, probe mint, probe-resolution-to-open), not merely the
+  saturation episode token**. Any transition landing between the consult and
+  the insert/register invalidates the read and the row immediately re-admits
+  instead of waiting for a wake that already fired; the generation, not the
+  episode token, is what closes the probe-resolves-to-open interleaving (a
+  send consulting while probing whose row registers only after the final
+  probe completes-and-opens would otherwise strand behind a wake that never
+  fires). All interleavings pinned in the test plan. The existing `origin` column cannot
   carry it: the schema constrains `origin` to `NULL | 'human' | 'system'`
   (`D/src/storage/schema/index.ts:199`), so a new value would fail the CHECK, and
   overloading it would discard the row's human/system semantics anyway.
@@ -849,9 +896,11 @@ by pre-existing suites):
    to the grant-bound identity's session** (never one per registered session);
    a manual-mode bound row retains and re-binds next eligible; **probe grant lifecycle** — mint at first
    admitting consult, honored by downstream consults for the same delivery
-   (the end-to-end pass that prevents the self-deadlock), registration is
-   episode-token-conditional (a clear landing between consult and register
-   re-admits immediately), the wake reaches only the bound identity's session
+   (the end-to-end pass that prevents the self-deadlock), **minted and bound
+   during the clear, before any consult** (a test that mints at the first
+   admitting consult re-opens the A2/B1 scheduling race), registration is
+   admission-generation-conditional (any state transition landing between
+   consult and register re-admits immediately), the wake reaches only the bound identity's session
    (manual-mode bound row → retain and re-bind next eligible), billing-terminal
    arms the non-timed closed state cleared only by credential change,
    **bound at mint to
@@ -944,11 +993,14 @@ by pre-existing suites):
    the retry — a bracketed GLM limit reports to the registry at attempt 0, a
    consult denial falls through to the existing `:1258` assessment (the watchdog
    arms; no bare skip-and-return), and each recursive re-entry consults admission.
-8. **Interpreter — wake and provider change:** one per-session publish per
-   registered session; a turn-boundary grant-revalidation pin (a grant whose
-   lease lapses during SDK startup does not start a turn); the handler re-runs the full P1 admission per uuid — a
-   session switched to manual mode after queueing is skipped and retained,
-   delivered only by manual promotion; a **model switch** with rows queued behind
+8. **Interpreter — wake and provider change:** **exactly one publish per
+   clear, to the grant-bound identity's session** (never one per registered
+   session — the broadcast shape is gone); a turn-boundary grant-revalidation
+   pin (a grant whose lease lapses during SDK startup does not start a turn);
+   the handler re-runs the full P1 admission for the bound uuid only — if that
+   row's session switched to manual mode after queueing it is skipped and
+   retained (grant re-binds next eligible), delivered only by manual
+   promotion; a **model switch** with rows queued behind
    the old provider deregisters them and immediately re-admits against the new
    key (no waiting on the old provider's wake; no newer-message overtake).
 9. **Scenario — the GLM herd, mocked SDK:** two sessions, one provider; A's query
