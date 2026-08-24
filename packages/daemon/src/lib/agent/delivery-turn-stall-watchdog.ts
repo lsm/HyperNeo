@@ -3,7 +3,7 @@ export class DeliveryTurnStallWatchdog {
   private resolveFire: (() => void) | null = null;
 
   constructor(
-    private readonly timeoutMs: number,
+    private timeoutMs: number,
     private readonly hasOutstandingTool: () => boolean,
     private readonly onFire?: () => void | Promise<void>,
     private readonly isPaused?: () => boolean
@@ -22,6 +22,17 @@ export class DeliveryTurnStallWatchdog {
       clearTimeout(this.timer);
       this.schedule();
     }
+  }
+
+  resizeTimeoutMs(timeoutMs: number): void {
+    this.timeoutMs = timeoutMs;
+    if (this.timer) {
+      this.bump();
+    }
+  }
+
+  getTimeoutMs(): number {
+    return this.timeoutMs;
   }
 
   cancel(): void {

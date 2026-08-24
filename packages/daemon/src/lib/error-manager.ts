@@ -447,6 +447,13 @@ export class ErrorManager {
       return;
     }
 
+    if (this.internalEventBus) {
+      this.internalEventBus.publishAsync('session.errorObserved', {
+        sessionId,
+        details: error,
+      });
+    }
+
     if (
       !isTerminalTurnError(error) &&
       this.shouldThrottleError(sessionId, error.category, error.code)

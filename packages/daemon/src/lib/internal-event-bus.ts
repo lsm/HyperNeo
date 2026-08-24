@@ -246,6 +246,7 @@ export interface SessionEvents {
   'session.deleted': { sessionId: string };
   'commands.updated': { sessionId: string; commands: string[] };
   'session.error': { sessionId: string; error: string; details?: unknown };
+  'session.errorObserved': { sessionId: string; details: unknown };
   'session.errorClear': { sessionId: string };
   'session.rate_limit_pause': {
     sessionId: string;

@@ -7,10 +7,12 @@ import type {
   RewindMode,
   SelectiveRewindResult,
   Session,
+  SessionConfig,
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   deliverMessage,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
@@ -2000,6 +2002,52 @@ describe('AgentSession', () => {
       expect(agentSession.isWaitingForInput()).toBe(true);
       unresolved = false;
       expect(agentSession.isWaitingForInput()).toBe(false);
+    });
+
+    it('sizes the stall watchdog to the ACP acceptance window until acceptance lands, then narrows (Codex P1)', async () => {
+      const statusByUuid: Record<string, string> = { 'acp-kick': 'submitted' };
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) => ({
+          content: 'x',
+          sendStatus: statusByUuid[uuid],
+        })),
+      }));
+
+      const acpSession = new AgentSession(
+        {
+          ...mockSession,
+          config: { ...mockSession.config, provider: 'acp' } as SessionConfig,
+        },
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+
+      await acpSession.stateManager.setProcessing('acp-kick');
+      const bridge = acpSession as unknown as {
+        armDeliveryTurnStall: () => Promise<void>;
+        clearDeliveryTurnStall: () => void;
+        deliveryTurnStall: { getTimeoutMs: () => number } | null;
+      };
+
+      let stalled = false;
+      (acpSession as unknown as { resetQuery: () => Promise<void> }).resetQuery = mock(async () => {
+        stalled = true;
+      });
+
+      bridge.armDeliveryTurnStall();
+      expect(bridge.deliveryTurnStall?.getTimeoutMs()).toBe(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stalled).toBe(false);
+
+      statusByUuid['acp-kick'] = 'consumed';
+      expect(() => acpSession.onDeliveryTurnAccepted()).not.toThrow();
+      expect(bridge.deliveryTurnStall?.getTimeoutMs()).toBe(3 * 60 * 1000);
+      bridge.clearDeliveryTurnStall();
+      expect(stalled).toBe(false);
+
+      expect(() => agentSession.onDeliveryTurnAccepted()).not.toThrow();
     });
 
     it('reconcileStrandedDeliveries skips processing, queued, and waiting_for_input', async () => {

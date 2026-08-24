@@ -961,6 +961,16 @@ describe('Session RPC Handlers — models.list', () => {
             db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
             return row.id;
           },
+          markDeliveryFailedByUuid: (_sid: string, uuid: string) => {
+            const row = db
+              .prepare(
+                `SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND send_status = 'enqueued'`
+              )
+              .get('sess-1', uuid) as { id: string } | undefined;
+            if (!row) return null;
+            db.prepare(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`).run(row.id);
+            return row.id;
+          },
         }),
       };
       const sessionManager = {
@@ -1030,6 +1040,31 @@ describe('Session RPC Handlers — models.list', () => {
           .get('db-failed') as { send_status: string };
         expect(row.send_status).toBe('failed');
       }
+    });
+
+    it('rolls the row back to failed when the post-reopen status broadcast rejects (Codex #5)', async () => {
+      eventBus.publish = mock(async (event: string) => {
+        if (event === 'messages.statusChanged') throw new Error('subscriber rejected');
+        return { delivered: 0, failures: [] };
+      });
+
+      await expect(
+        messageHubData.handlers.get('session.messages.retry')!(
+          { sessionId: 'sess-1', messageDbId: 'db-failed' },
+          {}
+        )
+      ).rejects.toThrow('subscriber rejected');
+
+      const row = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get('db-failed') as { send_status: string };
+      expect(row.send_status).toBe('failed');
+      const job = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+        )
+        .get(MESSAGE_DELIVERY, 'retry-me') as { n: number };
+      expect(job.n).toBe(0);
     });
   });
 });
