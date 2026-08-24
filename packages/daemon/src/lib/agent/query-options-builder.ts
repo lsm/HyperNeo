@@ -36,7 +36,11 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import { Logger } from '../logger.ts';
-import { getSessionModelInfo, isModelExcludedByCuration } from '../model-service.ts';
+import {
+  getSessionModelInfo,
+  isCuratedOutModel,
+  isModelExcludedByCuration,
+} from '../model-service.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -299,7 +303,7 @@ export class QueryOptionsBuilder {
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
-      if (isModelExcludedByCuration(config.fallbackModel, providerId)) {
+      if (await isModelExcludedByCuration(config.fallbackModel, providerId)) {
         this.logger.warn(
           `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
         );
@@ -388,7 +392,7 @@ export class QueryOptionsBuilder {
           request.dialogKind === 'refusal_fallback_prompt' &&
           liveFallbackModel &&
           liveFallbackModel === configuredFallbackModel &&
-          !isModelExcludedByCuration(liveFallbackModel, providerId)
+          !(await isModelExcludedByCuration(liveFallbackModel, providerId))
         ) {
           return { behavior: 'completed', result: { continue: true } };
         }
@@ -557,7 +561,7 @@ export class QueryOptionsBuilder {
       }
 
       const fallbackModel = this.ctx.session.config.fallbackModel;
-      if (fallbackModel && !isModelExcludedByCuration(fallbackModel, providerId)) {
+      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);

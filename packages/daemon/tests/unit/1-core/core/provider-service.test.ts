@@ -607,6 +607,33 @@ describe('ProviderService', () => {
       expect(model).toBe('translated-1');
     });
 
+    it('accepts a session-model alias that resolves to a curated catalog model', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new GlmMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => [
+        ...baseModels,
+        {
+          id: 'glm-5',
+          name: 'GLM-5',
+          alias: 'glm',
+          family: 'glm',
+          provider: 'glm',
+          contextWindow: 200000,
+          description: 'GLM-5',
+          releaseDate: '',
+          available: true,
+        },
+      ];
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      const model = await realService.getTitleGenerationModel('glm', 'glm');
+
+      expect(model).toBe('glm');
+    });
+
     it('returns null when curation is explicitly empty', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

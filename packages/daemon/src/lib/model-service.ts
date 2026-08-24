@@ -1046,31 +1046,50 @@ export function isCuratedOutModel(
   return !curatedIds.has(idOrAlias);
 }
 
-export function isModelExcludedByCuration(
+export function resolveCuratedCanonicalModelId(
   idOrAlias: string,
   providerId: string,
   cacheKey: string = 'global'
-): boolean {
-  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+): string | null {
+  const rawModels = readCachedModels(cacheKey);
+  const knownModel =
+    (rawModels
+      ? findInModels(
+          rawModels.filter((model) => model.provider === providerId),
+          idOrAlias
+        )
+      : undefined) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+  return knownModel?.id ?? null;
+}
+
+export async function isModelExcludedByCuration(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): Promise<boolean> {
+  const registry = getProviderRegistry();
+  const curatedModels = registry.getCuratedModels(providerId);
   if (curatedModels === undefined) {
     return false;
   }
 
   const curatedIds = new Set(curatedModels.map((model) => model.id));
 
-  const rawModels = readCachedModels(cacheKey);
-  const knownModel =
-    (rawModels &&
-      findInModels(
-        rawModels.filter((model) => model.provider === providerId),
-        idOrAlias
-      )) ??
-    findInModels(
-      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
-      idOrAlias
-    );
+  const canonicalId = resolveCuratedCanonicalModelId(idOrAlias, providerId, cacheKey);
+  if (canonicalId) {
+    return !curatedIds.has(canonicalId);
+  }
 
-  return !knownModel || !curatedIds.has(knownModel.id);
+  try {
+    const providerModels = (await registry.get(providerId)?.getModels()) ?? [];
+    return !providerModels.some((model) => model.id === idOrAlias || model.alias === idOrAlias);
+  } catch {
+    return true;
+  }
 }
 
 export async function resolveModelAlias(

@@ -1770,21 +1770,52 @@ describe('Model Service', () => {
   });
 
   describe('isModelExcludedByCuration', () => {
-    it('excludes curated-out models, catalog-missing models, and unknown ids under a curation', () => {
+    it('excludes curated-out models, catalog-missing models, and unknown ids under a curation', async () => {
       getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
       setModelsCache(new Map([['global', mockModels]]));
 
-      expect(isModelExcludedByCuration('opus', 'anthropic')).toBe(true);
-      expect(isModelExcludedByCuration('ghost-model', 'anthropic')).toBe(true);
-      expect(isModelExcludedByCuration('sonnet', 'anthropic')).toBe(false);
-      expect(isModelExcludedByCuration('opus', 'glm')).toBe(false);
+      await expect(isModelExcludedByCuration('opus', 'anthropic')).resolves.toBe(true);
+      await expect(isModelExcludedByCuration('ghost-model', 'anthropic')).resolves.toBe(true);
+      await expect(isModelExcludedByCuration('sonnet', 'anthropic')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('opus', 'glm')).resolves.toBe(false);
     });
 
-    it('is a no-op when the provider has no configured curation', () => {
+    it('is a no-op when the provider has no configured curation', async () => {
       setModelsCache(new Map([['global', mockModels]]));
 
-      expect(isModelExcludedByCuration('opus', 'anthropic')).toBe(false);
-      expect(isModelExcludedByCuration('ghost-model', 'anthropic')).toBe(false);
+      await expect(isModelExcludedByCuration('opus', 'anthropic')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('ghost-model', 'anthropic')).resolves.toBe(false);
+    });
+
+    it('allows a curated fallback before the cache populates by consulting the provider catalog', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'ollama-llama3',
+            name: 'Llama 3',
+            alias: 'llama3',
+            family: 'llama',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Llama 3',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-llama3' }]);
+      setModelsCache(new Map());
+
+      await expect(isModelExcludedByCuration('ollama-llama3', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('llama3', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('ollama-ghost', 'ollama')).resolves.toBe(true);
     });
   });
 

@@ -1306,7 +1306,8 @@ export class SDKMessageHandler {
     if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
-    if (isModelExcludedByCuration(fallbackModel, session.config.provider ?? 'anthropic')) return;
+    if (await isModelExcludedByCuration(fallbackModel, session.config.provider ?? 'anthropic'))
+      return;
 
     session.config = {
       ...session.config,

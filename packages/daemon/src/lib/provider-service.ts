@@ -5,7 +5,7 @@ import type {
   Provider as RegisteredProvider,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
-import { isCuratedOutModel } from './model-service.js';
+import { isCuratedOutModel, resolveCuratedCanonicalModelId } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
@@ -230,7 +230,10 @@ export class ProviderService {
         : undefined;
     for (const candidate of candidates) {
       if (!candidate || isCuratedOutModel(candidate, providerId)) continue;
-      if (catalogIds && !catalogIds.has(candidate)) continue;
+      if (catalogIds) {
+        const canonicalId = resolveCuratedCanonicalModelId(candidate, providerId) ?? candidate;
+        if (!catalogIds.has(canonicalId)) continue;
+      }
       return candidate;
     }
     return undefined;
