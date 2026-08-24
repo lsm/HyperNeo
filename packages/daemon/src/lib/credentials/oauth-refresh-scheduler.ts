@@ -19,6 +19,7 @@ export interface OAuthRefreshSchedulerOptions {
 
 export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private activeTick: Promise<void> | null = null;
   private readonly retryCounts = new Map<string, number>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
@@ -51,13 +52,30 @@ export class OAuthRefreshScheduler {
     }, this.intervalMs);
   }
 
-  stop(): void {
-    if (!this.timer) return;
-    clearInterval(this.timer);
-    this.timer = null;
+  async stop(): Promise<void> {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    const tick = this.activeTick;
+    if (tick) {
+      await tick;
+    }
   }
 
   async tick(): Promise<void> {
+    const promise = this.runTick();
+    this.activeTick = promise;
+    try {
+      await promise;
+    } finally {
+      if (this.activeTick === promise) {
+        this.activeTick = null;
+      }
+    }
+  }
+
+  private async runTick(): Promise<void> {
     await Promise.all(
       this.registry.getAll().map((provider) => this.refreshProviderIfNeeded(provider))
     );

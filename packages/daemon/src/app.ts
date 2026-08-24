@@ -447,9 +447,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const internalEventBus = createDaemonInternalEventBus();
     unsubscribeProviderFailureChanges = subscribeProviderFailureChanges((change) => {
-      if (change.record === null) {
-        credentialManager.markProviderHealth(change.providerId, 'healthy');
-      }
+      credentialManager.markProviderHealth(
+        change.providerId,
+        change.record === null ? 'healthy' : 'unhealthy'
+      );
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
@@ -1096,7 +1097,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
-        oauthRefreshScheduler.stop();
+        await oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');

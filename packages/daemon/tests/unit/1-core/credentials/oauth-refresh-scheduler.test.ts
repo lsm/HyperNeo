@@ -361,4 +361,45 @@ describe('OAuthRefreshScheduler', () => {
     expect(recovered).toEqual([]);
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
   });
+
+  it('drains an in-flight tick before stop resolves', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    let releaseRecovery: (() => void) | null = null;
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      recoverDormantProvider: () =>
+        new Promise((resolve) => {
+          releaseRecovery = () => resolve('recovered');
+        }),
+    });
+    scheduler.start();
+
+    for (let i = 0; i < 50 && !releaseRecovery; i++) {
+      await Promise.resolve();
+    }
+    expect(releaseRecovery).not.toBeNull();
+
+    let stopResolved = false;
+    const stopped = scheduler.stop().then(() => {
+      stopResolved = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stopResolved).toBe(false);
+
+    releaseRecovery?.();
+    await stopped;
+
+    expect(stopResolved).toBe(true);
+    expect(manager.stored).toHaveLength(1);
+  });
 });

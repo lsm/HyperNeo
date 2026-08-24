@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 type StartRecord = { resolve: () => void; reject: (err: Error) => void };
 const startCalls = vi.hoisted(() => [] as StartRecord[]);
@@ -131,6 +134,42 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     expect(state['clientCache']).toBeUndefined();
     expect(stopCalls).toHaveLength(1);
     expect(state['credentialsVersion']).toBe(version);
+  });
+
+  it('rejects a client that finishes starting after a real logout completes', async () => {
+    const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-logout-late-'));
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+    try {
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      const state = p as unknown as Record<string, unknown>;
+
+      const logoutPromise = p.logout();
+      for (let i = 0; i < 50; i++) {
+        await Promise.resolve();
+      }
+
+      const getOrCreate = (
+        p as unknown as {
+          getOrCreateClient(token?: string): Promise<unknown>;
+        }
+      ).getOrCreateClient.bind(p);
+      const clientPromise = getOrCreate('gho_test_token');
+      expect(startCalls).toHaveLength(1);
+
+      await logoutPromise;
+      startCalls[0].resolve();
+
+      await expect(clientPromise).rejects.toThrow('superseded');
+      expect(state['clientCache']).toBeUndefined();
+      expect(stopCalls).toHaveLength(1);
+    } finally {
+      fs.rmSync(authDir, { recursive: true, force: true });
+    }
   });
 
   it('propagates start() failure through ensureServerStarted()', async () => {

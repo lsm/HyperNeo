@@ -468,9 +468,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       throw refusal;
     }
 
-    await awaitServerStartBounded(this.serverStarting);
-    await this.stopServerAndClient();
     this.loggedOut = true;
+    const starting = this.serverStarting;
+    await awaitServerStartBounded(starting);
+    if (starting !== undefined && this.serverStarting === starting) {
+      this.serverStarting = undefined;
+    }
+    await this.stopServerAndClient();
   }
 
   private freshCachedExternalSource(): string | undefined {

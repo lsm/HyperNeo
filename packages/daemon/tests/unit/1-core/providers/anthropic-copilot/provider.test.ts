@@ -1685,6 +1685,30 @@ describe('logout()', () => {
     expect(internals['serverCache']).toBeUndefined();
   });
 
+  it('clears an abandoned startup on logout so a later login can restart the bridge', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    const abandoned = Promise.reject(new Error('never settles cleanly'));
+    abandoned.catch(() => {});
+    internals['serverStarting'] = abandoned;
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+
+    await p.logout();
+    expect(internals['serverStarting']).toBeUndefined();
+    expect(internals['loggedOut']).toBe(true);
+
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_new_login' });
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      async () => ({ url: 'http://127.0.0.1:9999', stop: async () => {} }) as never
+    );
+    await expect(p.ensureServerStarted()).resolves.toBe('http://127.0.0.1:9999');
+  });
+
   it('stops the running bridge on logout', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     const internals = p as unknown as Record<string, unknown>;
