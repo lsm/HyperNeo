@@ -94,6 +94,12 @@ import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { GOAL_OUTCOME_WAKE_ENABLED } from '../space/runtime/goal-outcome-wake-flag.ts';
+import { SpaceAgentInactivityWatchdogService } from '../space/agents/inactivity-watchdog-service.ts';
+import type { InactivityWatchdogSessionSnapshot } from '../space/agents/inactivity-watchdog-service.ts';
+import {
+  SpaceAgentInactivityClaimRepository,
+  SpaceAgentInactivityConfigRepository,
+} from '../../storage/repositories/space-agent-inactivity-repository.ts';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
@@ -298,6 +304,7 @@ export interface RPCHandlerSetupResult {
   spaceWorktreeManager: SpaceWorktreeManager;
   spaceGoalService: SpaceGoalService;
   goalAutomationService: GoalAutomationService;
+  spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
@@ -663,6 +670,64 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     outcomeNotificationRepo,
     enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,
   });
+
+  const spaceAgentInactivityWatchdog = new SpaceAgentInactivityWatchdogService({
+    configRepo: new SpaceAgentInactivityConfigRepository(deps.db.getDatabase()),
+    claimRepo: new SpaceAgentInactivityClaimRepository(deps.db.getDatabase()),
+    agentRepo: longHorizonAgentRepo,
+    spaceManager: deps.spaceManager,
+    scannerToken: `inactivity-scanner:${deps.db.getDatabasePath()}`,
+    getSessionSnapshot: (spaceId, agentId): InactivityWatchdogSessionSnapshot | null => {
+      const agent = longHorizonAgentRepo.getById(agentId);
+      if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return null;
+      const db = deps.db.getDatabase();
+      const sessionRow = db
+        .prepare(`SELECT created_at, processing_state FROM sessions WHERE id = ?`)
+        .get(agent.sessionId) as { created_at?: number; processing_state?: string | null } | null;
+      if (sessionRow == null) return null;
+      const consumedRow = db
+        .prepare(
+          `SELECT MAX(timestamp) AS ts FROM sdk_messages
+           WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
+        )
+        .get(agent.sessionId) as { ts?: number | null } | null;
+      const pendingRow = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages
+           WHERE session_id = ? AND send_status IN ('enqueued', 'submitted')`
+        )
+        .get(agent.sessionId) as { n?: number } | null;
+      let status = 'idle';
+      try {
+        const parsed = sessionRow.processing_state
+          ? (JSON.parse(sessionRow.processing_state) as { status?: unknown })
+          : null;
+        if (parsed && typeof parsed.status === 'string') status = parsed.status;
+      } catch {}
+      return {
+        latestConsumedMessageAt:
+          typeof consumedRow?.ts === 'number' && consumedRow.ts > 0 ? consumedRow.ts : null,
+        sessionCreatedAt:
+          typeof sessionRow.created_at === 'number' && sessionRow.created_at > 0
+            ? sessionRow.created_at
+            : null,
+        busyWithOtherWork:
+          status === 'processing' ||
+          status === 'queued' ||
+          status === 'running' ||
+          status === 'rate_limit_cooldown',
+        pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0,
+      };
+    },
+    deliverNag: (args) =>
+      spaceRuntimeService.deliverLongHorizonAgentNag({
+        spaceId: args.spaceId,
+        agentId: args.agentId,
+        message: args.prompt,
+        idempotencyKey: args.idempotencyKey,
+      }),
+  });
+
   deliverOutcomeWake = (notification) => {
     void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
       log.warn(
@@ -1022,5 +1087,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorktreeManager,
     spaceGoalService,
     goalAutomationService,
+    spaceAgentInactivityWatchdog,
   };
 }

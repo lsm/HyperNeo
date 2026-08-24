@@ -338,6 +338,37 @@ export class SpaceRuntimeService {
     return this.deliverLongHorizonExternalEvent(args, { gateSpaceLifecycle: true });
   }
 
+  async deliverLongHorizonAgentNag(args: {
+    spaceId: string;
+    agentId: string;
+    message: string;
+    idempotencyKey: string;
+  }): Promise<'consumed' | 'accepted' | 'terminal_failure'> {
+    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
+      return 'terminal_failure';
+    }
+    const space = await this.config.spaceManager.getSpace(args.spaceId);
+    if (!space || space.status !== 'active' || space.paused || space.stopped) {
+      return 'terminal_failure';
+    }
+    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    if (!session) return 'terminal_failure';
+    try {
+      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
+        terminalizeOnTimeout: false,
+      });
+      return 'consumed';
+    } catch {
+      const row = this.config.reactiveDb?.db
+        .getSDKMessageRepo()
+        .getDeliveryContent(session.getSessionData().id, args.idempotencyKey);
+      return row !== null && row !== undefined && row.sendStatus !== 'failed'
+        ? 'accepted'
+        : 'terminal_failure';
+    }
+  }
+
   private async deliverToLongTermAgent(
     actor: ActorRef,
     message: MessageRecord
@@ -575,7 +606,8 @@ export class SpaceRuntimeService {
       };
     },
     message: string,
-    messageId?: string
+    messageId?: string,
+    options: { terminalizeOnTimeout?: boolean } = {}
   ): Promise<string> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
@@ -631,7 +663,7 @@ export class SpaceRuntimeService {
               },
             })
           ),
-        ...(fresh
+        ...(fresh && options.terminalizeOnTimeout !== false
           ? {
               terminalizeOnTimeout: () => {
                 const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);

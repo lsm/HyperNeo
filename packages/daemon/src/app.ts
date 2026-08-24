@@ -697,6 +697,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceWorktreeManager,
       spaceGoalService,
       goalAutomationService,
+      spaceAgentInactivityWatchdog,
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
@@ -1033,6 +1034,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       reaperTimer.unref();
     }
 
+    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    if (process.env.NODE_ENV !== 'test') {
+      const scanInactivityWatchdog = async () => {
+        try {
+          const spaces = await spaceManager.listSpaces(false);
+          for (const space of spaces) {
+            await spaceAgentInactivityWatchdog.scanSpace(space.id);
+          }
+        } catch (err) {
+          logError('[Daemon] Inactivity watchdog scan failed:', err);
+        }
+      };
+      void scanInactivityWatchdog();
+      const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+      inactivityWatchdogTimer = setInterval(() => {
+        void scanInactivityWatchdog();
+      }, INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS);
+      inactivityWatchdogTimer.unref();
+    }
+
     let isCleanedUp = false;
     const cleanup = async () => {
       if (isCleanedUp) {
@@ -1046,6 +1067,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       if (reaperTimer !== null) {
         clearInterval(reaperTimer);
         reaperTimer = null;
+      }
+      if (inactivityWatchdogTimer !== null) {
+        clearInterval(inactivityWatchdogTimer);
+        inactivityWatchdogTimer = null;
       }
 
       try {
