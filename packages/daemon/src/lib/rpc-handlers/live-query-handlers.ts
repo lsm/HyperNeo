@@ -2167,9 +2167,10 @@ SELECT
   deliveryState,
   createdAt,
   turnUserMessageId,
-  parentToolUseId
+  parentToolUseId,
+  insOrder
 FROM joined
-ORDER BY createdAt ASC, id ASC
+ORDER BY createdAt ASC, insOrder ASC
 `.trim();
 
 export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
@@ -2303,6 +2304,20 @@ sdk_rows AS (
       -- the delivery-state UI for exactly the long multi-agent case it exists for.
       sm.message_type = 'user'
       AND COALESCE(sm.send_status, 'consumed') NOT IN ('consumed', 'failed')
+    )
+    OR (
+      -- Unresolved hyperneo_action cards (sdk_resume_choice unblock controls)
+      -- must survive the recent-turn cutoff too: the downstream visible-window
+      -- pinning can only preserve rows that reach the joined CTE, and a blocked
+      -- agent keeps its card until resolved (#2900 review). Mirrors
+      -- hasUnresolvedHyperNeoAction's resolved=0 predicate.
+      sm.message_type = 'hyperneo_action'
+      AND COALESCE(
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.resolved')
+        END,
+        1
+      ) = 0
     )
   )
     AND (

@@ -141,6 +141,8 @@ interface CompletedFeedTurn {
   roster: ActiveRosterEntry[];
   messageId: string | number;
   isTruncated?: boolean;
+  resultMessageId?: string | number;
+  resultTruncated?: boolean;
 }
 
 interface ActiveFeedTurn {
@@ -642,6 +644,8 @@ function buildCompletedTurn(
     resultInfo,
     messageId: sourceRow?.id ?? rows[0]?.id ?? '',
     isTruncated: sourceRow?.contentTruncated,
+    resultMessageId: resultRow?.id,
+    resultTruncated: resultRow?.contentTruncated,
     roster: (() => {
       const base = completedRosterEntries(
         rows,
@@ -1879,8 +1883,17 @@ function CompletedBody({
           overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : undefined
         }
         resultInfo={turn.resultInfo}
-        isTruncated={turn.isTruncated}
-        onExpand={onExpandMessage ? () => onExpandMessage(turn.messageId) : undefined}
+        isTruncated={turn.isTruncated || turn.resultTruncated}
+        onExpand={
+          onExpandMessage
+            ? () => {
+                if (turn.isTruncated) onExpandMessage(turn.messageId);
+                if (turn.resultTruncated && turn.resultMessageId !== undefined) {
+                  onExpandMessage(turn.resultMessageId);
+                }
+              }
+            : undefined
+        }
       />
     </div>
   );

@@ -4976,6 +4976,55 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(rows.length).toBe(6);
     });
 
+    test('unresolved action cards survive the recent-turn cutoff', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      insertSdkMessageAt(
+        'action-ancient-unresolved',
+        sessionId,
+        now,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-ancient-unresolved',
+          action: 'sdk_resume_choice',
+          resolved: false,
+        }
+      );
+      insertSdkMessageAt(
+        'action-ancient-resolved',
+        sessionId,
+        now + 10,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-ancient-resolved',
+          action: 'sdk_resume_choice',
+          resolved: true,
+        }
+      );
+      for (let i = 0; i < 105; i += 1) {
+        insertSdkMessageAt(`cu-${i}`, sessionId, now + 1000 + i * 10, 'user');
+        insertSdkMessageAt(`ca-${i}`, sessionId, now + 1000 + i * 10 + 5, 'assistant');
+      }
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 5) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain('action-ancient-unresolved');
+      expect(ids).not.toContain('action-ancient-resolved');
+      expect(rows.length).toBe(6);
+    });
+
     test('compact rows expose contentBytes and contentTruncated for oversized messages', () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
