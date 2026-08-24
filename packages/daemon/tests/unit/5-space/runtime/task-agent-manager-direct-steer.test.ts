@@ -889,6 +889,48 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(sourceRow?.status).toBe('consumed');
   });
 
+  it('carries the fold omission count into the deferred passenger remainder', async () => {
+    const harness = makeHarness();
+    const essences = [
+      {
+        eventId: 'omitted-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        eventType: 'pull_request_review_comment',
+        actor: 'codex[bot]',
+        body: 'bot feedback with omissions',
+        commentId: 'c-omit',
+      },
+      {
+        eventId: 'omitted-human',
+        topic: 'github/lsm/hyperneo/pull_request/2828.comment_polled',
+        eventType: 'issue_comment',
+        action: 'polled',
+        actor: 'lsm',
+        body: 'human note',
+        commentId: 'c-omit-human',
+      },
+    ];
+    const foldText = JSON.stringify({
+      type: 'external_event_digest',
+      events: essences,
+      droppedEventCount: 4,
+    });
+    await injectDefer(harness.manager, foldText);
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const passengerRow = harness.rows.find(
+      (row) => row.status === 'deferred' && rowText(row.message).includes('omitted-human')
+    );
+    expect(passengerRow).toBeDefined();
+    const passengerEnvelope = JSON.parse(rowText(passengerRow!.message)) as {
+      type: string;
+      droppedEventCount?: number;
+    };
+    expect(passengerEnvelope.type).toBe('external_event_digest');
+    expect(passengerEnvelope.droppedEventCount).toBe(4);
+  });
+
   it('does not double-admit a row that the cap fold superseded', async () => {
     const harness = makeHarness();
     for (let i = 0; i < 100; i++) {

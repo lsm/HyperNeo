@@ -304,6 +304,7 @@ interface DirectSteerBufferEntry {
   messageId: string;
   dbId: string;
   receivedAt: number;
+  droppedEventCount?: number;
 }
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
@@ -3679,9 +3680,10 @@ export class TaskAgentManager {
     ) {
       return;
     }
-    const entry = parseDeferredExternalEventText(args.messageText);
-    if (!entry) return;
-    const essences = deferredExternalEventEntryEvents(entry).map((essence) =>
+    const parsed = parseDeferredExternalEventText(args.messageText);
+    if (!parsed) return;
+    const droppedEventCount = parsed.kind === 'fold' ? parsed.droppedCount : undefined;
+    const essences = deferredExternalEventEntryEvents(parsed).map((essence) =>
       this.hydrateDirectSteerEssence(essence)
     );
     const representedClasses = directSteerClasses(essences);
@@ -3707,12 +3709,20 @@ export class TaskAgentManager {
     let bufferEssences = essences;
     let bufferMessageId = args.messageId;
     let bufferDbId = claimDbId;
+    let bufferDroppedEventCount = droppedEventCount;
     if (budgetedClasses.length < representedClasses.length) {
-      const split = this.splitPartiallyCooledFold(args.sessionId, essences, budgetedSet, claimDbId);
+      const split = this.splitPartiallyCooledFold(
+        args.sessionId,
+        essences,
+        budgetedSet,
+        claimDbId,
+        droppedEventCount
+      );
       if (!split) return;
       bufferEssences = split.steeringEssences;
       bufferMessageId = split.steeringMessageId;
       bufferDbId = split.steeringDbId;
+      bufferDroppedEventCount = undefined;
     }
     const key = directSteerBufferKey(args.sessionId, budgetedClasses[0]!);
     const buffer = this.directSteerBuffers.get(key) ?? [];
@@ -3731,6 +3741,7 @@ export class TaskAgentManager {
       messageId: bufferMessageId,
       dbId: bufferDbId,
       receivedAt: now,
+      ...(bufferDroppedEventCount ? { droppedEventCount: bufferDroppedEventCount } : {}),
     });
     this.directSteerBuffers.set(key, buffer);
     if (!this.directSteerBurstStarts.has(key)) this.directSteerBurstStarts.set(key, now);
@@ -3741,7 +3752,8 @@ export class TaskAgentManager {
     sessionId: string,
     essences: ExternalEventEssenceEntry[],
     budgetedSet: Set<DirectSteerEventClass>,
-    sourceDbId: string
+    sourceDbId: string,
+    droppedEventCount?: number
   ): {
     steeringEssences: ExternalEventEssenceEntry[];
     steeringMessageId: string;
@@ -3764,7 +3776,10 @@ export class TaskAgentManager {
       if (remaining.length > 0) {
         const remainderRow = buildSyntheticExternalEventMessage(
           sessionId,
-          buildDeferredEventDigestEnvelopeText(remaining)
+          buildDeferredEventDigestEnvelopeText(
+            remaining,
+            droppedEventCount ? { carriedDroppedCount: droppedEventCount } : undefined
+          )
         );
         remainderDbId = this.config.db.saveUserMessage(sessionId, remainderRow, 'deferred');
         savedDbIds.push(remainderDbId);
@@ -3947,9 +3962,16 @@ export class TaskAgentManager {
       (essence) => classifyExternalEventDirectSteer(essence) === null
     );
     if (passengerEssences.length > 0) {
+      const carriedDropped = steerable.reduce(
+        (sum, entry) => sum + (entry.droppedEventCount ?? 0),
+        0
+      );
       const passengerRow = buildSyntheticExternalEventMessage(
         sessionId,
-        buildDeferredEventDigestEnvelopeText(passengerEssences)
+        buildDeferredEventDigestEnvelopeText(
+          passengerEssences,
+          carriedDropped > 0 ? { carriedDroppedCount: carriedDropped } : undefined
+        )
       );
       try {
         const passengerDbId = this.config.db.saveUserMessage(sessionId, passengerRow, 'deferred');
