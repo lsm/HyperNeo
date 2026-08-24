@@ -22,7 +22,7 @@ import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
 
-const LIVE_QUERY_MESSAGE_LIMIT = 200;
+const LIVE_QUERY_MESSAGE_LIMIT = 50;
 
 const LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS = 3;
 const LIVE_QUERY_RESUBSCRIBE_RETRY_DELAY_MS = 500;

@@ -6,7 +6,7 @@ import type {
   LiveQuerySnapshotEvent,
   MessageDeliveryStatus,
 } from '@hyperneo/shared';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import {
   createLiveQueryLifecycleState,
   type LiveQueryLifecycleEffect,
@@ -35,6 +35,8 @@ export interface SpaceTaskThreadMessageRow {
   insOrder?: number | null;
   turnHiddenMessageCount?: number;
   sessionMessageCount?: number;
+  contentTruncated?: boolean;
+  contentBytes?: number;
 }
 
 interface ActiveTurnEntryRow {
@@ -53,7 +55,10 @@ export interface UseSpaceTaskMessagesResult {
   isLoading: boolean;
   error: string | null;
   isReconnecting: boolean;
+  expandMessage: (messageId: string | number) => Promise<void>;
 }
+
+const SPACE_TASK_MESSAGES_COMPACT_DEFAULT_LIMIT = 20;
 
 let _taskMessageSubCounter = 0;
 function nextTaskMessageSubId(taskId: string): string {
@@ -147,7 +152,8 @@ type LifecycleStorePayload = LiveQuerySnapshotEvent | LiveQueryDeltaEvent | null
 
 export function useSpaceTaskMessages(
   taskId: string | null,
-  variant: SpaceTaskMessagesQueryVariant = 'compact'
+  variant: SpaceTaskMessagesQueryVariant = 'compact',
+  limit = SPACE_TASK_MESSAGES_COMPACT_DEFAULT_LIMIT
 ): UseSpaceTaskMessagesResult {
   const { request, onEvent, getHub, isConnected } = useMessageHub();
   const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
@@ -198,8 +204,9 @@ export function useSpaceTaskMessages(
         if (effect.kind === 're-snapshot') {
           const hub = getHub();
           if (!hub) continue;
+          const params = variant === 'full' ? [taskId] : [taskId, limit];
           hub
-            .request('liveQuery.subscribe', { queryName, params: [taskId], subscriptionId })
+            .request('liveQuery.subscribe', { queryName, params, subscriptionId })
             .then(() => {
               executeEffects(dispatch({ type: 'subscribed', generation: effect.generation }));
             })
@@ -328,7 +335,7 @@ export function useSpaceTaskMessages(
         ).catch(() => {});
       }
     };
-  }, [taskId, isConnected, onEvent, request, getHub, queryName, variant]);
+  }, [taskId, isConnected, onEvent, request, getHub, queryName, variant, limit]);
 
   const sortedRows = useMemo(() => sortRows(rows), [rows]);
   const activeTurnSummaries = useMemo(
@@ -339,11 +346,37 @@ export function useSpaceTaskMessages(
   const isLoading = taskId !== null && isConnected && loadedForTaskId !== taskId;
   const error = messageError ?? activeTurnError;
 
+  const expandMessage = useCallback(
+    async (messageId: string | number) => {
+      if (!taskId) return;
+      const hub = getHub();
+      if (!hub) return;
+      const { sdkMessage } = await hub.request<{ sdkMessage: string }>('spaceTaskMessage.get', {
+        taskId,
+        messageId: String(messageId),
+      });
+      setRows((prev) =>
+        prev.map((row) =>
+          String(row.id) === String(messageId)
+            ? {
+                ...row,
+                content: sdkMessage,
+                contentTruncated: false,
+                contentBytes: sdkMessage.length,
+              }
+            : row
+        )
+      );
+    },
+    [taskId, getHub]
+  );
+
   return {
     rows: sortedRows,
     activeTurnSummaries,
     isLoading,
     error,
     isReconnecting: !isConnected && taskId !== null,
+    expandMessage,
   };
 }

@@ -46,6 +46,8 @@ export interface ParsedThreadRow {
   message: SDKMessage | null;
   fallbackText: string | null;
   replacementStatus?: MessageReplacementStatus;
+  contentTruncated?: boolean;
+  contentBytes?: number;
 }
 
 export interface TodoItem {
@@ -349,6 +351,8 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
       deliveryState: row.deliveryState ?? null,
       message: withTimestamp,
       fallbackText: null,
+      contentTruncated: row.contentTruncated,
+      contentBytes: row.contentBytes,
     };
   } catch {
     return {
@@ -366,6 +370,8 @@ export function parseThreadRow(row: SpaceTaskThreadMessageRow): ParsedThreadRow 
       deliveryState: row.deliveryState ?? null,
       message: null,
       fallbackText: row.content,
+      contentTruncated: row.contentTruncated,
+      contentBytes: row.contentBytes,
     };
   }
 }

@@ -1016,7 +1016,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
   });
 
   describe('hasMoreMessages (pagination inference)', () => {
-    const LIMIT = 200;
+    const LIMIT = 50;
 
     beforeEach(async () => {
       await sessionStore.select(null);
@@ -1070,7 +1070,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
       await sessionStore.select('session-1');
       const subId = hub.subscriptionId!;
 
-      const rows: SDKMessage[] = Array(50)
+      const rows: SDKMessage[] = Array(LIMIT - 1)
         .fill(null)
         .map((_, i) => ({
           uuid: `msg-${i}`,

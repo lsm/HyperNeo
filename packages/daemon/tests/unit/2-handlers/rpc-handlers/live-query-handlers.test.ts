@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
@@ -103,7 +104,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
-    expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(1);
+    expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(2);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!.paramCount).toBe(3);
@@ -1746,7 +1747,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'spaceTaskActiveTurn.byTask',
       ]) {
         const entry = NAMED_QUERY_REGISTRY.get(name)!;
-        const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId) as Array<{
+        const params = entry.paramCount === 2 ? [taskId, 20] : [taskId];
+        const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(...params) as Array<{
           detail: string;
         }>;
         const details = plan.map((row) => row.detail).join('\n');
@@ -3086,10 +3088,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
       }
 
-      function queryCompact(taskId: string): Record<string, unknown>[] {
+      function queryCompact(taskId: string, limit = 1000): Record<string, unknown>[] {
         backfillConversationTurns();
         const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
-        const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
 
@@ -4901,6 +4903,168 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
     });
 
+    test('compact query respects the window limit and returns the newest rows', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      for (let i = 0; i < 5; i += 1) {
+        insertSdkMessageAt(
+          `u-${i}`,
+          sessionId,
+          now + 1000 + i * 100,
+          { type: 'user', uuid: `u-${i}`, message: { role: 'user', content: `go ${i}` } },
+          'user'
+        );
+        insertSdkMessageAt(
+          `a-${i}`,
+          sessionId,
+          now + 1000 + i * 100 + 50,
+          {
+            type: 'assistant',
+            uuid: `a-${i}`,
+            message: { role: 'assistant', content: [{ type: 'text', text: `done ${i}` }] },
+          },
+          'assistant'
+        );
+      }
+
+      const rows = queryCompact(taskId, 3);
+      expect(rows.length).toBe(3);
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain('a-4');
+    });
+
+    test('compact rows expose contentBytes and contentTruncated for oversized messages', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      const longText = 'x'.repeat(5000);
+      insertSdkMessageAt(
+        'big-assistant',
+        sessionId,
+        now + 1000,
+        {
+          type: 'assistant',
+          uuid: 'big-assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: longText }] },
+        },
+        'assistant'
+      );
+
+      const rows = queryCompact(taskId, 5);
+      const big = rows.find((r) => r.id === 'big-assistant');
+      expect(big).toBeDefined();
+      expect(big!.contentBytes).toBeGreaterThan(5000);
+      expect(big!.contentTruncated).toBe(true);
+
+      const parsed = JSON.parse(big!.content as string) as Record<string, unknown>;
+      const content = (parsed.message as Record<string, unknown>).content as Array<{
+        type: string;
+        text: string;
+      }>;
+      expect(content[0].text.length).toBeLessThanOrEqual(1201);
+    });
+
+    test('windowed compact feed emits delta removals when rows age out', async () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      for (let i = 0; i < 5; i += 1) {
+        insertSdkMessageAt(
+          `u-${i}`,
+          sessionId,
+          now + 1000 + i * 100,
+          { type: 'user', uuid: `u-${i}`, message: { role: 'user', content: `go ${i}` } },
+          'user'
+        );
+        insertSdkMessageAt(
+          `a-${i}`,
+          sessionId,
+          now + 1000 + i * 100 + 50,
+          {
+            type: 'assistant',
+            uuid: `a-${i}`,
+            message: { role: 'assistant', content: [{ type: 'text', text: `done ${i}` }] },
+          },
+          'assistant'
+        );
+      }
+
+      const reactiveDb: ReactiveDatabase = {
+        db: undefined as unknown as Database,
+        on: (event, listener) => emitter.on(event, listener as never),
+        off: (event, listener) => emitter.off(event, listener as never),
+        getTableVersion: (table) => tableVersions[table] ?? 0,
+        beginTransaction: () => {},
+        commitTransaction: () => {},
+        abortTransaction: () => {},
+        notifyChange: (table, scope) => {
+          tableVersions[table] = (tableVersions[table] ?? 0) + 1;
+          emitter.emit('change', {
+            tables: [table],
+            versions: { [table]: tableVersions[table] },
+            scope,
+          });
+        },
+        willEmitTableChange: () => true,
+        resolveTaskIdForSession: () => null,
+      };
+      const emitter = new EventEmitter();
+      const tableVersions: Record<string, number> = {};
+
+      backfillConversationTurns();
+      const engine = new LiveQueryEngine(db, reactiveDb);
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const diffs: QueryDiff<Record<string, unknown>>[] = [];
+
+      const handle = engine.subscribe(entry.sql, [taskId, 3], (diff) => diffs.push(diff), {
+        debounceMs: 0,
+        scopeFilter: entry.buildScopeFilter?.([taskId], db),
+        rowFingerprint: entry.rowFingerprint,
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].type).toBe('snapshot');
+
+      for (let i = 5; i < 8; i += 1) {
+        insertSdkMessageAt(
+          `u-${i}`,
+          sessionId,
+          now + 2000 + i * 100,
+          { type: 'user', uuid: `u-${i}`, message: { role: 'user', content: `go ${i}` } },
+          'user'
+        );
+        insertSdkMessageAt(
+          `a-${i}`,
+          sessionId,
+          now + 2000 + i * 100 + 50,
+          {
+            type: 'assistant',
+            uuid: `a-${i}`,
+            message: { role: 'assistant', content: [{ type: 'text', text: `done ${i}` }] },
+          },
+          'assistant'
+        );
+      }
+
+      backfillConversationTurns();
+      reactiveDb.notifyChange('sdk_messages', { taskId });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(diffs.length).toBeGreaterThanOrEqual(2);
+      const delta = diffs[diffs.length - 1];
+      expect(delta.type).toBe('delta');
+      expect(delta.removed?.length).toBeGreaterThan(0);
+
+      handle.dispose();
+      engine.dispose();
+    });
+
     describe('compact-feed cap and active-turn-summary decoupling', () => {
       function insertSdkMessageAt(
         id: string,
@@ -4935,10 +5099,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				`);
       }
 
-      function queryCompact(taskId: string): Record<string, unknown>[] {
+      function queryCompact(taskId: string, limit = 1000): Record<string, unknown>[] {
         backfillConversationTurns();
         const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
-        const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
 

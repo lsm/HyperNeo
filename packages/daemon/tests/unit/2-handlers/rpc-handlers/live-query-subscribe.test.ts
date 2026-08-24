@@ -197,6 +197,19 @@ function insertWorkflowRun(db: BunDatabase, runId: string) {
   );
 }
 
+function insertSpaceTask(db: BunDatabase, id: string, spaceId: string = 'space-test-1') {
+  const now = Date.now();
+  db.exec(
+    `INSERT OR IGNORE INTO space_tasks (
+			id, space_id, task_number, title, description, status, priority, assigned_agent, agent_name,
+			workflow_run_id, workflow_node_id, task_agent_session_id, depends_on, created_at, updated_at
+		) VALUES (
+			'${id}', '${spaceId}', 1, 'Test Task', '', 'in_progress', 'normal', 'coder', NULL,
+			NULL, NULL, NULL, '[]', ${now}, ${now}
+		)`
+  );
+}
+
 describe('setupLiveQueryHandlers', () => {
   let db: BunDatabase;
   let reactiveDb: ReactiveDatabase;
@@ -308,9 +321,58 @@ describe('setupLiveQueryHandlers', () => {
     await expect(
       setup.callHandler('liveQuery.subscribe', {
         queryName: 'spaceTaskMessages.byTask.compact',
-        params: ['space-task-does-not-exist'],
+        params: ['space-task-does-not-exist', 20],
         subscriptionId: 'sub-1',
       })
+    ).rejects.toThrow('Unauthorized');
+  });
+
+  test('subscribe spaceTaskMessages.byTask.compact: rejects invalid window limit', async () => {
+    insertSpaceTask(db, taskId);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId, 0],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('limit');
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId, 101],
+        subscriptionId: 'sub-2',
+      })
+    ).rejects.toThrow('limit');
+  });
+
+  test('spaceTaskMessage.get returns the full sdk_message for a task row', async () => {
+    insertSpaceTask(db, taskId);
+    const messageId = 'msg-get-1';
+    const sdkMessage = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'full text' }] },
+    });
+    const now = Date.now();
+    db.exec(
+      `INSERT INTO sdk_messages (
+        id, session_id, message_type, sdk_message, timestamp, send_status, origin,
+        is_renderable, is_terminal, task_id
+      ) VALUES (
+        '${messageId}', 'sess-get-1', 'assistant', '${sdkMessage.replace(/'/g, "''")}',
+        '${new Date(now).toISOString()}', 'consumed', 'system',
+        1, 0, '${taskId}'
+      )`
+    );
+    const result = (await setup.callHandler('spaceTaskMessage.get', {
+      taskId,
+      messageId,
+    })) as { sdkMessage: string };
+    expect(result.sdkMessage).toBe(sdkMessage);
+  });
+
+  test('spaceTaskMessage.get rejects a missing task or message', async () => {
+    await expect(
+      setup.callHandler('spaceTaskMessage.get', { taskId: 'missing-task', messageId: 'msg-1' })
     ).rejects.toThrow('Unauthorized');
   });
 

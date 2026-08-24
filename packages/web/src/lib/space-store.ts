@@ -51,6 +51,8 @@ import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
 const logger = new Logger('hyperneo:web:spacestore');
 
+const TASK_MESSAGE_ACTIVITY_LIMIT = 20;
+
 export interface SpaceSessionSummary {
   id: string;
   title: string;
@@ -1498,7 +1500,7 @@ class SpaceStore {
         hub
           .request('liveQuery.subscribe', {
             queryName: 'spaceTaskMessages.byTask.compact',
-            params: [taskId],
+            params: [taskId, TASK_MESSAGE_ACTIVITY_LIMIT],
             subscriptionId,
           })
           .catch((err) => {
@@ -1509,7 +1511,7 @@ class SpaceStore {
 
       await hub.request('liveQuery.subscribe', {
         queryName: 'spaceTaskMessages.byTask.compact',
-        params: [taskId],
+        params: [taskId, TASK_MESSAGE_ACTIVITY_LIMIT],
         subscriptionId,
       });
 

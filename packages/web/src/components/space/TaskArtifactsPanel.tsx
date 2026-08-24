@@ -286,7 +286,11 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
 
   const [artifacts, setArtifacts] = useState<WorkflowRunArtifact[]>([]);
 
-  const { rows: messageRows, error: messageRowsError } = useSpaceTaskMessages(taskId ?? null);
+  const { rows: messageRows, error: messageRowsError } = useSpaceTaskMessages(
+    taskId ?? null,
+    'compact',
+    100
+  );
 
   const fileOps = useMemo<FileOperation[]>(() => {
     if (!messageRows.length) return [];

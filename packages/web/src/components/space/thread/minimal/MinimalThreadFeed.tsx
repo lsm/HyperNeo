@@ -43,6 +43,7 @@ interface MinimalThreadFeedProps {
   activeTurnSummaries?: ActiveTurnSummary[];
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
+  onExpandMessage?: (messageId: string | number) => void;
 }
 
 interface RosterToolEntry {
@@ -138,6 +139,8 @@ interface CompletedFeedTurn {
   replacementStatus?: MessageReplacementStatus;
   resultInfo?: ResultMessage;
   roster: ActiveRosterEntry[];
+  messageId: string | number;
+  isTruncated?: boolean;
 }
 
 interface ActiveFeedTurn {
@@ -173,6 +176,8 @@ interface CompactBoundaryFeedTurn {
   durationMs?: number;
   sessionId: string | null;
   highlightMessageUuid?: string;
+  messageId?: string | number;
+  isTruncated?: boolean;
 }
 
 interface SystemFeedTurn {
@@ -188,6 +193,8 @@ interface SystemFeedTurn {
   sessionId: string | null;
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;
+  messageId?: string | number;
+  isTruncated?: boolean;
 }
 
 interface MessageFeedTurn {
@@ -207,6 +214,8 @@ interface MessageFeedTurn {
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;
   sessionInit?: SystemInitMessage;
+  messageId: string | number;
+  isTruncated?: boolean;
 }
 
 type FeedTurn =
@@ -631,6 +640,8 @@ function buildCompletedTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
+    messageId: sourceRow?.id ?? rows[0]?.id ?? '',
+    isTruncated: sourceRow?.contentTruncated,
     roster: (() => {
       const base = completedRosterEntries(
         rows,
@@ -1086,6 +1097,8 @@ function buildMessageTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: row.replacementStatus,
     sessionInit,
+    messageId: row.id,
+    isTruncated: row.contentTruncated,
   };
 }
 
@@ -1747,10 +1760,12 @@ function CompletedBody({
   turn,
   overlayTaskId,
   overlayTaskReadonly,
+  onExpandMessage,
 }: {
   turn: CompletedFeedTurn;
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
+  onExpandMessage?: (messageId: string | number) => void;
 }) {
   const isTerminalError = isInlineTerminalResultError(turn.resultInfo);
   const errorSummary =
@@ -1856,6 +1871,8 @@ function CompletedBody({
           overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : undefined
         }
         resultInfo={turn.resultInfo}
+        isTruncated={turn.isTruncated}
+        onExpand={onExpandMessage ? () => onExpandMessage(turn.messageId) : undefined}
       />
     </div>
   );
@@ -1909,10 +1926,12 @@ function AgentTurnRow({
   turn,
   overlayTaskId,
   overlayTaskReadonly,
+  onExpandMessage,
 }: {
   turn: CompletedFeedTurn | ActiveFeedTurn;
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
+  onExpandMessage?: (messageId: string | number) => void;
 }) {
   const color = getAgentColor(turn.agent);
   const initial = agentInitial(turn.agent);
@@ -1995,13 +2014,20 @@ function AgentTurnRow({
           turn={turn}
           overlayTaskId={overlayTaskId}
           overlayTaskReadonly={overlayTaskReadonly}
+          onExpandMessage={onExpandMessage}
         />
       )}
     </div>
   );
 }
 
-function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
+function HumanMessageTurn({
+  turn,
+  onExpandMessage,
+}: {
+  turn: MessageFeedTurn;
+  onExpandMessage?: (messageId: string | number) => void;
+}) {
   const recipientColor = getAgentColor(turn.toLabel);
   return (
     <div
@@ -2039,6 +2065,8 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
           copyText={turn.body}
           align="right"
           sessionInit={turn.sessionInit}
+          isTruncated={turn.isTruncated}
+          onExpand={onExpandMessage ? () => onExpandMessage(turn.messageId) : undefined}
         />
       </div>
     </div>
@@ -2281,10 +2309,12 @@ function MinimalTurnRow({
   turn,
   overlayTaskId,
   overlayTaskReadonly,
+  onExpandMessage,
 }: {
   turn: FeedTurn;
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
+  onExpandMessage?: (messageId: string | number) => void;
 }) {
   if (turn.state === 'compact_boundary') {
     return (
@@ -2312,7 +2342,7 @@ function MinimalTurnRow({
         overlayTaskReadonly={overlayTaskReadonly}
       />
     ) : (
-      <HumanMessageTurn turn={turn} />
+      <HumanMessageTurn turn={turn} onExpandMessage={onExpandMessage} />
     );
   }
   return (
@@ -2320,6 +2350,7 @@ function MinimalTurnRow({
       turn={turn}
       overlayTaskId={overlayTaskId}
       overlayTaskReadonly={overlayTaskReadonly}
+      onExpandMessage={onExpandMessage}
     />
   );
 }
@@ -2332,6 +2363,7 @@ export function MinimalThreadFeed({
   activeTurnSummaries = [],
   overlayTaskId,
   overlayTaskReadonly,
+  onExpandMessage,
 }: MinimalThreadFeedProps) {
   const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
   if (turns.length === 0) return null;
@@ -2346,6 +2378,7 @@ export function MinimalThreadFeed({
             turn={turn}
             overlayTaskId={overlayTaskId}
             overlayTaskReadonly={overlayTaskReadonly}
+            onExpandMessage={onExpandMessage}
           />
         ))}
       </div>

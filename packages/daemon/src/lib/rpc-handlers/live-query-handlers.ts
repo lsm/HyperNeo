@@ -58,6 +58,76 @@ const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
   'space_task_agent',
 ]);
 
+const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
+const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD = 2048;
+const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX = 1200;
+const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX = 20;
+const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS = '…';
+
+function compactPreviewValue(value: unknown, path: string[]): unknown {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    if (value.length <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX) {
+      return value;
+    }
+    return `${value.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`;
+  }
+  if (Array.isArray(value)) {
+    const key = path[path.length - 1] ?? '';
+    const parent = path.length >= 2 ? path[path.length - 2] : '';
+    const isContentArray = key === 'content' && parent === 'message';
+    const limit = isContentArray
+      ? value.length
+      : Math.min(value.length, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX);
+    const out: unknown[] = [];
+    for (let i = 0; i < limit; i += 1) {
+      out.push(compactPreviewValue(value[i], [...path, String(i)]));
+    }
+    return out;
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = compactPreviewValue(v, [...path, key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function buildCompactMessagePreview(raw: string): {
+  preview: string;
+  contentBytes: number;
+  contentTruncated: boolean;
+} {
+  const contentBytes = raw.length;
+  if (contentBytes <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD) {
+    return { preview: raw, contentBytes, contentTruncated: false };
+  }
+  const parsed = parseJsonOptional<Record<string, unknown>>(raw);
+  if (!parsed) {
+    return {
+      preview: `${raw.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`,
+      contentBytes,
+      contentTruncated: true,
+    };
+  }
+  const previewValue = compactPreviewValue(parsed, []);
+  const preview = JSON.stringify(previewValue);
+  return { preview, contentBytes, contentTruncated: true };
+}
+
+function mapSpaceTaskMessageCompactRow(row: Record<string, unknown>): Record<string, unknown> {
+  const rawContent = typeof row.content === 'string' ? row.content : String(row.content ?? '');
+  const { preview, contentBytes, contentTruncated } = buildCompactMessagePreview(rawContent);
+  const mapped = mapSpaceTaskMessageRow({ ...row, content: preview });
+  mapped.contentBytes = contentBytes;
+  mapped.contentTruncated = contentTruncated;
+  return mapped;
+}
+
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
   const groupId = String(row.groupId ?? '');
@@ -2401,28 +2471,46 @@ selected_ids AS (
   SELECT id FROM seg_summary
 )
 SELECT
-  j.id,
-  j.sessionId,
-  j.kind,
-  j.role,
-  j.label,
-  j.nodeExecutionId,
-  j.taskId,
-  j.taskTitle,
-  j.messageType,
-  j.content,
-  j.origin,
-  j.deliveryState,
-  j.createdAt,
-  j.turnIndex,
-  j.parentToolUseId,
-  j.insOrder AS insOrder
-FROM joined j
-JOIN selected_ids s ON s.id = j.id
--- Tiebreak same-millisecond rows by insertion order (sm.rowid), not the random
--- UUID id, so e.g. several queued prompts consumed in the same ms render in
--- queue order, not shuffled (#2338).
-ORDER BY j.createdAt ASC, j.insOrder ASC
+  id,
+  sessionId,
+  kind,
+  role,
+  label,
+  nodeExecutionId,
+  taskId,
+  taskTitle,
+  messageType,
+  content,
+  origin,
+  deliveryState,
+  createdAt,
+  turnIndex,
+  parentToolUseId,
+  insOrder
+FROM (
+  SELECT
+    j.id,
+    j.sessionId,
+    j.kind,
+    j.role,
+    j.label,
+    j.nodeExecutionId,
+    j.taskId,
+    j.taskTitle,
+    j.messageType,
+    j.content,
+    j.origin,
+    j.deliveryState,
+    j.createdAt,
+    j.turnIndex,
+    j.parentToolUseId,
+    j.insOrder AS insOrder
+  FROM joined j
+  JOIN selected_ids s ON s.id = j.id
+  ORDER BY j.createdAt DESC, j.insOrder DESC
+  LIMIT ?
+)
+ORDER BY createdAt ASC, insOrder ASC
 `.trim();
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
@@ -3422,10 +3510,15 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
     'spaceTaskMessages.byTask.compact',
     {
       sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
-      paramCount: 1,
+      paramCount: 2,
       debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-      mapRow: mapSpaceTaskMessageRow,
+      mapRow: mapSpaceTaskMessageCompactRow,
       buildScopeFilter: buildTaskScopeFilter,
+      rowFingerprint: (row) => ({
+        id: row.id,
+        deliveryState: row.deliveryState,
+        content: typeof row.content === 'string' ? row.content.length : row.content,
+      }),
     },
   ],
   [
@@ -3685,6 +3778,19 @@ export function setupLiveQueryHandlers(
       if (!spaceTask) {
         throw new Error(`Unauthorized: space task "${taskId}" not found`);
       }
+      if (queryName === 'spaceTaskMessages.byTask.compact') {
+        const limit = params[1];
+        if (
+          typeof limit !== 'number' ||
+          !Number.isInteger(limit) ||
+          limit <= 0 ||
+          limit > MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW
+        ) {
+          throw new Error(
+            `Unauthorized: spaceTaskMessages.byTask.compact limit must be an integer in [1, ${MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW}], got ${String(limit)}`
+          );
+        }
+      }
     } else if (queryName === 'actorMessages.byWorkflowRun') {
       const workflowRunId = params[0] as string;
       if (params.some((param) => param !== workflowRunId)) {
@@ -3908,6 +4014,28 @@ export function setupLiveQueryHandlers(
     }
 
     return { ok: true } satisfies LiveQueryUnsubscribeResponse;
+  });
+
+  const stmtSpaceTaskMessage = db.prepare(
+    'SELECT sdk_message FROM sdk_messages WHERE id = ? AND task_id = ?'
+  );
+
+  messageHub.onRequest('spaceTaskMessage.get', async (data) => {
+    const { taskId, messageId } = data as { taskId?: unknown; messageId?: unknown };
+    if (typeof taskId !== 'string' || !taskId || typeof messageId !== 'string' || !messageId) {
+      throw new Error('spaceTaskMessage.get requires taskId and messageId');
+    }
+    const spaceTask = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as
+      | { space_id: string }
+      | undefined;
+    if (!spaceTask) {
+      throw new Error(`Unauthorized: space task "${taskId}" not found`);
+    }
+    const row = stmtSpaceTaskMessage.get(messageId, taskId) as { sdk_message: string } | undefined;
+    if (!row) {
+      throw new Error('Message not found');
+    }
+    return { sdkMessage: row.sdk_message };
   });
 
   const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
