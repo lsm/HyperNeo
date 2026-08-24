@@ -714,6 +714,7 @@ export class QueryRunner {
             provider: resolvedProviderId as Session['config']['provider'],
           },
         };
+        await providerService.ensureSessionProviderBridges(providerSession);
         const providerEnvVars = providerService.getProviderEnvVars(providerSession);
         extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined

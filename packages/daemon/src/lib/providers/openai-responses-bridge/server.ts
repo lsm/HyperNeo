@@ -30,6 +30,7 @@ import {
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
+import { createHttpWsServer } from '../../runtime-server/index.js';
 
 const logger = new Logger('openai-responses-bridge-server');
 
@@ -1314,9 +1315,9 @@ function resolveModelId(model: string, aliases: Record<string, string> | undefin
   return aliases?.[model] ?? model;
 }
 
-export function createOpenAIResponsesBridgeServer(
+export async function createOpenAIResponsesBridgeServer(
   config: OpenAIResponsesBridgeConfig
-): OpenAIResponsesBridgeServer {
+): Promise<OpenAIResponsesBridgeServer> {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
   const modelsResponse = modelsListResponse(config.models);
@@ -1415,9 +1416,10 @@ export function createOpenAIResponsesBridgeServer(
     }
   };
 
-  const server = Bun.serve({
+  const server = await createHttpWsServer({
+    hostname: '0.0.0.0',
     port: 0,
-    idleTimeout: 0,
+    idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {
       const route = extractSessionId(req);
 

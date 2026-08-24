@@ -25,6 +25,7 @@ import {
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
+import { createHttpWsServer } from '../../runtime-server/index.js';
 
 const logger = new Logger('openai-chat-bridge-server');
 
@@ -652,9 +653,9 @@ async function streamChatToAnthropic(params: {
   }
 }
 
-export function createOpenAIChatBridgeServer(
+export async function createOpenAIChatBridgeServer(
   config: OpenAIChatBridgeConfig
-): OpenAIChatBridgeServer {
+): Promise<OpenAIChatBridgeServer> {
   const fetchImpl = config.fetchImpl ?? fetch;
   const chatCompletionsUrl = buildChatCompletionsUrl(config.baseUrl);
   const toolUseSupported = config.toolUseSupported ?? true;
@@ -666,10 +667,10 @@ export function createOpenAIChatBridgeServer(
 
   const sessionThinkingConfigs = new Map<string, { thinking: AnthropicRequest['thinking'] }>();
 
-  const server = Bun.serve({
+  const server = await createHttpWsServer({
     hostname: '127.0.0.1',
     port: 0,
-    idleTimeout: 0,
+    idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const authHeader = req.headers.get('Authorization') ?? '';

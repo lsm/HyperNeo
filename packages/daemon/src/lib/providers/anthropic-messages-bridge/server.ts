@@ -1,5 +1,6 @@
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import { Logger } from '../../logger.js';
+import { createHttpWsServer } from '../../runtime-server/index.js';
 import type { AnthropicRequest } from '../provider-anthropic-compat/translator.js';
 import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
 import { isJsonContentType, normalizeUpstreamError } from '../shared/normalize-upstream-error.js';
@@ -106,9 +107,9 @@ function enforceThinking(bodyBytes: ArrayBuffer, desired: SessionThinkingConfig)
   return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
 }
 
-export function createAnthropicMessagesBridgeServer(
+export async function createAnthropicMessagesBridgeServer(
   config: AnthropicMessagesBridgeConfig
-): AnthropicMessagesBridgeServer {
+): Promise<AnthropicMessagesBridgeServer> {
   const fetchImpl = config.fetchImpl ?? fetch;
   const messagesUrl = buildUpstreamUrl(config.baseUrl, '/v1/messages', [
     '/v1/messages/count_tokens',
@@ -119,10 +120,10 @@ export function createAnthropicMessagesBridgeServer(
 
   const sessionThinking = new Map<string, SessionThinkingConfig>();
 
-  const server = Bun.serve({
+  const server = await createHttpWsServer({
     hostname: '127.0.0.1',
     port: 0,
-    idleTimeout: 0,
+    idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');

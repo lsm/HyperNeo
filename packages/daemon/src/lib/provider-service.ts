@@ -1,7 +1,12 @@
 import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
-import type { ProviderInfo as NewProviderInfo, ProviderSdkConfig } from '@hyperneo/shared/provider';
+import type {
+  ProviderInfo as NewProviderInfo,
+  ProviderSessionConfig,
+  ProviderSdkConfig,
+} from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
+import { providerSessionConfigForSession } from './providers/session-config.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
   return {
@@ -83,6 +88,36 @@ function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
 
 export class ProviderService {
   private readonly logger = new Logger('provider-service');
+
+  private async ensureProviderBridges(
+    provider:
+      | {
+          ensureBridgeStarted?(
+            modelId: string,
+            sessionConfig?: ProviderSessionConfig
+          ): Promise<void>;
+        }
+      | undefined,
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): Promise<void> {
+    try {
+      await provider?.ensureBridgeStarted?.(modelId, sessionConfig);
+    } catch {}
+  }
+
+  async ensureSessionProviderBridges(session: Session): Promise<void> {
+    await this.getReadyRegistry();
+    const registry = this.getRegistry();
+    const providerId = session.config.provider || 'anthropic';
+    const provider = registry.get(providerId);
+    if (!provider) return;
+    await this.ensureProviderBridges(
+      provider,
+      session.config.model || 'default',
+      providerSessionConfigForSession(session)
+    );
+  }
 
   private getRegistry() {
     return initializeProviders();
@@ -169,6 +204,7 @@ export class ProviderService {
     const models = await provider.getModels();
 
     let baseUrl: string | undefined;
+    await this.ensureProviderBridges(provider, models[0]?.id || 'default');
     try {
       const sdkConfig = provider.buildSdkConfig(models[0]?.id || 'default');
       baseUrl = Object.keys(sdkConfig.envVars).includes('ANTHROPIC_BASE_URL')
@@ -221,6 +257,7 @@ export class ProviderService {
     const provider = registry.get(providerId);
     const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
     let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
+    await this.ensureProviderBridges(provider, providerModelId);
     try {
       const sdkConfig = provider?.buildSdkConfig(providerModelId);
       sdkModelId = sdkConfig?.envVars.ANTHROPIC_MODEL ?? sdkModelId;
@@ -265,6 +302,7 @@ export class ProviderService {
 
     let baseUrl = 'https://api.anthropic.com';
     let apiVersion = 'v1';
+    await this.ensureProviderBridges(provider, modelId);
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
       modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? modelId;
@@ -300,6 +338,7 @@ export class ProviderService {
       return {};
     }
 
+    await this.ensureProviderBridges(provider, modelId);
     try {
       const sdkConfig = provider.buildSdkConfig(modelId);
       if (provider.id === 'anthropic' && process.env.HYPERNEO_USE_DEV_PROXY === '1') {
@@ -323,18 +362,7 @@ export class ProviderService {
       return {};
     }
 
-    const effectiveWorkspacePath = session.worktree?.worktreePath ?? session.workspacePath;
-    const sessionConfig = {
-      workspacePath: effectiveWorkspacePath ?? undefined,
-      sessionId: session.id,
-      ...(session.config.providerConfig
-        ? {
-            apiKey: session.config.providerConfig.apiKey,
-            baseUrl: session.config.providerConfig.baseUrl,
-            region: session.config.providerConfig.region,
-          }
-        : {}),
-    };
+    const sessionConfig = providerSessionConfigForSession(session);
 
     const modelId = session.config.model || 'default';
     try {
@@ -406,6 +434,7 @@ export class ProviderService {
     const sessionConfig = modelId ? { apiKey: undefined } : undefined;
     let sdkConfig: ProviderSdkConfig;
     try {
+      await this.ensureProviderBridges(provider, modelId || 'default', sessionConfig);
       sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
     } catch {
       return {};

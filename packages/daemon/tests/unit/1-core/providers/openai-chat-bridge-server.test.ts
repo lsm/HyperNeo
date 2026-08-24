@@ -42,7 +42,7 @@ describe('OpenAI Chat Completions bridge server', () => {
         });
       });
 
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test/v1',
         apiKey: 'test-key',
         headers: { 'X-Trace': 'on' },
@@ -96,7 +96,7 @@ describe('OpenAI Chat Completions bridge server', () => {
         { status: 200 }
       );
     });
-    const server = createOpenAIChatBridgeServer({
+    const server = await createOpenAIChatBridgeServer({
       baseUrl: 'http://upstream.test',
       fetchImpl: fetchMock as typeof fetch,
       toolUseSupported: false,
@@ -168,7 +168,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       ]);
       return new Response(body, { status: 200 });
     });
-    const server = createOpenAIChatBridgeServer({
+    const server = await createOpenAIChatBridgeServer({
       baseUrl: 'http://upstream.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -200,7 +200,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           headers: { 'Content-Type': 'application/json' },
         })
     );
-    const server = createOpenAIChatBridgeServer({
+    const server = await createOpenAIChatBridgeServer({
       baseUrl: 'http://upstream.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -229,7 +229,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           headers: { 'Content-Type': 'application/json' },
         })
     );
-    const server = createOpenAIChatBridgeServer({
+    const server = await createOpenAIChatBridgeServer({
       baseUrl: 'http://upstream.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -285,7 +285,7 @@ describe('OpenAI Chat Completions bridge server', () => {
     'serves Anthropic-compatible model listing for SDK initialization',
     async () => {
       const fetchMock = mock(async () => new Response('', { status: 500 }));
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -456,7 +456,7 @@ describe('OpenAI Chat Completions bridge server', () => {
         ]);
         return new Response(body, { status: 200 });
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -493,7 +493,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           )
       );
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -515,7 +515,7 @@ describe('OpenAI Chat Completions bridge server', () => {
       const fetchMock = mock(async () => {
         throw new Error('ECONNREFUSED');
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -537,7 +537,7 @@ describe('OpenAI Chat Completions bridge server', () => {
 
     it.skipIf(!isBun)('rejects non-streaming requests with 400', async () => {
       const fetchMock = mock(async () => new Response('', { status: 200 }));
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -557,7 +557,7 @@ describe('OpenAI Chat Completions bridge server', () => {
 
     it.skipIf(!isBun)('estimates input tokens at /v1/messages/count_tokens', async () => {
       const fetchMock = mock(async () => new Response('', { status: 500 }));
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -577,7 +577,7 @@ describe('OpenAI Chat Completions bridge server', () => {
 
     it.skipIf(!isBun)('serves /health and /v1/health', async () => {
       const fetchMock = mock(async () => new Response('', { status: 500 }));
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -591,8 +591,8 @@ describe('OpenAI Chat Completions bridge server', () => {
 
     it.skipIf(!isBun)(
       'binds to loopback (127.0.0.1) so other local users cannot reach the bridge',
-      () => {
-        const server = createOpenAIChatBridgeServer({
+      async () => {
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test',
           fetchImpl: (async () => new Response('', { status: 500 })) as typeof fetch,
         });
@@ -643,7 +643,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           ]);
           return new Response(body, { status: 200 });
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -687,7 +687,7 @@ describe('OpenAI Chat Completions bridge server', () => {
         ]);
         return new Response(body, { status: 200 });
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -738,7 +738,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           );
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1/chat/completions',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -786,7 +786,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           );
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl:
             'https://x.openai.azure.com/openai/deployments/gpt-4o?api-version=2024-08-01-preview',
           fetchImpl: fetchMock as typeof fetch,
@@ -828,7 +828,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           { status: 200 }
         );
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test/v1',
         fetchImpl: fetchMock as typeof fetch,
         thinkingSupported: true,
@@ -856,7 +856,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           { status: 200 }
         );
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test/v1',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -885,7 +885,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           { status: 200 }
         );
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test/v1',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -914,7 +914,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           );
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1',
           fetchImpl: fetchMock as typeof fetch,
           streamUsageSupported: true,
@@ -945,7 +945,7 @@ describe('OpenAI Chat Completions bridge server', () => {
               headers: { 'Content-Type': 'application/json' },
             })
         );
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -982,7 +982,7 @@ describe('OpenAI Chat Completions bridge server', () => {
               headers: { 'Content-Type': 'text/event-stream' },
             })
         );
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -1019,7 +1019,7 @@ describe('OpenAI Chat Completions bridge server', () => {
               headers: { 'Content-Type': 'text/event-stream' },
             })
         );
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -1054,7 +1054,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           ]);
           return new Response(body, { status: 200 });
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -1091,7 +1091,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           ]);
           return new Response(body, { status: 200 });
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -1141,7 +1141,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           ]);
           return new Response(body, { status: 200 });
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test',
           fetchImpl: fetchMock as typeof fetch,
         });
@@ -1178,7 +1178,7 @@ describe('OpenAI Chat Completions bridge server', () => {
         ]);
         return new Response(body, { status: 200 });
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -1212,7 +1212,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           );
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test',
           fetchImpl: fetchMock as typeof fetch,
           thinkingSupported: true,
@@ -1253,7 +1253,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           );
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1',
           fetchImpl: fetchMock as typeof fetch,
           chatTemplateKwargs: { enable_thinking: false },
@@ -1281,7 +1281,7 @@ describe('OpenAI Chat Completions bridge server', () => {
           { status: 200 }
         );
       });
-      const server = createOpenAIChatBridgeServer({
+      const server = await createOpenAIChatBridgeServer({
         baseUrl: 'http://upstream.test/v1',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -1309,7 +1309,7 @@ describe('OpenAI Chat Completions bridge server', () => {
             { status: 200 }
           );
         });
-        const server = createOpenAIChatBridgeServer({
+        const server = await createOpenAIChatBridgeServer({
           baseUrl: 'http://upstream.test/v1',
           fetchImpl: fetchMock as typeof fetch,
           chatTemplateKwargs: { enable_thinking: false },

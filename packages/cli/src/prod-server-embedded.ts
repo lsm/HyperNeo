@@ -2,9 +2,12 @@ import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
 import type { Config } from '@hyperneo/daemon/config';
+import { createHttpWsServer, type ServerHandle } from '@hyperneo/daemon/lib/runtime-server';
 import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
-import { mkdir, writeFile, access } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, writeFile, access, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { Readable } from 'node:stream';
 import {
   createCorsPreflightResponse,
   isWebSocketPath,
@@ -21,7 +24,7 @@ export async function startProdServer(config: Config) {
 
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
-  let server: ReturnType<typeof Bun.serve> | null = null;
+  let server: ServerHandle | null = null;
   let sdkWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 
   const shutdown = async (signal: string) => {
@@ -76,7 +79,7 @@ export async function startProdServer(config: Config) {
         .catch(() => false);
       if (!exists) {
         await mkdir(dirname(dest), { recursive: true });
-        const content = await Bun.file(filePath).text();
+        const content = await readFile(filePath, 'utf8');
         await writeFile(dest, content);
       }
     }
@@ -120,16 +123,16 @@ export async function startProdServer(config: Config) {
   const indexAsset = embeddedAssets.get('/index.html');
   let indexHtmlContent: string | null = null;
   if (indexAsset) {
-    indexHtmlContent = await Bun.file(indexAsset.filePath).text();
+    indexHtmlContent = await readFile(indexAsset.filePath, 'utf8');
   }
 
   log.info(`Serving ${embeddedAssets.size} embedded web assets`);
 
-  server = Bun.serve({
+  server = await createHttpWsServer({
     hostname: config.host,
     port: config.port,
 
-    async fetch(req, server) {
+    async fetch(req, upgrade) {
       const url = new URL(req.url);
 
       if (req.method === 'OPTIONS') {
@@ -137,14 +140,12 @@ export async function startProdServer(config: Config) {
       }
 
       if (isWebSocketPath(url.pathname)) {
-        const upgraded = server.upgrade(req, {
-          data: {
-            connectionSessionId: 'global',
-          },
+        const upgradeResponse = upgrade(req, {
+          connectionSessionId: 'global',
         });
 
-        if (upgraded) {
-          return;
+        if (upgradeResponse) {
+          return upgradeResponse;
         }
 
         return new Response('WebSocket upgrade failed', { status: 500 });
@@ -162,7 +163,10 @@ export async function startProdServer(config: Config) {
           headers['Cache-Control'] = 'no-cache';
         }
 
-        return new Response(Bun.file(asset.filePath), { headers });
+        return new Response(
+          Readable.toWeb(createReadStream(asset.filePath)) as unknown as ReadableStream,
+          { headers }
+        );
       }
 
       if (indexHtmlContent) {
@@ -179,7 +183,7 @@ export async function startProdServer(config: Config) {
 
     websocket: wsHandlers,
 
-    error(error) {
+    onError(error) {
       log.error('Server error:', error);
       return createJsonErrorResponse(error instanceof Error ? error.message : String(error));
     },
