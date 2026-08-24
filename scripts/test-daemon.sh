@@ -6,7 +6,7 @@
 # Usage:
 #   ./scripts/test-daemon.sh                # All shards in parallel (fast, no coverage)
 #   ./scripts/test-daemon.sh --coverage     # All shards with coverage
-#   ./scripts/test-daemon.sh 5-space-runtime-a # Run a single shard
+#   ./scripts/test-daemon.sh 5-space-a # Run a single shard
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
 #   ./scripts/test-daemon.sh --verify       # Validate shard config without running tests
@@ -95,7 +95,7 @@ shard_index_to_suffix() {
 	printf '%s' "${letters:i:1}"
 }
 
-# Resolve a hash-split shard name (e.g. 5-space-runtime-a) to its bucket's files.
+# Resolve a hash-split shard name (e.g. 5-space-a) to its bucket's files.
 # Prints absolute test paths and returns 0 on a match, 1 if $1 is not a hash split.
 # A spec with a 4th <weights> field resolves its bucket by duration-aware packing
 # (see HASH_SPLIT_SPECS above); the union of buckets is the full glob set either way.
@@ -192,7 +192,7 @@ verify_shards() {
 		# Parse the active shard matrix once: extract the `shard: [...]` flow
 		# sequence and normalize to one token per line. Membership is checked
 		# against THIS parsed list (grep -qxF per token), never by grepping the
-		# whole file — a commented-out matrix entry (`# 5-space-runtime-b`) must
+		# whole file — a commented-out matrix entry (`# 5-space-b`) must
 		# not satisfy the check, or CI silently drops the bucket.
 		local matrix_tokens=""
 		if [ -f "$workflow" ]; then
@@ -336,7 +336,7 @@ migration_shard_paths() {
 
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
-	# Hash-split shards (e.g. 5-space-runtime-a/b) are resolved dynamically by
+	# Hash-split shards (e.g. 5-space-a/b) are resolved dynamically by
 	# stable hash — no hand-listed files. See HASH_SPLIT_SPECS above.
 	local resolved
 	if resolved=$(hash_split_resolve "$1"); then

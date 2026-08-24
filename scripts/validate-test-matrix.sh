@@ -1334,6 +1334,7 @@ elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'vitest.on
 elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
 	err "main.yml online runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO online tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
+else
 # After `vitest run`, only the resolver-produced $paths (the one selector)
 # and neutral flags (--config, --reporter, --outputFile.*, --color) may
 # appear. A selection flag like --exclude=<glob> or --testNamePattern would

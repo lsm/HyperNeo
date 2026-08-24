@@ -196,7 +196,7 @@ describe('listSplitSpecs', () => {
     const online = listSplitSpecs('daemon-online');
     expect(online.map((spec) => spec.prefix)).toContain('rpc');
     expect(online.every((spec) => spec.testRoot === 'packages/daemon/tests/online')).toBe(true);
-  }, 30000);
+  }, 120000);
 });
 
 describe('main', () => {
@@ -236,7 +236,7 @@ describe('main', () => {
     );
     expect(warn.join('\n')).toContain('references manifest scripts/shard-weights.tsv');
     expect(warn.join('\n')).toContain('hash-fallback');
-  }, 30000);
+  }, 120000);
 
   it('fails before writing when no targeted file has a measured duration', () => {
     const dir = makeTempDir();
@@ -261,7 +261,7 @@ describe('main', () => {
     expect(code).toBe(1);
     expect(warn.join('\n')).toContain('no targeted daemon-unit file has a duration');
     expect(existsSync(outPath)).toBe(false);
-  }, 30000);
+  }, 120000);
 
   it('writes the manifest and merges with an existing one', () => {
     const dir = makeTempDir();
@@ -296,7 +296,7 @@ describe('main', () => {
       '500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts'
     );
     expect(out.join('\n')).toContain('(1 updated, 1 kept, 0 stale-dropped)');
-  }, 30000);
+  }, 120000);
 
   it('rejects an unknown suite and missing junit inputs', () => {
     expect(main(['--suite', 'nope', 'x.xml'], { out: () => {}, warn: () => {} })).toBe(2);

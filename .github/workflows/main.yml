@@ -199,17 +199,26 @@ jobs:
           daemon=false
           web=false
           while IFS= read -r f; do
-            # daemon unless the file is web-only or inert docs
+            # Inert docs: docs/ trees and TOP-LEVEL *.md only. Bash case globs
+            # match across '/', so a bare *.md would also swallow nested
+            # functional assets (e.g. packages/skills/*/SKILL.md feeds the
+            # bundled skill registry); those must fall through to the package
+            # rules below.
+            doc=false
+            case "$f" in
+              docs/*) doc=true ;;
+              *.md) case "$f" in */*) ;; *) doc=true ;; esac ;;
+            esac
+            if [ "$doc" = true ]; then continue; fi
+            # daemon unless the file is web-only
             case "$f" in
               packages/web/*) ;;
-              *.md|docs/*) ;;
               *) daemon=true ;;
             esac
-            # web unless the file is daemon-side-only or inert docs (packages/ui
-            # and root tooling count as web-relevant — they feed the web build)
+            # web unless the file is daemon-side-only (packages/ui and root
+            # tooling count as web-relevant — they feed the web build)
             case "$f" in
               packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/e2e/*) ;;
-              *.md|docs/*) ;;
               *) web=true ;;
             esac
           done <<< "$files"
