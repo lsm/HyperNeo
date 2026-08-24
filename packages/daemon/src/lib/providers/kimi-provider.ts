@@ -236,6 +236,10 @@ export class KimiProvider implements Provider {
     );
   }
 
+  private static isCapacityTaggedModelId(modelId: string): boolean {
+    return /-(8|32|128)k$/i.test(KimiProvider.normalizeKimiModelId(modelId));
+  }
+
   static resolveKimiTitleThinkingConfig(
     modelId: string
   ): { type: 'enabled'; budgetTokens: 16000 } | { type: 'disabled' } | undefined {
@@ -437,7 +441,12 @@ export class KimiProvider implements Provider {
     ) {
       return 'k3-256k';
     }
-    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3' || id.startsWith('moonshot-k3-')) {
+    if (
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'moonshot-k3' ||
+      (id.startsWith('moonshot-k3-') && !KimiProvider.isCapacityTaggedModelId(modelId))
+    ) {
       return 'kimi-k3[1m]';
     }
     if (KimiProvider.hasOneMContextSuffix(modelId)) return modelId;
@@ -475,7 +484,12 @@ export class KimiProvider implements Provider {
     ) {
       return useLegacy ? 'k3-256k' : 'kimi-k3-256k';
     }
-    if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3' || id.startsWith('moonshot-k3-')) {
+    if (
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'moonshot-k3' ||
+      (id.startsWith('moonshot-k3-') && !KimiProvider.isCapacityTaggedModelId(modelId))
+    ) {
       return (useLegacy ? 'k3' : 'kimi-k3') + (oneM ? '[1m]' : '');
     }
     if (oneM && KimiProvider.isDiscoveredKimiModelId(modelId)) {
@@ -614,7 +628,13 @@ export class KimiProvider implements Provider {
         }
       }
     }
-    if (prefixMatch && KimiProvider.isKimiK3Model(model.id)) return prefixMatch.model;
+    if (
+      prefixMatch &&
+      KimiProvider.isKimiK3Model(model.id) &&
+      !KimiProvider.isCapacityTaggedModelId(model.id)
+    ) {
+      return prefixMatch.model;
+    }
     if (KimiProvider.isDiscoveredKimiModelId(model.id)) {
       return {
         id: model.id,

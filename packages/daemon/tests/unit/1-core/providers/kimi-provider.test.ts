@@ -495,6 +495,25 @@ describe('KimiProvider', () => {
       expect(KimiProvider.isKimiK3OneMModel('k3-preview')).toBe(true);
     });
 
+    it('preserves capacity-tagged K3 discovery IDs instead of collapsing them to the 1M entry', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([{ data: [{ id: 'moonshot-k3-128k', object: 'model' }] }]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0]).toMatchObject({
+        id: 'moonshot-k3-128k',
+        name: 'moonshot-k3-128k',
+        family: 'kimi',
+        provider: 'kimi',
+        contextWindow: 131_072,
+        thinkingModes: 'granular',
+        available: true,
+      });
+    });
+
     it('caches successful discovery and force bypasses the cache', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const { fetchMock } = installModelListFetch([
@@ -613,6 +632,22 @@ describe('KimiProvider', () => {
       const config = provider.buildSdkConfig('moonshot-v1-32k');
       expect(config.envVars.ANTHROPIC_MODEL).toBe('moonshot-v1-32k');
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('32768');
+    });
+
+    it('routes capacity-tagged K3 discovery IDs to themselves, not the 1M flagship', () => {
+      expect(provider.buildSdkConfig('moonshot-k3-128k').envVars.ANTHROPIC_MODEL).toBe(
+        'moonshot-k3-128k'
+      );
+      expect(
+        provider.buildSdkConfig('moonshot-k3-32k').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      ).toBe('32768');
+      expect(provider.translateModelIdForSdk('moonshot-k3-128k')).toBe('moonshot-k3-128k');
+      expect(provider.getModelThinkingMode('moonshot-k3-128k')).toBe('granular');
+
+      expect(provider.translateModelIdForSdk('moonshot-k3')).toBe('kimi-k3[1m]');
+      expect(provider.translateModelIdForSdk('moonshot-k3-preview')).toBe('kimi-k3[1m]');
+      expect(provider.translateModelIdForSdk('moonshot-k3-256k-preview')).toBe('k3-256k');
+      expect(KimiProvider.resolveContextWindow('k3-256k')).toBe(262_144);
     });
 
     it('preserves newly discovered moonshot IDs instead of routing them to K2.7', () => {
