@@ -202,10 +202,19 @@ gate never sees. Re-flagging and admission are two separate rules:
   the provider is still probing; and the title job's own consult still
   applies.) Re-flag when the session still needs a title.
 - **The title job has its own admission interpreter.** Title generation is
-  lowest-priority background work: it admits **only when the account is fully
-  open — not saturated and not probing** — and never holds or competes for a
-  probe grant (its consult uses the synthetic identity
-  `(sessionId, 'title')`; one such job per session, idempotent). The consult
+  lowest-priority background work, and its admission follows the **standard
+  contract — saturated/closed → deny, probing → deny unless it holds the
+  grant, open → admit — with no fully-open-only exception**: its precedence
+  over nothing comes from queue position, not a stricter rule. Background
+  identities register in the FIFO **tail** (chat deliveries always precede
+  them in the global order), so when the last chat registration completes the
+  successor grant simply binds the next FIFO head — a background identity —
+  and its consult admits on that grant like any delivery; the grant machinery
+  serializes the background wave one at a time (a stricter fully-open-only
+  rule would contradict grant release and livelock: the bound job denied
+  while probing, the grant expiring and re-binding forever). Consult identity
+  is the synthetic `(sessionId, 'title')`; one such job per session,
+  idempotent. The consult
   sits at `handleSessionTitleGeneration`'s entry, before any lifecycle work;
   denial returns the same parked shape P3 uses — `requeue(job.id, retryAt)`
   with `retryAt` = the saturation deadline, or the probe tick while probing —
@@ -221,13 +230,8 @@ gate never sees. Re-flagging and admission are two separate rules:
   query's **actual effective account key** (title generation may resolve a
   different provider than the session's chat provider) before falling back — a
   title request can be the call that trips the cap, and the registry must learn
-  it. This keeps background titling strictly behind the user-visible drain:
-  chat deliveries consume grants and wake each other; title jobs wait for full
-  openness — **and full openness does not release the background wave at
-  once**: when the last chat registration completes, any accumulated parked
-  background jobs (titles, Space jobs, GitHub agents) release through the
-  same one-at-a-time grant machinery — background identities join the FIFO
-  tail and each admits on its own grant resolution — so a 64-wide title herd
+  it. This keeps background titling strictly behind the user-visible drain —
+  chat FIFO precedence plus one-at-a-time grant release; a 64-wide title herd
   cannot hit the just-recovered account. **The same interpreter covers the Space background provider
   queries** — `evolution-conversation-analysis-service.ts:289-296`,
   `evolution-episode-service.ts:754-761`, and `llm-workflow-selector.ts:56-61`
@@ -248,8 +252,13 @@ gate never sees. Re-flagging and admission are two separate rules:
   stored session credentials, `app.ts:536-566`) are v1's roster of
   out-of-pipeline provider callers; any new direct `query(...)` caller joins
   them by convention. The GitHub agents' denial shape **splits by invocation**:
-  the poll path (a durable tick) skips the agent work this tick — the next
-  scheduled poll retries naturally, no park needed; the **webhook path**
+  the poll path (a durable tick) skips the agent work this tick — **without
+  consuming the polling window**: the denial returns
+  \`skipped_provider_saturated\` and the poller does not advance
+  \`state.lastPollTime\` past that event (\`pollRepository\` advances the cursor
+  after the callbacks, \`github/polling-service.ts:121-133\`, so a plain skip
+  would silently eat it); the event is re-processed by the next poll once the
+  account reopens; the **webhook path**
   (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
   callback — no job, no `job.id`) processes the event **without** agent
   analysis (records the raw event, skips the LLM triage) and answers the
@@ -342,7 +351,8 @@ their per-uuid identity (calling the boundary per row where they currently call
 it once). **Not-yet-persisted deliveries are a distinct case**: the V1
 injection paths (`deliverInjectedMessage`,
 `injection-delivery-steps.ts:148-156`; the long-term-agent V1 path,
-`space-runtime-service.ts:572-575`) call `ensureQueryStarted` *before*
+`space-runtime-service.ts:572-575`; and `spaceAgentInjector`,
+`rpc-handlers/index.ts:869-880`) call `ensureQueryStarted` *before*
 inserting their SDK row — there is no row to settle or register on denial, and
 the message exists only in the caller's memory. For these the boundary returns
 a **typed `provider_parked` outcome** to the caller instead of settling a row:
@@ -484,8 +494,10 @@ default-endpoint providers (e.g. built-in Anthropic with stored credentials)
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
-Registry state is in-memory; the one durable addition is the `queue_reason`
-column on `sdk_messages` (migration) that makes queue linkage restart-safe.
+Registry state is in-memory; the durable additions are the `queue_reason`
+column **and the monotonic queue-sequence column** on `sdk_messages` (one
+migration) — linkage and FIFO order both restart-safe; reconstruction sorts
+by the sequence (pinned).
 
 ### Saturation derivation — consuming the classifier and the ladder
 
@@ -828,9 +840,11 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
    for the probe rule) at the **turn boundary** — start when the query yields
    the delivery's prompt, end at that turn's terminal result — not at the
    startup-permit sites and not for the whole streaming query, which stays
-   alive across turns. Every report is keyed by the **effective
-   provider-account key** (provider id + normalized endpoint fingerprint),
-   never the bare `resolvedProviderId`.
+   alive across turns. Every report is keyed by the **canonical account
+   key** of State ownership — the normalized upstream identity for explicit
+   endpoints, the provider id only for default-endpoint identities — never
+   the bare `resolvedProviderId`, and never a provider-id-prefixed split of
+   one shared upstream account.
 
 ## Sequencing
 
@@ -894,11 +908,12 @@ by pre-existing suites):
    provider-wide payload reaches zero per-session subscribers
    (`internal-event-bus.ts:116-135`) — **exactly one wake per clear, addressed
    to the grant-bound identity's session** (never one per registered session);
-   a manual-mode bound row retains and re-binds next eligible; **probe grant lifecycle** — mint at first
-   admitting consult, honored by downstream consults for the same delivery
-   (the end-to-end pass that prevents the self-deadlock), **minted and bound
-   during the clear, before any consult** (a test that mints at the first
-   admitting consult re-opens the A2/B1 scheduling race), registration is
+   a manual-mode bound row retains and re-binds next eligible; **probe grant
+   lifecycle** — **minted and bound during the clear, before any consult**
+   (the old mint-at-first-admitting-consult wording re-opened the A2/B1
+   scheduling race and is removed everywhere), honored by downstream consults
+   for the same delivery (the end-to-end pass that prevents the
+   self-deadlock), registration is
    admission-generation-conditional (any state transition landing between
    consult and register re-admits immediately), the wake reaches only the bound identity's session
    (manual-mode bound row → retain and re-bind next eligible), billing-terminal
