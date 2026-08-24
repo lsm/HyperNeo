@@ -203,7 +203,7 @@ describe('SpaceAgentInactivity repositories', () => {
         configRevision: 1,
       });
       claimRepo.markInFlight(spaceId, 'agent-1', 'k');
-      const held = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
+      const held = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', 1, {
         releaseClaim: false,
         markDegraded: false,
         advanceAttemptGeneration: false,
@@ -262,7 +262,7 @@ describe('SpaceAgentInactivity repositories', () => {
       });
 
       expect(
-        claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
+        claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', 1, {
           releaseClaim: true,
           markDegraded: false,
           advanceAttemptGeneration: false,
@@ -279,7 +279,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      const degraded = claimRepo.applyReset(spaceId, 'agent-1', 'k2', 'scanner-a', {
+      const degraded = claimRepo.applyReset(spaceId, 'agent-1', 'k2', 'scanner-a', 1, {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: true,
@@ -332,7 +332,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-b',
         configRevision: 1,
       });
-      const result = claimRepo.applyReset(spaceId, 'agent-1', 'old', 'scanner-a', {
+      const result = claimRepo.applyReset(spaceId, 'agent-1', 'old', 'scanner-a', 1, {
         releaseClaim: true,
         markDegraded: false,
         advanceAttemptGeneration: false,
@@ -374,7 +374,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-b',
         configRevision: 2,
       });
-      const result = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
+      const result = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', 2, {
         releaseClaim: true,
         markDegraded: false,
         advanceAttemptGeneration: false,
@@ -435,7 +435,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
+      claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', 1, {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: false,
@@ -444,6 +444,67 @@ describe('SpaceAgentInactivity repositories', () => {
       const cleared = claimRepo.getByAgent(spaceId, 'agent-1');
       expect(cleared?.degraded).toBe(false);
       expect(cleared?.state).toBe('none');
+    });
+
+    it('releases stale non-degraded claims older than the cutoff', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(claimRepo.releaseStale(spaceId, 'agent-1', Date.now() + 1000)).toBe(true);
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    });
+
+    it('keeps fresh claims within the lease and degraded tombstones untouched', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(claimRepo.releaseStale(spaceId, 'agent-1', 1)).toBe(false);
+      claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', 1, {
+        releaseClaim: false,
+        markDegraded: true,
+        advanceAttemptGeneration: false,
+      });
+      expect(claimRepo.releaseStale(spaceId, 'agent-1', Date.now() + 1000)).toBe(false);
+    });
+
+    it('ignores a late reset when the claim was replaced with a newer revision', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 2,
+      });
+      const result = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', 1, {
+        releaseClaim: true,
+        markDegraded: false,
+        advanceAttemptGeneration: false,
+      });
+      expect(result?.configRevision).toBe(2);
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')?.configRevision).toBe(2);
     });
   });
 });

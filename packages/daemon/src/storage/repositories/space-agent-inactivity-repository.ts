@@ -215,11 +215,22 @@ export class SpaceAgentInactivityClaimRepository {
     return result.changes > 0;
   }
 
+  releaseStale(spaceId: string, agentId: string, staleBefore: number): boolean {
+    const result = this.db
+      .prepare(
+        `DELETE FROM space_agent_inactivity_claims
+         WHERE space_id = ? AND agent_id = ? AND state != 'none' AND degraded = 0 AND updated_at <= ?`
+      )
+      .run(spaceId, agentId, staleBefore);
+    return result.changes > 0;
+  }
+
   applyReset(
     spaceId: string,
     agentId: string,
     expectedClaimKey: string,
     expectedOwnerToken: string | null,
+    expectedConfigRevision: number | null,
     reset: {
       releaseClaim: boolean;
       markDegraded: boolean;
@@ -230,7 +241,11 @@ export class SpaceAgentInactivityClaimRepository {
     return this.db.transaction(() => {
       const existing = this.getByAgent(spaceId, agentId);
       if (existing === null) return null;
-      if (existing.claimKey !== expectedClaimKey || existing.ownerToken !== expectedOwnerToken) {
+      if (
+        existing.claimKey !== expectedClaimKey ||
+        existing.ownerToken !== expectedOwnerToken ||
+        existing.configRevision !== expectedConfigRevision
+      ) {
         return existing;
       }
       if (reset.releaseClaim) {

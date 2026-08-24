@@ -12,6 +12,7 @@ import {
   type InactivityNagDeliveryOutcome,
   type InactivityWatchdogSessionSnapshot,
 } from '../../../../src/lib/space/agents/inactivity-watchdog-service';
+import { buildInactivityNagClaimKey } from '../../../../src/lib/space/agents/inactivity-watchdog-gates';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -220,5 +221,104 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     const oversized = 'x'.repeat(INACTIVITY_NAG_PROMPT_MAX_CHARS + 500);
     const bounded = boundInactivityNagPrompt(oversized);
     expect(bounded.length).toBe(INACTIVITY_NAG_PROMPT_MAX_CHARS);
+  });
+
+  it('truncates oversized prompts at code-point boundaries', () => {
+    const emoji = '😀'.repeat(INACTIVITY_NAG_PROMPT_MAX_CHARS + 100);
+    const bounded = boundInactivityNagPrompt(emoji);
+    expect(bounded.endsWith('…')).toBe(true);
+    expect([...bounded].length).toBe(INACTIVITY_NAG_PROMPT_MAX_CHARS);
+    expect(bounded.includes('�')).toBe(false);
+  });
+
+  it('marks the claim degraded when a delivery hangs past its timeout', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      deliveryTimeoutMs: 50,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return new Promise(() => {});
+      },
+    });
+    await service.scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')?.degraded).toBe(true);
+  });
+
+  it('does not deliver or reset a claim replaced by a newer scan revision', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    let getSpaceCalls = 0;
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: {
+        getSpace: mock(async () => {
+          getSpaceCalls += 1;
+          if (getSpaceCalls === 3) {
+            configRepo.upsert({
+              spaceId,
+              agentId: 'agent-1',
+              enabled: true,
+              thresholdMs: THRESHOLD_MS,
+              prompt: 'bump',
+            });
+            claimRepo.acquire({
+              spaceId,
+              agentId: 'agent-1',
+              claimKey: buildInactivityNagClaimKey({
+                agentId: 'agent-1',
+                windowAnchoredAt: sessionSnapshot.latestConsumedMessageAt!,
+                attemptGeneration: 0,
+              }),
+              windowAnchoredAt: sessionSnapshot.latestConsumedMessageAt!,
+              attemptGeneration: 0,
+              ownerToken: 'scanner-a',
+              configRevision: 2,
+            });
+          }
+          return { status: 'active', paused: false, stopped: false };
+        }),
+      },
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
+    expect(outcomes).toHaveLength(0);
+    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    expect(claim?.configRevision).toBe(2);
+    expect(claim?.degraded).toBe(false);
+    expect(claim?.state).toBe('accepted');
+  });
+
+  it('reclaims a stale claim left behind by a crashed scanner process', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    claimRepo.acquire({
+      spaceId,
+      agentId: 'agent-1',
+      claimKey: 'inactivity-nag:agent-1:stale:0',
+      windowAnchoredAt: NOW - THRESHOLD_MS - 5000,
+      attemptGeneration: 0,
+      ownerToken: 'scanner-old',
+      configRevision: 1,
+    });
+    db.prepare(
+      `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
+    ).run(spaceId, 'agent-1');
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
   });
 });
