@@ -1,9 +1,9 @@
 import type { SecurityCheckResult } from '@hyperneo/shared';
-import type { SecurityClassification } from './prompts/security-prompt';
-import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt';
-import { Logger } from '../logger';
-import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import type { SecurityClassification } from './prompts/security-prompt.ts';
+import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt.ts';
+import { Logger } from '../logger.ts';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 
 const logger = new Logger('security-agent');
 

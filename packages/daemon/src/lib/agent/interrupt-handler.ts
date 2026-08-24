@@ -1,11 +1,11 @@
 import type { Session, MessageHub } from '@hyperneo/shared';
-import type { QueryLike } from './query-like';
-import type { Logger } from '../logger';
-import type { MessageQueue } from './message-queue';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import { withSessionLock } from './message-delivery';
+import type { QueryLike } from './query-like.ts';
+import type { Logger } from '../logger.ts';
+import type { MessageQueue } from './message-queue.ts';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import { withSessionLock } from './message-delivery.ts';
 
 const DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS = 2000;
 const INTERRUPT_CONTROL_TIMED_OUT = 'interrupt-control-timed-out';
@@ -32,6 +32,8 @@ export interface InterruptHandlerContext {
   processExitedPromise: Promise<void> | null;
 
   getSdkCapabilities?(): ReadonlySet<string>;
+
+  onInterruptRequested?(): void;
 }
 
 export class InterruptHandler {
@@ -50,6 +52,8 @@ export class InterruptHandler {
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
+
+    this.ctx.onInterruptRequested?.();
 
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
 

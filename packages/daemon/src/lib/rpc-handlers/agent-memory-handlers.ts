@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { AgentMemoryRepository } from '../../storage/repositories/agent-memory-repository';
+import type { AgentMemoryRepository } from '../../storage/repositories/agent-memory-repository.ts';
 
 export interface AgentMemoryHandlerDeps {
   memoryRepo: AgentMemoryRepository;

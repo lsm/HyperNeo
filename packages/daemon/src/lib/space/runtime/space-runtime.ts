@@ -23,65 +23,65 @@ import {
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import {
   ChannelCycleRepository,
   DEAD_LOOP_THRESHOLD,
   DEAD_LOOP_WINDOW_MS,
-} from '../../../storage/repositories/channel-cycle-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
-import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
-import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import { formatExternalEventEssence } from '../../external-events/event-essence';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
-import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
-import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
+} from '../../../storage/repositories/channel-cycle-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
+import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { formatExternalEventEssence } from '../../external-events/event-essence.ts';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
+import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
 import {
   computeQueueAgeStats,
   ExternalEventQueueMetrics,
   type QueueHealthGauges,
   type QueueHealthSnapshot,
-} from '../../external-events/queue-health-metrics';
-import { TopicTrie } from '../../external-events/topic-trie';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import type { ExternalEvent } from '../../external-events/types';
+} from '../../external-events/queue-health-metrics.ts';
+import { TopicTrie } from '../../external-events/topic-trie.ts';
+import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import type { ExternalEvent } from '../../external-events/types.ts';
 import {
   type DaemonCommandMap,
   type InternalCommandBus,
   MissingCommandHandlerError,
-} from '../../internal-command-bus';
+} from '../../internal-command-bus.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
   InternalEventPayload,
-} from '../../internal-event-bus';
-import { Logger } from '../../logger';
-import type { SpaceActorRegistryAdapter } from '../actor-registry';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceManager } from '../managers/space-manager';
+} from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
+import type { SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import {
   assertValidSpaceTaskTransition,
   isValidSpaceTaskTransition,
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
-} from '../managers/space-task-manager';
+} from '../managers/space-task-manager.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
-} from '../managers/space-workflow-manager';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils';
-import type { WorkflowArtifactProfile } from './artifact-profile';
-import { CompletionDetector } from './completion-detector';
+} from '../managers/space-workflow-manager.ts';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
+import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import { CompletionDetector } from './completion-detector.ts';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
   DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
@@ -92,8 +92,8 @@ import {
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
-} from './constants';
-import { deliveryModeFromFailureReason } from './delivery-mode';
+} from './constants.ts';
+import { deliveryModeFromFailureReason } from './delivery-mode.ts';
 import {
   buildQueueKey,
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
@@ -108,20 +108,20 @@ import {
   resolveCurrentQueueableOrActiveExecution,
   resolveLiveDeliveryTarget,
   resolveSubscriptionTarget,
-} from './external-event-admission-gates';
+} from './external-event-admission-gates.ts';
 import {
   decideExternalEventDelivery,
   decidePostActivationDelivery,
   type ExternalEventDeliveryDecision,
-} from './external-event-delivery-pipeline';
-import { classifyLastMessageForIdleAgent } from './last-message-classifier';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
+} from './external-event-delivery-pipeline.ts';
+import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import {
   clearPendingCompletionState,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
-} from './post-approval-router';
+} from './post-approval-router.ts';
 import {
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
@@ -129,9 +129,9 @@ import {
   isPromptTooLongErrorMessage,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
   type PromptTooLongRecoveryState,
-} from './prompt-too-long-recovery';
-import type { TaskAgentManager } from './task-agent-manager';
-import { WorkflowExecutor } from './workflow-executor';
+} from './prompt-too-long-recovery.ts';
+import type { TaskAgentManager } from './task-agent-manager.ts';
+import { WorkflowExecutor } from './workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
@@ -140,10 +140,10 @@ import {
   isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
-} from './workflow-node-execution-validation';
-import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
-import { selectWorkflow } from './workflow-selector';
-import { decideRunTickAdmission, selectTimedOutExecutions } from './run-tick-admission-gates';
+} from './workflow-node-execution-validation.ts';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
+import { selectWorkflow } from './workflow-selector.ts';
+import { decideRunTickAdmission, selectTimedOutExecutions } from './run-tick-admission-gates.ts';
 import {
   resolveCompletionSummaries,
   isTaskAlreadyResolved,
@@ -152,13 +152,13 @@ import {
   isSettlementTerminal,
   resolveQuiesceSourceNodeId,
   selectSiblingsToQuiesce,
-} from './run-completion-settlement';
+} from './run-completion-settlement.ts';
 import {
   decideSpawnAdmission,
   selectPromotablePendingExecutions,
   classifySpawnFailure,
   hasDriveableExecution,
-} from './run-spawn-decisions';
+} from './run-spawn-decisions.ts';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
@@ -216,10 +216,10 @@ export interface SpaceRuntimeConfig {
   }) => Promise<void> | void;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
   goalService?: Pick<
-    import('../goals/goal-service').SpaceGoalService,
+    import('../goals/goal-service.ts').SpaceGoalService,
     'handleTaskTerminal' | 'supersedeOutcomeNotificationsForTask' | 'retryQueuedRunsForSpace'
   >;
-  evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
+  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
   spaceAgentInboxRepo?: SpaceAgentInboxRepository;
   deliverLongHorizonExternalEvent?: (args: {

@@ -1,7 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
-import { Logger } from './logger';
-import { isTerminalTurnError } from './agent/message-delivery';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
+import { Logger } from './logger.ts';
+import { isTerminalTurnError } from './agent/message-delivery.ts';
 
 export enum ErrorCategory {
   AUTHENTICATION = 'authentication',
@@ -433,8 +433,19 @@ export class ErrorManager {
     };
   }
 
-  async broadcastError(sessionId: string, error: StructuredError): Promise<void> {
+  async broadcastError(
+    sessionId: string,
+    error: StructuredError,
+    publishGuard?: () => boolean
+  ): Promise<void> {
     await this.updateApiConnectionStatus(error.category, error.code, error.message);
+
+    if (publishGuard && !publishGuard()) {
+      this.logger.warn(
+        `[ErrorManager] Suppressed stale ${error.category} error for session ${sessionId}`
+      );
+      return;
+    }
 
     if (
       !isTerminalTurnError(error) &&
@@ -466,7 +477,8 @@ export class ErrorManager {
       messageId?: string;
       phase?: string;
     },
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    publishGuard?: () => boolean
   ): Promise<StructuredError> {
     const sessionContext: StructuredError['sessionContext'] = {
       sessionId,
@@ -496,7 +508,7 @@ export class ErrorManager {
       });
     }
 
-    await this.broadcastError(sessionId, structuredError);
+    await this.broadcastError(sessionId, structuredError, publishGuard);
 
     return structuredError;
   }

@@ -1,4 +1,4 @@
-import { getDataDir } from './data-dir';
+import { getDataDir } from './data-dir.ts';
 import {
   copyFileSync,
   existsSync,
@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { Database } from '../storage/database';
+import type { Database } from '../storage/database.ts';
 
 function getSDKProjectDir(workspacePath: string): string {
   const resolved = existsSync(workspacePath) ? realpathSync(workspacePath) : workspacePath;

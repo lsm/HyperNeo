@@ -1,4 +1,4 @@
-import type { SpawnFn, SpawnOptions, SpawnProcess } from './types';
+import type { SpawnFn, SpawnOptions, SpawnProcess } from './types.ts';
 
 interface BunSubprocess {
   readonly pid: number;

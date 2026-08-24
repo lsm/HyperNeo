@@ -1,19 +1,19 @@
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type {
   SDKMessageRepository,
   SendStatus,
-} from '../../storage/repositories/sdk-message-repository';
-import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository';
-import { MESSAGE_DELIVERY } from '../job-queue-constants';
+} from '../../storage/repositories/sdk-message-repository.ts';
+import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository.ts';
+import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 import {
   isUniqueConstraintError,
   MESSAGE_DELIVERY_MAX_RETRIES,
   type MessageDeliveryOrigin,
   type MessageDeliveryRole,
-} from './message-delivery';
+} from './message-delivery.ts';
 
 export interface PersistAndEnqueueDeliveryArgs {
   db: BunDatabase;

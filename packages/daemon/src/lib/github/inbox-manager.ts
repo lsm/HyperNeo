@@ -1,5 +1,5 @@
-import type { Database } from '../../storage/database';
-import type { InboxItem, InboxItemStatus, GitHubEvent, SecurityCheckResult } from './types';
+import type { Database } from '../../storage/database.ts';
+import type { InboxItem, InboxItemStatus, GitHubEvent, SecurityCheckResult } from './types.ts';
 
 interface CreateInboxItemParams {
   source: 'github_issue' | 'github_comment' | 'github_pr';

@@ -1,4 +1,4 @@
-import { isRetryableErrorResultSubtype, isTerminalTurnError } from './message-delivery';
+import { isRetryableErrorResultSubtype, isTerminalTurnError } from './message-delivery.ts';
 
 export type TurnCompletionInput = {
   producedResult: boolean;

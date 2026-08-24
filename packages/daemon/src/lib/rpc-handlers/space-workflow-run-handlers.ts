@@ -1,23 +1,23 @@
 import { isAbsolute } from 'node:path';
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
-import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
-import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import type { SpaceTaskManager } from '../space/managers/space-task-manager';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository.ts';
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
 import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   triggerRetryableHookAction,
-} from '../space/runtime/workflow-hook-engine';
+} from '../space/runtime/workflow-hook-engine.ts';
 import {
   execGit,
   isGitRepo,
@@ -34,13 +34,13 @@ import {
   commitFilesCacheKey,
   commitFileDiffCacheKey,
   FILE_DIFF_SIZE_LIMIT_BYTES,
-} from '../space/artifact-git-ops';
+} from '../space/artifact-git-ops.ts';
 import {
   SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
   SPACE_WORKFLOW_RUN_SYNC_COMMITS,
   SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
-} from '../job-queue-constants';
-import { Logger } from '../logger';
+} from '../job-queue-constants.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-workflow-run-handlers');
 

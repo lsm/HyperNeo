@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
+import type { SessionManager } from '../session-manager.ts';
 
 export function setupCommandHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
   messageHub.onRequest('commands.list', async (data) => {

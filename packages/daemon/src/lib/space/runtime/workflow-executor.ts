@@ -1,5 +1,5 @@
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
-import { spawnProcess } from '../../runtime-spawn';
+import { spawnProcess } from '../../runtime-spawn/index.ts';
 
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 

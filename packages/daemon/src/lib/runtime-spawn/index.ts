@@ -1,8 +1,8 @@
-import { createBunSpawn } from './bun-backend';
-import { createNodeSpawn } from './node-backend';
-import type { SpawnFn } from './types';
+import { createBunSpawn } from './bun-backend.ts';
+import { createNodeSpawn } from './node-backend.ts';
+import type { SpawnFn } from './types.ts';
 
-export type { SpawnFn, SpawnOptions, SpawnProcess, SpawnSignal } from './types';
+export type { SpawnFn, SpawnOptions, SpawnProcess, SpawnSignal } from './types.ts';
 
 declare const Bun: unknown | undefined;
 

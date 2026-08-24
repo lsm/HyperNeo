@@ -8,21 +8,21 @@ import type {
   SpaceWorkerAgentSyncPreview,
 } from '@hyperneo/shared';
 import { KNOWN_TOOLS, isKnownToolEntry } from '@hyperneo/shared';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 
 type LongHorizonAgentHandleSource = {
   listBySpaceId(spaceId: string): Array<{ id: string; handle: string }>;
 };
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug.ts';
 import {
   isValidModel,
   getAvailableModels,
   getModelsCache,
   getModelInfoUnfiltered,
-} from '../../model-service';
-import { Logger } from '../../logger';
-import { getPresetAgentTemplates, type PresetAgentTemplate } from '../agents/seed-agents';
-import { computeAgentTemplateHash } from '../agents/agent-template-hash';
+} from '../../model-service.ts';
+import { Logger } from '../../logger.ts';
+import { getPresetAgentTemplates, type PresetAgentTemplate } from '../agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../agents/agent-template-hash.ts';
 
 const log = new Logger('space-agent-manager');
 

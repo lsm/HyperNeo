@@ -1,9 +1,9 @@
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import type {
   CircuitBreakerConfig,
   CircuitBreakerState,
   ErrorOccurrence,
-} from './circuit-breaker-transitions';
+} from './circuit-breaker-transitions.ts';
 import {
   advanceRapidFire,
   applyReset,
@@ -15,7 +15,7 @@ import {
   matchesTransientConnectionPattern,
   recordError,
   shouldReleaseCooldown,
-} from './circuit-breaker-transitions';
+} from './circuit-breaker-transitions.ts';
 
 export class ApiErrorCircuitBreaker {
   private logger: Logger;

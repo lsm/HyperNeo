@@ -11,7 +11,7 @@ import {
   createJsonErrorResponse,
   shouldHaveImmutableCache,
   isHtmlFile,
-} from './cli-utils';
+} from './cli-utils.ts';
 import { embeddedAssets, embeddedBuiltinSkills } from './embedded-assets';
 
 const log = createLogger('hyperneo:cli:prod-server');

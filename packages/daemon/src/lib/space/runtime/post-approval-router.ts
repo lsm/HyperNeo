@@ -6,14 +6,14 @@ import type {
   UpdateSpaceTaskParams,
   PostApprovalRoute,
 } from '@hyperneo/shared';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import {
   interpolatePostApprovalTemplate,
   type PostApprovalTemplateContext,
-} from '../workflows/post-approval-template';
-import { Logger } from '../../logger';
-import { isSpawnSupersededError } from './workflow-node-execution-validation';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+} from '../workflows/post-approval-template.ts';
+import { Logger } from '../../logger.ts';
+import { isSpawnSupersededError } from './workflow-node-execution-validation.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 
 const log = new Logger('post-approval-router');
 
@@ -48,9 +48,9 @@ export interface PostApprovalRouterDeps {
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
-  goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+  goalService?: Pick<import('../goals/goal-service.ts').SpaceGoalService, 'handleTaskTerminal'>;
   evolutionScopeService?: Pick<
-    import('../evolution-scope-service').EvolutionScopeService,
+    import('../evolution-scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
 }

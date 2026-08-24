@@ -1,7 +1,7 @@
 import type { GitHubEvent } from '@hyperneo/shared';
-import { Logger } from '../logger';
-import { normalizePollingEvent } from './event-normalizer';
-import type { GitHubApiComment, GitHubApiIssue, PollingConfig } from './types';
+import { Logger } from '../logger.ts';
+import { normalizePollingEvent } from './event-normalizer.ts';
+import type { GitHubApiComment, GitHubApiIssue, PollingConfig } from './types.ts';
 
 const log = new Logger('github-polling');
 

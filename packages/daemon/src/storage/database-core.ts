@@ -9,17 +9,17 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { Logger } from '../lib/logger';
-import { runMessageSearchMerge } from '../lib/message-search-merge';
-import { DatabaseLock } from './database-lock';
-import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability';
+import { Logger } from '../lib/logger.ts';
+import { runMessageSearchMerge } from '../lib/message-search-merge.ts';
+import { DatabaseLock } from './database-lock.ts';
+import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
 import {
   configureMessageSearchFts,
   createTables,
   reclaimPendingMigrationSpace,
   runMigrations,
-} from './schema';
-import { Database as BunDatabase } from './sqlite-compat';
+} from './schema/index.ts';
+import { Database as BunDatabase } from './sqlite-compat.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;

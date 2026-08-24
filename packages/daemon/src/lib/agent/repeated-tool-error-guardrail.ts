@@ -1,5 +1,5 @@
 import type { SpaceTask } from '@hyperneo/shared';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import {
   buildRecoveryMessage,
   buildRepeatedToolErrorEvidence,
@@ -8,7 +8,7 @@ import {
   repeatedToolErrorKey,
   type RepeatedToolErrorKey,
   type ToolResultError,
-} from './repeated-tool-error-gates';
+} from './repeated-tool-error-gates.ts';
 
 export interface RepeatedToolErrorGuardrailDeps {
   getTaskForSession: () => SpaceTask | null | undefined;

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import type { SpawnFn, SpawnOptions, SpawnProcess, SpawnSignal } from './types';
+import type { SpawnFn, SpawnOptions, SpawnProcess, SpawnSignal } from './types.ts';
 
 function toWebStream(stream: Readable | null): ReadableStream<Uint8Array> | null {
   if (!stream) return null;

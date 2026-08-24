@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export const SESSION_COUNTERS_TABLE_SQL = `
   -- Single-row aggregate of the sessions.list sidebar totals (total human

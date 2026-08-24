@@ -1,9 +1,9 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
-import { parseAddress } from '../../../../messaging/src/address';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import { Logger } from '../logger';
+import { parseAddress } from '../../../../messaging/src/address.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-task-message-handlers');
 

@@ -2,9 +2,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { execSync } from 'node:child_process';
-import { getDataDir } from './data-dir';
-import type { Database } from '../storage/database';
-import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
+import { getDataDir } from './data-dir.ts';
+import type { Database } from '../storage/database.ts';
+import type { ProviderCredentialManager } from './credentials/provider-credential-manager.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
 import { customProviderIdFor } from './providers/custom-endpoint-provider.js';
 
