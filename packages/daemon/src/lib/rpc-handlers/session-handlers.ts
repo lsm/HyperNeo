@@ -64,9 +64,15 @@ export async function detectStrandedProviders(
   const cachedProviders = new Set(
     cachedModels.map((m) => m.provider).filter((p): p is string => !!p)
   );
-  const toProbe = getProviderRegistry()
+  const registry = getProviderRegistry();
+  const toProbe = registry
     .getAll()
-    .filter((p) => !cachedProviders.has(p.id) && !hasRefreshBeenAttemptedFor(p.id));
+    .filter(
+      (provider) =>
+        !cachedProviders.has(provider.id) &&
+        registry.getCuratedModels(provider.id)?.length !== 0 &&
+        !hasRefreshBeenAttemptedFor(provider.id)
+    );
   if (toProbe.length === 0) return [];
   markRefreshAttemptedFor(toProbe.map((p) => p.id));
   const stranded: string[] = [];

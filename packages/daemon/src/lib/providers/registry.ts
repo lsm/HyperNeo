@@ -1,11 +1,12 @@
 import { createLogger } from '@hyperneo/shared/logger';
-import type { Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
+import type { CuratedModel, Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
 import type { Provider as ProviderIdStr } from '@hyperneo/shared';
 
 const log = createLogger('hyperneo:providers:registry');
 
 export class ProviderRegistry {
   private providers = new Map<ProviderId, Provider>();
+  private curatedModels = new Map<ProviderId, CuratedModel[]>();
 
   register(provider: Provider): void {
     if (this.providers.has(provider.id)) {
@@ -16,6 +17,22 @@ export class ProviderRegistry {
 
   unregister(providerId: ProviderId): void {
     this.providers.delete(providerId);
+    this.curatedModels.delete(providerId);
+  }
+
+  setCuratedModels(providerId: ProviderId, models: CuratedModel[] | undefined): void {
+    if (models === undefined) {
+      this.curatedModels.delete(providerId);
+      return;
+    }
+    this.curatedModels.set(
+      providerId,
+      models.map((model) => ({ ...model }))
+    );
+  }
+
+  getCuratedModels(providerId: ProviderId): CuratedModel[] | undefined {
+    return this.curatedModels.get(providerId)?.map((model) => ({ ...model }));
   }
 
   get(providerId: ProviderId): Provider | undefined {
@@ -138,6 +155,7 @@ export class ProviderRegistry {
 
   clear(): void {
     this.providers.clear();
+    this.curatedModels.clear();
   }
 
   get size(): number {

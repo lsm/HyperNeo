@@ -191,6 +191,32 @@ describe('Session RPC Handlers — models.list', () => {
     setupSessionHandlers(messageHubData.hub, {} as SessionManager, eventBus, {} as SpaceManager);
   });
 
+  it('returns only the configured curation subset', async () => {
+    const models = [
+      {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        provider: 'deepseek',
+        contextWindow: 1_000_000,
+      },
+      {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        provider: 'deepseek',
+        contextWindow: 1_000_000,
+      },
+    ] as ModelInfo[];
+    getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+    setModelsCache(new Map([['global', models]]));
+
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+    };
+
+    expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
+  });
+
   it('returns cached models when cache is populated', async () => {
     const testCache = new Map<
       string,
@@ -428,6 +454,16 @@ describe('Session RPC Handlers — models.list', () => {
         { id: 'x', provider: 'stranded-rep' } as ModelInfo,
       ]);
       expect(stranded).not.toContain('stranded-rep');
+    });
+
+    it('skips providers configured with an empty curation', async () => {
+      const registry = getProviderRegistry();
+      registry.register(mockProvider('curated-empty', true));
+      registry.setCuratedModels('curated-empty', []);
+
+      const stranded = await detectStrandedProviders(anthropicOnly);
+
+      expect(stranded).not.toContain('curated-empty');
     });
 
     it('skips unavailable providers', async () => {

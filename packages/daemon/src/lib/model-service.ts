@@ -97,17 +97,36 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
   },
 ];
 
+function getCuratedModelIds(providerId: string): Set<string> | undefined {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  return curatedModels === undefined ? undefined : new Set(curatedModels.map((model) => model.id));
+}
+
+function filterProviderModels(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const curatedIds = getCuratedModelIds(providerId);
+  return curatedIds === undefined ? models : models.filter((model) => curatedIds.has(model.id));
+}
+
+function filterModelsByCuration(models: ModelInfo[]): ModelInfo[] {
+  const curatedIdsByProvider = new Map<string, Set<string> | undefined>();
+  return models.filter((model) => {
+    if (!curatedIdsByProvider.has(model.provider)) {
+      curatedIdsByProvider.set(model.provider, getCuratedModelIds(model.provider));
+    }
+    const curatedIds = curatedIdsByProvider.get(model.provider);
+    return curatedIds === undefined || curatedIds.has(model.id);
+  });
+}
+
+function registeredFallbackModels(): ModelInfo[] {
+  const registry = getProviderRegistry();
+  return filterModelsByCuration(FALLBACK_MODELS.filter((model) => registry.has(model.provider)));
+}
+
 function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
   const modelMap = new Map<string, ModelInfo>();
-  const registry = getProviderRegistry();
 
-  for (const model of FALLBACK_MODELS) {
-    if (registry.has(model.provider)) {
-      modelMap.set(`${model.provider}:${model.id}`, model);
-    }
-  }
-
-  for (const model of providerModels) {
+  for (const model of [...registeredFallbackModels(), ...filterModelsByCuration(providerModels)]) {
     modelMap.set(`${model.provider}:${model.id}`, model);
   }
 
@@ -131,7 +150,10 @@ function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): Mode
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
-    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+    merged = [
+      ...merged.filter((model) => model.provider !== providerId),
+      ...filterProviderModels(providerId, slice),
+    ];
   }
   return merged;
 }
@@ -170,20 +192,21 @@ function applyRefreshedModels(
   fetchedModels: ModelInfo[],
   previousModels: ModelInfo[] | undefined
 ): void {
-  if (fetchedModels.length > 0) {
-    const mergedModels = mergeWithFallbackModels(fetchedModels);
-    if (previousModels && previousModels.length > mergedModels.length) {
-      modelsCache.set(cacheKey, previousModels);
-    } else {
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
-    }
+  const visiblePreviousModels = previousModels
+    ? mergeWithFallbackModels(filterModelsByCuration(previousModels))
+    : previousModels;
+  const mergedModels = mergeWithFallbackModels(fetchedModels);
+  if (
+    fetchedModels.length > 0 &&
+    visiblePreviousModels &&
+    visiblePreviousModels.length > mergedModels.length
+  ) {
+    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, visiblePreviousModels));
     cacheTimestamps.set(cacheKey, Date.now());
     return;
   }
-  if (!previousModels || previousModels.length === 0) {
-    const registry = getProviderRegistry();
-    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+  if (fetchedModels.length > 0 || !visiblePreviousModels || visiblePreviousModels.length === 0) {
+    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
     cacheTimestamps.set(cacheKey, Date.now());
   }
 }
@@ -245,9 +268,12 @@ type ProviderModelLoadResult =
 function fallbackModelsFor(provider: Provider): ModelInfo[] {
   const cached = provider.getCachedModels?.();
   if (cached && cached.length > 0) {
-    return cached;
+    return filterProviderModels(provider.id, cached);
   }
-  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+  return filterProviderModels(
+    provider.id,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id)
+  );
 }
 
 async function loadProviderModels(provider: Provider): Promise<ProviderModelLoadResult> {
@@ -257,7 +283,10 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
     }
     const models = await provider.getModels();
     if (models.length > 0) {
-      return { status: 'loaded', models };
+      return { status: 'loaded', models: filterProviderModels(provider.id, models) };
+    }
+    if (getProviderRegistry().getCuratedModels(provider.id)?.length === 0) {
+      return { status: 'loaded', models: [] };
     }
     return { status: 'failed', models: fallbackModelsFor(provider) };
   } catch (error) {
@@ -332,7 +361,7 @@ export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
     triggerBackgroundRefresh(cacheKey).catch(() => {});
   }
 
-  return cachedModels;
+  return filterModelsByCuration(cachedModels);
 }
 
 export async function initializeModels(): Promise<void> {
@@ -371,9 +400,7 @@ export async function initializeModels(): Promise<void> {
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
-      const registry = getProviderRegistry();
-      const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, registeredFallbackModels()));
       cacheTimestamps.set(cacheKey, Date.now());
     }
   })();
@@ -491,10 +518,11 @@ export function updateProviderModelsInCache(
     return false;
   }
 
+  const visibleModels = filterProviderModels(providerId, models);
   pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
   modelsCache.set(cacheKey, [
     ...cachedModels.filter((model) => model.provider !== providerId),
-    ...models,
+    ...visibleModels,
   ]);
   const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
   const inFlight = refreshInProgress.get(cacheKey);
@@ -506,7 +534,7 @@ export function updateProviderModelsInCache(
         if (!current) return;
         modelsCache.set(cacheKey, [
           ...current.filter((model) => model.provider !== providerId),
-          ...models,
+          ...filterProviderModels(providerId, models),
         ]);
       })
       .catch(() => {});
@@ -588,7 +616,10 @@ export async function getModelInfo(
     return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromCache) : fromCache;
   }
 
-  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const staticProviderModels = filterProviderModels(
+    providerId,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
+  );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
   return providerId === 'anthropic-copilot' && staticModel
     ? overlayCodexStaticMetadata(staticModel)
@@ -624,7 +655,10 @@ export async function isValidModel(
     return true;
   }
 
-  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const staticProviderModels = filterProviderModels(
+    providerId,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
+  );
   if (!findInModels(staticProviderModels, idOrAlias)) {
     return false;
   }

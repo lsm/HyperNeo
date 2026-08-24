@@ -146,6 +146,30 @@ describe('ProviderRegistry', () => {
     });
   });
 
+  describe('model curation', () => {
+    it('distinguishes absent, empty, and nonempty curation', () => {
+      expect(registry.getCuratedModels('mock')).toBeUndefined();
+
+      registry.setCuratedModels('mock', []);
+      expect(registry.getCuratedModels('mock')).toEqual([]);
+
+      registry.setCuratedModels('mock', [{ id: 'mock-1', name: 'Mock 1' }]);
+      expect(registry.getCuratedModels('mock')).toEqual([{ id: 'mock-1', name: 'Mock 1' }]);
+
+      registry.setCuratedModels('mock', undefined);
+      expect(registry.getCuratedModels('mock')).toBeUndefined();
+    });
+
+    it('clears curation when a provider is unregistered', () => {
+      registry.register(new MockProvider());
+      registry.setCuratedModels('mock', []);
+
+      registry.unregister('mock');
+
+      expect(registry.getCuratedModels('mock')).toBeUndefined();
+    });
+  });
+
   describe('get', () => {
     it('should get a registered provider', () => {
       const provider = new MockProvider();

@@ -67,13 +67,12 @@ export async function syncProviderToRegistry(
       provider.setAcpCommand(command);
       logger.info(`ACP provider command ${command ? 'configured' : 'reset to env default'}`);
     }
-    if (provider?.setCuratedModels) {
-      provider.setCuratedModels(models);
-      if (models !== undefined) {
-        logger.info(
-          `Applied model curation to ${record.providerId}: ${models.length} visible model(s)`
-        );
-      }
+    provider?.setCuratedModels?.(models);
+    registry.setCuratedModels(record.providerId, models);
+    if (models !== undefined) {
+      logger.info(
+        `Applied model curation to ${record.providerId}: ${models.length} visible model(s)`
+      );
     }
     if (provider?.setCredentials && credentials) {
       if (isStartupSync && provider.logout && provider.getCredentials) {

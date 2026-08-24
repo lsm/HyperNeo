@@ -432,6 +432,76 @@ describe('Model Service', () => {
     });
   });
 
+  describe('model curation', () => {
+    it('filters cached and fallback models to the configured provider subset', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
+      expect(await getModelInfo('sonnet', 'global', 'anthropic')).not.toBeNull();
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+      expect(await isValidModel('opus', 'global', 'anthropic')).toBe(false);
+    });
+
+    it('treats an empty curation as no visible models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('anthropic', []);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global')).toEqual([]);
+      expect(await getModelInfo('sonnet', 'global', 'anthropic')).toBeNull();
+      expect(await isValidModel('sonnet', 'global', 'anthropic', 'session-key')).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('preserves current cache, lookup, and validation behavior when curation is absent', async () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toMatchObject({ id: 'opus' });
+      expect(await isValidModel('opus', 'global', 'anthropic')).toBe(true);
+    });
+
+    it('filters provider-slice updates before they reach the global cache', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const visibleModel: ModelInfo = {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+      getProviderRegistry().setCuratedModels('acp', [{ id: visibleModel.id }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(
+        updateProviderModelsInCache('acp', [
+          visibleModel,
+          { ...visibleModel, id: 'curated-out-acp-model' },
+        ])
+      ).toBe(true);
+
+      expect(getAvailableModels('global').filter((model) => model.provider === 'acp')).toEqual([
+        visibleModel,
+      ]);
+    });
+  });
+
   describe('getAvailableModels', () => {
     beforeEach(() => {
       const testCache = new Map<string, ModelInfo[]>();
@@ -492,6 +562,17 @@ describe('Model Service', () => {
       const model = await getModelInfo('opus', 'global', 'anthropic');
       expect(model).not.toBeNull();
       expect(model?.id).toBe('opus');
+    });
+
+    it('does not resolve curated-out static aliases', async () => {
+      clearModelsCache();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+
+      expect(await getModelInfo('deepseek-pro', 'global', 'deepseek')).toBeNull();
+      expect(await getModelInfo('deepseek-flash', 'global', 'deepseek')).toMatchObject({
+        id: 'deepseek-v4-flash',
+      });
     });
 
     it('should return null for unknown model', async () => {
@@ -691,6 +772,15 @@ describe('Model Service', () => {
       expect(await isValidModel('unknown-deepseek', 'global', 'deepseek', 'session-key')).toBe(
         false
       );
+    });
+
+    it('does not let a session-scoped API key bypass curation', async () => {
+      clearModelsCache();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+
+      expect(await isValidModel('deepseek-pro', 'global', 'deepseek', 'session-key')).toBe(false);
+      expect(await isValidModel('deepseek-flash', 'global', 'deepseek', 'session-key')).toBe(true);
     });
   });
 
