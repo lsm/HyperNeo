@@ -1439,6 +1439,50 @@ describe('Model Service', () => {
       }
     });
 
+    it('reports no-op when a global clear supersedes an unavailable probe and a newer refresh recovered the provider', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const foregroundModels = GlmProvider.MODELS.map((_model, index) =>
+        glmModel(`glm-newer-${index}`)
+      );
+      let probeCall = 0;
+      let availableCalls = 0;
+      let releaseAvailable: ((available: boolean) => void) | null = null;
+      registerGlmProvider(
+        (): Promise<ModelInfo[]> => {
+          probeCall++;
+          if (probeCall === 1) return Promise.reject(new Error('Request failed (http 401)'));
+          return Promise.resolve(foregroundModels);
+        },
+        (): Promise<boolean> => {
+          availableCalls++;
+          if (availableCalls === 2) {
+            return new Promise<boolean>((resolve) => {
+              releaseAvailable = resolve;
+            });
+          }
+          return Promise.resolve(true);
+        }
+      );
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(availableCalls).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')).toBeUndefined();
+
+      clearModelsCache();
+      releaseAvailable?.(false);
+
+      await expect(recovery).resolves.toBe('no-op');
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
     it('does not install a stale slice when a global clear lands mid-probe', async () => {
       const { refreshModels, recoverDormantProvider } = await import(
         '../../../../src/lib/model-service'

@@ -621,8 +621,9 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
   if (result === 'timeout' || result.status === 'unavailable') {
     if (providerRetryGeneration === generationAtStart) {
       armProviderRetryTimer(providerId);
+      return 'failed';
     }
-    return 'failed';
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
   }
   const error = result.status === 'failed' ? result.error : undefined;
   if (error !== undefined) {

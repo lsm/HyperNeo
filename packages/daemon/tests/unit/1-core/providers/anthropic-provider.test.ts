@@ -564,7 +564,9 @@ describe('AnthropicProvider', () => {
       providerWithInFlightLoad.setCredentials({ type: 'api_key', apiKey: 'first-key' });
 
       const firstLoad = providerWithInFlightLoad.getModels();
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      for (let i = 0; i < 50 && loadCount < 1; i++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
       expect(loadCount).toBe(1);
 
       providerWithInFlightLoad.setCredentials({ type: 'api_key', apiKey: 'second-key' });
