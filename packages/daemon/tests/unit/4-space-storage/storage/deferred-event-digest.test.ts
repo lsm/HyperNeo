@@ -416,6 +416,39 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).not.toContain('open');
   });
 
+  it('routes non-poll pull_request webhook actions to the payload-preserving renderer', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'pr-1',
+        topic: 'github/o/r/pull_request/7.review_requested',
+        eventType: 'pull_request',
+        action: 'review_requested',
+        actor: 'marcliu',
+        prNumber: 7,
+        state: 'open',
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('review_requested by marcliu');
+    expect(digest).not.toContain('PR #7 state: open');
+  });
+
+  it('derives per-PR scope for rate-limited events from their annotated topics', () => {
+    const annotated =
+      '2 events received for topics: github/o/r/pull_request/7.polled, github/o/r/pull_request/8.polled ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      'Event IDs: rl-7 (github/o/r/pull_request/7.polled), rl-8 (github/o/r/pull_request/8.polled). ' +
+      'Use get_external_event(eventId) for full details.';
+    const entry = parseDeferredExternalEventText(annotated);
+    expect(entry?.kind).toBe('fold');
+    if (entry?.kind !== 'fold') return;
+    const digest = buildExternalEventDigestMessage(entry.events);
+    expect(digest).toContain('PR #7 state: updated');
+    expect(digest).toContain('PR #8 state: updated');
+    expect(digest).toContain('latest eventId: rl-7');
+    expect(digest).toContain('latest eventId: rl-8');
+  });
+
   it('marks merged, unmerged, and draft PR states distinctly', () => {
     const digest = buildExternalEventDigestMessage([
       {

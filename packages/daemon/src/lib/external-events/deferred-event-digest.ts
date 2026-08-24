@@ -109,6 +109,22 @@ const RATE_LIMIT_DIGEST_TOPIC = 'external_event.rate_limited';
 const RATE_LIMIT_DIGEST_PATTERN =
   /^(\d+) events received for topics: (.+?) \(oldest: (.+?), newest: (.+?)\)\. Event IDs: (.+?)\. Use get_external_event\(eventId\) for full details\.$/;
 
+function scopeFromTopic(topic: string): { repo?: string; prNumber?: number; prUrl?: string } {
+  const segments = topic.split('/');
+  if (segments.length < 5 || segments[0] !== 'github') return {};
+  const owner = segments[1]!;
+  const repoName = segments[2]!;
+  const resource = segments[3]!;
+  const entity = (segments[4] ?? '').split('.')[0] ?? '';
+  const prNumber = /^\d+$/.test(entity) ? Number(entity) : undefined;
+  return {
+    ...(owner && repoName ? { repo: `${owner}/${repoName}` } : {}),
+    ...(resource === 'pull_request' && prNumber !== undefined
+      ? { prNumber, prUrl: `https://github.com/${owner}/${repoName}/pull/${prNumber}` }
+      : {}),
+  };
+}
+
 function parseRateLimitDigestText(text: string): DeferredExternalEventEntry | null {
   const match = RATE_LIMIT_DIGEST_PATTERN.exec(text.trim());
   if (!match) return null;
@@ -139,7 +155,12 @@ function parseRateLimitDigestText(text: string): DeferredExternalEventEntry | nu
           ? oldestMs + Math.round((span * index) / (idEntries.length - 1))
           : newestMs;
     }
-    return { eventId, topic, ...(occurredAt !== undefined ? { occurredAt } : {}) };
+    return {
+      eventId,
+      topic,
+      ...scopeFromTopic(topic),
+      ...(occurredAt !== undefined ? { occurredAt } : {}),
+    };
   });
   return { kind: 'fold', events };
 }
@@ -272,7 +293,10 @@ function digestGroupKind(entry: ExternalEventEssenceEntry): DigestGroupKind {
   }
   if (entry.eventType === 'issue_comment' || suffix === 'comment_polled') return 'pr_comment';
   if (entry.eventType === 'check_run' || suffix === 'check_failed') return 'check';
-  if (entry.eventType === 'pull_request' || suffix === 'polled') return 'state';
+  if (suffix === 'polled') return 'state';
+  if (entry.eventType === 'pull_request') {
+    return !entry.action || entry.action === 'polled' ? 'state' : 'other';
+  }
   if (entry.eventType === 'reaction' || suffix === 'reaction_added') return 'reaction';
   return 'other';
 }
@@ -378,6 +402,9 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       );
     case 'other': {
       const parts = [`${latest.topic}: ×${count} (latest ${digestTimestamp(latest, includeDate)})`];
+      if (latest.action && latest.action !== 'polled') {
+        parts.push(`${latest.action} by ${latest.actor ?? 'unknown'}`);
+      }
       if (latest.state) parts.push(`state: ${latest.state}`);
       if (latest.environment) parts.push(`environment: ${latest.environment}`);
       const snippet = digestSnippet(latest.description ?? latest.body);
