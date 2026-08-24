@@ -1,4 +1,7 @@
-export { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '@hyperneo/prompts';
+export {
+  LONG_HORIZON_OWNER_REVIEW_CONTRACT,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '@hyperneo/prompts';
 export const LONG_HORIZON_AGENT_BUILTIN_TOOLS = [
   'Read',
   'Grep',

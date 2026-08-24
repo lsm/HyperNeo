@@ -3413,6 +3413,53 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
   });
 });
 
+describe('buildLongHorizonAgentSessionConfig — owner-review contract injection (MC5-B1)', () => {
+  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
+
+  async function callBuilder(agent: SpaceLongHorizonAgent): Promise<Partial<Session['config']>> {
+    return (
+      service as unknown as {
+        buildLongHorizonAgentSessionConfig: (
+          space: Space,
+          a: SpaceLongHorizonAgent
+        ) => Promise<Partial<Session['config']>>;
+      }
+    ).buildLongHorizonAgentSessionConfig(mockSpace, agent);
+  }
+
+  function systemPromptAppend(config: Partial<Session['config']>): string {
+    const prompt = config.systemPrompt;
+    if (typeof prompt !== 'object' || prompt === null || prompt.type !== 'preset') return '';
+    return prompt.append ?? '';
+  }
+
+  test('injects the current owner-review contract for agents without instructions', async () => {
+    const config = await callBuilder(buildLongHorizonAgent({ instructions: '' }));
+    const append = systemPromptAppend(config);
+    expect(append).toContain('## Goal Ownership & Outcome Review Contract');
+    expect(append).toContain('## Scheduling & Task Systems');
+  });
+
+  test('persisted agents with stale template instructions still receive the current contract', async () => {
+    const staleInstructions =
+      'Maintain marketing momentum. (drafted before the review tool existed)';
+    const config = await callBuilder(buildLongHorizonAgent({ instructions: staleInstructions }));
+    const append = systemPromptAppend(config);
+    expect(append).toContain(staleInstructions);
+    expect(append).toContain('## Goal Ownership & Outcome Review Contract');
+    expect(append).toContain('review_goal_outcome');
+  });
+
+  test('user-customized instructions are preserved, not replaced, by the contract append', async () => {
+    const custom = 'My bespoke positioning playbook.';
+    const config = await callBuilder(buildLongHorizonAgent({ instructions: custom }));
+    const append = systemPromptAppend(config);
+    expect(append.startsWith(custom)).toBe(true);
+    expect(append).toContain('## Goal Ownership & Outcome Review Contract');
+    expect(append.match(/## Goal Ownership & Outcome Review Contract/g)?.length).toBe(1);
+  });
+});
+
 describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider (Task #768)', () => {
   const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
   const refresh = () =>

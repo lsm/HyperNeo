@@ -65,6 +65,7 @@ import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-regist
 import { resolveCustomAgentPrompt } from '../agents/custom-agent';
 import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_OWNER_REVIEW_CONTRACT,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../agents/long-horizon-agent-tools';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
@@ -690,8 +691,8 @@ export class SpaceRuntimeService {
         : undefined)) as Session['config']['provider'];
     const instructions = agent.instructions?.trim();
     const systemPromptAppend = instructions
-      ? `${instructions}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
-      : LONG_HORIZON_SCHEDULING_GUARDRAIL;
+      ? `${instructions}\n\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
+      : `${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`;
     return {
       model,
       provider,
