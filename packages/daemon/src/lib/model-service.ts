@@ -820,6 +820,9 @@ export function clearModelsCache(cacheKey?: string): void {
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
+    for (const key of [...pendingSliceReleases]) {
+      if (key.startsWith(`${cacheKey}:`)) pendingSliceReleases.delete(key);
+    }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
     }
@@ -834,6 +837,7 @@ export function clearModelsCache(cacheKey?: string): void {
     refreshModes.clear();
     clearProviderModelCaches();
     pendingProviderSlices.clear();
+    pendingSliceReleases.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }

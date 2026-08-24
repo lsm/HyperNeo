@@ -270,6 +270,7 @@ async function listAcpRemoteModels(
 }
 
 const DISCOVERY_REFRESH_TIMEOUT_MS = 30_000;
+const DISCOVERY_SETTLE_GRACE_MS = 60_000;
 
 function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -498,7 +499,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       try {
         discovered = await raceWithTimeout(discoveryPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
       } catch (error) {
-        await discoveryPromise.catch(() => {});
+        await raceWithTimeout(
+          discoveryPromise.catch(() => {}),
+          DISCOVERY_SETTLE_GRACE_MS
+        ).catch(() => {});
         throw error;
       }
       if (discovered.length === 0) {
@@ -509,7 +513,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       try {
         models = await raceWithTimeout(modelsPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
       } catch (error) {
-        await modelsPromise.catch(() => {});
+        await raceWithTimeout(
+          modelsPromise.catch(() => {}),
+          DISCOVERY_SETTLE_GRACE_MS
+        ).catch(() => {});
         throw error;
       }
 
