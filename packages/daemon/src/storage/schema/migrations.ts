@@ -460,6 +460,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   run(migrationMarkerKey(208), () => runMigration208(db));
   run(migrationMarkerKey(209), () => runMigration209(db));
+
+  run(migrationMarkerKey(210), () => runMigration210(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9599,4 +9601,9 @@ export function runMigration205(db: BunDatabase): void {
     ON space_goal_outcome_notifications(goal_id, status, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
     ON space_goal_outcome_notifications(task_id, terminal_generation)`);
+}
+
+export function runMigration210(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_task_session`);
 }
