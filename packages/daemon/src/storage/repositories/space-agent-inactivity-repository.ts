@@ -95,6 +95,10 @@ export class SpaceAgentInactivityConfigRepository {
       (params.thresholdMs !== undefined && existing.thresholdMs !== params.thresholdMs) ||
       (params.prompt !== undefined && existing.prompt !== params.prompt);
     if (changed) {
+      const nextEnabled = params.enabled !== undefined ? params.enabled : existing.enabled;
+      const nextThreshold =
+        params.thresholdMs !== undefined ? params.thresholdMs : existing.thresholdMs;
+      const nextPrompt = params.prompt !== undefined ? params.prompt : existing.prompt;
       this.db
         .prepare(
           `UPDATE space_agent_inactivity_config
@@ -102,9 +106,9 @@ export class SpaceAgentInactivityConfigRepository {
            WHERE id = ?`
         )
         .run(
-          (params.enabled ?? existing.enabled) ? 1 : 0,
-          (params.thresholdMs ?? existing.thresholdMs) as SQLiteValue,
-          (params.prompt ?? existing.prompt) as SQLiteValue,
+          nextEnabled ? 1 : 0,
+          nextThreshold as SQLiteValue,
+          nextPrompt as SQLiteValue,
           now,
           existing.id
         );

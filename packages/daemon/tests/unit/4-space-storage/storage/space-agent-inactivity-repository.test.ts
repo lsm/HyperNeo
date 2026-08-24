@@ -51,6 +51,27 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(changed.configRevision).toBe(before.configRevision + 1);
     });
 
+    it('clears threshold and prompt to null with a revision bump', () => {
+      configRepo.upsert({
+        spaceId,
+        agentId: 'agent-1',
+        enabled: true,
+        thresholdMs: 5000,
+        prompt: 'nag',
+      });
+      const before = configRepo.getByAgent(spaceId, 'agent-1')!;
+      const cleared = configRepo.upsert({
+        spaceId,
+        agentId: 'agent-1',
+        thresholdMs: null,
+        prompt: null,
+      });
+      expect(cleared.thresholdMs).toBeNull();
+      expect(cleared.prompt).toBeNull();
+      expect(cleared.enabled).toBe(true);
+      expect(cleared.configRevision).toBe(before.configRevision + 1);
+    });
+
     it('lists only enabled configs for the space', () => {
       configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: 1000 });
       configRepo.upsert({ spaceId, agentId: 'agent-2', enabled: false });
