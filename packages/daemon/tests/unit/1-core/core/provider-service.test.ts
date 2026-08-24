@@ -13,7 +13,11 @@ import {
   markBuiltInProviderDisabled,
   resetProviderFactory,
 } from '../../../../src/lib/providers/factory';
-import { ProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import {
+  ProviderRegistry,
+  getProviderRegistry,
+  resetProviderRegistry,
+} from '../../../../src/lib/providers/registry';
 
 class MockProvider implements Provider {
   readonly id: string;
@@ -563,6 +567,23 @@ describe('ProviderService', () => {
 
       expect(model).toBe('kimi-k2.7-code');
     });
+
+    it('falls back to the first curated model when the title override is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-9');
+
+      expect(model).toBe('translated-1');
+    });
+
+    it('keeps the session model fallback when no curation is configured', async () => {
+      const model = await service.getTitleGenerationModel('glm', 'glm-4.7');
+
+      expect(model).toBe('translated-4.7');
+    });
   });
 
   describe('getTitleGenerationConfig', () => {
@@ -601,6 +622,47 @@ describe('ProviderService', () => {
       expect(config.modelId).toBe('kimi-k2.7-code');
       expect(config.baseUrl).toBe('https://api.moonshot.ai/anthropic');
       expect(config.apiVersion).toBe('v1');
+    });
+
+    it('uses the tier fallback when the title override is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-haiku' }, { id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config.modelId).toBe('title-haiku');
+      expect(config.baseUrl).toBe('https://mock.api.com');
+    });
+
+    it('falls back to the first curated model when title override and tier fallback are curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config.modelId).toBe('title-1');
+      expect(config.baseUrl).toBe('https://mock.api.com');
+    });
+  });
+
+  describe('getCheapTierModel', () => {
+    it('returns the provider title override when no curation is configured', async () => {
+      registry.register(new TitleOverrideMockProvider());
+
+      expect(await service.getCheapTierModel('title-override')).toBe('title-turbo');
+    });
+
+    it('skips curated-out candidates and falls back to the first curated model', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
     });
   });
 

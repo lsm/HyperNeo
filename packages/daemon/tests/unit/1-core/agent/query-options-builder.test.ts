@@ -130,6 +130,28 @@ describe('QueryOptionsBuilder', () => {
       ).toEqual({ behavior: 'cancelled' });
     });
 
+    describe('refusal fallback model curation', () => {
+      afterEach(() => {
+        getProviderRegistry().setCuratedModels('anthropic', undefined);
+      });
+
+      it('drops a curated-out fallback model and the refusal dialog opt-in at build time', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        expect(options.fallbackModel).toBeUndefined();
+        expect(options.supportedDialogKinds).toBeUndefined();
+      });
+
+      it('keeps a fallback model that survives curation', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        expect(options.fallbackModel).toBe('haiku');
+        expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+      });
+    });
+
     it('should include agents when configured', async () => {
       mockSession.config.agents = {
         'test-agent': {

@@ -1,6 +1,11 @@
 import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
-import type { ProviderInfo as NewProviderInfo, ProviderSdkConfig } from '@hyperneo/shared/provider';
+import type {
+  ProviderInfo as NewProviderInfo,
+  ProviderSdkConfig,
+  Provider as RegisteredProvider,
+} from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
+import { isModelCuratedOut } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
@@ -17,6 +22,16 @@ export const NON_ANTHROPIC_PREFIX_PROVIDER_VARS = [
   'CLAUDE_CODE_SUBAGENT_MODEL',
   'ENABLE_TOOL_SEARCH',
 ] as const;
+
+function preferUncuratedModel(
+  providerId: string,
+  ...candidates: Array<string | undefined>
+): string | undefined {
+  for (const candidate of candidates) {
+    if (candidate && !isModelCuratedOut(candidate, providerId)) return candidate;
+  }
+  return undefined;
+}
 
 export interface ProviderEnvVars {
   ANTHROPIC_BASE_URL?: string;
@@ -213,13 +228,27 @@ export class ProviderService {
     return models[0]?.id || 'default';
   }
 
+  private async getVisibleProviderDefaultModelId(
+    providerId: string,
+    provider: RegisteredProvider
+  ): Promise<string | undefined> {
+    const curated = this.getRegistry().getCuratedModels(providerId);
+    if (curated !== undefined && curated.length > 0) return curated[0].id;
+    return (await provider.getModels())[0]?.id;
+  }
+
   async getTitleGenerationModels(
     providerId: string,
     sessionModelId: string
   ): Promise<{ providerModelId: string; sdkModelId: string }> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
-    const providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    const preferred = provider?.getTitleGenerationModel?.();
+    let providerModelId = preferred ?? sessionModelId;
+    if (provider && preferred && isModelCuratedOut(preferred, providerId)) {
+      providerModelId =
+        (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? sessionModelId;
+    }
     let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
     try {
       const sdkConfig = provider?.buildSdkConfig(providerModelId);
@@ -235,7 +264,14 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     if (!provider) return null;
-    return provider.getTitleGenerationModel?.() ?? provider.getModelForTier?.('haiku') ?? null;
+    const preferred = preferUncuratedModel(
+      providerId,
+      provider.getTitleGenerationModel?.(),
+      provider.getModelForTier?.('haiku')
+    );
+    if (preferred) return preferred;
+    if (registry.getCuratedModels(providerId) === undefined) return null;
+    return (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? null;
   }
 
   async getTitleGenerationModel(providerId: string, sessionModelId: string): Promise<string> {
@@ -261,7 +297,10 @@ export class ProviderService {
 
     const titleOverride = provider.getTitleGenerationModel?.();
     const tierFallback = provider.getModelForTier('haiku');
-    let modelId = titleOverride || tierFallback || (await provider.getModels())[0]?.id || 'default';
+    let modelId =
+      preferUncuratedModel(providerId, titleOverride, tierFallback) ??
+      (await this.getVisibleProviderDefaultModelId(providerId, provider)) ??
+      'default';
 
     let baseUrl = 'https://api.anthropic.com';
     let apiVersion = 'v1';

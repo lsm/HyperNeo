@@ -36,7 +36,7 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { Logger } from '../logger';
-import { getSessionModelInfo } from '../model-service';
+import { getSessionModelInfo, isModelCuratedOut } from '../model-service';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -299,13 +299,19 @@ export class QueryOptionsBuilder {
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
-      const contextManager = getProviderContextManager();
-      const fallbackSession = {
-        ...this.ctx.session,
-        config: { ...this.ctx.session.config, model: config.fallbackModel },
-      };
-      const fallbackContext = contextManager.createContext(fallbackSession);
-      sdkFallbackModel = fallbackContext.getSdkModelId();
+      if (isModelCuratedOut(config.fallbackModel, providerId)) {
+        this.logger.warn(
+          `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
+        );
+      } else {
+        const contextManager = getProviderContextManager();
+        const fallbackSession = {
+          ...this.ctx.session,
+          config: { ...this.ctx.session.config, model: config.fallbackModel },
+        };
+        const fallbackContext = contextManager.createContext(fallbackSession);
+        sdkFallbackModel = fallbackContext.getSdkModelId();
+      }
     }
 
     const systemPromptConfig = this.buildSystemPrompt();
@@ -380,7 +386,7 @@ export class QueryOptionsBuilder {
         }
         return { behavior: 'cancelled' };
       },
-      supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
+      supportedDialogKinds: sdkFallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
     if (this.ctx.session.type === 'space_chat') {

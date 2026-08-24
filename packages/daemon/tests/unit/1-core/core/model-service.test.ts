@@ -3,6 +3,7 @@ import {
   getAvailableModels,
   getModelInfo,
   getModelInfoUnfiltered,
+  isModelCuratedOut,
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
@@ -1660,6 +1661,17 @@ describe('Model Service', () => {
 
       expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
       expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
+    });
+
+    it('isModelCuratedOut resolves aliases before checking the curated set', () => {
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isModelCuratedOut('opus', 'anthropic')).toBe(true);
+      expect(isModelCuratedOut('nonexistent-model', 'anthropic')).toBe(true);
+      expect(isModelCuratedOut('sonnet', 'anthropic')).toBe(false);
+      expect(isModelCuratedOut('default', 'anthropic')).toBe(false);
+      expect(isModelCuratedOut('opus', 'glm')).toBe(false);
     });
   });
 

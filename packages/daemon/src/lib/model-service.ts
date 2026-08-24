@@ -971,6 +971,29 @@ export async function getSessionModelInfo(
     : fromStatic;
 }
 
+export function isModelCuratedOut(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
+  const curatedIds = getCuratedModelIds(providerId);
+  if (curatedIds === undefined) return false;
+  const rawModels = readCachedModels(cacheKey);
+  const resolved =
+    (rawModels
+      ? findInModels(
+          rawModels.filter((model) => model.provider === providerId),
+          idOrAlias
+        )
+      : undefined) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+  if (resolved) return !curatedIds.has(resolved.id);
+  return !curatedIds.has(idOrAlias);
+}
+
 export async function getModelInfoUnfiltered(
   idOrAlias: string,
   cacheKey: string = 'global'

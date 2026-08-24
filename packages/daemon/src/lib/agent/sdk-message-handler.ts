@@ -37,7 +37,7 @@ import type { Database } from '../../storage/database';
 import { ErrorCategory, type ErrorManager } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
-import { getSessionModelInfo } from '../model-service';
+import { getSessionModelInfo, isModelCuratedOut } from '../model-service';
 import { getProviderContextManager } from '../providers/factory';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
 import { ContextFetcher } from './context-fetcher';
@@ -1303,6 +1303,7 @@ export class SDKMessageHandler {
     if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
+    if (isModelCuratedOut(fallbackModel, session.config.provider ?? 'anthropic')) return;
 
     session.config = {
       ...session.config,

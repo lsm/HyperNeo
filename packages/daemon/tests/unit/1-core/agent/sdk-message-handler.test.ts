@@ -2467,6 +2467,29 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('does not persist a curated-out fallback model', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
     describe('refusal rewind target plumbing (refused_user_message_uuid)', () => {
       it('records the refused user message uuid on session metadata', async () => {
         await handler.handleMessage({
