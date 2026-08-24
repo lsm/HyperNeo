@@ -205,14 +205,21 @@ gate never sees. Re-flagging and admission are two separate rules:
   lowest-priority background work, and its admission follows the **standard
   contract — saturated/closed → deny, probing → deny unless it holds the
   grant, open → admit — with no fully-open-only exception**: its precedence
-  over nothing comes from queue position, not a stricter rule. Background
-  identities register in the FIFO **tail** (chat deliveries always precede
-  them in the global order), so when the last chat registration completes the
-  successor grant simply binds the next FIFO head — a background identity —
-  and its consult admits on that grant like any delivery; the grant machinery
-  serializes the background wave one at a time (a stricter fully-open-only
-  rule would contradict grant release and livelock: the bound job denied
-  while probing, the grant expiring and re-binding forever). Consult identity
+  over nothing from **separate queues, not one interleaved FIFO**: chat
+  registrations hold the chat queue, background identities a background
+  queue, and the grant always binds the chat queue's head first — the
+  background queue is admitted only when the chat queue is empty (a single
+  interleaved FIFO would make a newly arriving user turn wait behind an
+  entire parked background drain). When the chat queue empties, the successor
+  grant binds the background head and its consult admits on that grant; the
+  grant machinery serializes the background wave one at a time. **Background
+  grants live the full lifecycle**: a direct caller that admits on a grant
+  consumes it at its SDK query start and resolves it on termination — clean
+  completion mints the successor, its classified 429 re-arms saturation,
+  any other termination releases — mirroring the turn-boundary semantics
+  (for a one-shot background query, the query IS the turn); the
+  `reportQueryStart/End` wiring these interpreters already owe carries the
+  consumption and resolution. Consult identity
   is the synthetic `(sessionId, 'title')`; one such job per session,
   idempotent. The consult
   sits at `handleSessionTitleGeneration`'s entry, before any lifecycle work;
@@ -254,9 +261,9 @@ gate never sees. Re-flagging and admission are two separate rules:
   them by convention. The GitHub agents' denial shape **splits by invocation**:
   the poll path (a durable tick) skips the agent work this tick — **without
   consuming the polling window**: the denial returns
-  \`skipped_provider_saturated\` and the poller does not advance
-  \`state.lastPollTime\` past that event (\`pollRepository\` advances the cursor
-  after the callbacks, \`github/polling-service.ts:121-133\`, so a plain skip
+  `skipped_provider_saturated` and the poller does not advance
+  `state.lastPollTime` past that event (`pollRepository` advances the cursor
+  after the callbacks, `github/polling-service.ts:121-133`, so a plain skip
   would silently eat it); the event is re-processed by the next poll once the
   account reopens; the **webhook path**
   (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
@@ -481,9 +488,13 @@ same credential (the custom-endpoint model allows distinct ids with identical
 `baseUrl`/`apiKey`, `custom-endpoint.ts:23-30`) — one concurrency-limited
 account. The key is therefore the **canonical upstream identity** (normalized
 `baseUrl` + credential digest) whenever the effective configuration carries
-an explicit endpoint, with the provider id filling in only for
-default-endpoint providers (e.g. built-in Anthropic with stored credentials)
-— so endpoint X's limit stops endpoint Y's calls to the same account.
+an explicit endpoint, **and for default-endpoint identities the key still
+carries the credential digest when a session overrides the API key** (two
+sessions on one built-in provider with different `providerConfig.apiKey`
+values are different accounts) — the bare provider id keys only sessions
+using the provider's stored default credentials. Endpoint X's limit stops
+endpoint Y's calls to the same account, and credential A's closure never
+queues credential B.
 
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
@@ -858,7 +869,9 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
    startup-permit sites and not for the whole streaming query, which stays
    alive across turns. Every report is keyed by the **canonical account
    key** of State ownership — the normalized upstream identity for explicit
-   endpoints, the provider id only for default-endpoint identities — never
+   endpoints, and for default-endpoint identities the provider id plus any
+   credential-digest override (bare provider id only for stored default
+   credentials) — never
    the bare `resolvedProviderId`, and never a provider-id-prefixed split of
    one shared upstream account.
 
@@ -889,7 +902,7 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (fully-open-only, synthetic identity, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, synthetic identity, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -917,7 +930,10 @@ by pre-existing suites):
    vs ladder; **episode charging** (10 concurrent reports → charge 1, `untilMs` =
    max); charge reset after **both** clear kinds (probe-clear and timer-expiry,
    via the `chargeResetArmed` flag — the timer path is the one that would silently
-   march to the 4-hour cap); billing-terminal exclusion; probe rule both-edges
+   march to the 4-hour cap); billing-terminal **closure** (arms the non-timed
+   closed state — the old exclusion assertion is replaced by: closed admits
+   nothing, parks durably at the sentinel, requeues on credential change);
+   probe rule both-edges
    (completion before arm + floor timer; completion after floor; no clear before
    floor; no clear for reset-bearing saturation); `reportRefinedReset` replaces a
    ladder `untilMs` and never shortens a parsed one; **wake routing** — a
@@ -983,7 +999,8 @@ by pre-existing suites):
    migration alike); the title-job interpreter — denial at
    `handleSessionTitleGeneration` parks at the saturation deadline (probe tick
    while probing), no grant is held or consumed, admission only when fully
-   open, the re-enqueued job succeeds once open, the title re-flag fires after
+   grant-aware (a bound title identity consumes its grant at query start and
+   resolves it on termination), the re-enqueued job succeeds once admitted, the title re-flag fires after
    any successful delivery that suppressed it (probe or provider-change
    migration alike), title-query failures are
    classified and reported with the title query's own effective account key,
@@ -1018,7 +1035,12 @@ by pre-existing suites):
    still find the row); a later wake must never undo the user's defer.
 7. **Interpreter — retry consult (P4):** saturated auto-retry returns the
    widened `parked` callback outcome — the watchdog relinquishes its timer
-   without startup retries and without `notifyResume` — settles the row deferred
+   without startup retries and **publishes a pause-clearing resume variant**
+   (`TaskAgentManager.limitedSessionsByTask` removes a session only on
+   `session.rate_limit_resume`, task-agent-manager.ts:390-410 — an unmatched
+   pause would keep the parent task restricted and its injections hitting
+   `parentTaskLimited` after the registry already owns the row) while
+   signaling the provider-queued state distinctly, settles the row deferred
    with the marker, registers; fallback-switched session (different provider)
    unaffected; the **provider-retry branch** classifies before deciding
    the retry — a bracketed GLM limit reports to the registry at attempt 0, a
