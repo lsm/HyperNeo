@@ -323,10 +323,10 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     message: MessageRecord
   ): Promise<string | null> {
-    if (!(await this.isGoalOutcomeWakeDeliverable(message))) return null;
+    if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) return null;
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
-    if (!(await this.isGoalOutcomeWakeDeliverable(message))) return null;
+    if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) return null;
     await this.injectLongTermAgentMessage(
       session,
       message.body,
@@ -335,13 +335,28 @@ export class SpaceRuntimeService {
     return session.getSessionData().id;
   }
 
-  private async isGoalOutcomeWakeDeliverable(message: MessageRecord): Promise<boolean> {
+  private async isGoalOutcomeWakeDeliverable(
+    actor: ActorRef,
+    message: MessageRecord
+  ): Promise<boolean> {
     if (!message.idempotencyKey?.startsWith('goal-outcome:')) return true;
     const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
     const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
     if (notification == null || notification.status !== 'pending') return false;
     const space = await this.config.spaceManager.getSpace(message.spaceId);
-    return space != null && space.status === 'active' && !space.paused && !space.stopped;
+    if (!space || space.status !== 'active' || space.paused || space.stopped) return false;
+    const goal = this.config.goalService?.getGoal(notification.goalId);
+    if (!goal || goal.spaceId !== notification.spaceId) return false;
+    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    let authorizedId: string | null = null;
+    if (resolution?.action === 'resolved') {
+      authorizedId = resolution.owner.agentId;
+    } else if (resolution?.action === 'coordinator_fallback') {
+      authorizedId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
+      authorizedId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+    }
+    return authorizedId != null && agentIdFromActorId(actor.actorId) === authorizedId;
   }
 
   async deliverGoalOutcomeWake(notification: SpaceGoalOutcomeNotification): Promise<void> {
