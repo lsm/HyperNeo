@@ -3061,7 +3061,7 @@ FROM (
 ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
-const MESSAGES_BY_SESSION_SQL = `
+export const MESSAGES_BY_SESSION_SQL = `
 WITH latest_shutdown_boundary AS MATERIALIZED (
   SELECT id
   FROM sdk_messages

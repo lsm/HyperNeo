@@ -13,6 +13,7 @@ import type {
 import type { GoalStatus, RoomGoal } from '@hyperneo/shared/types/neo';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DatabaseCore } from './database-core';
+import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability';
 import { ShortIdAllocator } from '../lib/short-id-allocator';
 export { ShortIdAllocator } from '../lib/short-id-allocator';
 import { SessionRepository } from './repositories/session-repository';
@@ -95,6 +96,7 @@ export type {
 
 export interface DatabaseOptions {
   messageSearchIndexFlushIntervalMs?: number;
+  queryObservability?: SQLiteQueryObservabilityOptions;
 }
 
 export class Database {
@@ -126,7 +128,7 @@ export class Database {
   private static readonly MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS = 2_000;
 
   constructor(dbPath: string, options?: DatabaseOptions) {
-    this.core = new DatabaseCore(dbPath);
+    this.core = new DatabaseCore(dbPath, { queryObservability: options?.queryObservability });
     this.messageSearchIndexFlushIntervalMs =
       options?.messageSearchIndexFlushIntervalMs ?? Database.MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS;
   }

@@ -270,7 +270,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     }
 
-    const db = new Database(config.dbPath);
+    const db = new Database(
+      config.dbPath,
+      config.sqlQueryObservability
+        ? { queryObservability: config.sqlQueryObservability }
+        : undefined
+    );
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);

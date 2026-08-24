@@ -25,4 +25,21 @@ describe('sqlite compat: readonly option (cross-runtime)', () => {
     expect(() => ro.exec('INSERT INTO t VALUES (2)')).toThrow();
     ro.close();
   });
+
+  it('layering PRAGMA query_only reports the flag and still blocks writes', () => {
+    const rw = new Database(path);
+    rw.exec('CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (1);');
+    rw.close();
+
+    const ro = new Database(path, { readonly: true });
+    ro.exec('PRAGMA query_only = ON');
+    const flag = ro.prepare('PRAGMA query_only').get() as {
+      query_only?: number | string | boolean;
+    } | null;
+    expect(flag?.query_only === 1 || flag?.query_only === '1' || flag?.query_only === true).toBe(
+      true
+    );
+    expect(() => ro.exec('INSERT INTO t VALUES (3)')).toThrow();
+    ro.close();
+  });
 });

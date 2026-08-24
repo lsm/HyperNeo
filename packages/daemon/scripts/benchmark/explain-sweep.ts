@@ -6,7 +6,7 @@ import {
 
 const DB_PATH = process.env.BENCH_DB_PATH ?? '/tmp/hyperneo-bench/daemon-clone.db';
 
-const db = new Database(DB_PATH);
+const db = new Database(DB_PATH, { readonly: true });
 db.exec('PRAGMA query_only = ON');
 db.exec('PRAGMA busy_timeout = 10000');
 

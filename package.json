@@ -35,6 +35,7 @@
     "architecture:file-size-report": "bun run scripts/architecture-file-size-report.ts",
     "check": "bun run check:no-comments && bun run check:prompts-sync && bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run check:session-guards && bun run check:space-task-handler-tests && bun run check:db-schema-parity && bun run check:test-quality && bun run check:test-matrix && bun run check:online-shards",
     "db:maintain-message-search": "bun run scripts/maintain-message-search-db.ts",
+    "perf:daemon-live-scale": "bun packages/daemon/scripts/benchmark/live-scale-query-regression.ts",
     "test:proxy:start": "./scripts/dev-proxy.sh start",
     "test:proxy:stop": "./scripts/dev-proxy.sh stop",
     "test:proxy:status": "./scripts/dev-proxy.sh status",

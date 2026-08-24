@@ -49,6 +49,43 @@ export interface PayloadMatch {
   equals: string;
 }
 
+export interface JobQueueCandidateSelectionInput {
+  queue: string;
+  now: number;
+  limit: number;
+  exclude?: PayloadMatch;
+  requireEqual?: PayloadMatch;
+  excludeIds?: string[];
+}
+
+export interface JobQueueCandidateSelection {
+  sql: string;
+  params: Array<string | number>;
+}
+
+export function buildJobQueueCandidateSelection(
+  input: JobQueueCandidateSelectionInput
+): JobQueueCandidateSelection {
+  let sql = `SELECT * FROM job_queue WHERE queue = ? AND status = 'pending' AND run_at <= ?`;
+  const params: Array<string | number> = [input.queue, input.now];
+  if (input.requireEqual) {
+    sql += ` AND json_extract(payload, ?) = ?`;
+    params.push(input.requireEqual.path, input.requireEqual.equals);
+  }
+  if (input.exclude) {
+    sql += ` AND COALESCE(json_extract(payload, ?), '') != ?`;
+    params.push(input.exclude.path, input.exclude.equals);
+  }
+  const excludeIds = input.excludeIds ?? [];
+  if (excludeIds.length > 0) {
+    sql += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+    params.push(...excludeIds);
+  }
+  sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`;
+  params.push(input.limit);
+  return { sql, params };
+}
+
 export class JobQueueRepository {
   constructor(private db: BunDatabase) {}
 
@@ -98,19 +135,13 @@ export class JobQueueRepository {
     const claimed: Job[] = [];
 
     const txn = this.db.transaction(() => {
-      let sql = `SELECT * FROM job_queue WHERE queue = ? AND status = 'pending' AND run_at <= ?`;
-      const params: (string | number)[] = [queue, Date.now()];
-      if (exclude) {
-        sql += ` AND COALESCE(json_extract(payload, ?), '') != ?`;
-        params.push(exclude.path, exclude.equals);
-      }
-      if (excludeIds && excludeIds.length > 0) {
-        sql += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
-        params.push(...excludeIds);
-      }
-      sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`;
-      params.push(limit);
-
+      const { sql, params } = buildJobQueueCandidateSelection({
+        queue,
+        now: Date.now(),
+        limit,
+        exclude,
+        excludeIds,
+      });
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
     }, 'immediate');
@@ -128,16 +159,13 @@ export class JobQueueRepository {
     const claimed: Job[] = [];
 
     const txn = this.db.transaction(() => {
-      let sql = `SELECT * FROM job_queue
-             WHERE queue = ? AND status = 'pending' AND run_at <= ?
-               AND json_extract(payload, ?) = ?`;
-      const params: (string | number)[] = [queue, Date.now(), spec.path, spec.equals];
-      if (excludeIds && excludeIds.length > 0) {
-        sql += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
-        params.push(...excludeIds);
-      }
-      sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`;
-      params.push(limit);
+      const { sql, params } = buildJobQueueCandidateSelection({
+        queue,
+        now: Date.now(),
+        limit,
+        requireEqual: spec,
+        excludeIds,
+      });
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
     }, 'immediate');
