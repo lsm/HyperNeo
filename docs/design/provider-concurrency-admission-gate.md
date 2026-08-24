@@ -832,7 +832,10 @@ by pre-existing suites):
    job to `retryAt = now`; reconstruction excludes archived sessions and
    archiving retires marked rows; a query-mode flip to immediate re-admits
    retained registrations; an empty-backlog clear consumes `chargeResetArmed`
-   on the first subsequent clean turn; registration add/lookup/lazy cleanup;
+   only on a clean turn that started after the clear; the marker is retained
+   through promotion (cleared at yield or terminal exit) so reconstruction
+   still sees promoted-but-unstarted rows; the LLM classifier skips while its
+   selected account is saturated; registration add/lookup/lazy cleanup;
    timer lifecycle (destroy clears;
    unref'd); clock and jitter injection throughout (the pilot-9 purity
    convention: every time check against an injected `now`).
