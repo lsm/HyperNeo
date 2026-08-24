@@ -1787,13 +1787,24 @@ describe('Model Service', () => {
       await expect(isModelExcludedByCuration('ghost-model', 'anthropic')).resolves.toBe(false);
     });
 
-    it('allows a curated fallback before the cache populates by consulting the provider catalog', async () => {
+    it('consults the live provider catalog against the curated set when the cache has not populated', async () => {
       const registry = getProviderRegistry();
       registry.register({
         id: 'ollama',
         displayName: 'Ollama',
         isAvailable: () => true,
         getModels: async () => [
+          {
+            id: 'ollama-qwen',
+            name: 'Qwen',
+            alias: 'qwen3',
+            family: 'qwen',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Qwen',
+            releaseDate: '',
+            available: true,
+          },
           {
             id: 'ollama-llama3',
             name: 'Llama 3',
@@ -1810,11 +1821,12 @@ describe('Model Service', () => {
         getModelForTier: () => undefined,
         buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
       } as unknown as Parameters<typeof registry.register>[0]);
-      registry.setCuratedModels('ollama', [{ id: 'ollama-llama3' }]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
       setModelsCache(new Map());
 
-      await expect(isModelExcludedByCuration('ollama-llama3', 'ollama')).resolves.toBe(false);
-      await expect(isModelExcludedByCuration('llama3', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('ollama-qwen', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('qwen3', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('llama3', 'ollama')).resolves.toBe(true);
       await expect(isModelExcludedByCuration('ollama-ghost', 'ollama')).resolves.toBe(true);
     });
   });

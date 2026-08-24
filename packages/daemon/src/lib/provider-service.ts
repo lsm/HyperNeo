@@ -5,7 +5,7 @@ import type {
   Provider as RegisteredProvider,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
-import { isCuratedOutModel, resolveCuratedCanonicalModelId } from './model-service.js';
+import { resolveVisibleCanonicalModelId } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
@@ -224,16 +224,16 @@ export class ProviderService {
     ...candidates: Array<string | undefined>
   ): Promise<string | undefined> {
     const curated = this.getRegistry().getCuratedModels(providerId);
-    const catalogIds =
-      curated !== undefined
-        ? new Set((await provider.getModels()).map((model) => model.id))
-        : undefined;
+    if (curated === undefined) {
+      return candidates.find((candidate) => candidate !== undefined);
+    }
+    const curatedIds = new Set(curated.map((model) => model.id));
+    const catalogIds = new Set((await provider.getModels()).map((model) => model.id));
     for (const candidate of candidates) {
-      if (!candidate || isCuratedOutModel(candidate, providerId)) continue;
-      if (catalogIds) {
-        const canonicalId = resolveCuratedCanonicalModelId(candidate, providerId) ?? candidate;
-        if (!catalogIds.has(canonicalId)) continue;
-      }
+      if (!candidate) continue;
+      const canonicalId =
+        (await resolveVisibleCanonicalModelId(candidate, providerId)) ?? candidate;
+      if (!curatedIds.has(canonicalId) || !catalogIds.has(canonicalId)) continue;
       return candidate;
     }
     return undefined;

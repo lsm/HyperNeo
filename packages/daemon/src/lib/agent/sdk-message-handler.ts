@@ -1306,8 +1306,20 @@ export class SDKMessageHandler {
     if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
-    if (await isModelExcludedByCuration(fallbackModel, session.config.provider ?? 'anthropic'))
+    const providerId = session.config.provider ?? 'anthropic';
+    const configuredFallbackModel = session.config.fallbackModel;
+    if (await isModelExcludedByCuration(fallbackModel, providerId)) return;
+    const liveConfig = this.ctx.session.config;
+    if (
+      (liveConfig.provider ?? 'anthropic') !== providerId ||
+      liveConfig.fallbackModel !== configuredFallbackModel ||
+      liveConfig.model === fallbackModel
+    ) {
+      this.logger.warn(
+        `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`
+      );
       return;
+    }
 
     session.config = {
       ...session.config,

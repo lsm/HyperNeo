@@ -634,6 +634,37 @@ describe('ProviderService', () => {
       expect(model).toBe('glm');
     });
 
+    it('accepts an uncached alias of a curated model on a dynamically discovered provider', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'ollama-qwen',
+            name: 'Qwen',
+            alias: 'qwen3',
+            family: 'qwen',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Qwen',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+
+      const model = await realService.getTitleGenerationModel('ollama', 'qwen3');
+
+      expect(model).toBe('qwen3');
+    });
+
     it('returns null when curation is explicitly empty', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();
