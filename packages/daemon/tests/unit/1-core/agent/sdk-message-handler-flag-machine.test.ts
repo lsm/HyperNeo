@@ -476,6 +476,192 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual(resetFlags);
     });
+
+    type StateCrossRow = {
+      name: string;
+      prime?: () => Promise<void>;
+      suppress?: 'plain' | 'clearInFlight' | 'mismatch';
+      result?: () => SDKMessage;
+      afterBusy: FlagView;
+      afterResult?: FlagView;
+      sendIdleEvent: boolean;
+      expectedIdle: 'plain' | 'suppressed' | 'none';
+      expectedReplay: number;
+      expectedWait?: 'reset';
+      expectedFlags: FlagView;
+      cleanupClear?: boolean;
+    };
+
+    const stateCrossRows: StateCrossRow[] = [
+      {
+        name: 'session-state mode with a suppressed error retains suppression past the idle event',
+        suppress: 'plain',
+        result: () => errorResult('state-suppressed-error'),
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        afterResult: {
+          ...resetFlags,
+          suppressIdleOnNextResult: true,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: false,
+        },
+        sendIdleEvent: true,
+        expectedIdle: 'suppressed',
+        expectedReplay: 0,
+        expectedFlags: { ...resetFlags, suppressIdleOnNextResult: true },
+      },
+      {
+        name: 'session-state mode with a suppressed error and clear in flight unwinds on the result',
+        suppress: 'clearInFlight',
+        result: () => errorResult('state-clear-error'),
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        afterResult: resetFlags,
+        sendIdleEvent: false,
+        expectedIdle: 'none',
+        expectedReplay: 0,
+        expectedWait: 'reset',
+        expectedFlags: resetFlags,
+      },
+      {
+        name: 'session-state mode with a suppressed success for another turn keeps suppression armed',
+        suppress: 'mismatch',
+        result: () => successResult('state-mismatch', { user_message_uuid: 'unrelated-msg-id' }),
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        afterResult: {
+          ...resetFlags,
+          suppressIdleOnNextResult: true,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: true,
+        },
+        sendIdleEvent: true,
+        expectedIdle: 'suppressed',
+        expectedReplay: 0,
+        expectedFlags: { ...resetFlags, suppressIdleOnNextResult: true },
+        cleanupClear: true,
+        expectedWait: 'reset',
+      },
+      {
+        name: 'session-state mode with a nested result defers everything to the idle event with replay',
+        result: () => successResult('state-nested', { parent_tool_use_id: 'toolu-1' }),
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        afterResult: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+        },
+        sendIdleEvent: true,
+        expectedIdle: 'plain',
+        expectedReplay: 1,
+        expectedFlags: resetFlags,
+      },
+      {
+        name: 'a stale success verdict carried into session-state mode still allows replay on idle',
+        prime: async () => {
+          await handler.handleMessage(successResult('prime-stale-true'));
+        },
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: true,
+        },
+        sendIdleEvent: true,
+        expectedIdle: 'plain',
+        expectedReplay: 1,
+        expectedFlags: resetFlags,
+      },
+      {
+        name: 'a stale error verdict carried into session-state mode still blocks replay on idle',
+        prime: async () => {
+          await handler.handleMessage(errorResult('prime-stale-false'));
+        },
+        afterBusy: {
+          ...resetFlags,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: false,
+        },
+        sendIdleEvent: true,
+        expectedIdle: 'plain',
+        expectedReplay: 0,
+        expectedFlags: resetFlags,
+      },
+    ];
+
+    for (const row of stateCrossRows) {
+      it(row.name, async () => {
+        if (row.prime) {
+          await row.prime();
+        }
+        setIdleSpy.mockClear();
+        beginTerminalIdleSpy.mockClear();
+        emitSpy.mockClear();
+
+        await handler.handleMessage(sessionState('busy'));
+        expect(readFlags(handler)).toEqual(row.afterBusy);
+
+        let wait: Promise<string> | null = null;
+        if (row.suppress === 'plain' || row.suppress === 'mismatch') {
+          handler.suppressIdleForNextResult();
+        }
+        if (row.suppress === 'mismatch') {
+          wait = handler.waitForSuppressedResult(5_000, 'other-msg-id');
+        }
+        if (row.suppress === 'clearInFlight') {
+          handler.suppressIdleForNextResult();
+          wait = handler.waitForSuppressedResult(5_000);
+          handler.markClearMessageSent();
+        }
+
+        if (row.result) {
+          await handler.handleMessage(row.result());
+          expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+          expect(setIdleSpy).not.toHaveBeenCalled();
+          expect(readFlags(handler)).toEqual(row.afterResult);
+        }
+
+        if (row.sendIdleEvent) {
+          await handler.handleMessage(sessionState('idle'));
+          if (row.expectedIdle === 'suppressed') {
+            expect(setIdleSpy).toHaveBeenCalledWith({
+              suppressDeliveryWaiters: true,
+              suppressIdlePublish: true,
+              suppressIdleCallback: true,
+            });
+          }
+        }
+        if (row.expectedIdle === 'none') {
+          expect(setIdleSpy).not.toHaveBeenCalled();
+        }
+
+        expect(replayCount()).toBe(row.expectedReplay);
+        expect(readFlags(handler)).toEqual(row.expectedFlags);
+
+        if (row.cleanupClear) {
+          handler.clearIdleSuppression();
+        }
+        if (row.expectedWait !== undefined && wait !== null) {
+          expect(await wait).toBe(row.expectedWait);
+        }
+      });
+    }
   });
 
   describe('publication phase and failure-path boundaries', () => {
