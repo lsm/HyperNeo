@@ -1,7 +1,6 @@
 import type {
   CreateProviderParams,
   MessageHub,
-  ModelInfo,
   ProviderRecord,
   UpdateProviderParams,
 } from '@hyperneo/shared';
@@ -289,34 +288,50 @@ export interface ProviderHandlerDeps {
 }
 
 const LAST_GOOD_DISCOVERY_KEY = 'discoveredModels';
-const LAST_GOOD_DISCOVERY_MAX_CHARS = MAX_JSON_FIELD_LEN / 2;
+const LAST_GOOD_DISCOVERY_WRAPPER_RESERVE =
+  `${JSON.stringify(LAST_GOOD_DISCOVERY_KEY)}:${JSON.stringify({ models: [], truncated: true })}`
+    .length + 1;
 
 interface LastGoodDiscoveredModels {
   models: CuratedModel[];
   truncated?: boolean;
 }
 
+function lastGoodDiscoveryBudget(base: Record<string, unknown>): number {
+  const stripped = { ...base };
+  delete stripped[LAST_GOOD_DISCOVERY_KEY];
+  const prefixLength = Object.keys(stripped).length > 0 ? JSON.stringify(stripped).length + 1 : 0;
+  return Math.max(0, MAX_JSON_FIELD_LEN - prefixLength - LAST_GOOD_DISCOVERY_WRAPPER_RESERVE);
+}
+
 function buildLastGoodDiscoveredModels(
   providerId: string,
-  discovered: ModelInfo[]
+  discovered: ReadonlyArray<{ id: string; name?: string }>,
+  budget: number
 ): LastGoodDiscoveredModels {
-  const curatedIds = new Set(
-    getProviderRegistry()
-      .getCuratedModels(providerId)
-      ?.map((model) => model.id) ?? []
-  );
-  const ordered = [
-    ...discovered.filter((model) => curatedIds.has(model.id)),
-    ...discovered.filter((model) => !curatedIds.has(model.id)),
-  ];
+  const registry = getProviderRegistry();
+  const byId = new Map<string, CuratedModel>();
+  for (const curated of registry.getCuratedModels(providerId) ?? []) {
+    byId.set(curated.id, {
+      id: curated.id,
+      ...(curated.name === undefined ? {} : { name: curated.name }),
+    });
+  }
+  for (const model of discovered) {
+    const seeded = byId.get(model.id);
+    if (seeded) {
+      if (seeded.name === undefined && model.name !== undefined) seeded.name = model.name;
+      continue;
+    }
+    byId.set(model.id, { id: model.id, ...(model.name === undefined ? {} : { name: model.name }) });
+  }
   const models: CuratedModel[] = [];
   let used = 2;
   let truncated = false;
-  for (let index = 0; index < ordered.length; index++) {
-    const { id, name } = ordered[index];
-    const entry = { id, ...(name === undefined ? {} : { name }) };
-    const cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
-    if (used + cost > LAST_GOOD_DISCOVERY_MAX_CHARS) {
+  for (const entry of byId.values()) {
+    const serialized = JSON.stringify(entry);
+    const cost = serialized.length + (models.length === 0 ? 0 : 1);
+    if (used + cost > budget) {
       truncated = true;
       break;
     }
@@ -329,7 +344,7 @@ function buildLastGoodDiscoveredModels(
 function persistLastGoodDiscoveredModels(
   providerRepo: ProviderRepository,
   record: ProviderRecord,
-  discovered: ModelInfo[]
+  discovered: ReadonlyArray<{ id: string; name?: string }>
 ): boolean {
   let base: Record<string, unknown> = {};
   if (record.configJson) {
@@ -342,7 +357,11 @@ function persistLastGoodDiscoveredModels(
       base = {};
     }
   }
-  const lastGood = buildLastGoodDiscoveredModels(record.providerId, discovered);
+  const lastGood = buildLastGoodDiscoveredModels(
+    record.providerId,
+    discovered,
+    lastGoodDiscoveryBudget(base)
+  );
   base[LAST_GOOD_DISCOVERY_KEY] = lastGood;
   providerRepo.updateProvider(record.id, { configJson: JSON.stringify(base) });
   return lastGood.truncated === true;
@@ -423,17 +442,24 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       throw new Error(`Provider ${record.providerId} does not support remote model listing`);
     }
 
-    const { getModelsCacheGeneration, applyDiscoveredProviderModels } = await import(
-      '../model-service.js'
-    );
+    const {
+      getModelsCacheGeneration,
+      applyDiscoveredProviderModels,
+      markProviderRefreshSucceeded,
+    } = await import('../model-service.js');
     const generationAtStart = getModelsCacheGeneration();
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
+    const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
 
     const discovered = await provider.listRemoteModels({ force: true });
+    if (discovered.length === 0) {
+      throw new Error(`Provider ${record.providerId} returned no models`);
+    }
     const models = await provider.getModels();
 
     if (
       getModelsCacheGeneration() !== generationAtStart ||
+      JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
       !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
     ) {
       return { success: false, reason: 'superseded' };
@@ -444,6 +470,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
     const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
     applyDiscoveredProviderModels(record.providerId, models);
+    markProviderRefreshSucceeded(record.providerId);
     notifyProvidersChanged(internalEventBus);
 
     return {

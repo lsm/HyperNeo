@@ -981,6 +981,12 @@ export function applyDiscoveredProviderModels(
   );
 }
 
+export function markProviderRefreshSucceeded(providerId: string): void {
+  providerAppliedSeq.set(providerId, ++modelLoadSequence);
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+}
+
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
   const normalized = idOrAlias.toLowerCase();
 
