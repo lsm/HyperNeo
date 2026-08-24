@@ -17,8 +17,8 @@ function makeActor(
   return {
     agentStatus: 'active',
     spaceWakeable: true,
-    sessionIdle: true,
-    pendingAcceptedDelivery: false,
+    busyWithOtherWork: false,
+    pendingOtherAcceptedDelivery: false,
     lastActivityAt: NOW - THRESHOLD_MS - 1,
     ...overrides,
   };
@@ -173,16 +173,18 @@ describe('decideInactivityNag', () => {
       });
     });
 
-    test('skips when the session is processing, queued, or cooling down', () => {
-      expect(decideInactivityNag(input({ actor: makeActor({ sessionIdle: false }) }))).toEqual({
-        action: 'none',
-        reason: 'session_busy',
-      });
+    test('skips when the session has competing work queued', () => {
+      expect(decideInactivityNag(input({ actor: makeActor({ busyWithOtherWork: true }) }))).toEqual(
+        {
+          action: 'none',
+          reason: 'session_busy',
+        }
+      );
     });
 
-    test('skips when an accepted delivery is still unconsumed', () => {
+    test('skips when another accepted delivery is still unconsumed', () => {
       expect(
-        decideInactivityNag(input({ actor: makeActor({ pendingAcceptedDelivery: true }) }))
+        decideInactivityNag(input({ actor: makeActor({ pendingOtherAcceptedDelivery: true }) }))
       ).toEqual({ action: 'none', reason: 'delivery_pending' });
     });
   });
@@ -281,17 +283,6 @@ describe('decideInactivityNag', () => {
       expect(decision.action).toBe('nag');
     });
 
-    test('still blocks another claimant behind a busy session or pending delivery', () => {
-      expect(
-        decideInactivityNag(
-          input({
-            actor: makeActor({ sessionIdle: false }),
-            claim: makeClaim({ ownerToken: 'scanner-b' }),
-          })
-        )
-      ).toEqual({ action: 'none', reason: 'session_busy' });
-    });
-
     test('stops blocking on a degraded tombstone once activity advances past its window', () => {
       const decision = decideInactivityNag(
         input({
@@ -357,12 +348,22 @@ describe('decideNagWindowReset', () => {
     });
   });
 
-  test('a terminal delivery failure marks the claim degraded and blocks automatic retries', () => {
+  test('a terminal delivery failure before consumption advances the generation', () => {
     expect(decideNagWindowReset('terminal_failure')).toEqual({
       resetWindow: false,
       releaseClaim: false,
       markDegraded: true,
       advanceAttemptGeneration: true,
+      degraded: true,
+    });
+  });
+
+  test('a terminal failure after consumption stays degraded without a fresh generation', () => {
+    expect(decideNagWindowReset('terminal_failure', { consumed: true })).toEqual({
+      resetWindow: false,
+      releaseClaim: false,
+      markDegraded: true,
+      advanceAttemptGeneration: false,
       degraded: true,
     });
   });

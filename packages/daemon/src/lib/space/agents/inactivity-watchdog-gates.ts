@@ -28,8 +28,8 @@ export type InactivityNagDecision =
 export interface InactivityWatchdogActorSnapshot {
   agentStatus: 'active' | 'paused' | 'disabled' | 'archived';
   spaceWakeable: boolean;
-  sessionIdle: boolean;
-  pendingAcceptedDelivery: boolean;
+  busyWithOtherWork: boolean;
+  pendingOtherAcceptedDelivery: boolean;
   lastActivityAt: number;
 }
 
@@ -99,21 +99,6 @@ function claimAnchoredToCurrentWindow(ctx: InactivityWatchdogCtx): boolean {
   return currentWindow !== null && claim.windowAnchoredAt === currentWindow;
 }
 
-function claimRevisionMatches(ctx: InactivityWatchdogCtx): boolean {
-  const claim = ctx.claim;
-  if (claim === null) return true;
-  if (claim.configRevision === null || ctx.configRevision === null) return true;
-  return claim.configRevision === ctx.configRevision;
-}
-
-function claimOwnedByCaller(ctx: InactivityWatchdogCtx): boolean {
-  const claim = ctx.claim;
-  if (claim === null || claim.state === 'none') return false;
-  if (!claimAnchoredToCurrentWindow(ctx)) return false;
-  if (!claimRevisionMatches(ctx)) return false;
-  return claim.ownerToken === ctx.callerToken;
-}
-
 export function applyDegradedGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
   const blocked = ctx.claim?.degraded === true && claimAnchoredToCurrentWindow(ctx);
   return blocked ? decided(ctx, { action: 'none', reason: 'degraded' }) : ctx;
@@ -130,13 +115,13 @@ export function applyActorInactiveGate(ctx: InactivityWatchdogCtx): InactivityWa
 }
 
 export function applyBusySessionGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  if (claimOwnedByCaller(ctx)) return ctx;
-  return ctx.actor?.sessionIdle ? ctx : decided(ctx, { action: 'none', reason: 'session_busy' });
+  return ctx.actor?.busyWithOtherWork
+    ? decided(ctx, { action: 'none', reason: 'session_busy' })
+    : ctx;
 }
 
 export function applyPendingDeliveryGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  if (claimOwnedByCaller(ctx)) return ctx;
-  return ctx.actor?.pendingAcceptedDelivery
+  return ctx.actor?.pendingOtherAcceptedDelivery
     ? decided(ctx, { action: 'none', reason: 'delivery_pending' })
     : ctx;
 }
@@ -145,7 +130,7 @@ export function applyClaimHeldGate(ctx: InactivityWatchdogCtx): InactivityWatchd
   const claim = ctx.claim;
   if (claim === null || claim.state === 'none') return ctx;
   if (!claimAnchoredToCurrentWindow(ctx)) return ctx;
-  if (!claimRevisionMatches(ctx)) return ctx;
+  if (claim.configRevision !== ctx.configRevision) return ctx;
   if (claim.ownerToken === ctx.callerToken) return ctx;
   return decided(ctx, { action: 'none', reason: 'claim_held' });
 }
@@ -212,7 +197,10 @@ export interface InactivityNagWindowReset {
   degraded: boolean;
 }
 
-export function decideNagWindowReset(stage: InactivityNagDeliveryStage): InactivityNagWindowReset {
+export function decideNagWindowReset(
+  stage: InactivityNagDeliveryStage,
+  context: { consumed: boolean } = { consumed: false }
+): InactivityNagWindowReset {
   switch (stage) {
     case 'pre_admission_failure':
       return {
@@ -243,7 +231,7 @@ export function decideNagWindowReset(stage: InactivityNagDeliveryStage): Inactiv
         resetWindow: false,
         releaseClaim: false,
         markDegraded: true,
-        advanceAttemptGeneration: true,
+        advanceAttemptGeneration: !context.consumed,
         degraded: true,
       };
   }
