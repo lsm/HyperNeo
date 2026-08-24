@@ -21,7 +21,12 @@ function toRequest(req: IncomingMessage, hostname: string, port: number): Reques
   return new Request(url, init);
 }
 
+function clientIsGone(res: ServerResponse): boolean {
+  return res.destroyed || res.writableEnded;
+}
+
 function waitForDrain(res: ServerResponse): Promise<void> {
+  if (clientIsGone(res)) return Promise.resolve();
   return new Promise<void>((resolve) => {
     const settle = () => {
       res.off('drain', settle);
@@ -45,17 +50,31 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
     return;
   }
   const reader = response.body.getReader();
+  let closed = false;
+  const onClientGone = () => {
+    closed = true;
+    void reader.cancel().catch(() => {});
+  };
+  res.once('close', onClientGone);
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      if (closed || clientIsGone(res)) break;
       if (!res.write(value)) {
+        if (closed || clientIsGone(res)) break;
         await waitForDrain(res);
+        if (closed || clientIsGone(res)) break;
       }
     }
-    res.end();
-  } catch (error) {
-    res.destroy(error instanceof Error ? error : new Error(String(error)));
+    if (!closed && !clientIsGone(res)) {
+      res.end();
+    }
+  } catch {
+    res.destroy();
+  } finally {
+    res.off('close', onClientGone);
+    await reader.cancel().catch(() => {});
   }
 }
 

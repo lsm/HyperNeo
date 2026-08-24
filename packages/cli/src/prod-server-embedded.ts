@@ -4,10 +4,8 @@ import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver'
 import type { Config } from '@hyperneo/daemon/config';
 import { createHttpWsServer, type ServerHandle } from '@hyperneo/daemon/lib/runtime-server';
 import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
-import { createReadStream } from 'node:fs';
 import { mkdir, writeFile, access, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { Readable } from 'node:stream';
 import {
   createCorsPreflightResponse,
   isWebSocketPath,
@@ -163,10 +161,7 @@ export async function startProdServer(config: Config) {
           headers['Cache-Control'] = 'no-cache';
         }
 
-        return new Response(
-          Readable.toWeb(createReadStream(asset.filePath)) as unknown as ReadableStream,
-          { headers }
-        );
+        return new Response(await readFile(asset.filePath), { headers });
       }
 
       if (indexHtmlContent) {

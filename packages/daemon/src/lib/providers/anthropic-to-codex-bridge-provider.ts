@@ -134,6 +134,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private readonly bridgeServers = new Map<string, OpenAIResponsesBridgeServer>();
   private readonly bridgeServerAuthKeys = new Map<string, string>();
   private readonly bridgePromises = new Map<string, Promise<void>>();
+  private shutdownStarted = false;
 
   private readonly authPath: string;
 
@@ -624,6 +625,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       modelAliases: this.modelAliases(),
     }).then(
       (bridgeServer) => {
+        if (this.shutdownStarted) {
+          bridgeServer.stop();
+          this.bridgePromises.delete(bridgeKey);
+          return;
+        }
         this.bridgeServers.set(bridgeKey, bridgeServer);
         this.bridgeServerAuthKeys.set(bridgeKey, authKey);
         this.bridgePromises.delete(bridgeKey);
@@ -660,6 +666,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   stopAllBridgeServers(): void {
+    this.shutdownStarted = true;
+    this.bridgePromises.clear();
     for (const server of this.bridgeServers.values()) {
       server.stop();
     }

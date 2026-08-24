@@ -1417,7 +1417,7 @@ export async function createOpenAIResponsesBridgeServer(
   };
 
   const server = await createHttpWsServer({
-    hostname: '0.0.0.0',
+    hostname: '127.0.0.1',
     port: 0,
     idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {

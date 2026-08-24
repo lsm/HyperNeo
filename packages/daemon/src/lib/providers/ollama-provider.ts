@@ -89,6 +89,7 @@ export class OllamaProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
   private bridgeServers = new Map<string, OllamaBridgeServer>();
   private bridgePromises = new Map<string, Promise<void>>();
+  private shutdownStarted = false;
 
   constructor(options: OllamaProviderOptions) {
     this.kind = options.kind;
@@ -260,6 +261,8 @@ export class OllamaProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
+    this.shutdownStarted = true;
+    this.bridgePromises.clear();
     for (const bridge of this.bridgeServers.values()) bridge.stop();
     this.bridgeServers.clear();
   }
@@ -317,6 +320,11 @@ export class OllamaProvider implements Provider {
       fetchImpl: this.fetchImpl,
     }).then(
       (bridge) => {
+        if (this.shutdownStarted) {
+          bridge.stop();
+          this.bridgePromises.delete(key);
+          return;
+        }
         this.bridgeServers.set(key, bridge);
         this.bridgePromises.delete(key);
       },

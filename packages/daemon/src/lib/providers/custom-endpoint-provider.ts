@@ -100,6 +100,7 @@ export class CustomEndpointProvider implements Provider {
   private readonly options: CustomEndpointProviderOptions;
   private bridges = new Map<string, CustomEndpointBridge>();
   private bridgePromises = new Map<string, Promise<CustomEndpointBridge>>();
+  private shutdownStarted = false;
 
   constructor(config: CustomEndpointConfig, options: CustomEndpointProviderOptions = {}) {
     if (!config.id) throw new Error('CustomEndpointProvider: endpoint id is required');
@@ -273,6 +274,8 @@ export class CustomEndpointProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
+    this.shutdownStarted = true;
+    this.bridgePromises.clear();
     for (const bridge of this.bridges.values()) bridge.stop();
     this.bridges.clear();
   }
@@ -351,6 +354,11 @@ export class CustomEndpointProvider implements Provider {
     const created = this.createBridgeForType(params);
     const ready = Promise.resolve(created).then(
       (bridge) => {
+        if (this.shutdownStarted) {
+          bridge.stop();
+          this.bridgePromises.delete(key);
+          return bridge;
+        }
         this.bridges.set(key, bridge);
         this.bridgePromises.delete(key);
         return bridge;

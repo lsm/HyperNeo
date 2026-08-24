@@ -86,6 +86,47 @@ describe('runtime-server node backend', () => {
     server.stop(true);
   });
 
+  it('cancels the upstream body reader when the client disconnects mid-stream', async () => {
+    let upstreamCancelled = false;
+    let secondChunkProduced = false;
+    const server = await withNodeServer(async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: first\n\n'));
+          setTimeout(() => {
+            secondChunkProduced = true;
+            controller.enqueue(encoder.encode('data: second\n\n'));
+          }, 800);
+        },
+        cancel() {
+          upstreamCancelled = true;
+        },
+      });
+      return new Response(stream, {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+
+    const controller = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      signal: controller.signal,
+    });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    expect(decoder.decode((await reader.read()).value)).toBe('data: first\n\n');
+
+    controller.abort();
+    const deadline = Date.now() + 5000;
+    while (!upstreamCancelled && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(upstreamCancelled).toBe(true);
+    expect(secondChunkProduced).toBe(false);
+
+    server.stop(true);
+  });
+
   it('upgrades websocket connections and echoes messages', async () => {
     const opened: string[] = [];
     const server = await withNodeServer(

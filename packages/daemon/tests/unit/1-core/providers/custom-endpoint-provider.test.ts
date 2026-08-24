@@ -291,7 +291,6 @@ describe('CustomEndpointProvider', () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
     await p.ensureBridgeStarted('qwen2.5-vl-7b');
-    await p.ensureBridgeStarted('qwen2.5-vl-7b');
     p.buildSdkConfig('qwen2.5-vl-7b');
     expect(fake.configs[0]).toMatchObject({
       toolUseSupported: false,
@@ -315,7 +314,6 @@ describe('CustomEndpointProvider', () => {
       { bridgeFactory: fake.factory }
     );
     await p.ensureBridgeStarted('reasoner');
-    await p.ensureBridgeStarted('reasoner');
     p.buildSdkConfig('reasoner');
     expect(fake.configs[0]).toMatchObject({ thinkingSupported: true });
   });
@@ -323,7 +321,6 @@ describe('CustomEndpointProvider', () => {
   it('defaults streamUsageSupported to false (strict OpenAI-compatible backends)', async () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
-    await p.ensureBridgeStarted('qwen2.5-7b');
     await p.ensureBridgeStarted('qwen2.5-7b');
     p.buildSdkConfig('qwen2.5-7b');
     expect(fake.configs[0].streamUsageSupported).toBe(false);
@@ -344,7 +341,6 @@ describe('CustomEndpointProvider', () => {
       },
       { bridgeFactory: fake.factory }
     );
-    await p.ensureBridgeStarted('openai-compatible');
     await p.ensureBridgeStarted('openai-compatible');
     p.buildSdkConfig('openai-compatible');
     expect(fake.configs[0].streamUsageSupported).toBe(true);
@@ -386,14 +382,31 @@ describe('CustomEndpointProvider', () => {
     const fake = makeFakeBridge();
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
     await p.ensureBridgeStarted('qwen2.5-7b');
-    await p.ensureBridgeStarted('qwen2.5-7b');
     p.buildSdkConfig('qwen2.5-7b');
-    await p.ensureBridgeStarted('qwen2.5-vl-7b');
     await p.ensureBridgeStarted('qwen2.5-vl-7b');
     p.buildSdkConfig('qwen2.5-vl-7b');
     expect(fake.configs).toHaveLength(2);
     await p.shutdown();
     expect(fake.stoppedPorts).toHaveLength(2);
+  });
+
+  it('stops a bridge that finishes starting after shutdown', async () => {
+    const stoppedPorts: number[] = [];
+    let resolveFactory: (bridge: OpenAIChatBridgeServer) => void = () => {};
+    const factory = (): Promise<OpenAIChatBridgeServer> =>
+      new Promise((resolve) => {
+        resolveFactory = resolve;
+      });
+    const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: factory });
+    const ensurePromise = p.ensureBridgeStarted('qwen2.5-7b');
+    await p.shutdown();
+    resolveFactory({
+      port: 49999,
+      stop: () => stoppedPorts.push(49999),
+    });
+    await ensurePromise;
+    expect(stoppedPorts).toEqual([49999]);
+    expect(() => p.buildSdkConfig('qwen2.5-7b')).toThrow(/bridge not started/);
   });
 
   it('resolveModelCapabilities fills in defaults', async () => {
@@ -499,7 +512,6 @@ describe('CustomEndpointProvider', () => {
       { bridgeFactory: fake.factory }
     );
     await p.ensureBridgeStarted('qwen2.5-7b');
-    await p.ensureBridgeStarted('qwen2.5-7b');
     p.buildSdkConfig('qwen2.5-7b');
     expect(fake.configs[0].headers).toEqual({
       'X-Org': 'acme',
@@ -528,10 +540,6 @@ describe('CustomEndpointProvider', () => {
       baseUrl: 'http://override.test/v1',
       apiKey: 'session-key',
     });
-    await p.ensureBridgeStarted('qwen2.5-7b', {
-      baseUrl: 'http://override.test/v1',
-      apiKey: 'session-key',
-    });
     p.buildSdkConfig('qwen2.5-7b', {
       baseUrl: 'http://override.test/v1',
       apiKey: 'session-key',
@@ -549,7 +557,6 @@ describe('CustomEndpointProvider', () => {
         bridgeFactories: { 'openai-chat': fake.factory },
       });
       expect(p.getType()).toBe('openai-chat');
-      await p.ensureBridgeStarted('qwen2.5-7b');
       await p.ensureBridgeStarted('qwen2.5-7b');
       p.buildSdkConfig('qwen2.5-7b');
       expect(fake.configs).toHaveLength(1);
@@ -595,7 +602,6 @@ describe('CustomEndpointProvider', () => {
         }
       );
       await p.ensureBridgeStarted('claude-sonnet-proxied');
-      await p.ensureBridgeStarted('claude-sonnet-proxied');
       p.buildSdkConfig('claude-sonnet-proxied');
       expect(anthropicConfigs).toHaveLength(1);
       expect(openaiFake.configs).toHaveLength(0);
@@ -639,7 +645,6 @@ describe('CustomEndpointProvider', () => {
           },
         }
       );
-      await p.ensureBridgeStarted('qwen2.5-coder:14b');
       await p.ensureBridgeStarted('qwen2.5-coder:14b');
       p.buildSdkConfig('qwen2.5-coder:14b');
       expect(ollamaConfigs).toHaveLength(1);
@@ -707,9 +712,7 @@ describe('CustomEndpointProvider', () => {
       const fake = makeFakeBridge();
       const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
       await p.ensureBridgeStarted('qwen2.5-7b');
-      await p.ensureBridgeStarted('qwen2.5-7b');
       p.buildSdkConfig('qwen2.5-7b');
-      await p.ensureBridgeStarted('qwen2.5-vl-7b');
       await p.ensureBridgeStarted('qwen2.5-vl-7b');
       p.buildSdkConfig('qwen2.5-vl-7b');
       p.setSessionThinkingConfig('sess-1', 'think8k');
@@ -727,7 +730,6 @@ describe('CustomEndpointProvider', () => {
     it('sends undefined thinking when level is off or unknown', async () => {
       const fake = makeFakeBridge();
       const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
-      await p.ensureBridgeStarted('qwen2.5-7b');
       await p.ensureBridgeStarted('qwen2.5-7b');
       p.buildSdkConfig('qwen2.5-7b');
       p.setSessionThinkingConfig('sess-1', 'off');
@@ -754,7 +756,6 @@ describe('CustomEndpointProvider', () => {
         },
         { bridgeFactory: fake.factory }
       );
-      await p.ensureBridgeStarted('qwen3');
       await p.ensureBridgeStarted('qwen3');
       p.buildSdkConfig('qwen3');
       expect(fake.configs[0].chatTemplateKwargs).toEqual({ enable_thinking: false });
@@ -794,7 +795,6 @@ describe('CustomEndpointProvider', () => {
     it('omits chatTemplateKwargs from the bridge config when the model does not declare it', async () => {
       const fake = makeFakeBridge();
       const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
-      await p.ensureBridgeStarted('qwen2.5-7b');
       await p.ensureBridgeStarted('qwen2.5-7b');
       p.buildSdkConfig('qwen2.5-7b');
       expect(fake.configs[0].chatTemplateKwargs).toBeUndefined();

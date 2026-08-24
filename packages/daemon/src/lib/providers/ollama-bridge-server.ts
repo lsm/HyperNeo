@@ -366,7 +366,7 @@ export async function createOllamaAnthropicBridgeServer(
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.baseUrl.replace(/\/$/, '').replace(/\/api\/chat\/?$/i, '');
   const server = await createHttpWsServer({
-    hostname: config.hostname ?? '0.0.0.0',
+    hostname: config.hostname ?? '127.0.0.1',
     port: 0,
     idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {
