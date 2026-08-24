@@ -156,7 +156,7 @@ export class MinimaxProvider implements Provider {
     if (!apiKey) throw new Error('MiniMax API key not configured');
     const configuredBaseUrl = options.baseUrl?.trim().replace(/\/+$/, '');
     const baseUrl =
-      configuredBaseUrl === MinimaxProvider.BASE_URL
+      configuredBaseUrl?.toLowerCase() === MinimaxProvider.BASE_URL.toLowerCase()
         ? MinimaxProvider.MODEL_LIST_BASE_URL
         : (configuredBaseUrl ?? MinimaxProvider.MODEL_LIST_BASE_URL);
     const models = await fetchRemoteModelList({

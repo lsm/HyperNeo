@@ -266,9 +266,11 @@ describe('MinimaxProvider', () => {
 
       await provider.listRemoteModels();
       await provider.listRemoteModels({ baseUrl: MinimaxProvider.BASE_URL });
+      await provider.listRemoteModels({ baseUrl: 'https://API.MINIMAX.IO/anthropic/' });
       await provider.listRemoteModels({ baseUrl: 'https://proxy.example.com/openai' });
 
       expect(calls.map((call) => call[0])).toEqual([
+        'https://api.minimax.io/v1/models',
         'https://api.minimax.io/v1/models',
         'https://api.minimax.io/v1/models',
         'https://proxy.example.com/openai/v1/models',
