@@ -261,6 +261,7 @@ describe('MinimaxProvider', () => {
         { data: [{ id: 'MiniMax-M2.7', object: 'model' }] },
         { data: [{ id: 'MiniMax-M3', object: 'model' }] },
         { data: [{ id: 'MiniMax-M2.7-highspeed', object: 'model' }] },
+        { data: [{ id: 'MiniMax-M2.5', object: 'model' }] },
       ]);
       provider = new MinimaxProvider();
 
