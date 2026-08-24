@@ -83,10 +83,12 @@ stores: `app-mcp-store`, `global-store`, `session-store`, `skills-store`,
 | `space-store` | Fits with machine extensions + a store adapter; highest payoff | Four near-identical blocks (`spaceTaskActivity.byTask`, `spaceTaskMessages.byTask.compact`, `nodeExecutions.byRun`, `spaceSessions.bySpace`). Caveats: no `liveQuery.error` listeners anywhere (migration would *add* an error path needing a policy decision); `subscribeTaskActivity`/`subscribeTaskMessageActivity` are awaited and throw on initial failure (needs an async bridge — the machine settles via emissions); reconnect resubscribe is fire-and-forget with no retry/settle. **Correction from #2788 review:** `nodeExecutions.byRun` is single-active in practice — `ensureNodeExecutions` unsubscribes every run subscription before subscribing to a new run — so one machine instance at a time suffices; the N-concurrent concern was overstated. |
 | `space-mcp-store` (inventoried here) | Fits, same caveats as `app-mcp-store` | Singleton `mcpEnablement.bySpace` subscription with snapshot/delta listeners, `onConnection` resubscribe, awaited subscribe that throws to the caller, loading+error signals, no `liveQuery.error` listener. Needs the async bridge and a fresh machine per actual subscription lifecycle (`disposed` is terminal). |
 | `skills-store` (inventoried here) | Fits, same shape as `space-mcp-store` | Same subscribe/unsubscribe skeleton with snapshot/delta listeners and `onConnection` resubscribe — but `subscribe()` is **ref-counted** (`useSkills`, `ToolsModal`, `AppMcpServersSettings` overlap; re-acquisition reuses the live subscription, teardown at zero), so machine creation must key to the 0→1 lifecycle, not to each acquisition call. |
+| `session-store` `messages.bySession` (inventoried here) | **Does not fit today** | The subscription is wrapped in a recovery protocol: `MESSAGE_TOO_LARGE` handling, a hand-rolled `awaitingSnapshot` delta gate (its own version of the machine's `live` gating), `beginRecovery`/`performRecovery` on disconnect/reconnect, and optimistic-message preservation in the apply path (`mergeSnapshotIntoTranscript`'s prefix preservation plus uuid-keyed dedup in `mergeSdkMessagesWithDedup`). All of it lives above the subscription lifecycle; candidate only after recovery orchestration is itself extracted. |
 
-One caveat shared by every "fits" verdict above: these stores currently apply
-matching deltas **unconditionally**, while the machine emits deltas only from
-`live` (drift row 10). After a resubscribe whose snapshot is lost or delayed, a
+One caveat shared by every "fits" verdict in the table above: these stores
+(`app-mcp`, `global`, `space`, `space-mcp`, `skills`) currently apply matching
+deltas **unconditionally**, while the machine emits deltas only from `live`
+(drift row 10). After a resubscribe whose snapshot is lost or delayed, a
 migrated store with `snapshotRetryEnabled: false` would sit frozen in
 `awaiting-snapshot` and drop deltas that today's stores apply; arming the
 watchdog only delays settling and does not emit pre-snapshot deltas either
@@ -94,7 +96,6 @@ watchdog only delays settling and does not emit pre-snapshot deltas either
 it is not a complete remedy. The U4 migration must either add an adapter/
 configuration that emits pre-snapshot deltas, or explicitly accept and record
 the gating change.
-| `session-store` `messages.bySession` (inventoried here) | **Does not fit today** | The subscription is wrapped in a recovery protocol: `MESSAGE_TOO_LARGE` handling, a hand-rolled `awaitingSnapshot` delta gate (its own version of the machine's `live` gating), `beginRecovery`/`performRecovery` on disconnect/reconnect, and optimistic-message preservation in the apply path (`mergeSnapshotIntoTranscript`'s prefix preservation plus uuid-keyed dedup in `mergeSdkMessagesWithDedup`). All of it lives above the subscription lifecycle; candidate only after recovery orchestration is itself extracted. |
 
 ## Proposed unification PRs — NOT applied, owner decides
 
