@@ -1698,16 +1698,53 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     for (const message of warnings) {
       expect(message.length).toBeLessThanOrEqual(1000);
     }
+    expect(warnings[0]).toContain('30 workflow(s) have a template update available');
+    for (const message of warnings.slice(1)) {
+      expect(message).toContain('[startup] workflow template updates (cont.)');
+    }
     const joined = warnings.join(' ');
     for (const workflow of workflows) {
       expect(joined).toContain(workflow.name);
     }
   });
 
+  it('does not truncate drift names when the entry already fits the cap', async () => {
+    const [template] = getBuiltInWorkflows();
+    const fittingName = `${'Y'.repeat(500)}-tail-marker`;
+    const space: Space = { ...mockSpace, id: 'sp-fits', name: 'Fits' };
+    const workflow: SpaceWorkflow = {
+      ...mockWorkflow,
+      id: 'wf-fits',
+      spaceId: 'sp-fits',
+      name: fittingName,
+      templateName: template.name,
+      templateHash: 'stale-fits',
+    };
+    const sm = makeSpaceManager([space]);
+    const wm = makeWorkflowManager({ 'sp-fits': [workflow] });
+
+    const warnings: string[] = [];
+    configureLogger({ level: LogLevel.WARN });
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:space-workflow-handlers' && event.level === 'warn') {
+        warnings.push(event.message);
+      }
+    });
+    try {
+      await checkBuiltInWorkflowDriftOnStartup(wm, sm);
+    } finally {
+      unsubscribe();
+      configureLogger({ level: LogLevel.SILENT });
+    }
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(fittingName);
+  });
+
   it('bounds individually oversized names in the drift summary', async () => {
     const [template] = getBuiltInWorkflows();
-    const longSpaceName = `S`.repeat(1200);
-    const longWorkflowName = `X`.repeat(1200);
+    const longSpaceName = `${'S'.repeat(1190)}-SE9`;
+    const longWorkflowName = `${'X'.repeat(1190)}-WE9`;
     const space: Space = { ...mockSpace, id: 'sp-long', name: longSpaceName };
     const workflow: SpaceWorkflow = {
       ...mockWorkflow,
@@ -1740,6 +1777,8 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     }
     expect(warnings.some((message) => message.includes('S'.repeat(100)))).toBe(true);
     expect(warnings.some((message) => message.includes('X'.repeat(100)))).toBe(true);
+    expect(warnings.some((message) => message.includes('SE9'))).toBe(true);
+    expect(warnings.some((message) => message.includes('WE9'))).toBe(true);
   });
 
   it('resolves without throwing when spaceManager.listSpaces rejects (non-fatal)', async () => {

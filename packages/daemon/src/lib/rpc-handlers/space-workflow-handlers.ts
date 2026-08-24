@@ -25,9 +25,19 @@ const log = new Logger('space-workflow-handlers');
 
 const DRIFT_SUMMARY_MAX_CHARS = 900;
 
-function boundDriftEntryPart(value: string): string {
-  const max = Math.floor((DRIFT_SUMMARY_MAX_CHARS - 32) / 2);
-  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+function formatDriftEntry(spaceName: string, workflowName: string, customized: boolean): string {
+  const suffix = customized ? ' (customized)' : '';
+  if (spaceName.length + workflowName.length + suffix.length + 1 <= DRIFT_SUMMARY_MAX_CHARS) {
+    return `${spaceName}/${workflowName}${suffix}`;
+  }
+  const half = Math.floor((DRIFT_SUMMARY_MAX_CHARS - suffix.length - 1) / 2);
+  return `${squeezeDriftName(spaceName, half)}/${squeezeDriftName(workflowName, half)}${suffix}`;
+}
+
+function squeezeDriftName(value: string, max: number): string {
+  if (value.length <= max) return value;
+  if (max <= 6) return value.slice(0, max);
+  return `${value.slice(0, max - 6)}...${value.slice(-3)}`;
 }
 
 const PRESET_AGENT_NAMES_LOWER = new Set(
@@ -219,13 +229,9 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     if (updatesAvailable.length === 0 && customizedOnlyCount === 0) return;
 
     if (updatesAvailable.length > 0) {
-      const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) => {
-        const spacePart = boundDriftEntryPart(spaceName);
-        const workflowPart = boundDriftEntryPart(workflowName);
-        return customized
-          ? `${spacePart}/${workflowPart} (customized)`
-          : `${spacePart}/${workflowPart}`;
-      });
+      const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) =>
+        formatDriftEntry(spaceName, workflowName, customized)
+      );
       const header =
         `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +
         `(open the Workflow List in the UI and click "Sync" to apply)`;
@@ -234,17 +240,19 @@ export async function checkBuiltInWorkflowDriftOnStartup(
         log.warn(single);
       } else {
         log.warn(`${header}. Affected workflows (chunked to fit the log line cap):`);
+        const chunkPrefix = '[startup] workflow template updates (cont.) — ';
+        const chunkBudget = DRIFT_SUMMARY_MAX_CHARS - chunkPrefix.length;
         let line = '';
         for (const entry of entries) {
           const candidate = line ? `${line}, ${entry}` : entry;
-          if (candidate.length > DRIFT_SUMMARY_MAX_CHARS && line) {
-            log.warn(`  ${line},`);
+          if (candidate.length > chunkBudget && line) {
+            log.warn(`${chunkPrefix}${line},`);
             line = entry;
           } else {
             line = candidate;
           }
         }
-        if (line) log.warn(`  ${line}`);
+        if (line) log.warn(`${chunkPrefix}${line}`);
       }
     }
     if (customizedOnlyCount > 0) {
