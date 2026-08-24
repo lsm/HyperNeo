@@ -201,6 +201,20 @@ describe('parseDeferredExternalEventText', () => {
     });
   });
 
+  it('matches rate-limit JSON containing Unicode line separators', () => {
+    const id = `bad${'\u2028'}id${'\u2029'}end`;
+    const ids = [{ id, topic: 'github/o/r/pull_request/7.check_failed' }];
+    const structured =
+      '1 events received for topics: github/o/r/pull_request/7.check_failed ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      `Event IDs: ${JSON.stringify(ids)}. ` +
+      'Use get_external_event(eventId) for full details.';
+    const entry = parseDeferredExternalEventText(structured);
+    expect(entry?.kind).toBe('fold');
+    if (entry?.kind !== 'fold') return;
+    expect(entry.events[0]?.eventId).toBe(id);
+  });
+
   it('returns null for non-external-event text', () => {
     expect(parseDeferredExternalEventText('a human follow-up')).toBeNull();
     expect(parseDeferredExternalEventText('{"type":"chat","topic":"x"}')).toBeNull();
@@ -439,6 +453,23 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('Reactions on PR #7: ×1, latest 👍 by marcliu at 17:00 UTC');
     expect(digest).toContain('Reactions on PR #7: ×1, latest 🚀 by marcliu at 18:00 UTC');
     expect(digest).toContain('latest eventId: ra-4');
+  });
+
+  it('keeps payload-free reactions separate by event', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'pf-1',
+        topic: 'github/o/r/pull_request/7.reaction_added',
+        prNumber: 7,
+      },
+      {
+        eventId: 'pf-2',
+        topic: 'github/o/r/pull_request/7.reaction_added',
+        prNumber: 7,
+      },
+    ]);
+    expect(digest).toContain('latest eventId: pf-1');
+    expect(digest).toContain('latest eventId: pf-2');
   });
 
   it('renders structured branch-protection payload fields on other-tier lines', () => {
@@ -830,6 +861,27 @@ describe('partitionDeferredExternalEventRows', () => {
     expect(digest).toContain(
       '50 older events were folded out of earlier batches and are superseded.'
     );
+  });
+
+  it('caps flattened events across the whole partition, not per row', () => {
+    const burstRows = [0, 1].map((n) => {
+      const ids = Array.from({ length: 150 }, (_, i) => ({
+        id: `r${n}-${i}`,
+        topic: 'github/o/r/pull_request/7.check_failed',
+      }));
+      return row(
+        `db-burst-${n}`,
+        `u-burst-${n}`,
+        '150 events received for topics: github/o/r/pull_request/7.check_failed ' +
+          '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+          `Event IDs: ${JSON.stringify(ids)}. ` +
+          'Use get_external_event(eventId) for full details.'
+      );
+    });
+    const partition = partitionDeferredExternalEventRows(burstRows);
+    expect(partition.digestEvents).toHaveLength(200);
+    expect(partition.droppedCount).toBe(100);
+    expect(partition.digestEvents[0]).toMatchObject({ eventId: 'r0-100' });
   });
 
   it('splits digest-tier external rows from everything else', () => {

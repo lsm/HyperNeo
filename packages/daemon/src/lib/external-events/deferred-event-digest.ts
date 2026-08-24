@@ -121,7 +121,7 @@ export function parseDeferredExternalEventText(text: string): DeferredExternalEv
 const RATE_LIMIT_DIGEST_TOPIC = 'external_event.rate_limited';
 
 const RATE_LIMIT_DIGEST_PATTERN =
-  /^(\d+) events received for topics: (.+?) \(oldest: (.+?), newest: (.+?)\)\. Event IDs: (.+?)\. Use get_external_event\(eventId\) for full details\.$/;
+  /^(\d+) events received for topics: (.+?) \(oldest: (.+?), newest: (.+?)\)\. Event IDs: (.+?)\. Use get_external_event\(eventId\) for full details\.$/s;
 
 function scopeFromTopic(topic: string): { repo?: string; prNumber?: number; prUrl?: string } {
   const segments = topic.split('/');
@@ -257,15 +257,13 @@ export function partitionDeferredExternalEventRows(
       continue;
     }
     digestRows.push(row);
-    const flattened = deferredExternalEventEntryEvents(entry);
-    if (flattened.length > DEFERRED_EVENT_ENVELOPE_MAX_EVENTS) {
-      const overflow = flattened.length - DEFERRED_EVENT_ENVELOPE_MAX_EVENTS;
-      digestEvents.push(...flattened.slice(overflow));
-      droppedCount += overflow;
-    } else {
-      digestEvents.push(...flattened);
-    }
+    digestEvents.push(...deferredExternalEventEntryEvents(entry));
     if (entry.kind === 'fold') droppedCount += entry.droppedCount ?? 0;
+  }
+  if (digestEvents.length > DEFERRED_EVENT_ENVELOPE_MAX_EVENTS) {
+    const overflow = digestEvents.length - DEFERRED_EVENT_ENVELOPE_MAX_EVENTS;
+    digestEvents.splice(0, overflow);
+    droppedCount += overflow;
   }
   return { digestRows, digestEvents, droppedCount, remainder };
 }
@@ -363,6 +361,7 @@ function digestGroupKey(entry: ExternalEventEssenceEntry, kind: DigestGroupKind)
     case 'state':
       return `state|${scope}`;
     case 'reaction':
+      if (!entry.body && !entry.actor) return `reaction|${scope}|event ${entry.eventId}`;
       return `reaction|${scope}|${entry.body ?? ''}|${entry.actor ?? ''}`;
     case 'other':
       return `other|${entry.topic}|${
