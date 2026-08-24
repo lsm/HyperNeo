@@ -246,6 +246,7 @@ export function normalizeGitHubWebhook(
       reviewer: actor.login,
       reviewerBot: isBotActor(actor.login, actor.type),
       submittedAt: getString(review.submitted_at),
+      commitId: getString(review.commit_id) || undefined,
     };
   } else if (eventType === 'pull_request_review_comment') {
     const pr = asObject(root.pull_request);
@@ -1039,10 +1040,11 @@ export function normalizeGitHubMergeConflict(params: {
   sequence: number;
   deliveryId: string;
 }): NormalizedGitHubEvent | null {
-  const repo = params.repo;
+  const watched = params.repo;
   const prNumber = params.prNumber;
-  if (!repo.owner || !repo.repo || !prNumber) return null;
+  if (!watched.owner || !watched.repo || !prNumber) return null;
   const pr = asObject(params.pullRequest);
+  const repo = resolvePollingRepo(watched, pr);
   const author = userFrom(pr.user);
   const occurredAt = Date.now();
   const action = params.conflicting ? 'merge_conflict' : 'merge_conflict_resolved';
@@ -1095,29 +1097,32 @@ export function normalizeGitHubReview(
   if (!id || !prNumber) return null;
   const state = getString(obj.state).toUpperCase();
   if (!REVIEW_VERDICT_STATES.has(state)) return null;
+  const repo = resolvePollingRepo(watched, obj);
+  if (!repo.owner || !repo.repo) return null;
   const user = userFrom(obj.user);
   const submittedAt = getString(obj.submitted_at);
   const body = getString(obj.body);
   const title = `PR #${prNumber} review ${state}`;
   const nodeId = getString(obj.node_id);
-  const canonicalOwner = watched.owner.toLowerCase();
-  const canonicalRepo = watched.repo.toLowerCase();
+  const commitId = getString(obj.commit_id);
+  const canonicalOwner = repo.owner.toLowerCase();
+  const canonicalRepo = repo.repo.toLowerCase();
   return {
     deliveryId: `poll:review:${id}`,
     dedupeKey: `${canonicalOwner}/${canonicalRepo}:review:${id}:submitted`,
     source: 'polling',
     eventType: 'pull_request_review',
     action: 'submitted',
-    repoOwner: watched.owner,
-    repoName: watched.repo,
+    repoOwner: repo.owner,
+    repoName: repo.repo,
     entityId: String(prNumber),
     prNumber,
-    prUrl: prUrl(watched.owner, watched.repo, prNumber),
+    prUrl: prUrl(repo.owner, repo.repo, prNumber),
     actor: user.login,
     actorType: user.type,
     body,
     summary: `${title} by ${user.login}${body ? `: ${truncateBody(body)}` : ''}`,
-    externalUrl: getString(obj.html_url, prUrl(watched.owner, watched.repo, prNumber)),
+    externalUrl: getString(obj.html_url, prUrl(repo.owner, repo.repo, prNumber)),
     externalId: `review:${id}:submitted`,
     commentId: '',
     nodeId,
@@ -1132,6 +1137,7 @@ export function normalizeGitHubReview(
       reviewerType: user.type,
       reviewerBot: isBotActor(user.login, user.type),
       submittedAt,
+      commitId: commitId || undefined,
     },
   };
 }

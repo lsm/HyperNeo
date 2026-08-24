@@ -9863,7 +9863,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       submitted_at: '2026-01-05T00:00:00Z',
       user: { login: 'reviewer', type: 'User' },
     }));
-    let mode: 'single' | 'floor' = 'single';
+    let mode: 'single' | 'floor' | 'notModified' = 'single';
     const fetchImpl = (async (url: string | URL | Request) => {
       const requestUrl = String(url);
       calls.push(requestUrl);
@@ -9881,6 +9881,9 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       if (path.endsWith('/pulls/7/reviews')) {
         if (mode === 'single') {
           return pollingResponseWithHeaders(singlePageReviews, { ETag: '"reviews-v1"' });
+        }
+        if (mode === 'notModified') {
+          return new Response(null, { status: 304 });
         }
         return pollingResponseWithHeaders(fullFirstPage, {
           'X-RateLimit-Remaining': '50',
@@ -9902,6 +9905,16 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
       expect(cursor.reviewEtags?.[7]).toBeUndefined();
       expect(cursor.lastPartialPollError).toBeTruthy();
+
+      mode = 'single';
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
+      expect(cursor.reviewEtags?.[7]).toBe('"reviews-v1"');
+
+      mode = 'notModified';
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
+      expect(cursor.reviewEtags?.[7]).toBe('"reviews-v1"');
     } finally {
       await extension.stop();
     }

@@ -2913,6 +2913,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (reviewResponse.status === 304) {
           reviewScanComplete = true;
           reviewScanSinglePage = true;
+          reviewPendingEtag = reviewEtags[prNumber] ?? reviewResponse.headers.get('ETag');
           break;
         }
         if (reviewRateLimit.limited) {

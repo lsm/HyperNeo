@@ -741,6 +741,7 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         state: 'CHANGES_REQUESTED',
         body: 'please fix',
         submitted_at: '2026-01-01T00:00:00Z',
+        commit_id: 'abc123def456',
         html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-555',
         user: { login: 'codex[bot]', type: 'Bot' },
       })!;
@@ -755,7 +756,22 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         reviewerType: 'Bot',
         reviewerBot: true,
         reviewId: '555',
+        commitId: 'abc123def456',
       });
+    });
+
+    test('review topics follow the payload repository when the watched repo was renamed', () => {
+      const normalized = normalizeGitHubReview(watched, 7, {
+        id: 556,
+        state: 'APPROVED',
+        submitted_at: '2026-01-01T00:00:00Z',
+        html_url: 'https://github.com/acme/widgets-renamed/pull/7#pullrequestreview-556',
+        user: { login: 'dev', type: 'User' },
+      })!;
+      expect(normalized.dedupeKey).toBe('acme/widgets-renamed:review:556:submitted');
+      expect(toExternalEvent('space-1', normalized).topic).toBe(
+        'github/acme/widgets-renamed/pull_request/7.review_submitted'
+      );
     });
 
     test('human reviewers are not flagged as bots', () => {
