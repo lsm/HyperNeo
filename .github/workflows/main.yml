@@ -178,8 +178,11 @@ jobs:
           # checkout@v6 on pull_request yields the merge commit, so a plain
           # two-dot tree-diff against the dev tip is exactly the PR's changed
           # file set (depth-1 fetches have no merge base for a three-dot
-          # diff). An empty/unreadable diff falls back to running everything.
-          files=$(git diff --name-only origin/dev HEAD || true)
+          # diff). --no-renames lists a rename as BOTH its old and new path
+          # (delete + add), so a file moved across the daemon/web boundary
+          # classifies both sides instead of only the destination. An
+          # empty/unreadable diff falls back to running everything.
+          files=$(git diff --name-only --no-renames origin/dev HEAD || true)
           if [ -z "$files" ]; then
             echo "Empty diff against dev — defaulting to run everything."
             echo "daemon=true" >> "$GITHUB_OUTPUT"
