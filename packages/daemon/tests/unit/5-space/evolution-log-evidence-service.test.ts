@@ -670,6 +670,74 @@ describe('EvolutionLogEvidenceService', () => {
     expect(totalEvidence()).toBe(6);
   });
 
+  it('drains all fan-out writes synchronously in flush', () => {
+    const scope2 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'flush-fanout-2',
+      objective: 'flush fanout scope 2',
+    }).id;
+    const scope3 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'flush-fanout-3',
+      objective: 'flush fanout scope 3',
+    }).id;
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [
+        { scopeId, levels: ['warn'] },
+        { scopeId: scope2, levels: ['warn'] },
+        { scopeId: scope3, levels: ['warn'] },
+      ],
+      maxBufferedEvents: 2,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'shutdown drain' }));
+    service.flush();
+
+    const total =
+      evolutionRepo.listEvidence(scopeId).length +
+      evolutionRepo.listEvidence(scope2).length +
+      evolutionRepo.listEvidence(scope3).length;
+    expect(total).toBe(3);
+  });
+
+  it('requeues a busy batch suffix exactly once', async () => {
+    let failWrites = true;
+    let findCalls = 0;
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.createEvidence = (params: CreateEvidenceRefParams) => {
+      if (failWrites) throw new Error('database is locked');
+      return evolutionRepo.createEvidence(params);
+    };
+    repo.findLatestEvidenceBySource = (sid: string, sourceId: string) => {
+      if (!failWrites) findCalls += 1;
+      return evolutionRepo.findLatestEvidenceBySource(sid, sourceId);
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      service.capture(createEvent({ level: 'warn', message: `suffix warning ${i}` }));
+    }
+    service.flush();
+    failWrites = false;
+
+    await service.flushAsync();
+    await service.flushAsync();
+
+    expect(findCalls).toBe(3);
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(3);
+    for (const evidence of evolutionRepo.listEvidence(scopeId)) {
+      expect(evidence.metadata.count).toBe(1);
+    }
+  });
+
   it('does not double-write evidence when flush interrupts an active drain', async () => {
     const sleepSync = (ms: number): void => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

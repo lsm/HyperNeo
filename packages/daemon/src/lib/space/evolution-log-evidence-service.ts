@@ -160,23 +160,12 @@ export class EvolutionLogEvidenceService {
   flush(): void {
     this.cancelScheduledDrain();
     let busyHit = false;
-    const budget = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
-    let writes = 0;
     const interrupted = this.drainItem;
     if (interrupted !== null) {
       this.drainItem = null;
       for (let i = interrupted.offset; i < interrupted.subscriptions.length; i++) {
-        if (writes >= budget) {
-          this.drainItem = {
-            event: interrupted.event,
-            subscriptions: interrupted.subscriptions,
-            offset: i,
-          };
-          break;
-        }
         try {
           this.writeEvidence(interrupted.event, interrupted.subscriptions[i]);
-          writes += 1;
         } catch (error) {
           if (!isSqliteBusyError(error)) continue;
           busyHit = true;
@@ -197,19 +186,13 @@ export class EvolutionLogEvidenceService {
     } else if (batch.length > 0) {
       try {
         const subscriptions = this.getSubscriptions();
-        let stopped = false;
-        for (let index = 0; index < batch.length && !stopped; index++) {
+        for (let index = 0; index < batch.length; index++) {
           const event = batch[index];
           let eventBusy = false;
           for (const subscription of subscriptions) {
-            if (writes >= budget) {
-              stopped = true;
-              break;
-            }
             if (!matchesSubscription(subscription, event)) continue;
             try {
               this.writeEvidence(event, subscription);
-              writes += 1;
             } catch (error) {
               if (isSqliteBusyError(error)) {
                 busyHit = true;
@@ -218,10 +201,11 @@ export class EvolutionLogEvidenceService {
               }
             }
           }
-          if (stopped || eventBusy) {
+          if (eventBusy) {
             for (let remain = batch.length - 1; remain >= index; remain--) {
               this.buffer.unshift(batch[remain]);
             }
+            break;
           }
         }
       } catch (error) {
@@ -239,12 +223,11 @@ export class EvolutionLogEvidenceService {
         BUSY_RETRY_BASE_MS * 2 ** (this.busyRetryCount - 1),
         MAX_BUSY_RETRY_MS
       );
-    } else if (this.buffer.length === 0 && this.drainItem === null) {
-      this.busyRetryCount = 0;
-      this.retryDelayMs = null;
+      this.scheduleDrain();
       return;
     }
-    this.scheduleDrain();
+    this.busyRetryCount = 0;
+    this.retryDelayMs = null;
   }
 
   private cancelScheduledDrain(): void {
