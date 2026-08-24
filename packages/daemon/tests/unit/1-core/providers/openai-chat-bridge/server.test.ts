@@ -59,6 +59,51 @@ describe.skipIf(!isBun)(
       server = undefined;
     });
 
+    it('aborts the upstream fetch when the client disconnects mid-stream', async () => {
+      let upstreamSignal: AbortSignal | undefined;
+      server = await makeServer(
+        (_url, init) =>
+          new Promise<Response>((resolve) => {
+            upstreamSignal = init?.signal ?? undefined;
+            const encoder = new TextEncoder();
+            resolve(
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      encoder.encode('data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n')
+                    );
+                  },
+                }),
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              )
+            );
+          })
+      );
+
+      const controller = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'custom-model',
+          max_tokens: 16,
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      await reader.read();
+      controller.abort();
+
+      const deadline = Date.now() + 5000;
+      while (!upstreamSignal?.aborted && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(upstreamSignal?.aborted).toBe(true);
+    });
+
     it('normalizes a 200-with-body rate-limit error to retryable', async () => {
       server = await makeServer(
         async () =>

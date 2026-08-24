@@ -354,9 +354,13 @@ async function streamOllamaToAnthropic(params: {
     );
     send(messageStopSSE());
   } catch (error) {
-    send(errorSSE('api_error', error instanceof Error ? error.message : 'Ollama stream failed'));
+    try {
+      send(errorSSE('api_error', error instanceof Error ? error.message : 'Ollama stream failed'));
+    } catch {}
   } finally {
-    controller.close();
+    try {
+      controller.close();
+    } catch {}
   }
 }
 
@@ -437,6 +441,7 @@ export async function createOllamaAnthropicBridgeServer(
           .filter(Boolean)
           .join('\n')
       );
+      const upstreamAbort = new AbortController();
       let ollamaResponse: Response;
       try {
         ollamaResponse = await fetchImpl(`${baseUrl}/api/chat`, {
@@ -447,6 +452,7 @@ export async function createOllamaAnthropicBridgeServer(
             ...config.headers,
           },
           body: JSON.stringify(requestBody),
+          signal: upstreamAbort.signal,
         });
       } catch (error) {
         return sendJsonError(
@@ -472,6 +478,9 @@ export async function createOllamaAnthropicBridgeServer(
             model: body.model,
             inputTokens,
           });
+        },
+        cancel() {
+          upstreamAbort.abort();
         },
       });
       return new Response(stream, {

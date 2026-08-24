@@ -147,11 +147,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = makeProvider({}, undefined, undefined);
     });
 
-    it('reports the maximum Codex context window', () => {
+    it('reports the maximum Codex context window', async () => {
       expect(provider.capabilities.maxContextWindow).toBe(1050000);
     });
 
-    it('advertises thinking when the Responses adapter is active', () => {
+    it('advertises thinking when the Responses adapter is active', async () => {
       expect(provider.capabilities.extendedThinking).toBe(true);
       expect(provider.capabilities.thinkingModes).toBe('granular');
     });
@@ -402,8 +402,10 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-placeholder' }, undefined, undefined);
     });
 
-    it('shares the Responses bridge server across workspace paths with the same auth', () => {
+    it('shares the Responses bridge server across workspace paths with the same auth', async () => {
+      await provider.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/workspace-a' });
       const cfgA = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-a' });
+      await provider.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/workspace-b' });
       const cfgB = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/workspace-b' });
 
       const urlA = cfgA.envVars.ANTHROPIC_BASE_URL as string;
@@ -412,8 +414,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(new URL(urlA).port).toBe(new URL(urlB).port);
     });
 
-    it('reuses the same bridge server for the same workspace path', () => {
+    it('reuses the same bridge server for the same workspace path', async () => {
+      await provider.ensureBridgeStarted('gpt-5.3-codex', {
+        workspacePath: '/tmp/workspace-reuse',
+      });
       const cfg1 = provider.buildSdkConfig('gpt-5.3-codex', {
+        workspacePath: '/tmp/workspace-reuse',
+      });
+      await provider.ensureBridgeStarted('gpt-5.3-codex', {
         workspacePath: '/tmp/workspace-reuse',
       });
       const cfg2 = provider.buildSdkConfig('gpt-5.3-codex', {
@@ -427,6 +435,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       try {
+        await p.ensureBridgeStarted('gpt-5.3-codex', {
+          workspacePath: '/tmp/workspace-auth-late',
+        });
         const cfgWithoutAuth = p.buildSdkConfig('gpt-5.3-codex', {
           workspacePath: '/tmp/workspace-auth-late',
         });
@@ -434,6 +445,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
         writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'file-token-now-available' });
         await p.getApiKey();
 
+        await p.ensureBridgeStarted('gpt-5.3-codex', {
+          workspacePath: '/tmp/workspace-auth-late',
+        });
         const cfgWithAuth = p.buildSdkConfig('gpt-5.3-codex', {
           workspacePath: '/tmp/workspace-auth-late',
         });
@@ -460,6 +474,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       try {
         await p.getApiKey();
+        await p.ensureBridgeStarted('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
         const cfg = p.buildSdkConfig('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
         expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
         const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/models`);
@@ -489,6 +504,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
         await p.getApiKey();
 
+        await p.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
         const cfg1 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
         const port1 = new URL(cfg1.envVars.ANTHROPIC_BASE_URL as string).port;
 
@@ -504,6 +520,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
           raw: { accountId: 'acct_refresh' },
         } as ProviderCredentials);
 
+        await p.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
         const cfg2 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
         const port2 = new URL(cfg2.envVars.ANTHROPIC_BASE_URL as string).port;
 
@@ -574,6 +591,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
           }
         };
 
+        await p.ensureBridgeStarted('gpt-5.3-codex', {
+          workspacePath: '/tmp/workspace-auth-change',
+        });
         const firstCfg = p.buildSdkConfig('gpt-5.3-codex', {
           workspacePath: '/tmp/workspace-auth-change',
         });
@@ -581,6 +601,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
         await fetchLocal(firstBaseUrl);
 
         env.OPENAI_API_KEY = 'sk-second';
+        await p.ensureBridgeStarted('gpt-5.3-codex', {
+          workspacePath: '/tmp/workspace-auth-change',
+        });
         const secondCfg = p.buildSdkConfig('gpt-5.3-codex', {
           workspacePath: '/tmp/workspace-auth-change',
         });
@@ -595,6 +618,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
           accountId: 'acct_new',
         });
         await p.getApiKey();
+        await p.ensureBridgeStarted('gpt-5.3-codex', {
+          workspacePath: '/tmp/workspace-auth-change',
+        });
         const oauthCfg = p.buildSdkConfig('gpt-5.3-codex', {
           workspacePath: '/tmp/workspace-auth-change',
         });
@@ -626,7 +652,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('returns isAnthropicCompatible=true and clears OAuth token precedence', () => {
+    it('returns isAnthropicCompatible=true and clears OAuth token precedence', async () => {
+      await provider.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/ws-compat' });
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-compat' });
       expect(cfg.isAnthropicCompatible).toBe(true);
       expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-default');
@@ -643,6 +670,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'file-based-token' });
         const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
         await p.getApiKey();
+        await p.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/file-auth-ws' });
         const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/file-auth-ws' });
         expect(cfg.isAnthropicCompatible).toBe(true);
         expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
@@ -661,6 +689,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
         writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'file-token-not-empty' });
         const p = makeProvider({ OPENAI_API_KEY: '' }, hyperneoDir, path.join(tmpDir, 'codex'));
         await p.getApiKey();
+        await p.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/empty-env-ws' });
         const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/empty-env-ws' });
         expect(cfg.isAnthropicCompatible).toBe(true);
         expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
@@ -709,6 +738,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
             );
           }
         );
+        await p.ensureBridgeStarted('gpt-5.3-codex', { workspacePath: '/tmp/fedramp-ws' });
         const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/fedramp-ws' });
 
         const resp = await originalFetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
@@ -731,7 +761,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to real Codex model IDs', () => {
+    it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to real Codex model IDs', async () => {
+      await provider.ensureBridgeStarted('gpt-5.6-terra', { workspacePath: '/tmp/ws-model' });
       const cfg = provider.buildSdkConfig('gpt-5.6-terra', { workspacePath: '/tmp/ws-model' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna');
@@ -740,6 +771,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('routes GPT-5.6 Sol using real Codex ID with context metadata', async () => {
+      await provider.ensureBridgeStarted('gpt-5.6-sol', { workspacePath: '/tmp/ws-gpt-56-sol' });
       const cfg = provider.buildSdkConfig('gpt-5.6-sol', { workspacePath: '/tmp/ws-gpt-56-sol' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-sol');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.6-sol');
@@ -751,12 +783,14 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(sol?.sdkModelIds).toContain('gpt-5.6-sol');
     });
 
-    it('resolves model alias to real Codex ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
+    it('resolves model alias to real Codex ID in ANTHROPIC_DEFAULT_SONNET_MODEL', async () => {
+      await provider.ensureBridgeStarted('codex', { workspacePath: '/tmp/ws-alias' });
       const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
     });
 
-    it('keeps the SDK sonnet tier on Luna for mini Codex sessions', () => {
+    it('keeps the SDK sonnet tier on Luna for mini Codex sessions', async () => {
+      await provider.ensureBridgeStarted('codex-mini', { workspacePath: '/tmp/ws-mini' });
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-luna');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna');
@@ -786,7 +820,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
         );
 
         const lunaSession = { sessionId: 'luna-with-frontier-fallback', workspacePath: '/tmp/ws' };
+        await provider.ensureBridgeStarted('gpt-5.6-luna', lunaSession);
         const lunaPrimary = provider.buildSdkConfig('gpt-5.6-luna', lunaSession);
+        await provider.ensureBridgeStarted('gpt-5.6-sol', lunaSession);
         provider.buildSdkConfig('gpt-5.6-sol', lunaSession);
         await originalFetch(`${lunaPrimary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
           method: 'POST',
@@ -802,7 +838,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
           sessionId: 'frontier-with-luna-fallback',
           workspacePath: '/tmp/ws',
         };
+        await provider.ensureBridgeStarted('gpt-5.6-sol', frontierSession);
         const frontierPrimary = provider.buildSdkConfig('gpt-5.6-sol', frontierSession);
+        await provider.ensureBridgeStarted('gpt-5.6-luna', frontierSession);
         provider.buildSdkConfig('gpt-5.6-luna', frontierSession);
         await originalFetch(`${frontierPrimary.envVars.ANTHROPIC_BASE_URL}/v1/messages`, {
           method: 'POST',
@@ -820,23 +858,28 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
-    it('resolves codex-latest alias to real Codex ID', () => {
+    it('resolves codex-latest alias to real Codex ID', async () => {
+      await provider.ensureBridgeStarted('codex-latest', { workspacePath: '/tmp/ws-latest' });
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-sol');
     });
 
-    it('resolves gpt-5.4 alias to real Codex ID', () => {
+    it('resolves gpt-5.4 alias to real Codex ID', async () => {
+      await provider.ensureBridgeStarted('codex-5.4', { workspacePath: '/tmp/ws-54' });
       const cfg = provider.buildSdkConfig('codex-5.4', { workspacePath: '/tmp/ws-54' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
     });
 
-    it('throws for unknown model IDs instead of silently falling back', () => {
+    it('throws for unknown model IDs instead of silently falling back', async () => {
       expect(() =>
         provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' })
       ).toThrow('Unknown Codex model: unknown-model');
     });
 
-    it('uses real Codex model IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
+    it('uses real Codex model IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', async () => {
+      await provider.ensureBridgeStarted('gpt-5.3-codex', {
+        workspacePath: '/tmp/ws-no-leak',
+      });
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-no-leak',
       });
@@ -846,6 +889,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('advertises real Codex context windows in bridge models list', async () => {
+      await provider.ensureBridgeStarted('gpt-5.3-codex', {
+        workspacePath: '/tmp/ws-models',
+      });
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-models',
       });
@@ -871,7 +917,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       provider = makeProvider({}, undefined, undefined);
     });
 
-    it('owns models explicitly listed in the catalogue', () => {
+    it('owns models explicitly listed in the catalogue', async () => {
       expect(provider.ownsModel('gpt-5.6-sol')).toBe(true);
       expect(provider.ownsModel('gpt-5.6-terra')).toBe(true);
       expect(provider.ownsModel('gpt-5.6-luna')).toBe(true);
@@ -889,7 +935,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('codex-latest')).toBe(true);
     });
 
-    it('does not own models not in the catalogue', () => {
+    it('does not own models not in the catalogue', async () => {
       expect(provider.ownsModel('codex-1')).toBe(false);
       expect(provider.ownsModel('o4-mini')).toBe(false);
       expect(provider.ownsModel('o1-preview')).toBe(false);
@@ -903,7 +949,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
     });
 
-    it('translates all model IDs to "default" following GLM/Kimi pattern', () => {
+    it('translates all model IDs to "default" following GLM/Kimi pattern', async () => {
       expect(provider.translateModelIdForSdk('codex-latest')).toBe('default');
       expect(provider.translateModelIdForSdk('codex-mini')).toBe('default');
       expect(provider.translateModelIdForSdk('codex-5.6-terra')).toBe('default');
@@ -911,11 +957,11 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.translateModelIdForSdk('unknown-model')).toBe('default');
     });
 
-    it('does not own claude- models', () => {
+    it('does not own claude- models', async () => {
       expect(provider.ownsModel('claude-3-opus')).toBe(false);
     });
 
-    it('does not own arbitrary unrecognised model IDs', () => {
+    it('does not own arbitrary unrecognised model IDs', async () => {
       expect(provider.ownsModel('unknown-model-xyz')).toBe(false);
     });
   });
@@ -1556,6 +1602,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const captured = { body: undefined as Record<string, unknown> | undefined };
       const fetchSpy = mockUpstreamFetch(captured);
       const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      await p.ensureBridgeStarted('gpt-5.3-codex', { sessionId: 'sess-123' });
       const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-123' });
 
       p.setSessionThinkingConfig('sess-123', 'think32k');
@@ -1581,6 +1628,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const captured = { body: undefined as Record<string, unknown> | undefined };
       const fetchSpy = mockUpstreamFetch(captured);
       const p = makeProvider({ OPENAI_API_KEY: 'sk-env-key' });
+      await p.ensureBridgeStarted('gpt-5.3-codex', { sessionId: 'sess-env' });
       const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-env' });
 
       p.setSessionThinkingConfig('sess-env', 'think16k');
@@ -1606,6 +1654,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const captured = { body: undefined as Record<string, unknown> | undefined };
       const fetchSpy = mockUpstreamFetch(captured);
       const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
+      await p.ensureBridgeStarted('gpt-5.3-codex', { sessionId: 'sess-789' });
       const cfg = p.buildSdkConfig('gpt-5.3-codex', { sessionId: 'sess-789' });
 
       p.setSessionThinkingConfig('sess-789', 'think32k');
@@ -1631,7 +1680,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
   });
 
   describe('setSessionThinkingConfig (no bridge required)', () => {
-    it('is a no-op when no bridge server is active', () => {
+    it('is a no-op when no bridge server is active', async () => {
       const p = makeProvider({ OPENAI_API_KEY: 'sk-test' });
       expect(() => p.setSessionThinkingConfig('sess-456', 'think16k')).not.toThrow();
     });

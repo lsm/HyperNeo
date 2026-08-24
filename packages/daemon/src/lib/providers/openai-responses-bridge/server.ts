@@ -900,11 +900,13 @@ async function streamResponsesToAnthropic({
   onReasoningItems,
   onProductive,
   modelContextWindow,
+  abortSignal,
 }: {
   openAIResponse: Response;
   controller: ReadableStreamDefaultController<Uint8Array>;
   model: string;
   estimatedInputTokens: number;
+  abortSignal?: AbortSignal;
   onFunctionCallResponse?: (callId: string, responseId: string) => void;
   onReasoningItems?: (items: ResponsesReasoningItem[]) => void;
   onProductive?: () => void;
@@ -1262,6 +1264,10 @@ async function streamResponsesToAnthropic({
     send(messageStopSSE());
     closeController();
   } catch (err) {
+    if (abortSignal?.aborted) {
+      closeController();
+      return;
+    }
     if (isControllerInvalidStateError(err)) {
       closed = true;
       logger.warn('openai-responses: SSE controller closed during streaming');
@@ -1513,12 +1519,14 @@ export async function createOpenAIResponsesBridgeServer(
         );
       }
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
+      const upstreamAbort = new AbortController();
       let openAIResponse: Response;
       try {
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
           headers: buildOpenAIHeaders(config.auth, resolvedAuth),
           body: JSON.stringify(requestBody),
+          signal: upstreamAbort.signal,
         });
         if (openAIResponse.status === 401) {
           const refreshed = await refreshOpenAIResponsesAuth(config.auth);
@@ -1528,6 +1536,7 @@ export async function createOpenAIResponsesBridgeServer(
               method: 'POST',
               headers: buildOpenAIHeaders(config.auth, resolvedAuth),
               body: JSON.stringify(requestBody),
+              signal: upstreamAbort.signal,
             });
           }
         }
@@ -1556,6 +1565,7 @@ export async function createOpenAIResponsesBridgeServer(
               method: 'POST',
               headers: buildOpenAIHeaders(config.auth, resolvedAuth),
               body: JSON.stringify(requestBody),
+              signal: upstreamAbort.signal,
             });
             continuation = undefined;
           } else {
@@ -1609,6 +1619,7 @@ export async function createOpenAIResponsesBridgeServer(
             method: 'POST',
             headers: buildOpenAIHeaders(config.auth, resolvedAuth),
             body: JSON.stringify(requestBody),
+            signal: upstreamAbort.signal,
           });
         }
       } catch (err) {
@@ -1698,6 +1709,7 @@ export async function createOpenAIResponsesBridgeServer(
             controller,
             model,
             estimatedInputTokens,
+            abortSignal: upstreamAbort.signal,
             ...(resolvedModelContextWindow !== undefined
               ? { modelContextWindow: resolvedModelContextWindow }
               : {}),
@@ -1715,6 +1727,9 @@ export async function createOpenAIResponsesBridgeServer(
               consumeContinuation(sessionId, resolvedContinuation);
             },
           });
+        },
+        cancel() {
+          upstreamAbort.abort();
         },
       });
       return new Response(stream, {

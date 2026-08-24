@@ -743,6 +743,7 @@ export async function createOpenAIChatBridgeServer(
       );
       const inputTokens = estimateAnthropicInputTokens(body);
 
+      const upstreamAbort = new AbortController();
       let upstreamResponse: Response;
       try {
         upstreamResponse = await fetchImpl(chatCompletionsUrl, {
@@ -753,6 +754,7 @@ export async function createOpenAIChatBridgeServer(
             ...config.headers,
           },
           body: JSON.stringify(chatRequest),
+          signal: upstreamAbort.signal,
         });
       } catch (error) {
         return sendJsonError(
@@ -805,6 +807,9 @@ export async function createOpenAIChatBridgeServer(
             inputTokens,
             ...(modelContextWindow !== undefined ? { modelContextWindow } : {}),
           });
+        },
+        cancel() {
+          upstreamAbort.abort();
         },
       });
       return new Response(stream, {
