@@ -502,22 +502,26 @@ export class KimiProvider implements Provider {
   }
 
   private resolveModelListBaseUrl(baseUrl?: string): string {
-    const configuredBaseUrl = baseUrl ?? this.env.KIMI_BASE_URL;
+    if (baseUrl) {
+      const normalizedBaseUrl = normalizeBaseUrl(baseUrl).toLowerCase();
+      for (const region of VALID_REGIONS) {
+        if (
+          normalizedBaseUrl === KimiProvider.getBaseUrlForRegion(region).toLowerCase() ||
+          normalizedBaseUrl === KimiProvider.getOpenAiBaseUrlForRegion(region).toLowerCase()
+        ) {
+          return KimiProvider.getOpenAiBaseUrlForRegion(region);
+        }
+      }
+      return baseUrl;
+    }
+    const configuredBaseUrl = this.env.KIMI_BASE_URL;
     const explicitRegion = this.env.KIMI_REGION;
     const region = explicitRegion
       ? resolveKimiRegion(explicitRegion)
       : configuredBaseUrl
         ? (KimiProvider.resolveRegionFromBaseUrl(configuredBaseUrl) ?? this.defaultRegion)
         : this.defaultRegion;
-    if (!baseUrl) return KimiProvider.getOpenAiBaseUrlForRegion(region);
-    const normalizedBaseUrl = normalizeBaseUrl(baseUrl).toLowerCase();
-    if (
-      normalizedBaseUrl === KimiProvider.getBaseUrlForRegion(region).toLowerCase() ||
-      normalizedBaseUrl === KimiProvider.getOpenAiBaseUrlForRegion(region).toLowerCase()
-    ) {
-      return KimiProvider.getOpenAiBaseUrlForRegion(region);
-    }
-    return baseUrl;
+    return KimiProvider.getOpenAiBaseUrlForRegion(region);
   }
 
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo | null {

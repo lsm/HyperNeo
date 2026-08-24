@@ -165,7 +165,9 @@ export class MinimaxProvider implements Provider {
       force: options.force,
       cache: options.baseUrl === undefined ? this.modelListCache : undefined,
     });
-    return models.map((model) => this.toRemoteModelInfo(model));
+    return models
+      .filter((model) => this.ownsModel(model.id))
+      .map((model) => this.toRemoteModelInfo(model));
   }
 
   ownsModel(modelId: string): boolean {

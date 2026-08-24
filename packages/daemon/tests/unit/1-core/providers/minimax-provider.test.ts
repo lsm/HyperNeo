@@ -221,6 +221,23 @@ describe('MinimaxProvider', () => {
       expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
     });
 
+    it('filters discovered IDs that MiniMax cannot route', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      installModelListFetch([
+        {
+          data: [
+            { id: 'MiniMax-M3', object: 'model' },
+            { id: 'deployment-alias', object: 'model' },
+          ],
+        },
+      ]);
+      provider = new MinimaxProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models.map((model) => model.id)).toEqual(['MiniMax-M3']);
+    });
+
     it('maps the message base and leaves custom baseUrl overrides read-only', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       const { calls } = installModelListFetch([

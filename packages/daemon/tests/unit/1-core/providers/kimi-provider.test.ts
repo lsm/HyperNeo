@@ -332,8 +332,9 @@ describe('KimiProvider', () => {
 
     it('maps known message-base overrides to listing endpoints without mutating the region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_REGION = 'china';
       const { calls } = installModelListFetch([
-        { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
         { data: [{ id: 'kimi-for-coding', object: 'model' }] },
         { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
       ]);
@@ -345,7 +346,7 @@ describe('KimiProvider', () => {
       await provider.listRemoteModels({ baseUrl: 'https://api.moonshot.ai/anthropic' });
 
       expect(calls.map((call) => call[0])).toEqual([
-        'https://api.moonshot.ai/v1/models',
+        'https://api.kimi.com/coding/v1/models',
         'https://api.kimi.com/coding/v1/models',
         'https://api.moonshot.ai/v1/models',
       ]);
@@ -368,7 +369,7 @@ describe('KimiProvider', () => {
 
       expect(models).toHaveLength(1);
       expect(models[0]).toMatchObject({
-        id: 'kimi-k3',
+        id: 'kimi-k3[1m]',
         contextWindow: 1_048_576,
         thinkingModes: 'granular',
       });
@@ -387,7 +388,7 @@ describe('KimiProvider', () => {
       const forced = await provider.listRemoteModels({ force: true });
 
       expect(first).toEqual(cached);
-      expect(forced[0]?.id).toBe('kimi-k3');
+      expect(forced[0]?.id).toBe('kimi-k3[1m]');
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
