@@ -186,13 +186,48 @@ describe('SpaceAgentInactivity repositories', () => {
         spaceId,
         agentId: 'agent-1',
         claimKey: 'new-revision',
-        windowAnchoredAt: 100,
+        windowAnchoredAt: 200,
         attemptGeneration: 0,
         ownerToken: 'scanner-c',
         configRevision: 2,
       });
       expect(newRevision.acquired).toBe(true);
       expect(newRevision.claim.claimKey).toBe('new-revision');
+    });
+
+    it('refuses to replace a live claim with an older window or revision', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'newer',
+        windowAnchoredAt: 200,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-b',
+        configRevision: 2,
+      });
+      const staleWindow = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'older-window',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(staleWindow.acquired).toBe(false);
+      const staleRevision = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'older-revision',
+        windowAnchoredAt: 200,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(staleRevision.acquired).toBe(false);
+      const surviving = claimRepo.getByAgent(spaceId, 'agent-1');
+      expect(surviving?.ownerToken).toBe('scanner-b');
+      expect(surviving?.configRevision).toBe(2);
     });
 
     it('holds an accepted claim unchanged through a no-op accepted reset', () => {

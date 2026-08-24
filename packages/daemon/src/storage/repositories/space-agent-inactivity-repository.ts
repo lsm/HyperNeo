@@ -161,13 +161,14 @@ export class SpaceAgentInactivityClaimRepository {
       ) {
         return { acquired: true, claim: existing, created: false };
       }
-      const blocksCurrentWindow =
+      const live = existing !== null && existing.state !== 'none' && !existing.degraded;
+      const incomingNewer =
         existing !== null &&
-        existing.state !== 'none' &&
-        !existing.degraded &&
-        existing.windowAnchoredAt === params.windowAnchoredAt &&
-        existing.configRevision === params.configRevision;
-      if (blocksCurrentWindow) {
+        existing.windowAnchoredAt <= params.windowAnchoredAt &&
+        (existing.configRevision ?? 0) <= (params.configRevision ?? 0) &&
+        (existing.windowAnchoredAt < params.windowAnchoredAt ||
+          (existing.configRevision ?? 0) < (params.configRevision ?? 0));
+      if (live && !incomingNewer) {
         return { acquired: false, claim: existing, created: false };
       }
       const id = existing?.id ?? generateUUID();
