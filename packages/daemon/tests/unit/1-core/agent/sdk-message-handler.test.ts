@@ -2492,19 +2492,22 @@ describe('SDKMessageHandler', () => {
 
     it('does not persist the fallback when the session config changes during the curation check', async () => {
       const provider = new TranslatingMockProvider();
-      provider.getModels = async () => [
-        {
-          id: 'gpt-5.4-mini',
-          name: 'GPT 5.4 Mini',
-          alias: 'gpt54mini',
-          family: 'gpt',
-          provider: 'anthropic-codex',
-          contextWindow: 100000,
-          description: 'GPT 5.4 Mini',
-          releaseDate: '',
-          available: true,
-        },
-      ];
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
       getProviderRegistry().register(provider);
       getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
       mockSession.config = {
@@ -2522,6 +2525,7 @@ describe('SDKMessageHandler', () => {
         fallback_model: 'claude-sonnet-4-20250514',
         content: 'Retrying with fallback model',
       } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       mockSession.config = { ...mockSession.config, fallbackModel: undefined };
 
       await pending;
@@ -2533,19 +2537,22 @@ describe('SDKMessageHandler', () => {
 
     it('does not persist the fallback when the primary model changes during the curation check', async () => {
       const provider = new TranslatingMockProvider();
-      provider.getModels = async () => [
-        {
-          id: 'gpt-5.4-mini',
-          name: 'GPT 5.4 Mini',
-          alias: 'gpt54mini',
-          family: 'gpt',
-          provider: 'anthropic-codex',
-          contextWindow: 100000,
-          description: 'GPT 5.4 Mini',
-          releaseDate: '',
-          available: true,
-        },
-      ];
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
       getProviderRegistry().register(provider);
       getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
       mockSession.config = {
@@ -2563,6 +2570,7 @@ describe('SDKMessageHandler', () => {
         fallback_model: 'claude-sonnet-4-20250514',
         content: 'Retrying with fallback model',
       } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       mockSession.config = { ...mockSession.config, model: 'gpt-5.4-turbo' };
 
       await pending;
