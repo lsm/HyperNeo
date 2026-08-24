@@ -264,6 +264,8 @@ export class AgentSession
   private taskNotificationRequeryPending = false;
   private taskNotificationRequeryPendingDelayMs: number | null = null;
   private taskNotificationRequeryInterruptionGeneration: number | null = null;
+  private taskNotificationRequerySuppressedGeneration: number | null = null;
+  private taskNotificationRequeryContinueMessageId: string | null = null;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -456,6 +458,7 @@ export class AgentSession
 
     this.stateManager.setOnIdleCallback(async () => {
       await this.lifecycleManager.executeDeferredRestartIfPending();
+      this.flushPendingTaskNotificationRequery();
       void this.reconcileStrandedDeliveries().catch((error) => {
         this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
       });
@@ -748,7 +751,7 @@ export class AgentSession
   ): Promise<
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
-    return withSessionLock(this.session.id, async () => {
+    const result = await withSessionLock(this.session.id, async () => {
       const result =
         mode === 'remove'
           ? this.db.deletePendingUserMessage(this.session.id, messageDbId)
@@ -767,6 +770,8 @@ export class AgentSession
         removedFromMemory,
       };
     });
+    this.flushPendingTaskNotificationRequery();
+    return result;
   }
 
   async handleInterrupt(opts?: {
@@ -780,6 +785,11 @@ export class AgentSession
   }
 
   onInterruptRequested(): void {
+    this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
+    const continueMessageId = this.taskNotificationRequeryContinueMessageId;
+    if (continueMessageId) {
+      this.messageQueue.remove(continueMessageId);
+    }
     this.resetTaskNotificationRequery();
   }
 
@@ -1410,7 +1420,16 @@ export class AgentSession
       this.resetTaskNotificationRequery();
       return;
     }
-    if (decision.action === 'hold') return;
+    if (decision.action === 'hold') {
+      if (!this.taskNotificationRequeryExhausted && this.hasQueuedFollowUpDelivery()) {
+        this.clearTaskNotificationRequeryTimer();
+        this.taskNotificationRequeryPending = true;
+        this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
+          this.taskNotificationRequeryAttempts
+        );
+      }
+      return;
+    }
     if (decision.action === 'escalate') {
       this.clearTaskNotificationRequeryTimer();
       this.taskNotificationRequeryPending = false;
@@ -1418,6 +1437,7 @@ export class AgentSession
       void this.escalateTaskNotificationRequeryExhaustion();
       return;
     }
+    if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
     this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
     if (this.stateManager.getState().status === 'idle') {
       this.scheduleTaskNotificationRequery(decision.delayMs);
@@ -1435,7 +1455,13 @@ export class AgentSession
       return true;
     }
     const jobQueue = this.db.getJobQueueRepo?.();
-    return (jobQueue?.activeDeliveryMessageUuids(this.session.id)?.size ?? 0) > 0;
+    const activeUuids = jobQueue?.activeDeliveryMessageUuids(this.session.id);
+    if (!activeUuids || activeUuids.size === 0) return false;
+    for (const uuid of activeUuids) {
+      const consumed = this.db.getMessageByStatusAndUuid?.(this.session.id, 'consumed', uuid);
+      if (!consumed) return true;
+    }
+    return false;
   }
 
   private scheduleTaskNotificationRequery(delayMs: number): void {
@@ -1456,13 +1482,14 @@ export class AgentSession
     this.taskNotificationRequeryTimer = null;
   }
 
-  private resetTaskNotificationRequery(): void {
+  resetTaskNotificationRequery(): void {
     this.clearTaskNotificationRequeryTimer();
     this.taskNotificationRequeryAttempts = 0;
     this.taskNotificationRequeryExhausted = false;
     this.taskNotificationRequeryPending = false;
     this.taskNotificationRequeryPendingDelayMs = null;
     this.taskNotificationRequeryInterruptionGeneration = null;
+    this.taskNotificationRequeryContinueMessageId = null;
   }
 
   private flushPendingTaskNotificationRequery(): void {
@@ -1513,18 +1540,39 @@ export class AgentSession
       this.taskNotificationRequeryInterruptionGeneration = null;
       return;
     }
-    if (this.hasQueuedFollowUpDelivery()) return;
+    if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
+    if (this.hasQueuedFollowUpDelivery()) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = 0;
+      return;
+    }
     if (this.stateManager.getState().status !== 'idle') {
       this.taskNotificationRequeryPending = true;
       return;
     }
     if (this.isLimitRecoveryPending()) return;
     if (!this.messageQueue.isRunning() || !this.queryPromise) {
-      this.logger.warn(
-        `task-notification requery: no live query to continue for session ${this.session.id}; ` +
-          'standing down in favor of the runtime idle-watch backstop'
-      );
-      return;
+      if (this.session.config.queryMode === 'manual') {
+        this.logger.warn(
+          `task-notification requery: query is not live for manual-mode session ` +
+            `${this.session.id}; standing down in favor of the runtime idle-watch backstop`
+        );
+        return;
+      }
+      try {
+        const started = await this.lifecycleManager.ensureQueryStarted();
+        if (started === 'blocked') {
+          throw new Error('SDK transcript recovery prompt emitted');
+        }
+      } catch (error) {
+        this.logger.warn(
+          `task-notification requery: could not restart the dead query for session ` +
+            `${this.session.id}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.taskNotificationRequeryAttempts += 1;
+        this.handleTaskNotificationRequeryFailure();
+        return;
+      }
     }
     this.taskNotificationRequeryAttempts += 1;
     const attempt = this.taskNotificationRequeryAttempts;
@@ -1533,18 +1581,28 @@ export class AgentSession
         `issuing bare-continue follow-up turn ${attempt}/${TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS} ` +
         `for session ${this.session.id}`
     );
+    const continueMessageId = generateUUID();
+    this.taskNotificationRequeryContinueMessageId = continueMessageId;
     try {
-      await this.messageQueue.enqueue(TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
+      await this.messageQueue.enqueueWithId(
+        continueMessageId,
+        TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE
+      );
     } catch (error) {
       this.logger.warn(
         `task-notification requery: bare-continue delivery failed for session ${this.session.id}: ` +
           `${error instanceof Error ? error.message : String(error)}`
       );
       this.handleTaskNotificationRequeryFailure();
+    } finally {
+      if (this.taskNotificationRequeryContinueMessageId === continueMessageId) {
+        this.taskNotificationRequeryContinueMessageId = null;
+      }
     }
   }
 
   private handleTaskNotificationRequeryFailure(): void {
+    if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
     if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
       this.taskNotificationRequeryExhausted = true;
       void this.escalateTaskNotificationRequeryExhaustion();

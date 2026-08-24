@@ -58,6 +58,8 @@ export interface QueryLifecycleManagerContext {
 
   startStreamingQuery(): Promise<void>;
 
+  resetTaskNotificationRequery?(): void;
+
   setCleaningUp(value: boolean): void;
   cleanupEventSubscriptions(): void;
   clearModelsCache(): Promise<void>;
@@ -321,6 +323,7 @@ export class QueryLifecycleManager {
     } = this.ctx;
 
     this.ctx.messageHandler.cancelSuppressedResultWait();
+    this.ctx.resetTaskNotificationRequery?.();
 
     if (!this.ctx.queryObject && !this.ctx.queryPromise) {
       messageQueue.clear();
