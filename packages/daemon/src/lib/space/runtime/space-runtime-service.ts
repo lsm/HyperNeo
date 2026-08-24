@@ -1132,8 +1132,14 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
-      inactivityConfigRepo: this.config.inactivityConfigRepo,
-      inactivityRunNow: this.config.inactivityRunNow,
+      inactivityConfigRepo:
+        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
+          ? this.config.inactivityConfigRepo
+          : undefined,
+      inactivityRunNow:
+        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
+          ? this.config.inactivityRunNow
+          : undefined,
     });
   }
 
@@ -1875,6 +1881,8 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
+      inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
+      inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
     });
 
     const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);

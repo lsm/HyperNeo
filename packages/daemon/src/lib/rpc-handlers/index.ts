@@ -205,6 +205,15 @@ export interface RPCHandlerDependencies {
 
 const log = new Logger('rpc-handlers');
 
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
   deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
     const params = (data ?? {}) as {
@@ -691,18 +700,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         const db = deps.db.getDatabase();
         const sessionRow = db
           .prepare(`SELECT created_at, processing_state FROM sessions WHERE id = ?`)
-          .get(agent.sessionId) as { created_at?: number; processing_state?: string | null } | null;
+          .get(agent.sessionId) as {
+          created_at?: string | number;
+          processing_state?: string | null;
+        } | null;
         if (sessionRow == null) return null;
         const consumedRow = db
           .prepare(
             `SELECT MAX(timestamp) AS ts FROM sdk_messages
            WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
           )
-          .get(agent.sessionId) as { ts?: number | null } | null;
+          .get(agent.sessionId) as { ts?: string | number | null } | null;
         const pendingRow = db
           .prepare(
             `SELECT COUNT(*) AS n FROM sdk_messages
-           WHERE session_id = ? AND send_status IN ('enqueued', 'submitted')`
+           WHERE session_id = ? AND send_status IN ('enqueued', 'submitted', 'deferred')`
           )
           .get(agent.sessionId) as { n?: number } | null;
         let status = 'idle';
@@ -713,12 +725,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           if (parsed && typeof parsed.status === 'string') status = parsed.status;
         } catch {}
         return {
-          latestConsumedMessageAt:
-            typeof consumedRow?.ts === 'number' && consumedRow.ts > 0 ? consumedRow.ts : null,
-          sessionCreatedAt:
-            typeof sessionRow.created_at === 'number' && sessionRow.created_at > 0
-              ? sessionRow.created_at
-              : null,
+          latestConsumedMessageAt: toEpochMs(consumedRow?.ts),
+          sessionCreatedAt: toEpochMs(sessionRow.created_at),
           busyWithOtherWork:
             status === 'processing' ||
             status === 'queued' ||
