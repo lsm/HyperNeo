@@ -1346,7 +1346,7 @@ export class SDKMessageHandler {
 
   private resolveConfiguredFallbackModel(sdkFallbackModel: string | undefined): string | undefined {
     const configuredFallbackModel = this.ctx.session.config.fallbackModel;
-    if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
+    if (!sdkFallbackModel || !configuredFallbackModel) return undefined;
 
     const fallbackSession = {
       ...this.ctx.session,
