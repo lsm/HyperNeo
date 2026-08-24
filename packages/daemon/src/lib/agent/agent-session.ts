@@ -192,6 +192,13 @@ import {
 import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
+import {
+  buildTaskNotificationRequeryEscalationEvent,
+  TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+  TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+  resolveTaskNotificationRequery,
+  taskNotificationRequeryDelayMs,
+} from './task-notification-requery';
 
 export class AgentSession
   implements
@@ -247,6 +254,10 @@ export class AgentSession
     observer: MessageDeliveryAttemptObserver;
     pendingStart?: boolean;
   } | null = null;
+
+  private taskNotificationRequeryAttempts = 0;
+  private taskNotificationRequeryExhausted = false;
+  private taskNotificationRequeryTimer: ReturnType<typeof setTimeout> | null = null;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -1361,6 +1372,134 @@ export class AgentSession
 
   async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
     await this.messageHandler.handleMessage(message);
+    this.observeTaskNotificationResult(message);
+  }
+
+  private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
+    if (this.session.config.provider === 'acp') return;
+    const decision = resolveTaskNotificationRequery({
+      message,
+      attempts: this.taskNotificationRequeryAttempts,
+      exhausted: this.taskNotificationRequeryExhausted,
+      followUpQueued: this.hasQueuedFollowUpDelivery(),
+    });
+    if (decision.action === 'reset') {
+      this.resetTaskNotificationRequery();
+      return;
+    }
+    if (decision.action === 'hold') return;
+    if (decision.action === 'escalate') {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
+    this.scheduleTaskNotificationRequery(decision.delayMs);
+  }
+
+  private hasQueuedFollowUpDelivery(): boolean {
+    if (this.messageQueue.size() > 0) return true;
+    const jobQueue = this.db.getJobQueueRepo?.();
+    return (jobQueue?.activeDeliveryMessageUuids(this.session.id)?.size ?? 0) > 0;
+  }
+
+  private scheduleTaskNotificationRequery(delayMs: number): void {
+    this.clearTaskNotificationRequeryTimer();
+    const timer = setTimeout(() => {
+      this.taskNotificationRequeryTimer = null;
+      void this.runTaskNotificationRequeryContinue();
+    }, delayMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.taskNotificationRequeryTimer = timer;
+  }
+
+  private clearTaskNotificationRequeryTimer(): void {
+    if (!this.taskNotificationRequeryTimer) return;
+    clearTimeout(this.taskNotificationRequeryTimer);
+    this.taskNotificationRequeryTimer = null;
+  }
+
+  private resetTaskNotificationRequery(): void {
+    this.clearTaskNotificationRequeryTimer();
+    this.taskNotificationRequeryAttempts = 0;
+    this.taskNotificationRequeryExhausted = false;
+  }
+
+  private async runTaskNotificationRequeryContinue(): Promise<void> {
+    if (this._isCleaningUp) return;
+    if (this.db.getSession(this.session.id)?.status === 'archived') return;
+    if (this.hasQueuedFollowUpDelivery()) return;
+    if (this.stateManager.getState().status === 'rate_limit_cooldown') return;
+    if (this.isLimitRecoveryPending()) return;
+    if (!this.messageQueue.isRunning() || !this.queryPromise) {
+      this.logger.warn(
+        `task-notification requery: no live query to continue for session ${this.session.id}; ` +
+          'standing down in favor of the runtime idle-watch backstop'
+      );
+      return;
+    }
+    this.taskNotificationRequeryAttempts += 1;
+    const attempt = this.taskNotificationRequeryAttempts;
+    this.logger.warn(
+      `task-notification requery: turn ended on a hollow task-notification result; ` +
+        `issuing bare-continue follow-up turn ${attempt}/${TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS} ` +
+        `for session ${this.session.id}`
+    );
+    try {
+      await this.messageQueue.enqueue(TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE, true);
+    } catch (error) {
+      this.logger.warn(
+        `task-notification requery: bare-continue delivery failed for session ${this.session.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+      this.handleTaskNotificationRequeryFailure();
+    }
+  }
+
+  private handleTaskNotificationRequeryFailure(): void {
+    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
+    this.scheduleTaskNotificationRequery(
+      taskNotificationRequeryDelayMs(this.taskNotificationRequeryAttempts)
+    );
+  }
+
+  private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
+    const attempts = this.taskNotificationRequeryAttempts;
+    const execution = this.db.getNodeExecutionRepo?.().getByAgentSessionId(this.session.id) ?? null;
+    const event = buildTaskNotificationRequeryEscalationEvent({
+      sessionId: this.session.id,
+      spaceId: this.session.context?.spaceId,
+      taskId: this.session.context?.taskId,
+      workflowRunId: execution?.workflowRunId,
+      attempts,
+      timestamp: new Date().toISOString(),
+    });
+    if (!event) {
+      this.logger.warn(
+        `task-notification requery budget exhausted after ${attempts} attempt(s) for session ` +
+          `${this.session.id}; needs attention: no space context resolved, the runtime ` +
+          'idle-watch backstop owns recovery'
+      );
+      return;
+    }
+    this.logger.warn(
+      `task-notification requery budget exhausted after ${attempts} attempt(s); needs attention: ` +
+        `session=${this.session.id} run=${event.runId} task=${event.taskId}`
+    );
+    try {
+      await this.internalEventBus.publish('space.workflowRun.needsAttention', { ...event });
+    } catch (error) {
+      this.logger.warn(
+        `task-notification requery: failed to publish needs-attention escalation: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   async onSlashCommandsFetched(): Promise<void> {
@@ -2373,6 +2512,7 @@ export class AgentSession
     }
     this.messageHandler.cancelSuppressedResultWait();
     this.clearDeliveryTurnStall();
+    this.clearTaskNotificationRequeryTimer();
     for (const unsub of this.deliveryErrorSubs) {
       try {
         unsub();

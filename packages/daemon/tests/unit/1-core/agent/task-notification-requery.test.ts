@@ -1,0 +1,448 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import {
+  buildTaskNotificationRequeryEscalationEvent,
+  isTopLevelHollowTaskNotificationResult,
+  resolveTaskNotificationRequery,
+  TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+  TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+  taskNotificationRequeryDelayMs,
+} from '../../../../src/lib/agent/task-notification-requery';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
+import type { Database } from '../../../../src/storage/database';
+
+const ZERO_USAGE = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+};
+
+function buildResultMessage(overrides: Record<string, unknown> = {}): SDKMessage {
+  return {
+    type: 'result',
+    subtype: 'success',
+    duration_ms: 1000,
+    duration_api_ms: 1000,
+    is_error: false,
+    num_turns: 2,
+    result: '',
+    stop_reason: null,
+    total_cost_usd: 0,
+    usage: { ...ZERO_USAGE },
+    modelUsage: {},
+    permission_denials: [],
+    parent_tool_use_id: null,
+    uuid: 'result-uuid',
+    session_id: 'requery-session-id',
+    ...overrides,
+  } as unknown as SDKMessage;
+}
+
+function buildHollowTaskNotificationResult(): SDKMessage {
+  return buildResultMessage({ origin: { kind: 'task-notification' } });
+}
+
+function buildRealSuccessResult(): SDKMessage {
+  return buildResultMessage({
+    result: 'Review handoff submitted.',
+    usage: { ...ZERO_USAGE, input_tokens: 1200, output_tokens: 340 },
+    num_turns: 8,
+  });
+}
+
+function buildApiErrorTerminalResult(): SDKMessage {
+  return buildResultMessage({
+    is_error: true,
+    terminal_reason: 'api_error',
+    result: 'API Error: Connection refused (ConnectionRefused)',
+  });
+}
+
+describe('task-notification requery policy', () => {
+  afterEach(() => {
+    delete process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS;
+  });
+
+  describe('isTopLevelHollowTaskNotificationResult', () => {
+    it('accepts a hollow task-notification result', () => {
+      expect(isTopLevelHollowTaskNotificationResult(buildHollowTaskNotificationResult())).toBe(
+        true
+      );
+    });
+
+    it('rejects results where the model produced output', () => {
+      expect(
+        isTopLevelHollowTaskNotificationResult(
+          buildResultMessage({
+            origin: { kind: 'task-notification' },
+            usage: { ...ZERO_USAGE, input_tokens: 900 },
+          })
+        )
+      ).toBe(false);
+      expect(
+        isTopLevelHollowTaskNotificationResult(
+          buildResultMessage({
+            origin: { kind: 'task-notification' },
+            result: 'Consumed the notification.',
+          })
+        )
+      ).toBe(false);
+    });
+
+    it('rejects error results, foreign origins, nested results, and non-results', () => {
+      expect(
+        isTopLevelHollowTaskNotificationResult(
+          buildResultMessage({ origin: { kind: 'task-notification' }, is_error: true })
+        )
+      ).toBe(false);
+      expect(
+        isTopLevelHollowTaskNotificationResult(buildResultMessage({ origin: { kind: 'human' } }))
+      ).toBe(false);
+      expect(
+        isTopLevelHollowTaskNotificationResult(
+          buildResultMessage({
+            origin: { kind: 'task-notification' },
+            parent_tool_use_id: 'toolu-123',
+          })
+        )
+      ).toBe(false);
+      expect(
+        isTopLevelHollowTaskNotificationResult({ type: 'assistant' } as unknown as SDKMessage)
+      ).toBe(false);
+    });
+  });
+
+  describe('resolveTaskNotificationRequery', () => {
+    const base = { attempts: 0, exhausted: false, followUpQueued: false };
+
+    it('stands down with reset on results that show real model activity', () => {
+      expect(
+        resolveTaskNotificationRequery({ ...base, message: buildRealSuccessResult() })
+      ).toEqual({ action: 'reset' });
+      expect(
+        resolveTaskNotificationRequery({ ...base, message: buildApiErrorTerminalResult() })
+      ).toEqual({ action: 'reset' });
+    });
+
+    it('holds on non-result and nested-result messages', () => {
+      expect(
+        resolveTaskNotificationRequery({ ...base, message: { type: 'user' } as SDKMessage })
+      ).toEqual({ action: 'hold' });
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          message: buildResultMessage({
+            origin: { kind: 'task-notification' },
+            parent_tool_use_id: 'toolu-123',
+          }),
+        })
+      ).toEqual({ action: 'hold' });
+    });
+
+    it('holds while a follow-up user message is already queued', () => {
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          followUpQueued: true,
+          message: buildHollowTaskNotificationResult(),
+        })
+      ).toEqual({ action: 'hold' });
+    });
+
+    it('escalates once the bounded budget is exhausted and stays held afterwards', () => {
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+          message: buildHollowTaskNotificationResult(),
+        })
+      ).toEqual({ action: 'escalate' });
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+          exhausted: true,
+          message: buildHollowTaskNotificationResult(),
+        })
+      ).toEqual({ action: 'hold' });
+    });
+
+    it('requeries immediately on the first hollow result and backs off afterwards', () => {
+      expect(
+        resolveTaskNotificationRequery({ ...base, message: buildHollowTaskNotificationResult() })
+      ).toEqual({ action: 'requery', delayMs: 0 });
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          attempts: 2,
+          message: buildHollowTaskNotificationResult(),
+        })
+      ).toEqual({ action: 'requery', delayMs: 1000 });
+    });
+  });
+
+  describe('taskNotificationRequeryDelayMs', () => {
+    it('follows the default backoff ladder', () => {
+      expect(taskNotificationRequeryDelayMs(0)).toBe(0);
+      expect(taskNotificationRequeryDelayMs(1)).toBe(500);
+      expect(taskNotificationRequeryDelayMs(2)).toBe(1000);
+      expect(taskNotificationRequeryDelayMs(3)).toBe(2000);
+      expect(taskNotificationRequeryDelayMs(10)).toBe(8000);
+    });
+
+    it('honors the test base-delay override', () => {
+      process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
+      expect(taskNotificationRequeryDelayMs(2)).toBe(2);
+      process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '0';
+      expect(taskNotificationRequeryDelayMs(4)).toBe(0);
+    });
+  });
+
+  describe('buildTaskNotificationRequeryEscalationEvent', () => {
+    it('returns null unless space, task, and run context all resolve', () => {
+      expect(
+        buildTaskNotificationRequeryEscalationEvent({
+          sessionId: 's1',
+          attempts: 5,
+          timestamp: '2026-08-23T00:00:00.000Z',
+        })
+      ).toBeNull();
+      expect(
+        buildTaskNotificationRequeryEscalationEvent({
+          sessionId: 's1',
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          attempts: 5,
+          timestamp: '2026-08-23T00:00:00.000Z',
+        })
+      ).toBeNull();
+    });
+
+    it('builds the needs-attention event when the full context resolves', () => {
+      expect(
+        buildTaskNotificationRequeryEscalationEvent({
+          sessionId: 's1',
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          workflowRunId: 'run-1',
+          attempts: 5,
+          timestamp: '2026-08-23T00:00:00.000Z',
+        })
+      ).toEqual({
+        sessionId: 's1',
+        spaceId: 'space-1',
+        runId: 'run-1',
+        taskId: 'task-1',
+        reason: expect.stringContaining('immediate re-query budget exhausted'),
+        retriesExhausted: 5,
+        timestamp: '2026-08-23T00:00:00.000Z',
+      });
+    });
+  });
+});
+
+describe('AgentSession task-notification requery (incident replay)', () => {
+  let agentSession: AgentSession;
+  let enqueueSpy: ReturnType<typeof mock>;
+  let publishSpy: ReturnType<typeof mock>;
+  let activeDeliveryUuids: Set<string>;
+
+  const settleRequery = async (): Promise<void> => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  };
+
+  const continueCalls = (): number => enqueueSpy.mock.calls.length;
+
+  const needsAttentionPublishes = (): number =>
+    publishSpy.mock.calls.filter(
+      ([event]: [string]) => event === 'space.workflowRun.needsAttention'
+    ).length;
+
+  function createRequerySession(sessionOverrides: Record<string, unknown> = {}): AgentSession {
+    const session = {
+      id: 'requery-session-id',
+      title: 'Requery Session',
+      workspacePath: '/test/workspace',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: { model: 'default', maxTokens: 8192, temperature: 1.0 },
+      metadata: {},
+      ...sessionOverrides,
+    } as unknown as Session;
+
+    const db = {
+      getSession: mock(() => session),
+      updateSession: mock(() => {}),
+      saveSDKMessage: mock(() => true),
+      getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
+      getUserMessageIdsByStatus: mock(() => []),
+      getMessageByStatusAndUuid: mock(() => null),
+      updateMessageStatus: mock(() => {}),
+      updateMessageTimestamp: mock(() => {}),
+      beginTransaction: mock(() => {}),
+      commitTransaction: mock(() => {}),
+      abortTransaction: mock(() => {}),
+      getJobQueueRepo: mock(() => ({ activeDeliveryMessageUuids: () => activeDeliveryUuids })),
+      getNodeExecutionRepo: mock(() => ({
+        getByAgentSessionId: () => ({ id: 'exec-1', workflowRunId: 'run-1' }),
+      })),
+    } as unknown as Database;
+
+    return new AgentSession(
+      session,
+      db,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      {
+        publish: publishSpy,
+        publishAsync: mock(() => {}),
+        subscribe: mock(
+          (_: string, __: (data: unknown) => void, ___: { subscriberName: string }) => () => {}
+        ),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>,
+      mock(async () => 'test-api-key')
+    );
+  }
+
+  function armLiveQuery(session: AgentSession): void {
+    session.messageQueue.start();
+    session.queryPromise = new Promise<void>(() => {});
+    (
+      session.messageQueue as unknown as {
+        enqueue: (content: string | MessageContent[], internal?: boolean) => Promise<string>;
+      }
+    ).enqueue = enqueueSpy;
+  }
+
+  beforeEach(() => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
+    activeDeliveryUuids = new Set();
+    enqueueSpy = mock(async () => 'requery-message-id');
+    publishSpy = mock(async () => {});
+    agentSession = createRequerySession({
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+    });
+    armLiveQuery(agentSession);
+  });
+
+  afterEach(() => {
+    delete process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS;
+    (
+      agentSession as unknown as {
+        clearTaskNotificationRequeryTimer: () => void;
+      }
+    ).clearTaskNotificationRequeryTimer();
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+  });
+
+  it('replays the incident: api_error terminal, hollow wakeup, re-query retries until recovery', async () => {
+    await agentSession.onSDKMessage(buildApiErrorTerminalResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+    expect(enqueueSpy.mock.calls[0]).toEqual([TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE, true]);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(2);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(3);
+
+    await agentSession.onSDKMessage(buildRealSuccessResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(3);
+    expect(needsAttentionPublishes()).toBe(0);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(4);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('escalates to the needs-attention channel when the budget is exhausted', async () => {
+    for (let i = 0; i < TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS; i++) {
+      await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+      await settleRequery();
+    }
+    expect(continueCalls()).toBe(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
+    expect(needsAttentionPublishes()).toBe(0);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(
+      publishSpy.mock.calls.find(
+        ([event]: [string]) => event === 'space.workflowRun.needsAttention'
+      )
+    ).toEqual([
+      'space.workflowRun.needsAttention',
+      expect.objectContaining({
+        sessionId: 'requery-session-id',
+        spaceId: 'space-1',
+        runId: 'run-1',
+        taskId: 'task-1',
+        retriesExhausted: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+      }),
+    ]);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS);
+    expect(needsAttentionPublishes()).toBe(1);
+  });
+
+  it('skips the re-query while a follow-up user message is already queued', async () => {
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('stands down without the live query and logs instead of publishing outside space context', async () => {
+    const detachedSession = createRequerySession({});
+    armLiveQuery(detachedSession);
+    detachedSession.queryPromise = null;
+    detachedSession.messageQueue.stop();
+
+    await detachedSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(
+      (
+        (detachedSession as unknown as { messageQueue: { enqueue: ReturnType<typeof mock> } })
+          .messageQueue as { enqueue: ReturnType<typeof mock> }
+      ).enqueue.mock.calls.length
+    ).toBe(0);
+
+    (
+      detachedSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+    await detachedSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(
+      publishSpy.mock.calls.filter(
+        ([event]: [string]) => event === 'space.workflowRun.needsAttention'
+      ).length
+    ).toBe(0);
+
+    (
+      detachedSession as unknown as { clearTaskNotificationRequeryTimer: () => void }
+    ).clearTaskNotificationRequeryTimer();
+    detachedSession.queryPromise = null;
+    detachedSession.messageQueue.stop();
+  });
+});
