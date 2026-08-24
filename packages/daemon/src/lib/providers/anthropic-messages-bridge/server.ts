@@ -195,12 +195,19 @@ export async function createAnthropicMessagesBridgeServer(
         ...config.headers,
       };
 
+      const upstreamAbort = new AbortController();
+      if (req.signal.aborted) {
+        upstreamAbort.abort();
+      } else {
+        req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
+      }
       let upstreamResponse: Response;
       try {
         upstreamResponse = await fetchImpl(target, {
           method: 'POST',
           headers,
           body: bodyBytes,
+          signal: upstreamAbort.signal,
         });
       } catch (error) {
         return sendJsonError(

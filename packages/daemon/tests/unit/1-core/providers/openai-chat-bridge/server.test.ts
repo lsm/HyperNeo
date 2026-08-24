@@ -59,6 +59,44 @@ describe.skipIf(!isBun)(
       server = undefined;
     });
 
+    it('aborts the upstream fetch when the client disconnects before upstream headers arrive', async () => {
+      let upstreamSignal: AbortSignal | undefined;
+      server = await makeServer(
+        (_url, init) =>
+          new Promise<Response>(() => {
+            upstreamSignal = init?.signal ?? undefined;
+          })
+      );
+
+      const controller = new AbortController();
+      const resPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'custom-model',
+          max_tokens: 16,
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+        signal: controller.signal,
+      });
+
+      const started = Date.now() + 5000;
+      while (!upstreamSignal && Date.now() < started) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(upstreamSignal).toBeDefined();
+
+      controller.abort();
+      await resPromise.catch(() => {});
+
+      const deadline = Date.now() + 5000;
+      while (!upstreamSignal?.aborted && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(upstreamSignal?.aborted).toBe(true);
+    });
+
     it('aborts the upstream fetch when the client disconnects mid-stream', async () => {
       let upstreamSignal: AbortSignal | undefined;
       server = await makeServer(

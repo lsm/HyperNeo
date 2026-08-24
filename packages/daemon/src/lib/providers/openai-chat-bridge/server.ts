@@ -744,6 +744,11 @@ export async function createOpenAIChatBridgeServer(
       const inputTokens = estimateAnthropicInputTokens(body);
 
       const upstreamAbort = new AbortController();
+      if (req.signal.aborted) {
+        upstreamAbort.abort();
+      } else {
+        req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
+      }
       let upstreamResponse: Response;
       try {
         upstreamResponse = await fetchImpl(chatCompletionsUrl, {

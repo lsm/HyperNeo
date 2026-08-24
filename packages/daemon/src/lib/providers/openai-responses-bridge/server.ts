@@ -1520,6 +1520,11 @@ export async function createOpenAIResponsesBridgeServer(
       }
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
       const upstreamAbort = new AbortController();
+      if (req.signal.aborted) {
+        upstreamAbort.abort();
+      } else {
+        req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
+      }
       let openAIResponse: Response;
       try {
         openAIResponse = await fetchImpl(upstreamUrl, {

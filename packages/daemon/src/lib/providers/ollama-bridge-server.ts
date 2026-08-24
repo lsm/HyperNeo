@@ -442,6 +442,11 @@ export async function createOllamaAnthropicBridgeServer(
           .join('\n')
       );
       const upstreamAbort = new AbortController();
+      if (req.signal.aborted) {
+        upstreamAbort.abort();
+      } else {
+        req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
+      }
       let ollamaResponse: Response;
       try {
         ollamaResponse = await fetchImpl(`${baseUrl}/api/chat`, {

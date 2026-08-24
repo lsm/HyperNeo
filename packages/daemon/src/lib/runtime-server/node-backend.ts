@@ -4,7 +4,12 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';
 import type { RuntimeSocket, ServerHandle, ServerOptions, UpgradeFn } from './types.ts';
 
-function toRequest(req: IncomingMessage, hostname: string, port: number): Request {
+function toRequest(
+  req: IncomingMessage,
+  hostname: string,
+  port: number,
+  clientSignal?: AbortSignal
+): Request {
   const url = `http://${hostname}:${port}${req.url ?? '/'}`;
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
@@ -18,6 +23,7 @@ function toRequest(req: IncomingMessage, hostname: string, port: number): Reques
     init.body = Readable.toWeb(req) as unknown as ReadableStream<Uint8Array>;
     (init as { duplex?: 'half' }).duplex = 'half';
   }
+  if (clientSignal) init.signal = clientSignal;
   return new Request(url, init);
 }
 
@@ -87,11 +93,16 @@ export async function createNodeServer(options: ServerOptions): Promise<ServerHa
       return new Response(null, { status: 200 });
     };
 
+    const clientGone = new AbortController();
+    const onClientGone = () => clientGone.abort();
+    res.once('close', onClientGone);
+
     const boundPort = (server.address() as { port: number } | null)?.port ?? options.port;
-    const request = toRequest(req, hostname, boundPort);
+    const request = toRequest(req, hostname, boundPort, clientGone.signal);
 
     Promise.resolve(fetch(request, upgrade))
       .then((response) => {
+        res.off('close', onClientGone);
         if (response) {
           void writeResponse(res, response);
         } else {

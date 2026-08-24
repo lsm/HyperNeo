@@ -127,6 +127,37 @@ describe('runtime-server node backend', () => {
     server.stop(true);
   });
 
+  it('aborts the request signal when the client disconnects before the response starts', async () => {
+    let clientSignal: AbortSignal | undefined;
+    const server = await withNodeServer(async (req) => {
+      clientSignal = req.signal;
+      await new Promise<Response>(() => {});
+      return new Response('never');
+    });
+
+    const controller = new AbortController();
+    const resPromise = fetch(`http://127.0.0.1:${server.port}/health`, {
+      signal: controller.signal,
+    });
+
+    const started = Date.now() + 5000;
+    while (!clientSignal && Date.now() < started) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(clientSignal).toBeDefined();
+
+    controller.abort();
+    await resPromise.catch(() => {});
+
+    const deadline = Date.now() + 5000;
+    while (!clientSignal?.aborted && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(clientSignal?.aborted).toBe(true);
+
+    server.stop(true);
+  });
+
   it('upgrades websocket connections and echoes messages', async () => {
     const opened: string[] = [];
     const server = await withNodeServer(
