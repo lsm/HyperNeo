@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  ListRemoteModelsOptions,
   ModelTier,
   Provider,
   ProviderAuthStatusInfo,
@@ -10,6 +11,11 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import {
+  buildModelListUrl,
+  fetchRemoteModelList,
+  type RemoteModelListEntry,
+} from './shared/model-list.js';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -131,6 +137,7 @@ export class KimiProvider implements Provider {
   private defaultRegion: KimiRegion = 'china';
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
 
   constructor(
@@ -144,6 +151,7 @@ export class KimiProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
+    this.modelListCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -335,6 +343,25 @@ export class KimiProvider implements Provider {
     return KimiProvider.MODELS;
   }
 
+  async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
+    }
+    const baseUrl = this.resolveModelListBaseUrl(options.baseUrl);
+    const models = await fetchRemoteModelList({
+      url: buildModelListUrl(baseUrl, 'openai-chat'),
+      headers: { Authorization: `Bearer ${apiKey}` },
+      force: options.force,
+      cache: options.baseUrl === undefined ? this.modelListCache : undefined,
+      fetchImpl: this.fetchImpl,
+    });
+    const knownModels = models
+      .map((model) => this.toRemoteModelInfo(model))
+      .filter((model): model is ModelInfo => model !== null);
+    return Array.from(new Map(knownModels.map((model) => [model.id, model])).values());
+  }
+
   ownsModel(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
     return (
@@ -473,6 +500,53 @@ export class KimiProvider implements Provider {
 
   getTitleGenerationModel(): string {
     return KimiProvider.DEFAULT_MODEL;
+  }
+
+  private resolveModelListBaseUrl(baseUrl?: string): string {
+    const configuredBaseUrl = baseUrl ?? this.env.KIMI_BASE_URL;
+    if (configuredBaseUrl) {
+      const normalizedBaseUrl = normalizeBaseUrl(configuredBaseUrl).toLowerCase();
+      if (normalizedBaseUrl === 'https://api.moonshot.cn/anthropic') {
+        return 'https://api.moonshot.cn/v1';
+      }
+      for (const region of VALID_REGIONS) {
+        if (
+          normalizedBaseUrl === KimiProvider.getBaseUrlForRegion(region).toLowerCase() ||
+          normalizedBaseUrl === KimiProvider.getOpenAiBaseUrlForRegion(region).toLowerCase()
+        ) {
+          return KimiProvider.getOpenAiBaseUrlForRegion(region);
+        }
+      }
+      return configuredBaseUrl;
+    }
+    const explicitRegion = this.env.KIMI_REGION;
+    const region = explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion;
+    return KimiProvider.getOpenAiBaseUrlForRegion(region);
+  }
+
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo | null {
+    const normalized = KimiProvider.normalizeKimiModelId(model.id);
+    const exactMatch = KimiProvider.MODELS.find((candidate) => {
+      const identifiers = [
+        candidate.id,
+        ...(candidate.sdkModelIds ?? []),
+        ...(candidate.providerAliases ?? []),
+      ];
+      return identifiers.some(
+        (identifier) => KimiProvider.normalizeKimiModelId(identifier) === normalized
+      );
+    });
+    if (exactMatch) return exactMatch;
+    let prefixMatch: { model: ModelInfo; length: number } | undefined;
+    for (const candidate of KimiProvider.MODELS) {
+      for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {
+        const prefix = KimiProvider.normalizeKimiModelId(rawPrefix);
+        if (normalized.startsWith(prefix) && (!prefixMatch || prefix.length > prefixMatch.length)) {
+          prefixMatch = { model: candidate, length: prefix.length };
+        }
+      }
+    }
+    return prefixMatch?.model ?? null;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

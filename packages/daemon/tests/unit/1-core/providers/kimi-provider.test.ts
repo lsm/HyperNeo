@@ -13,15 +13,20 @@ import {
 describe('KimiProvider', () => {
   let provider: KimiProvider;
   let originalEnv: NodeJS.ProcessEnv;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    originalFetch = global.fetch;
     delete process.env.KIMI_API_KEY;
     delete process.env.MOONSHOT_API_KEY;
+    delete process.env.KIMI_REGION;
+    delete process.env.KIMI_BASE_URL;
   });
 
   afterEach(async () => {
-    await provider.shutdown();
+    await provider?.shutdown();
+    global.fetch = originalFetch;
     process.env = originalEnv;
   });
 
@@ -269,6 +274,169 @@ describe('KimiProvider', () => {
       await provider.getModels();
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('listRemoteModels', () => {
+    function installModelListFetch(responses: unknown[]): {
+      fetchMock: ReturnType<typeof mock>;
+      calls: Array<[RequestInfo | URL, RequestInit | undefined]>;
+    } {
+      const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
+      const fetchMock = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+        calls.push([url, init]);
+        const body = responses.shift();
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      return { fetchMock, calls };
+    }
+
+    it('uses the China OpenAI endpoint instead of the Anthropic probe endpoint by default', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock, calls } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toEqual([KimiProvider.MODELS[3]]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = calls[0] ?? [];
+      expect(url).toBe('https://api.kimi.com/coding/v1/models');
+      expect(init?.method).toBe('GET');
+      expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
+    });
+
+    it('uses the global OpenAI endpoint rather than appending models to the Anthropic base', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_REGION = 'global';
+      const { calls } = installModelListFetch([
+        { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models[0]).toMatchObject({
+        id: 'kimi-for-coding',
+        provider: 'kimi',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+        available: true,
+      });
+      expect(calls[0]?.[0]).toBe('https://api.moonshot.ai/v1/models');
+      expect(String(calls[0]?.[0])).not.toContain('/anthropic/');
+    });
+
+    it('preserves a custom environment base URL and uses the injected fetch', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_BASE_URL = 'https://proxy.example.com/kimi';
+      const fetchMock = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'kimi-for-coding', object: 'model' }] }), {
+            status: 200,
+          })
+      );
+      provider = new KimiProvider(process.env, undefined, fetchMock as unknown as typeof fetch);
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toEqual([KimiProvider.MODELS[3]]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://proxy.example.com/kimi/v1/models');
+    });
+
+    it('maps known message-base overrides to listing endpoints without mutating the region', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_REGION = 'china';
+      const { calls } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
+        { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+      provider.setDefaultRegion('global');
+
+      await provider.listRemoteModels();
+      await provider.listRemoteModels({ baseUrl: 'https://api.kimi.com/coding' });
+      await provider.listRemoteModels({ baseUrl: 'https://api.moonshot.ai/anthropic' });
+      await provider.listRemoteModels({ baseUrl: 'https://api.moonshot.cn/anthropic' });
+
+      expect(calls.map((call) => call[0])).toEqual([
+        'https://api.kimi.com/coding/v1/models',
+        'https://api.kimi.com/coding/v1/models',
+        'https://api.moonshot.ai/v1/models',
+        'https://api.moonshot.cn/v1/models',
+      ]);
+      expect(provider.getDefaultRegion()).toBe('global');
+    });
+
+    it('matches supported prefix aliases and filters IDs Kimi cannot route yet', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([
+        {
+          data: [
+            { id: 'moonshot-k3-preview', object: 'model' },
+            { id: 'moonshot-v1-32k', object: 'model' },
+            { id: 'kimi-k4', object: 'model' },
+          ],
+        },
+      ]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toHaveLength(2);
+      expect(models[0]).toMatchObject({
+        id: 'kimi-k3[1m]',
+        contextWindow: 1_048_576,
+        thinkingModes: 'granular',
+      });
+      expect(models[1]).toEqual(KimiProvider.MODELS[3]);
+    });
+
+    it('caches successful discovery and force bypasses the cache', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-k3', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      const first = await provider.listRemoteModels();
+      const cached = await provider.listRemoteModels();
+      const forced = await provider.listRemoteModels({ force: true });
+
+      expect(first).toEqual(cached);
+      expect(forced[0]?.id).toBe('kimi-k3[1m]');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('propagates forced discovery failures instead of serving the cached list', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      let calls = 0;
+      global.fetch = mock(async () => {
+        calls++;
+        return calls === 1
+          ? new Response(JSON.stringify({ data: [{ id: 'kimi-for-coding' }] }), { status: 200 })
+          : new Response('unavailable', { status: 503 });
+      }) as unknown as typeof fetch;
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels();
+
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+        'Endpoint returned HTTP 503'
+      );
+    });
+
+    it('rejects discovery without credentials', async () => {
+      provider = new KimiProvider();
+
+      await expect(provider.listRemoteModels()).rejects.toThrow('Kimi API key not configured');
     });
   });
 
