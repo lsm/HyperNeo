@@ -233,20 +233,25 @@ export class ProviderService {
     provider: RegisteredProvider
   ): Promise<string | undefined> {
     const curated = this.getRegistry().getCuratedModels(providerId);
-    if (curated !== undefined) return curated[0]?.id;
-    return (await provider.getModels())[0]?.id;
+    const models = await provider.getModels();
+    if (curated !== undefined) {
+      const catalogIds = new Set(models.map((model) => model.id));
+      return curated.find((entry) => catalogIds.has(entry.id))?.id;
+    }
+    return models[0]?.id;
   }
 
   async getTitleGenerationModels(
     providerId: string,
     sessionModelId: string
-  ): Promise<{ providerModelId: string; sdkModelId: string }> {
+  ): Promise<{ providerModelId: string; sdkModelId: string } | null> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     let providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
     if (provider && isCuratedOutModel(providerModelId, providerId)) {
-      providerModelId =
-        (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? sessionModelId;
+      const visibleModelId = await this.getVisibleProviderDefaultModelId(providerId, provider);
+      if (!visibleModelId) return null;
+      providerModelId = visibleModelId;
     }
     let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
     try {
@@ -273,16 +278,19 @@ export class ProviderService {
     return (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? null;
   }
 
-  async getTitleGenerationModel(providerId: string, sessionModelId: string): Promise<string> {
-    const { sdkModelId } = await this.getTitleGenerationModels(providerId, sessionModelId);
-    return sdkModelId;
+  async getTitleGenerationModel(
+    providerId: string,
+    sessionModelId: string
+  ): Promise<string | null> {
+    const models = await this.getTitleGenerationModels(providerId, sessionModelId);
+    return models?.sdkModelId ?? null;
   }
 
   async getTitleGenerationConfig(providerId: string): Promise<{
     modelId: string;
     baseUrl: string;
     apiVersion: string;
-  }> {
+  } | null> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
 
@@ -298,8 +306,11 @@ export class ProviderService {
     const tierFallback = provider.getModelForTier('haiku');
     let modelId =
       preferUncuratedModel(providerId, titleOverride, tierFallback) ??
-      (await this.getVisibleProviderDefaultModelId(providerId, provider)) ??
-      'default';
+      (await this.getVisibleProviderDefaultModelId(providerId, provider));
+    if (!modelId) {
+      if (registry.getCuratedModels(providerId) !== undefined) return null;
+      modelId = 'default';
+    }
 
     let baseUrl = 'https://api.anthropic.com';
     let apiVersion = 'v1';

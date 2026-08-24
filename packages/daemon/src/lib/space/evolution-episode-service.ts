@@ -717,6 +717,9 @@ export async function resolveEpisodeJudgeModel(
   const providerService = getProviderService();
   const provider = await providerService.getDefaultProvider();
   const cfg = await providerService.getTitleGenerationConfig(provider);
+  if (!cfg) {
+    throw new Error(`Provider ${provider} has no visible models for episode judging`);
+  }
   return { provider, modelId: cfg.modelId };
 }
 

@@ -909,11 +909,26 @@ export class SessionLifecycle {
       modelId = sessionModel;
     } else {
       const config = await providerService.getTitleGenerationConfig(provider);
+      if (!config) {
+        this.logger.warn(
+          `[SessionLifecycle] Provider ${provider} has no visible models, using fallback title`
+        );
+        return {
+          title: messageText.substring(0, 50).trim() || 'New Session',
+          isFallback: true,
+        };
+      }
       modelId = config.modelId;
     }
 
     try {
       const title = await this.generateTitleWithSdk(provider, modelId, messageText);
+      if (!title) {
+        return {
+          title: messageText.substring(0, 50).trim() || 'New Session',
+          isFallback: true,
+        };
+      }
       return { title, isFallback: false };
     } catch (error) {
       this.logger.error('[SessionLifecycle] SDK title generation failed:', error);
@@ -928,7 +943,7 @@ export class SessionLifecycle {
     provider: string,
     modelId: string,
     messageText: string
-  ): Promise<string> {
+  ): Promise<string | null> {
     const query =
       this.config.titleGenerationQueryForTesting ??
       (await import('@anthropic-ai/claude-agent-sdk')).query;
@@ -936,6 +951,12 @@ export class SessionLifecycle {
       this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
     const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
+    if (!titleModels) {
+      this.logger.warn(
+        `[SessionLifecycle] Provider ${provider} has no visible models, skipping title generation`
+      );
+      return null;
+    }
 
     const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
       provider,

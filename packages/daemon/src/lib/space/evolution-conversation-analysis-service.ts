@@ -348,6 +348,9 @@ async function resolveConversationFrictionModel(
   const providerService = getProviderService();
   const provider = await providerService.getDefaultProvider();
   const cfg = await providerService.getTitleGenerationConfig(provider);
+  if (!cfg) {
+    throw new Error(`Provider ${provider} has no visible models for conversation analysis`);
+  }
   return { provider, modelId: cfg.modelId };
 }
 

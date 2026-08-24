@@ -596,7 +596,7 @@ describe('ProviderService', () => {
       expect(model).toBe('translated-1');
     });
 
-    it('keeps the session model when curation is explicitly empty', async () => {
+    it('returns null when curation is explicitly empty', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();
       globalRegistry.register(new TitleOverrideMockProvider());
@@ -604,7 +604,7 @@ describe('ProviderService', () => {
 
       const model = await realService.getTitleGenerationModel('title-override', 'title-9');
 
-      expect(model).toBe('translated-9');
+      expect(model).toBeNull();
     });
   });
 
@@ -612,17 +612,17 @@ describe('ProviderService', () => {
     it('should return config for registered provider', async () => {
       const config = await service.getTitleGenerationConfig('glm');
 
-      expect(config.modelId).toBe('glm-haiku');
-      expect(config.baseUrl).toBe('https://api.glm.example.com');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.modelId).toBe('glm-haiku');
+      expect(config?.baseUrl).toBe('https://api.glm.example.com');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('should return fallback config for unknown provider', async () => {
       const config = await service.getTitleGenerationConfig('unknown' as unknown as ProviderId);
 
-      expect(config.modelId).toBe('haiku');
-      expect(config.baseUrl).toBe('https://api.anthropic.com');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.modelId).toBe('haiku');
+      expect(config?.baseUrl).toBe('https://api.anthropic.com');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('should return defaults when buildSdkConfig throws (e.g. server not yet started)', async () => {
@@ -630,8 +630,8 @@ describe('ProviderService', () => {
 
       const config = await service.getTitleGenerationConfig('throwing' as unknown as ProviderId);
 
-      expect(config.baseUrl).toBe('https://api.anthropic.com');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.baseUrl).toBe('https://api.anthropic.com');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('should return provider-routed title model for region-aware providers', async () => {
@@ -641,9 +641,9 @@ describe('ProviderService', () => {
 
       const config = await service.getTitleGenerationConfig('region-aware-title' as ProviderId);
 
-      expect(config.modelId).toBe('kimi-k2.7-code');
-      expect(config.baseUrl).toBe('https://api.moonshot.ai/anthropic');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.modelId).toBe('kimi-k2.7-code');
+      expect(config?.baseUrl).toBe('https://api.moonshot.ai/anthropic');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('uses the tier fallback when the title override is curated out', async () => {
@@ -654,8 +654,8 @@ describe('ProviderService', () => {
 
       const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
 
-      expect(config.modelId).toBe('title-haiku');
-      expect(config.baseUrl).toBe('https://mock.api.com');
+      expect(config?.modelId).toBe('title-haiku');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
     });
 
     it('falls back to the first curated model when title override and tier fallback are curated out', async () => {
@@ -666,11 +666,11 @@ describe('ProviderService', () => {
 
       const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
 
-      expect(config.modelId).toBe('title-1');
-      expect(config.baseUrl).toBe('https://mock.api.com');
+      expect(config?.modelId).toBe('title-1');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
     });
 
-    it('returns the default model when curation is explicitly empty', async () => {
+    it('returns null when curation is explicitly empty', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();
       globalRegistry.register(new TitleOverrideMockProvider());
@@ -678,7 +678,7 @@ describe('ProviderService', () => {
 
       const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
 
-      expect(config.modelId).toBe('default');
+      expect(config).toBeNull();
     });
   });
 
@@ -705,6 +705,15 @@ describe('ProviderService', () => {
       globalRegistry.setCuratedModels('title-override', []);
 
       expect(await realService.getCheapTierModel('title-override')).toBeNull();
+    });
+
+    it('skips stale curated entries missing from the provider catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-stale' }, { id: 'title-1' }]);
+
+      expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
     });
   });
 
