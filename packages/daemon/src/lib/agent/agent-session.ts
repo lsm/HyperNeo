@@ -263,6 +263,7 @@ export class AgentSession
   private taskNotificationRequeryTimer: ReturnType<typeof setTimeout> | null = null;
   private taskNotificationRequeryPending = false;
   private taskNotificationRequeryPendingDelayMs: number | null = null;
+  private taskNotificationRequeryInterruptionGeneration: number | null = null;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -1417,6 +1418,7 @@ export class AgentSession
       void this.escalateTaskNotificationRequeryExhaustion();
       return;
     }
+    this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
     if (this.stateManager.getState().status === 'idle') {
       this.scheduleTaskNotificationRequery(decision.delayMs);
     } else {
@@ -1460,6 +1462,7 @@ export class AgentSession
     this.taskNotificationRequeryExhausted = false;
     this.taskNotificationRequeryPending = false;
     this.taskNotificationRequeryPendingDelayMs = null;
+    this.taskNotificationRequeryInterruptionGeneration = null;
   }
 
   private flushPendingTaskNotificationRequery(): void {
@@ -1467,6 +1470,17 @@ export class AgentSession
     this.taskNotificationRequeryPending = false;
     const delayMs = this.taskNotificationRequeryPendingDelayMs ?? 0;
     this.taskNotificationRequeryPendingDelayMs = null;
+    if (
+      this.taskNotificationRequeryInterruptionGeneration !== null &&
+      this.taskNotificationRequeryInterruptionGeneration !== this.getQueryGeneration()
+    ) {
+      this.logger.warn(
+        `task-notification requery: query replaced while a continuation was pending for session ` +
+          `${this.session.id}; dropping the stale episode`
+      );
+      this.taskNotificationRequeryInterruptionGeneration = null;
+      return;
+    }
     if (
       this._isCleaningUp ||
       this.isLimitRecoveryPending() ||
@@ -1487,6 +1501,18 @@ export class AgentSession
   private async runTaskNotificationRequeryContinue(): Promise<void> {
     if (this._isCleaningUp) return;
     if (this.db.getSession(this.session.id)?.status === 'archived') return;
+    if (
+      this.taskNotificationRequeryInterruptionGeneration !== null &&
+      this.taskNotificationRequeryInterruptionGeneration !== this.getQueryGeneration()
+    ) {
+      this.logger.warn(
+        `task-notification requery: query replaced since the hollow result ` +
+          `(generation ${this.taskNotificationRequeryInterruptionGeneration} -> ` +
+          `${this.getQueryGeneration()}); standing down for session ${this.session.id}`
+      );
+      this.taskNotificationRequeryInterruptionGeneration = null;
+      return;
+    }
     if (this.hasQueuedFollowUpDelivery()) return;
     if (this.stateManager.getState().status !== 'idle') {
       this.taskNotificationRequeryPending = true;

@@ -463,6 +463,44 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(1);
   });
 
+  it('stands down when the query is replaced after a continuation is scheduled', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    (
+      agentSession as unknown as { incrementQueryGeneration: () => number }
+    ).incrementQueryGeneration();
+
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(continueCalls()).toBe(1);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('drops a pending continuation when the query is replaced before idle', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '1';
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = 2;
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await agentSession.stateManager.setProcessing('prior-turn', 'initializing');
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    (
+      agentSession as unknown as { incrementQueryGeneration: () => number }
+    ).incrementQueryGeneration();
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
