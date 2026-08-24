@@ -336,12 +336,17 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
       clearProviderRetry(failure.providerId);
     }
   }
-  for (const providerId of result.succeededProviderIds) {
+  for (const providerId of result.loadedProviderIds) {
     invalidateProviderRetry(providerId);
     clearProviderFailure(providerId);
-  }
-  for (const providerId of result.loadedProviderIds) {
     clearProviderRetry(providerId);
+  }
+  for (const providerId of result.succeededProviderIds) {
+    if (result.loadedProviderIds.includes(providerId)) continue;
+    invalidateProviderRetry(providerId);
+    if (getProviderFailure(providerId)) {
+      armProviderRetryTimer(providerId);
+    }
   }
   for (const failure of result.failures) {
     invalidateProviderRetry(failure.providerId);

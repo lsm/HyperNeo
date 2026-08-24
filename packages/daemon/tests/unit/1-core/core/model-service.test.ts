@@ -801,6 +801,43 @@ describe('Model Service', () => {
         jest.useRealTimers();
       }
     });
+
+    it('keeps the marker through an empty foreground catalog and notifies on scheduled recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let catalog: ModelInfo[] | null = null;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (catalog === null) throw new Error('Endpoint returned HTTP 503');
+          return catalog;
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        const changes: ProviderFailureChange[] = [];
+        subscribeProviderFailureChanges((change) => changes.push(change));
+
+        catalog = [];
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        catalog = [glmModel('glm-5-real')];
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(changes.some((c) => c.providerId === 'glm' && c.record === null)).toBe(true);
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-real']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('cache management', () => {
