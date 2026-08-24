@@ -219,9 +219,13 @@ gate never sees. Re-flagging and admission are two separate rules:
   any other termination releases — mirroring the turn-boundary semantics
   (for a one-shot background query, the query IS the turn); the
   `reportQueryStart/End` wiring these interpreters already owe carries the
-  consumption and resolution. Consult identity
-  is the synthetic `(sessionId, 'title')`; one such job per session,
-  idempotent. The consult
+  consumption and resolution. Consult identity is the **title job's
+  durable identity** — `{kind: 'job', jobKind: 'title', jobId}` from the
+  `session-title` job itself, never an in-memory synthetic tuple (the grant
+  union and the job wake dispatcher key on `jobId`; a synthetic
+  `(sessionId, 'title')` would leave the dispatcher with nothing to wake and
+  the consult unable to report holding the grant, so it would park forever).
+  One such job per session, idempotent. The consult
   sits at `handleSessionTitleGeneration`'s entry, before any lifecycle work;
   denial returns the same parked shape P3 uses — `requeue(job.id, retryAt)`
   with `retryAt` = the saturation deadline, or the probe tick while probing —
@@ -281,8 +285,16 @@ gate never sees. Re-flagging and admission are two separate rules:
   so the credential-change re-admission hook recreates/updates both agents
   from the new credentials before re-admitting or draining any parked
   GitHub analysis; replaying with a stale snapshot would invoke the old
-  key while the registry reasons about the new account) are v1's roster of
-  out-of-pipeline provider callers; any new direct `query(...)` caller joins
+  key while the registry reasons about the new account). **One event, one
+  grant**: `processEvent` chains `checkSecurity` → `routeEvent`
+  (github-service.ts:214-287), so an event's grant spans the whole
+  workflow — granted once at event admission, each agent query rides it
+  (multiple queries, one concurrency slot), resolved when the event's
+  processing terminates; per-agent grants would interleave events (A's
+  router denied after A's security consumed its grant and the successor
+  bound to B) and never complete an event. These surfaces are v1's roster
+  of out-of-pipeline provider callers; any new direct `query(...)` caller
+  joins
   them by convention. The GitHub agents' denial shape **splits by invocation**:
   the poll path (a durable tick) skips the agent work this tick — the denial
   returns `skipped_provider_saturated`, and **cursor/ETag handling follows
@@ -298,8 +310,12 @@ gate never sees. Re-flagging and admission are two separate rules:
   the account reopens; the **webhook path**
   (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
   callback — no job, no `job.id`) processes the event **without** agent
-  analysis (answers the webhook immediately — the callback must complete,
-  GitHub would otherwise retry the delivery) **and persists the original
+  analysis — and the **acknowledgment becomes conditional**: the 200 is
+  returned only after the durable inbox commit succeeds; if the inbox write
+  throws, the handler answers a retryable non-2xx so GitHub redelivers
+  (today the catch path still 200s, which would silently drop the
+  saturated event). The callback must complete quickly either way — GitHub
+  would otherwise time out and retry — and **persists the original
   webhook payload to the inbox for exact replay**: poll-derived events are
   not a substitute — normalization synthesizes actions (`updated`) that
   differ from webhook actions (`opened`/`closed`/`synchronize`), so replaying
@@ -307,7 +323,12 @@ gate never sees. Re-flagging and admission are two separate rules:
   Every skipped webhook goes to the inbox regardless of polling mode. **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
-  persisted to a durable raw-event inbox keyed by event id, and the inbox
+  persisted to a durable raw-event inbox keyed by the **GitHub delivery
+  id** (`X-GitHub-Delivery`, github-event-extension.ts:671) — not the
+  normalized event id, which the normalizer regenerates per receipt
+  (`crypto.randomUUID()`, github-normalizer.ts:1094), so a crash before the
+  200 response would let GitHub's retry of the *same delivery* land as an
+  unrelated key and bypass the delivery-record dedupe — and the inbox
   entries **register as durable background waiters** — drained through the
   agents on **any** clear of their account key (normal timer/probe clears
   included, via the same wake that drains the background queue), not only by
@@ -614,11 +635,17 @@ not inherit):
   (which already re-admits registrations on `providers.update` /
   `auth.login` / `auth.logout`) requeues it to `now` the moment the account
   re-opens; no tick-retry loop ever hits the provider. **Closure probes are
-  the one admitted lane while closed**: `closureProbe` callers bypass the
-  closed arm exactly once per attempt — success clears closure and drains
-  registrations, a fresh billing-terminal response re-arms `closed`, any
-  other error leaves it armed (the probe retries on its own schedule).
-  Ordinary deliveries can never set this fact. This reconciles the
+  the one admitted lane while closed — exactly one at a time**: a bypass
+  requires holding the account's **closure-probe grant**, a single atomic
+  reservation (concurrent Retry Now clicks or a manual retry overlapping
+  the daily health probe would otherwise all bypass `closed` — v1's cap is
+  null, so nothing else bounds them — and re-create the parallel wave
+  against the exhausted account). A caller denied the grant queues on its
+  own trigger and consults again. The holder's outcome resolves the grant:
+  success clears closure and drains registrations, a fresh billing-terminal
+  response re-arms `closed`, any other error leaves it armed (the probe
+  retries on its own schedule). Ordinary deliveries can never set the fact
+  nor hold the grant. This reconciles the
   old "do not arm" exception with the provider-wide admission objective.
 - `resetAtMs` present (bounded by `MAX_RESET_HORIZON_MS`, the same check
   `decideRateLimitTrip` makes) → `untilMs = cooldownFromReset(resetAtMs).retryAtMs`
@@ -663,8 +690,10 @@ not inherit):
   (`reportRefinedReset(accountKey, episodeToken, resetAtMs)` from the same
   wiring that owns `classifyUnknownLimit`): `reportLimitError` returns an
   **episode token**, and the refinement must carry it. The token remains
-  matchable for the episode's whole life — arming, clear, probing — and is
-  retired only when the episode's grant resolves or a newer episode arms:
+  matchable for the episode's whole life — arming, clear, probing,
+  *including while the probe's grant is consumed and its turn runs* — and is
+  retired only when the episode's grant fully resolves (turn terminal) or a
+  newer episode arms:
   this is what makes the revocation rules below reachable (a token killed at
   the early clear could never revoke the post-clear grant). A mismatched or
   late-token refinement (newer episode live) is **discarded** rather than
@@ -830,8 +859,12 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   `session.messages.promotePending`, `session-handlers.ts:1126-1182`:
   deferred → enqueued → delivery job; the enqueued wake arm below for parked
   rows); the **job** wake directly makes that durable job claimable
-  (`retryAt = now` under the same claim-token rules); the **inbox** wake
-  drains that event through the agents.
+  (`retryAt = now` under the same claim-token rules) — and for jobs whose
+  handler needs an active session (title generation throws on an unloaded
+  `SessionCache`, session-lifecycle.ts:768-773), the wake resolves the
+  owning session first (`getSessionAsync`) so a reconstructed
+  never-loaded-session job does not burn grants failing to find it; the
+  **inbox** wake drains that event through the agents.
 - **Probing release — one probe grant, carried end-to-end, pushing the drain.**
   After **any** clear (probe rule, timer expiry, or startup reconstruction), the
   provider mints a single **probe grant — bound at mint time, not by race**:
@@ -959,7 +992,14 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   replay exists to re-run P1 for an idle session, so the rows would otherwise
   stay deferred indefinitely while newer immediate messages dispatch. The
   principle: retained rows are re-admitted on any config event that changes
-  *why* they were retained. **Logout closes, it does not re-admit**: the
+  *why* they were retained. **Space-level provider changes re-admit parked
+  jobs**: `space.update` changing a Space's `defaultModel`/`defaultProvider`
+  matches none of the session hooks — but conversation-friction and other
+  Space-scoped jobs resolve their provider from the Space **at execution
+  time**, so their registrations under the old key are as stale as a
+  switched session's; `space.update` joins the re-admission triggers,
+  re-admitting the Space's parked jobs under the new effective key.
+  **Logout closes, it does not re-admit**: the
   re-admission hook re-runs admission against the *new* key — and
   `ProviderAdmissionFacts` gains an `accountAvailable: boolean` fact (usable
   credentials present); `auth.logout` removing a provider's only credential
@@ -1012,12 +1052,10 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
    the delivery's prompt, end at that turn's terminal result — not at the
    startup-permit sites and not for the whole streaming query, which stays
    alive across turns. Every report is keyed by the **canonical account
-   key** of State ownership — the normalized upstream identity for explicit
-   endpoints, and for default-endpoint identities the provider id plus any
-   credential-digest override (bare provider id only for stored default
-   credentials) — never
-   the bare `resolvedProviderId`, and never a provider-id-prefixed split of
-   one shared upstream account.
+   key** of State ownership — the effective **credential digest** (endpoint
+   and region never join the key; every stored credential contributes its
+   digest, so rotation changes it) — never the bare `resolvedProviderId`,
+   and never an endpoint-split of one credential's account.
 
 ## Sequencing
 
