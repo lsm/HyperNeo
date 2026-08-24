@@ -1412,6 +1412,49 @@ describe('ProvidersSettings', () => {
     });
   });
 
+  it('preserves cached auth status when an event refresh cannot reload it', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [
+        createMockProvider('1', 'openai', {
+          displayName: 'OpenAI',
+          authType: 'oauth',
+          available: true,
+        }),
+      ],
+    });
+    mockListProviderAuthStatus
+      .mockResolvedValueOnce({
+        providers: [
+          {
+            id: 'openai',
+            displayName: 'OpenAI',
+            isAuthenticated: true,
+            method: 'oauth',
+            needsRefresh: true,
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('Auth timeout'));
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Refresh Needed'));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => {
+      expect(mockListProviderAuthStatus).toHaveBeenCalledTimes(2);
+      expect(mockToastWarning).toHaveBeenCalledWith(
+        'Auth status unavailable — showing cached state'
+      );
+    });
+    expect(container.textContent).toContain('Refresh Needed');
+  });
+
   it('opens EditorModal when custom endpoint edit is clicked', async () => {
     const providers = [
       createMockProvider('1', 'custom:lm', {

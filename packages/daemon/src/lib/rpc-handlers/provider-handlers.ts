@@ -501,6 +501,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         }
       })
     );
+    await clearCacheAndNotifyProvidersChanged(internalEventBus);
     return { results };
   });
 }

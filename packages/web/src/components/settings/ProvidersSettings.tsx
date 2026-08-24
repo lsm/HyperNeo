@@ -154,7 +154,7 @@ export function ProvidersSettings() {
         listProviders(),
         listProviderAuthStatus().catch((_err) => {
           toast.warning('Auth status unavailable — showing cached state');
-          return { providers: [] as ProviderAuthStatus[] };
+          return null;
         }),
       ]);
       if (generation !== loadGenerationRef.current) return;
@@ -171,10 +171,11 @@ export function ProvidersSettings() {
           `${window.location.pathname}${query ? `?${query}` : ''}`
         );
       }
-      const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
+      const authById = new Map(authResponse?.providers.map((a) => [a.id, a]));
+      const previousAuthById = new Map(providers.map((p) => [p.providerId, p.authStatus]));
       const enriched = records.map((r) => ({
         ...r,
-        authStatus: authById.get(r.providerId),
+        authStatus: authResponse ? authById.get(r.providerId) : previousAuthById.get(r.providerId),
       }));
       setProviders(enriched);
       const nextRegions: Record<string, 'china' | 'global'> = {};

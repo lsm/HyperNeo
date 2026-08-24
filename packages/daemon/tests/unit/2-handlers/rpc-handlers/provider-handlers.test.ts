@@ -1283,6 +1283,9 @@ describe('Provider RPC handlers', () => {
       expect(anthropic?.healthy).toBe(true);
       expect(openrouter?.healthy).toBe(false);
       expect(openrouter?.error).toBe('Not registered');
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('probes ACP providers during bulk health checks even when models are cached', async () => {
