@@ -981,6 +981,8 @@ describe('QueryOptionsBuilder', () => {
 
     it('does not force an enabled budget for a fallback dropped by build', async () => {
       getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      process.env.KIMI_API_KEY = 'test-kimi-key';
+      process.env.KIMI_BASE_URL = 'http://127.0.0.1:9';
       try {
         mockSession.config.provider = 'kimi';
         mockSession.config.model = 'kimi-k3';
@@ -994,6 +996,8 @@ describe('QueryOptionsBuilder', () => {
 
         expect(result.thinking).toBeUndefined();
       } finally {
+        process.env.KIMI_API_KEY = '';
+        process.env.KIMI_BASE_URL = '';
         getProviderRegistry().setCuratedModels('kimi', undefined);
       }
     });
