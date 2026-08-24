@@ -1587,7 +1587,11 @@ export class AgentSession
       this.taskNotificationRequeryPending = true;
       return;
     }
-    if (this.isLimitRecoveryPending()) return;
+    if (this.isLimitRecoveryPending()) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = 0;
+      return;
+    }
     if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
       this.clearTaskNotificationRequeryTimer();
       this.taskNotificationRequeryExhausted = true;

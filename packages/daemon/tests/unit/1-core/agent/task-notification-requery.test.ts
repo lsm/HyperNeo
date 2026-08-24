@@ -878,6 +878,24 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(1);
   });
 
+  it('re-parks the episode while rate-limit recovery is pending', async () => {
+    const isRecoveryPending = mock(() => true);
+    (
+      agentSession as unknown as {
+        rateLimitWatchdog: { isRecoveryPending: typeof isRecoveryPending };
+      }
+    ).rateLimitWatchdog = { isRecoveryPending };
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    isRecoveryPending.mockImplementation(() => false);
+    await agentSession.stateManager.setIdle();
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
   it('re-parks a scheduled retry when the SDK turns busy during the backoff', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     (
