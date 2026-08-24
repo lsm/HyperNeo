@@ -5790,10 +5790,11 @@ describe('AgentSession', () => {
         undefined,
         { autoReplayPendingMessages: false }
       );
+      const activeMessageId = 'active-msg-uuid';
       if (row.status === 'processing') {
-        await agentSession.stateManager.setProcessing(steerUuid);
+        await agentSession.stateManager.setProcessing(activeMessageId);
       } else if (row.status === 'queued') {
-        await agentSession.stateManager.setQueued(steerUuid);
+        await agentSession.stateManager.setQueued(activeMessageId);
       } else if (row.status === 'interrupted') {
         await agentSession.stateManager.setInterrupted();
       } else if (row.status === 'waiting_for_input') {
@@ -5989,6 +5990,36 @@ describe('AgentSession', () => {
         expected: 'promote',
       },
       {
+        name: 'waiting_for_input promotes past an invalid delivery',
+        status: 'waiting_for_input',
+        delivery: 'consumed',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'rate_limit_cooldown promotes past an invalid delivery',
+        status: 'rate_limit_cooldown',
+        delivery: 'consumed',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
+        name: 'interrupted promotes past an invalid delivery',
+        status: 'interrupted',
+        delivery: 'consumed',
+        queryPromise: 'present',
+        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'held',
+        expected: 'promote',
+      },
+      {
         name: 'processing aborts on a consumed delivery row',
         status: 'processing',
         delivery: 'consumed',
@@ -6139,7 +6170,7 @@ describe('AgentSession', () => {
           undefined,
           { autoReplayPendingMessages: false }
         );
-        await agentSession.stateManager.setProcessing(steerUuid);
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
         agentSession.queryPromise = new Promise<void>(() => {});
         let release!: () => void;
         const held = new Promise<void>((resolve) => {
@@ -6191,7 +6222,7 @@ describe('AgentSession', () => {
           undefined,
           { autoReplayPendingMessages: false }
         );
-        await agentSession.stateManager.setProcessing(steerUuid);
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
         let resolveQuery!: () => void;
         agentSession.queryPromise = new Promise<void>((resolve) => {
           resolveQuery = resolve;
