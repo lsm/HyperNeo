@@ -245,4 +245,93 @@ describe('OAuthRefreshScheduler', () => {
 
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
   });
+
+  it('runs dormancy recovery after a successful refresh and before the change event', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const order: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      recoverDormantProvider: async (providerId) => {
+        await Promise.resolve();
+        order.push(`recovered:${providerId}`);
+        return true;
+      },
+      onProviderChanged: (providerId) => {
+        order.push(`changed:${providerId}`);
+      },
+    });
+
+    await scheduler.tick();
+
+    expect(order).toEqual(['recovered:oauth-provider', 'changed:oauth-provider']);
+    expect(manager.health.get('oauth-provider')).toBe('healthy');
+  });
+
+  it('swallows dormancy recovery failures so the refresh still completes', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const changed: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      recoverDormantProvider: async () => {
+        throw new Error('recovery exploded');
+      },
+      onProviderChanged: (providerId) => {
+        changed.push(providerId);
+      },
+    });
+
+    await scheduler.tick();
+
+    expect(manager.stored).toHaveLength(1);
+    expect(manager.health.get('oauth-provider')).toBe('healthy');
+    expect(changed).toEqual(['oauth-provider']);
+  });
+
+  it('does not run dormancy recovery when the refresh fails', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(false));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const recovered: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 1,
+      recoverDormantProvider: async (providerId) => {
+        recovered.push(providerId);
+        return false;
+      },
+    });
+
+    await scheduler.tick();
+
+    expect(recovered).toEqual([]);
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+  });
 });

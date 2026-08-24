@@ -390,6 +390,28 @@ describe('AnthropicProvider', () => {
       const models = await provider.getModels();
       expect(models).toEqual([]);
     });
+
+    it('clears the model cache when credentials are replaced', async () => {
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+      provider.setModelCache([
+        {
+          id: 'cached',
+          name: 'Cached',
+          alias: 'cached',
+          family: 'sonnet' as const,
+          provider: 'anthropic' as const,
+          contextWindow: 100000,
+          description: 'Cached',
+          releaseDate: '',
+          available: true,
+        },
+      ]);
+
+      provider.setCredentials({ type: 'api_key', apiKey: '' });
+
+      const models = await provider.getModels();
+      expect(models).toEqual([]);
+    });
   });
 
   describe('convertSdkModels foreign-id filter', () => {

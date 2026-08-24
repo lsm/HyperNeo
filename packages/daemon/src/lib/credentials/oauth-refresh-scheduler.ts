@@ -13,6 +13,7 @@ export interface OAuthRefreshSchedulerOptions {
   registry?: ProviderRegistry;
   now?: () => number;
   onProviderChanged?: (providerId: string) => void;
+  recoverDormantProvider?: (providerId: string) => Promise<boolean>;
 }
 
 export class OAuthRefreshScheduler {
@@ -24,6 +25,7 @@ export class OAuthRefreshScheduler {
   private readonly registry: ProviderRegistry;
   private readonly now: () => number;
   private readonly onProviderChanged?: (providerId: string) => void;
+  private readonly recoverDormantProvider?: (providerId: string) => Promise<boolean>;
 
   constructor(
     private readonly credentialManager: ProviderCredentialManager,
@@ -35,6 +37,7 @@ export class OAuthRefreshScheduler {
     this.registry = options.registry ?? getProviderRegistry();
     this.now = options.now ?? Date.now;
     this.onProviderChanged = options.onProviderChanged;
+    this.recoverDormantProvider = options.recoverDormantProvider;
   }
 
   start(): void {
@@ -83,6 +86,7 @@ export class OAuthRefreshScheduler {
         await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
       }
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
+      await this.recoverDormant(provider.id);
       this.onProviderChanged?.(provider.id);
       return;
     }
@@ -93,6 +97,13 @@ export class OAuthRefreshScheduler {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
       this.onProviderChanged?.(provider.id);
     }
+  }
+
+  private async recoverDormant(providerId: string): Promise<void> {
+    if (!this.recoverDormantProvider) return;
+    try {
+      await this.recoverDormantProvider(providerId);
+    } catch {}
   }
 
   private async credentialsForProvider(provider: Provider): Promise<ProviderCredentials | null> {

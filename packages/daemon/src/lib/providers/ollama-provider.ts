@@ -100,6 +100,7 @@ export class OllamaProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.clearModelCache();
+    this.lastAuthError = undefined;
   }
 
   getCredentials(): ProviderCredentials | null {

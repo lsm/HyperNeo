@@ -91,6 +91,7 @@ export class AnthropicProvider implements Provider {
 
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
+    this.clearModelCache();
   }
 
   getCredentials(): ProviderCredentials | null {

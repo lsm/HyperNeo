@@ -776,6 +776,124 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
   });
 
+  describe('setCredentials() credential mutation', () => {
+    function fakeRuntime(): { server: unknown; client: unknown; stops: string[] } {
+      const stops: string[] = [];
+      return {
+        stops,
+        server: {
+          url: 'http://127.0.0.1:45678',
+          stop: async () => {
+            stops.push('server');
+          },
+        },
+        client: {
+          stop: async () => {
+            stops.push('client');
+          },
+        },
+      };
+    }
+
+    function fakeModel(): Record<string, unknown> {
+      return {
+        id: 'gpt-4o',
+        name: 'GPT-4o (Copilot)',
+        alias: 'copilot-gpt-4o',
+        family: 'gpt',
+        provider: 'anthropic-copilot',
+        contextWindow: 128000,
+        description: 'GPT-4o via GitHub Copilot',
+        releaseDate: '2025-01-01',
+        available: true,
+      };
+    }
+
+    async function settle(): Promise<void> {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    it('tears down dynamic models, client, and server caches when the token changes', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const runtime = fakeRuntime();
+      (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
+      (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_replacement_token' });
+      await settle();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(runtime.stops).toEqual(['server', 'client']);
+      expect(state['serverCache']).toBeUndefined();
+      expect(state['clientCache']).toBeUndefined();
+      expect(state['dynamicModelsCache']).toBeNull();
+      expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
+      expect(state['storedCredentialToken']).toBe('gho_replacement_token');
+    });
+
+    it('keeps runtime caches when the same token is re-applied', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_same_token' });
+      const runtime = fakeRuntime();
+      (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
+      (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_same_token' });
+      await settle();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(runtime.stops).toEqual([]);
+      expect(state['serverCache']).toBe(runtime.server);
+      expect(state['clientCache']).toBe(runtime.client);
+      expect(state['dynamicModelsCache']).toEqual([fakeModel()]);
+    });
+
+    it('stops a server that is still starting when credentials change', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const stops: string[] = [];
+      let resolveStart: ((server: unknown) => void) | undefined;
+      const starting = new Promise<unknown>((resolve) => {
+        resolveStart = resolve;
+      });
+      (p as unknown as Record<string, unknown>)['serverStarting'] = starting;
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_replacement_token' });
+      await settle();
+      expect((p as unknown as Record<string, unknown>)['serverStarting']).toBeUndefined();
+
+      resolveStart?.({
+        url: 'http://127.0.0.1:45679',
+        stop: async () => {
+          stops.push('server');
+        },
+      });
+      await settle();
+      await settle();
+
+      expect(stops).toEqual(['server']);
+      expect((p as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
+    });
+
+    it('clears dynamic model caches through clearModelCache()', () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      p.clearModelCache();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(state['dynamicModelsCache']).toBeNull();
+      expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
+    });
+  });
+
   describe('ensureServerStarted() retry-after-failure', () => {
     it('clears serverStarting on rejection so the next call can retry', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});

@@ -1243,6 +1243,198 @@ describe('Model Service', () => {
     });
   });
 
+  describe('credential dormancy exit (OAuth refresh recovery)', () => {
+    type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+    function glmModel(id: string): ModelInfo {
+      return {
+        id,
+        name: id,
+        alias: id,
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 128000,
+        description: id,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    function registerGlmProvider(getModels: () => Promise<ModelInfo[]>): {
+      getModels: ReturnType<typeof mock>;
+    } {
+      const getModelsMock = mock(getModels);
+      getProviderRegistry().register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: async () => true,
+        getModels: getModelsMock,
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as ProviderLike);
+      return { getModels: getModelsMock };
+    }
+
+    it('clears a definitive failure, refreshes the cache slice, and releases the stranded gate', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let failing = true;
+      const { getModels } = registerGlmProvider(async () => {
+        if (failing) throw new Error('Request failed (http 401)');
+        return [glmModel('glm-recovered-model')];
+      });
+
+      await refreshModels();
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-recovered-model')).toBe(false);
+
+      const changes: ProviderFailureChange[] = [];
+      subscribeProviderFailureChanges((change) => changes.push(change));
+      failing = false;
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe(true);
+
+      expect(getModels).toHaveBeenCalledTimes(2);
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-recovered-model')).toBe(true);
+      expect(changes.some((c) => c.providerId === 'glm' && c.record === null)).toBe(true);
+    });
+
+    it('is a no-op when no failure is recorded', async () => {
+      const { recoverDormantProvider } = await import('../../../../src/lib/model-service');
+      const { getModels } = registerGlmProvider(async () => [glmModel('glm-fine')]);
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe(false);
+
+      expect(getModels).toHaveBeenCalledTimes(0);
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('leaves transient failures to the scheduled retry machinery', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const { getModels } = registerGlmProvider(async () => {
+        throw new Error('Endpoint returned HTTP 503');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe(false);
+
+      expect(getModels).toHaveBeenCalledTimes(1);
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('skips recovery when the provider is no longer registered', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      registerGlmProvider(async () => {
+        throw new Error('Request failed (http 401)');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      getProviderRegistry().unregister('glm');
+      await expect(recoverDormantProvider('glm')).resolves.toBe(false);
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+    });
+
+    it('lifts dormancy even when the post-recovery probe still fails', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const { getModels } = registerGlmProvider(async () => {
+        throw new Error('Request failed (http 401)');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe(true);
+
+      expect(getModels).toHaveBeenCalledTimes(2);
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+    });
+
+    it('does not install a stale slice when a global clear lands mid-probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider(async (): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) throw new Error('Request failed (http 401)');
+        return new Promise<ModelInfo[]>((resolve) => {
+          releaseProbe = resolve;
+        });
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      clearModelsCache();
+      releaseProbe?.([glmModel('glm-after-clear')]);
+      await recovery;
+
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('does not clobber a foreground refresh that overtakes the recovery probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider(async (): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) throw new Error('Request failed (http 401)');
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((resolve) => {
+            releaseProbe = resolve;
+          });
+        }
+        return [glmModel('glm-foreground-model')];
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-foreground-model')).toBe(true);
+
+      releaseProbe?.([glmModel('glm-recovery-model')]);
+      await recovery;
+
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-recovery-model')).toBe(false);
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-foreground-model')).toBe(true);
+    });
+  });
+
   describe('cache management', () => {
     it('should start with empty cache', () => {
       const cache = getModelsCache();

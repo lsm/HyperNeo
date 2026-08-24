@@ -133,8 +133,47 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         ? credentials.apiKey
         : (credentials.accessToken ?? credentials.refreshToken);
     if (!token) return;
+    const previousToken = this.storedCredentialToken ?? this.tokenCache?.token;
+    if (previousToken !== token) {
+      this.resetCredentialBoundCaches();
+    }
     this.storedCredentialToken = token;
     this.tokenCache = { token, expiresAt: Number.POSITIVE_INFINITY };
+  }
+
+  clearModelCache(): void {
+    this.dynamicModelsCache = null;
+    this.dynamicModelsCacheExpiresAt = 0;
+  }
+
+  private resetCredentialBoundCaches(): void {
+    this.clearModelCache();
+    void this.resetEmbeddedRuntime();
+  }
+
+  private async resetEmbeddedRuntime(): Promise<void> {
+    const starting = this.serverStarting;
+    const server = this.serverCache;
+    const client = this.clientCache;
+    this.serverStarting = undefined;
+    this.serverCache = undefined;
+    this.clientCache = undefined;
+    if (server) {
+      await server.stop().catch((err: unknown) => {
+        logger.warn('Error stopping embedded Anthropic server:', err);
+      });
+    }
+    if (client) {
+      await client.stop().catch((err: unknown) => {
+        logger.warn('Error stopping CopilotClient:', err);
+      });
+    }
+    if (starting) {
+      const started = await starting.catch(() => undefined);
+      if (started) {
+        await started.stop().catch(() => {});
+      }
+    }
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
@@ -384,18 +423,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
-    if (this.serverCache) {
-      await this.serverCache.stop().catch((err: unknown) => {
-        logger.warn('Error stopping embedded Anthropic server:', err);
-      });
-      this.serverCache = undefined;
-    }
-    if (this.clientCache) {
-      await this.clientCache.stop().catch((err: unknown) => {
-        logger.warn('Error stopping CopilotClient:', err);
-      });
-      this.clientCache = undefined;
-    }
+    await this.resetEmbeddedRuntime();
   }
 
   async ensureServerStarted(): Promise<string> {
@@ -404,15 +432,25 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     if (!this.serverStarting) {
       this.serverStarting = this.createServer();
     }
+    const starting = this.serverStarting;
 
+    let server: EmbeddedServer;
     try {
-      this.serverCache = await this.serverStarting;
-      this.serverStarting = undefined;
+      server = await starting;
     } catch (err) {
-      this.serverStarting = undefined;
+      if (this.serverStarting === starting) {
+        this.serverStarting = undefined;
+      }
       throw err;
     }
-    return this.serverCache.url;
+
+    if (this.serverStarting !== starting) {
+      return this.ensureServerStarted();
+    }
+
+    this.serverCache = server;
+    this.serverStarting = undefined;
+    return server.url;
   }
 
   private async resolveGitHubToken(

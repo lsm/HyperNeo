@@ -562,6 +562,35 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
   clearProviderRetry(providerId);
 }
 
+export async function recoverDormantProvider(providerId: string): Promise<boolean> {
+  if (getProviderFailure(providerId)?.errorKind !== 'credential') return false;
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) return false;
+
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+  provider.clearModelCache?.();
+
+  const generationAtStart = providerRetryGeneration;
+  const probeSeq = ++modelLoadSequence;
+  const result = await raceProviderProbe(
+    loadProviderModels(provider),
+    PROVIDER_RETRY_PROBE_TIMEOUT_MS
+  );
+  if (
+    providerRetryGeneration !== generationAtStart ||
+    (providerAppliedSeq.get(providerId) ?? 0) > probeSeq
+  ) {
+    return true;
+  }
+  if (result === 'timeout' || result.status !== 'loaded') {
+    return true;
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  return true;
+}
+
 function isCacheStale(cacheKey: string): boolean {
   const timestamp = cacheTimestamps.get(cacheKey);
   if (!timestamp) return true;
