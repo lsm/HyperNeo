@@ -348,15 +348,17 @@ export class KimiProvider implements Provider {
     if (!apiKey) {
       throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
     }
-    const region = this.resolveDiscoveryRegion(options.baseUrl);
-    const baseUrl = options.baseUrl ?? KimiProvider.getOpenAiBaseUrlForRegion(region);
+    const baseUrl = this.resolveModelListBaseUrl(options.baseUrl);
     const models = await fetchRemoteModelList({
       url: buildModelListUrl(baseUrl, 'openai-chat'),
       headers: { Authorization: `Bearer ${apiKey}` },
       force: options.force,
       cache: options.baseUrl === undefined ? this.modelListCache : undefined,
     });
-    return models.map((model) => this.toRemoteModelInfo(model));
+    const knownModels = models
+      .map((model) => this.toRemoteModelInfo(model))
+      .filter((model): model is ModelInfo => model !== null);
+    return Array.from(new Map(knownModels.map((model) => [model.id, model])).values());
   }
 
   ownsModel(modelId: string): boolean {
@@ -499,31 +501,38 @@ export class KimiProvider implements Provider {
     return KimiProvider.DEFAULT_MODEL;
   }
 
-  private resolveDiscoveryRegion(baseUrl?: string): KimiRegion {
-    const explicitRegion = this.env.KIMI_REGION;
-    if (explicitRegion) return resolveKimiRegion(explicitRegion);
+  private resolveModelListBaseUrl(baseUrl?: string): string {
     const configuredBaseUrl = baseUrl ?? this.env.KIMI_BASE_URL;
-    return configuredBaseUrl
-      ? (KimiProvider.resolveRegionFromBaseUrl(configuredBaseUrl) ?? this.defaultRegion)
-      : this.defaultRegion;
+    const explicitRegion = this.env.KIMI_REGION;
+    const region = explicitRegion
+      ? resolveKimiRegion(explicitRegion)
+      : configuredBaseUrl
+        ? (KimiProvider.resolveRegionFromBaseUrl(configuredBaseUrl) ?? this.defaultRegion)
+        : this.defaultRegion;
+    if (!baseUrl) return KimiProvider.getOpenAiBaseUrlForRegion(region);
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl).toLowerCase();
+    if (
+      normalizedBaseUrl === KimiProvider.getBaseUrlForRegion(region).toLowerCase() ||
+      normalizedBaseUrl === KimiProvider.getOpenAiBaseUrlForRegion(region).toLowerCase()
+    ) {
+      return KimiProvider.getOpenAiBaseUrlForRegion(region);
+    }
+    return baseUrl;
   }
 
-  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
-    const staticModel = KimiProvider.MODELS.find((candidate) => candidate.id === model.id);
-    if (staticModel) return staticModel;
-    return {
-      id: model.id,
-      name: model.name ?? model.id,
-      alias: model.id,
-      family: 'kimi',
-      provider: this.id,
-      contextWindow: this.capabilities.maxContextWindow,
-      preferContextWindowMetadata: true,
-      thinkingModes: this.capabilities.thinkingModes,
-      description: `${model.name ?? model.id} via Kimi`,
-      releaseDate: '',
-      available: true,
-    };
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo | null {
+    const normalized = KimiProvider.normalizeKimiModelId(model.id);
+    const staticModel = KimiProvider.MODELS.find((candidate) => {
+      const identifiers = [
+        candidate.id,
+        ...(candidate.sdkModelIds ?? []),
+        ...(candidate.providerAliases ?? []),
+      ];
+      return identifiers.some(
+        (identifier) => KimiProvider.normalizeKimiModelId(identifier) === normalized
+      );
+    });
+    return staticModel ?? null;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

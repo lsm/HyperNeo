@@ -221,7 +221,7 @@ describe('MinimaxProvider', () => {
       expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
     });
 
-    it('uses read-only baseUrl overrides without polluting the saved endpoint cache', async () => {
+    it('maps the message base and leaves custom baseUrl overrides read-only', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       const { calls } = installModelListFetch([
         { data: [{ id: 'MiniMax-M2.7', object: 'model' }] },
@@ -231,15 +231,14 @@ describe('MinimaxProvider', () => {
       provider = new MinimaxProvider();
 
       await provider.listRemoteModels();
+      await provider.listRemoteModels({ baseUrl: MinimaxProvider.BASE_URL });
       await provider.listRemoteModels({ baseUrl: 'https://proxy.example.com/openai' });
-      const forced = await provider.listRemoteModels({ force: true });
 
       expect(calls.map((call) => call[0])).toEqual([
         'https://api.minimax.io/v1/models',
-        'https://proxy.example.com/openai/v1/models',
         'https://api.minimax.io/v1/models',
+        'https://proxy.example.com/openai/v1/models',
       ]);
-      expect(forced[0]).toEqual(MinimaxProvider.MODELS[3]);
     });
 
     it('caches successful discovery and force bypasses the cache', async () => {

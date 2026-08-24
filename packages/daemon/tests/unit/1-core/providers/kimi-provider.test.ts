@@ -320,16 +320,17 @@ describe('KimiProvider', () => {
       const models = await provider.listRemoteModels();
 
       expect(models[0]).toMatchObject({
-        id: 'kimi-k2.7-code',
+        id: 'kimi-for-coding',
         provider: 'kimi',
-        contextWindow: 1_048_576,
+        contextWindow: 262_144,
+        thinkingModes: 'on',
         available: true,
       });
       expect(calls[0]?.[0]).toBe('https://api.moonshot.ai/v1/models');
       expect(String(calls[0]?.[0])).not.toContain('/anthropic/');
     });
 
-    it('honors the provider default region and infers a baseUrl override without mutating it', async () => {
+    it('maps known message-base overrides to listing endpoints without mutating the region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       const { calls } = installModelListFetch([
         { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
@@ -340,8 +341,8 @@ describe('KimiProvider', () => {
       provider.setDefaultRegion('global');
 
       await provider.listRemoteModels();
-      await provider.listRemoteModels({ baseUrl: 'https://api.kimi.com/coding/v1' });
-      await provider.listRemoteModels({ force: true });
+      await provider.listRemoteModels({ baseUrl: 'https://api.kimi.com/coding' });
+      await provider.listRemoteModels({ baseUrl: 'https://api.moonshot.ai/anthropic' });
 
       expect(calls.map((call) => call[0])).toEqual([
         'https://api.moonshot.ai/v1/models',
@@ -349,6 +350,28 @@ describe('KimiProvider', () => {
         'https://api.moonshot.ai/v1/models',
       ]);
       expect(provider.getDefaultRegion()).toBe('global');
+    });
+
+    it('filters discovered IDs that Kimi cannot route yet', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([
+        {
+          data: [
+            { id: 'kimi-k3', object: 'model' },
+            { id: 'kimi-k4', object: 'model' },
+          ],
+        },
+      ]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0]).toMatchObject({
+        id: 'kimi-k3',
+        contextWindow: 1_048_576,
+        thinkingModes: 'granular',
+      });
     });
 
     it('caches successful discovery and force bypasses the cache', async () => {

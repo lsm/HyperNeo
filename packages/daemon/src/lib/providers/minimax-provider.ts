@@ -154,8 +154,13 @@ export class MinimaxProvider implements Provider {
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error('MiniMax API key not configured');
+    const configuredBaseUrl = options.baseUrl?.trim().replace(/\/+$/, '');
+    const baseUrl =
+      configuredBaseUrl === MinimaxProvider.BASE_URL
+        ? MinimaxProvider.MODEL_LIST_BASE_URL
+        : (configuredBaseUrl ?? MinimaxProvider.MODEL_LIST_BASE_URL);
     const models = await fetchRemoteModelList({
-      url: buildModelListUrl(options.baseUrl ?? MinimaxProvider.MODEL_LIST_BASE_URL, 'openai-chat'),
+      url: buildModelListUrl(baseUrl, 'openai-chat'),
       headers: { Authorization: `Bearer ${apiKey}` },
       force: options.force,
       cache: options.baseUrl === undefined ? this.modelListCache : undefined,
