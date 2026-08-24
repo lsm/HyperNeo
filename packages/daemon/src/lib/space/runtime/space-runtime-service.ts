@@ -323,21 +323,25 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     message: MessageRecord
   ): Promise<string | null> {
-    if (message.idempotencyKey?.startsWith('goal-outcome:')) {
-      const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
-      const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
-      if (notification == null || notification.status !== 'pending') return null;
-      const space = await this.config.spaceManager.getSpace(actor.spaceId);
-      if (!space || space.status !== 'active' || space.paused || space.stopped) return null;
-    }
+    if (!(await this.isGoalOutcomeWakeDeliverable(message))) return null;
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
+    if (!(await this.isGoalOutcomeWakeDeliverable(message))) return null;
     await this.injectLongTermAgentMessage(
       session,
       message.body,
       message.idempotencyKey ?? message.messageId
     );
     return session.getSessionData().id;
+  }
+
+  private async isGoalOutcomeWakeDeliverable(message: MessageRecord): Promise<boolean> {
+    if (!message.idempotencyKey?.startsWith('goal-outcome:')) return true;
+    const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
+    const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
+    if (notification == null || notification.status !== 'pending') return false;
+    const space = await this.config.spaceManager.getSpace(message.spaceId);
+    return space != null && space.status === 'active' && !space.paused && !space.stopped;
   }
 
   async deliverGoalOutcomeWake(notification: SpaceGoalOutcomeNotification): Promise<void> {
