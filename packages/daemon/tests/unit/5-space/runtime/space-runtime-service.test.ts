@@ -1966,52 +1966,68 @@ describe('SpaceRuntimeService', () => {
       expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
     });
 
+    function makeWakeSession(sessionId: string): AgentSession {
+      return {
+        setRuntimeMcpServers: mock(() => {}),
+        mergeRuntimeMcpServers: mock(() => {}),
+        setRuntimeSystemPrompt: mock(() => {}),
+        updateConfig: mock(async () => {}),
+        resetQuery: mock(async () => ({ success: true })),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} }) as Session),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+    }
+
+    function makeWakeSessionManager(
+      sessions: Map<string, AgentSession>,
+      createdIds?: string[]
+    ): SessionManager {
+      return {
+        getSessionAsync: mock(async (sessionId: string) => sessions.get(sessionId) ?? null),
+        createSession: mock(async (...args: unknown[]) => {
+          const sessionId =
+            (args[0] as { sessionId?: string })?.sessionId ?? createdIds?.shift() ?? 'session-1';
+          sessions.set(sessionId, makeWakeSession(sessionId));
+          return sessionId;
+        }),
+        listSessions: mock(() => [] as Session[]),
+        registerSessionResetSubscriber: mock(() => () => {}),
+      } as unknown as SessionManager;
+    }
+
+    function buildDurableDeliveryReactiveDb(): {
+      reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
+      saveUserMessage: ReturnType<typeof mock>;
+    } {
+      const saveUserMessage = mock(() => 'db-msg');
+      const reactiveDb = {
+        db: {
+          saveUserMessage,
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => null,
+            markDeliveryFailedByUuid: () => null,
+            reopenDeliveryByUuid: () => null,
+          }),
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+              const uuid = args?.payload?.messageUuid;
+              if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+              return { id: 'job-1' };
+            },
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+      return { reactiveDb, saveUserMessage };
+    }
+
     test('reroutes a wake rejected mid-provisioning to the new owner', async () => {
-      const makeLhAgentRecord = (id: string, handle: string) => ({
-        id,
-        spaceId: mockSpace.id,
-        handle,
-        displayName: id,
-        templateKey: null,
-        status: 'active',
-        sessionId: null,
-        instructions: 'Do work.',
-        autonomyLevel: null,
-        model: null,
-        thinkingLevel: null,
-        provider: null,
-        settingSources: null,
-        toolPermissions: {},
-        createdAt: NOW,
-        updatedAt: NOW,
-      });
       const ownerA = { action: 'resolved', owner: { agentId: 'agent-a' } };
       const ownerB = { action: 'resolved', owner: { agentId: 'agent-b' } };
       let ownerCalls = 0;
       const sessions = new Map<string, AgentSession>();
-      const makeLhSession = (agentId: string) =>
-        ({
-          ...makeSession(),
-          getSessionData: mock(() => ({
-            id: longTermAgentSessionId(mockSpace.id, agentId),
-            metadata: {},
-            config: {},
-          })),
-          ensureQueryStarted: mock(async () => {}),
-          messageQueue: { enqueueWithId: mock(async () => {}) },
-        }) as unknown as AgentSession;
-      const sessionManager = makeSessionManager(null);
-      (
-        sessionManager.createSession as Mock<typeof sessionManager.createSession>
-      ).mockImplementation(async (args) => {
-        const agentId = args.sessionId.endsWith('agent-a') ? 'agent-a' : 'agent-b';
-        const sessionId = longTermAgentSessionId(mockSpace.id, agentId);
-        sessions.set(sessionId, makeLhSession(agentId));
-        return sessionId;
-      });
-      (
-        sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>
-      ).mockImplementation(async (sessionId: string) => sessions.get(sessionId) ?? null);
+      const sessionManager = makeWakeSessionManager(sessions);
       const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const longHorizonAgentRepo = {
@@ -2020,9 +2036,7 @@ describe('SpaceRuntimeService', () => {
           return ownerCalls >= 3 ? ownerB : ownerA;
         }),
         getById: mock((id: string) =>
-          id === 'agent-a'
-            ? makeLhAgentRecord('agent-a', 'agent-a')
-            : makeLhAgentRecord('agent-b', 'agent-b')
+          buildLongHorizonAgent({ id, handle: id, displayName: id })
         ),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
@@ -2030,10 +2044,20 @@ describe('SpaceRuntimeService', () => {
         getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
       } as unknown as SpaceRuntimeServiceConfig['goalService'];
       const outcomeNotificationRepo = {
-        getById: mock(() => ({ status: 'pending' })),
+        getById: mock(() => ({
+          id: notification.id,
+          goalId: notification.goalId,
+          spaceId: notification.spaceId,
+          status: 'pending',
+        })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
       const svc = new SpaceRuntimeService({
-        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
         enableGoalOutcomeWake: true,
         reactiveDb,
         longHorizonAgentRepo,
@@ -2055,42 +2079,11 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('leaves a wake pending without queueing when it goes stale mid-provisioning', async () => {
-      const makeLhAgentRecord = (id: string, handle: string) => ({
-        id,
-        spaceId: mockSpace.id,
-        handle,
-        displayName: id,
-        templateKey: null,
-        status: 'active',
-        sessionId: null,
-        instructions: 'Do work.',
-        autonomyLevel: null,
-        model: null,
-        thinkingLevel: null,
-        provider: null,
-        settingSources: null,
-        toolPermissions: {},
-        createdAt: NOW,
-        updatedAt: NOW,
-      });
       let notificationCalls = 0;
-      const sessionManager = makeSessionManager(null);
-      const createdSession = {
-        ...makeSession(),
-        getSessionData: mock(() => ({
-          id: longTermAgentSessionId(mockSpace.id, 'lh-agent-1'),
-          metadata: {},
-          config: {},
-        })),
-        ensureQueryStarted: mock(async () => {}),
-        messageQueue: { enqueueWithId: mock(async () => {}) },
-      } as unknown as AgentSession;
-      (
-        sessionManager.createSession as Mock<typeof sessionManager.createSession>
-      ).mockImplementation(async () => longTermAgentSessionId(mockSpace.id, 'lh-agent-1'));
-      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession);
+      const sessions = new Map<string, AgentSession>();
+      const sessionManager = makeWakeSessionManager(sessions, [
+        longTermAgentSessionId(mockSpace.id, 'lh-agent-1'),
+      ]);
       const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const longHorizonAgentRepo = {
@@ -2098,7 +2091,7 @@ describe('SpaceRuntimeService', () => {
           action: 'resolved',
           owner: { agentId: 'lh-agent-1' },
         })),
-        getById: mock(() => makeLhAgentRecord('lh-agent-1', 'lh-agent')),
+        getById: mock(() => buildLongHorizonAgent()),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const goalService = {
@@ -2107,11 +2100,22 @@ describe('SpaceRuntimeService', () => {
       const outcomeNotificationRepo = {
         getById: mock(() => {
           notificationCalls += 1;
-          return notificationCalls >= 3 ? { status: 'acknowledged' } : { status: 'pending' };
+          const status = notificationCalls >= 3 ? 'acknowledged' : 'pending';
+          return {
+            id: notification.id,
+            goalId: notification.goalId,
+            spaceId: notification.spaceId,
+            status,
+          };
         }),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
       const svc = new SpaceRuntimeService({
-        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
         enableGoalOutcomeWake: true,
         reactiveDb,
         longHorizonAgentRepo,
