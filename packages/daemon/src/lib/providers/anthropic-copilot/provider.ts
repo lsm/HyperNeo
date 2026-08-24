@@ -504,11 +504,23 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         this.serverStarting = undefined;
         throw err;
       }
-      return this.ensureServerStarted();
+      if (this.serverCache || this.serverStarting !== undefined) {
+        return this.ensureServerStarted();
+      }
+      throw err;
     }
 
     if (this.serverStarting !== starting) {
-      return this.ensureServerStarted();
+      await runtime.server.stop().catch(() => {});
+      await runtime.client.stop().catch(() => {});
+      const current = this.serverCache as EmbeddedServer | undefined;
+      if (current) {
+        return current.url;
+      }
+      if (this.serverStarting !== undefined) {
+        return this.ensureServerStarted();
+      }
+      throw new Error('Copilot runtime was reset during server start');
     }
 
     this.serverCache = runtime.server;

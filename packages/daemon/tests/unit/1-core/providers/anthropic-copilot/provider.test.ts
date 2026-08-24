@@ -1116,6 +1116,41 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       await expect(started).resolves.toBe('http://127.0.0.1:45678');
       expect(replacementStops).toEqual([]);
     });
+
+    it('does not restart the runtime when shutdown supersedes an in-flight start', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      let createCall = 0;
+      let resolveInitial: ((runtime: unknown) => void) | undefined;
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        (() => {
+          createCall++;
+          if (createCall === 1) {
+            return new Promise((resolve) => {
+              resolveInitial = resolve;
+            });
+          }
+          return Promise.resolve({
+            server: { url: 'http://127.0.0.1:9999', stop: async () => {} },
+            client: { stop: async () => {} },
+          });
+        }) as never
+      );
+
+      const started = p.ensureServerStarted();
+      await Promise.resolve();
+      expect(createCall).toBe(1);
+
+      const shutdownPromise = p.shutdown();
+      await Promise.resolve();
+
+      resolveInitial?.({
+        server: { url: 'http://127.0.0.1:45679', stop: async () => {} },
+        client: { stop: async () => {} },
+      });
+      await expect(started).rejects.toThrow('reset during server start');
+      await shutdownPromise;
+      expect(createCall).toBe(1);
+    });
   });
 
   describe('shutdown()', () => {
