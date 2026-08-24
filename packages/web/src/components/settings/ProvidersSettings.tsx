@@ -203,7 +203,7 @@ export function ProvidersSettings() {
       setGateTimeout(
         err instanceof ConnectionTimeoutError || err instanceof ConnectionNotReadyError
       );
-      toast.error('Failed to load providers');
+      if (showLoading) toast.error('Failed to load providers');
     } finally {
       if (generation === loadGenerationRef.current) {
         setLoading(false);
@@ -563,7 +563,7 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {loadError && providers.length > 0 && (
+          {loadError && autoRetryShowsLoadingRef.current && providers.length > 0 && (
             <div class="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2">
               <p class="text-sm text-red-300">
                 {sessionExpired
@@ -578,7 +578,7 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {loadError && providers.length === 0 ? (
+          {loadError && autoRetryShowsLoadingRef.current && providers.length === 0 ? (
             <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-6 text-center">
               <p class="text-sm text-red-300">
                 {sessionExpired ? 'Your session expired.' : 'Failed to load providers.'}

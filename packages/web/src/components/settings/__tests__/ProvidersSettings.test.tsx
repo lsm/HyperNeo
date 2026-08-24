@@ -419,6 +419,8 @@ describe('ProvidersSettings', () => {
       eventHandler();
     });
     await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+    expect(mockToastError).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('Failed to reload providers');
 
     mockGetHubIfConnected.mockReturnValue(null);
     await act(async () => {

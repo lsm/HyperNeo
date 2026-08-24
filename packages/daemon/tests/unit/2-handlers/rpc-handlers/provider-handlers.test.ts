@@ -1161,6 +1161,9 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('probes the ACP command during provider tests even when models are cached', async () => {
@@ -1230,6 +1233,9 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(false);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
   });
 

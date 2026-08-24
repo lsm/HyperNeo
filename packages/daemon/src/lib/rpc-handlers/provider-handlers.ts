@@ -425,6 +425,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { healthy: false, error: 'Provider not registered' };
     }
 
@@ -435,6 +436,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           healthStatus: 'unhealthy',
           lastHealthCheckAt: Date.now(),
         });
+        await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { healthy: false, error: 'Provider not available' };
       }
       if (provider instanceof AcpProvider) {
@@ -445,6 +447,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'healthy',
         lastHealthCheckAt: Date.now(),
       });
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { healthy: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -452,6 +455,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         healthStatus: 'unhealthy',
         lastHealthCheckAt: Date.now(),
       });
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { healthy: false, error };
     }
   });
