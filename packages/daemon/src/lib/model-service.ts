@@ -428,6 +428,8 @@ function raceProviderProbe<T>(promise: Promise<T>, ms: number): Promise<T | 'tim
   });
 }
 
+const providerProbesInFlight = new Map<string, Promise<ProviderModelLoadResult>>();
+
 async function runScheduledProviderRetry(providerId: string): Promise<void> {
   const generationAtStart = providerRetryGeneration;
   const invalidationAtStart = providerRetryInvalidations.get(providerId) ?? 0;
@@ -436,10 +438,20 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     providerRetryEntries.delete(providerId);
     return;
   }
-  const result = await raceProviderProbe(
-    loadProviderModels(provider),
-    PROVIDER_RETRY_PROBE_TIMEOUT_MS
-  );
+  if (providerProbesInFlight.has(providerId)) {
+    armProviderRetryTimer(providerId);
+    return;
+  }
+  const probe = loadProviderModels(provider);
+  providerProbesInFlight.set(providerId, probe);
+  void probe
+    .finally(() => {
+      if (providerProbesInFlight.get(providerId) === probe) {
+        providerProbesInFlight.delete(providerId);
+      }
+    })
+    .catch(() => {});
+  const result = await raceProviderProbe(probe, PROVIDER_RETRY_PROBE_TIMEOUT_MS);
   if (
     providerRetryGeneration !== generationAtStart ||
     (providerRetryInvalidations.get(providerId) ?? 0) !== invalidationAtStart

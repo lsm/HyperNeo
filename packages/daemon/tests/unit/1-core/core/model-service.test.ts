@@ -762,21 +762,34 @@ describe('Model Service', () => {
       jest.useFakeTimers();
       try {
         let calls = 0;
+        let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
         const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
           calls += 1;
           if (calls === 1) throw new Error('Endpoint returned HTTP 503');
-          return new Promise<ModelInfo[]>((resolve) => {
-            if (calls >= 3) resolve([glmModel('glm-5-late')]);
-          });
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseProbe = resolve;
+            });
+          }
+          return [glmModel('glm-5-late')];
         });
 
         await refreshModels();
 
         jest.advanceTimersByTime(60_001);
         await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
         jest.advanceTimersByTime(30_001);
         await flushMicrotasks();
         expect(getModels).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        releaseProbe?.([glmModel('glm-5-late')]);
+        await flushMicrotasks();
 
         jest.advanceTimersByTime(60_001);
         await flushMicrotasks();
