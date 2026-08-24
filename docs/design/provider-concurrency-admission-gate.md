@@ -206,9 +206,16 @@ gate never sees. Re-flagging and admission are two separate rules:
   denial returns the same parked shape P3 uses — `requeue(job.id, retryAt)`
   with `retryAt` = the saturation deadline, or the probe tick while probing —
   so the job retries through the ordinary queue instead of throwing into the
-  job-queue default retry. This keeps background titling strictly behind the
-  user-visible drain: chat deliveries consume grants and wake each other;
-  title jobs wait for full openness. This is the
+  job-queue default retry. **Failures feed back**:
+  `generateTitleFromMessage` swallows SDK errors into a fallback title, so the
+  interpreter classifies title-query results/errors itself (`assessLimitError`
+  on the error text/status) and reports via `reportLimitError` with the title
+  query's **actual effective account key** (title generation may resolve a
+  different provider than the session's chat provider) before falling back — a
+  title request can be the call that trips the cap, and the registry must learn
+  it. This keeps background titling strictly behind the user-visible drain:
+  chat deliveries consume grants and wake each other; title jobs wait for full
+  openness. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -477,8 +484,15 @@ not inherit):
   authoritative reset state: `untilMs` is replaced (never shortened for an
   already-authoritative reset), the wake timer reschedules, and any outstanding
   probe grant is revoked (its delivery returns to the queue) so the next
-  admission waits for the known reset. This is the design's full consumption of
-  #2664's tier, not just its deterministic half.
+  admission waits for the known reset. The classifier's **own SDK query
+  consults admission too**: `resolveClassifierProvider` prefers another
+  provider but falls back to the excluded one when it is the only usable
+  choice — on a single-provider installation every ambiguous limit error would
+  trigger a fresh call to the already-saturated account outside the registry.
+  The classifier therefore skips (and its callers treat the attempt as
+  unrefined) while its selected effective account is saturated or probing.
+  This is the design's full consumption of #2664's tier, not just its
+  deterministic half.
 
 **Feed sites — including the provider-retry branch.** `reportLimitError` is
 wired at the three existing classification sites (`query-runner.ts:1258`,
@@ -523,9 +537,13 @@ fall back to the first ladder step instead of escalating. The timer-expiry path
 still resets: expiry clears → successor probe granted → its clean completion
 consumes the flag. **The empty-backlog clear is the one exception**: when a
 clear's drain finds no registrations, no probe identity will ever exist, so
-the flag is consumed by the **first clean provider turn completing after that
-clear** — otherwise the next independent episode inherits the advanced charge
-and starts at a longer ladder step for no reason. Mirrors the watchdog's
+the flag is consumed by the **first clean provider turn that both started and
+completed after that clear** (the turn-start generation is recorded against the
+clear generation, the same identity discipline as probe resolution — a
+pre-clear sibling turn finishing moments after the clear must not consume it,
+or a continuing-saturation 429 would wrongly restart at charge 1) — otherwise
+the next independent episode inherits the advanced charge and starts at a
+longer ladder step for no reason. Mirrors the watchdog's
 `retryCount` / `freeWait` distinction at provider scope.
 
 ### Queue and wake
@@ -567,12 +585,24 @@ and starts at a longer ladder step for no reason. Mirrors the watchdog's
   set.
 - **Probing release — one probe grant, carried end-to-end, pushing the drain.**
   After **any** clear (probe rule, timer expiry, or startup reconstruction), the
-  provider mints a single **probe grant**. The first admitting consult receives
-  it, keyed by that delivery's message uuid; every downstream consult for the
-  *same* delivery — the V2 claim, the V1 start, the retry — admits on the grant,
-  so one logical delivery passes all backstops instead of deadlocking against its
-  own probing state. The grant is consumed **at the prompt yield — the turn
-  boundary — and that consumption is the authoritative grant check**: the
+  provider mints a single **probe grant — bound at mint time, not by race**:
+  the registry selects the earliest eligible composite identity from the global
+  queue (scanning past retained manual-mode rows), binds the grant to it, and
+  publishes the targeted wake for that identity's session only. The wake
+  handler admits exactly the bound identity; an unbound delivery consulting
+  while probing queues at the tick. Binding at mint is what makes the
+  cross-session FIFO real — "first admitting consult wins" would let A2 steal
+  B1's turn whenever session A's handler happens to run first. Every downstream
+  consult for the *bound* delivery — the V2 claim, the V1 start, the retry —
+  admits on the grant, so one logical delivery passes all backstops instead of
+  deadlocking against its own probing state. **Batching is disabled while the
+  account is saturated or probing**: `AgentSession.buildDeliveryBatch`
+  otherwise folds additional `'enqueued'` rows of the same session into one
+  prompt, letting an ungranted row (A2) ride the granted head (A1) ahead of the
+  global FIFO's B1 — batches form only when the account is fully open, and a
+  granted delivery is a single-identity prompt. The grant is consumed **at the
+  prompt yield — the turn boundary — and that consumption is the authoritative
+  grant check**: the
   boundary-level consults are advisory early parks, and a grant whose lease
   lapsed during SDK startup (mint → yield longer than the lease) does not start
   a turn — the prompt is not yielded, the delivery returns to the queue, and
@@ -627,9 +657,14 @@ and starts at a longer ladder step for no reason. Mirrors the watchdog's
   arm instead makes the row's existing delivery job claimable immediately
   (requeue with `retryAt = now` under the same claim token rules); the claim's
   P3 consult then applies the grant. Deferred rows keep the promotion path.
-- **Marker clearing on exit.** Every transition that moves a provider-queued row
-  out of its queued state — promotion to `'enqueued'`, terminal `'consumed'` /
-  `'failed'`, **and an explicit user defer of a P3-parked `'enqueued'` row**
+- **Marker clearing on exit.** The marker and registration are **retained
+  through promotion**: a promoted row keeps them until the grant is consumed at
+  its prompt yield or the row otherwise exits — a daemon restart between
+  promotion and yield must still find the row in the marker scan, or its
+  ordinary job would claim alongside the single reconstructed probe. The exits
+  that clear both, atomically with their status flip, are: grant consumption at
+  prompt yield, terminal `'consumed'` / `'failed'`,
+  **and an explicit user defer of a P3-parked `'enqueued'` row**
   (`session.messages.deferPending` → `deferEnqueuedUserMessage`): leaving the
   marker there would let a later provider wake auto-promote a row the user just
   deferred — clears `queue_reason` and deregisters the uuid in the same
