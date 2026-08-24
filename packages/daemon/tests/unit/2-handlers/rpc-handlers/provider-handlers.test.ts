@@ -776,9 +776,11 @@ describe('Provider RPC handlers', () => {
       expect(first.broken).toBe(true);
       expect(first.discoveredModels.models).toEqual([{ id: 'remote-a', name: 'Remote A' }]);
       const second = parsePersisted(repo.getProvider(withBrokenConfig.id)?.configJson) as {
-        discoveredModels: { models: Array<{ id: string }> };
+        discoveredModels: { models: Array<{ id: string; name?: string }> };
       };
-      expect(second.discoveredModels).toEqual({ models: [{ id: 'remote-b' }] });
+      expect(second.discoveredModels).toEqual({
+        models: [{ id: 'remote-b', name: 'remote-b' }],
+      });
     });
 
     it('persists configured curated ids ahead of discovery even when discovery omits them', async () => {
