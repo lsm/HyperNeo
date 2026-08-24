@@ -22,6 +22,7 @@ export interface PollCursor {
   mergeConflictEtags?: Record<number, string>;
   seenReviewIds?: Record<string, boolean>;
   reviewEtags?: Record<number, string>;
+  reviewLastSeenAt?: Record<number, number>;
   endpointLastSeenAt?: Record<string, number>;
   endpointPendingLastSeenAt?: Record<string, number>;
   lastPollError?: string | null;

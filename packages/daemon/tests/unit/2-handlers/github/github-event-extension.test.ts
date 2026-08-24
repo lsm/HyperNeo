@@ -9961,7 +9961,141 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
       const cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
       expect(cursor.mergeConflictSequences?.[7]).toBe(1);
-      expect(cursor.mergeConflictStates?.[7]).toBeUndefined();
+      expect(cursor.mergeConflictStates?.[7]).toBe(true);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('conflict state survives a pull request leaving the recent set so later resolution still emits', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const crowdOutRows = Array.from({ length: 10 }, (_, index) =>
+      createPullRequestRow(20 + index, {
+        updated_at: `2026-03-01T00:00:${String(index).padStart(2, '0')}Z`,
+      })
+    );
+    let pullsRows: Record<string, unknown>[] = [createPullRequestRow(7)];
+    let pullDetail7: Record<string, unknown> = {
+      ...createPullRequestRow(7),
+      mergeable: false,
+      mergeable_state: 'dirty',
+    };
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse(pullsRows);
+      if (path.endsWith('/pulls/7')) return pollingResponse(pullDetail7);
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(received.filter((item) => item.topic.endsWith('.merge_conflict'))).toHaveLength(1);
+
+      pullsRows = crowdOutRows;
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const cursor = extension.repo.getWatchedRepoById(repo.id)!.pollCursor!;
+      expect(cursor.recentPullRequestNumbers).not.toContain(7);
+      expect(cursor.mergeConflictStates?.[7]).toBe(true);
+
+      pullsRows = [createPullRequestRow(7, { updated_at: '2026-04-01T00:00:00Z' })];
+      pullDetail7 = { ...createPullRequestRow(7), mergeable: true, mergeable_state: 'clean' };
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const resolved = received.filter((item) => item.topic.endsWith('.merge_conflict_resolved'));
+      expect(resolved).toHaveLength(1);
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('a review submitted while its pull request was outside the recent set still publishes on return', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const crowdOutRows = Array.from({ length: 10 }, (_, index) =>
+      createPullRequestRow(20 + index, {
+        updated_at: `2026-03-01T00:00:${String(index).padStart(2, '0')}Z`,
+      })
+    );
+    const reviewRows = [
+      {
+        id: 801,
+        state: 'CHANGES_REQUESTED',
+        submitted_at: '2026-01-05T00:00:00Z',
+        user: { login: 'codex[bot]', type: 'Bot' },
+      },
+    ];
+    let pullsRows: Record<string, unknown>[] = [createPullRequestRow(7)];
+    let includeSecondReview = false;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse(pullsRows);
+      if (path.endsWith('/pulls/7')) {
+        return pollingResponse({
+          ...createPullRequestRow(7),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      }
+      if (path.endsWith('/pulls/7/reviews')) {
+        return pollingResponse(
+          includeSecondReview
+            ? [
+                ...reviewRows,
+                {
+                  id: 802,
+                  state: 'APPROVED',
+                  submitted_at: '2026-01-06T00:00:00Z',
+                  user: { login: 'devin-ai-integration[bot]', type: 'Bot' },
+                },
+              ]
+            : reviewRows
+        );
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received.filter((item) => item.topic.endsWith('.review_submitted'))).toHaveLength(1);
+
+      pullsRows = crowdOutRows;
+      includeSecondReview = true;
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      pullsRows = [createPullRequestRow(7, { updated_at: '2026-04-01T00:00:00Z' })];
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const verdicts = received.filter((item) => item.topic.endsWith('.review_submitted'));
+      expect(verdicts).toHaveLength(2);
+      expect(verdicts.some((item) => item.payload.reviewId === '802')).toBe(true);
     } finally {
       await extension.stop();
     }

@@ -2267,6 +2267,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const mergeConflictEtags = cursor.mergeConflictEtags ?? {};
     const seenReviewIds = cursor.seenReviewIds ?? {};
     const reviewEtags = cursor.reviewEtags ?? {};
+    const reviewLastSeenAt = cursor.reviewLastSeenAt ?? {};
     const endpointLastSeenAt = cursor.endpointLastSeenAt ?? {};
     const endpointPendingLastSeenAt = cursor.endpointPendingLastSeenAt ?? {};
     let nextPullsSeedInProgress = pullsSeedInProgress;
@@ -2973,12 +2974,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           if (!reviewId || seenReviewIds[reviewId]) continue;
           const event = normalizeGitHubReview(watched, prNumber, review);
           if (!event) continue;
-          if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+          const reviewWatermark = reviewLastSeenAt[prNumber] ?? watermarks.committed;
+          if (reviewWatermark > 0 && event.occurredAt < reviewWatermark) {
             seenReviewIds[reviewId] = true;
             continue;
           }
           await this.publishEvent(watched.spaceId, event, this.context);
           seenReviewIds[reviewId] = true;
+          reviewLastSeenAt[prNumber] = Math.max(reviewLastSeenAt[prNumber] ?? 0, event.occurredAt);
           count++;
         }
         if (reviews.length < 100) {
@@ -3114,9 +3117,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
     }
-    for (const key of Object.keys(mergeConflictStates)) {
-      if (!trackedPrSet.has(Number(key))) delete mergeConflictStates[Number(key)];
-    }
     for (const key of Object.keys(mergeConflictEtags)) {
       if (!trackedPrSet.has(Number(key))) delete mergeConflictEtags[Number(key)];
     }
@@ -3185,6 +3185,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       mergeConflictEtags,
       seenReviewIds,
       reviewEtags,
+      reviewLastSeenAt,
       endpointLastSeenAt,
       endpointPendingLastSeenAt,
       lastPollError: committedLastPollError,
