@@ -164,12 +164,18 @@ function getAvailableProviders(): Provider[] {
 function applyRefreshedModels(
   cacheKey: string,
   fetchedModels: ModelInfo[],
-  previousModels: ModelInfo[] | undefined
+  previousModels: ModelInfo[] | undefined,
+  supersededProviderIds: string[] = []
 ): void {
   if (fetchedModels.length > 0) {
     const mergedModels = mergeWithFallbackModels(fetchedModels);
     if (previousModels && previousModels.length > mergedModels.length) {
-      modelsCache.set(cacheKey, previousModels);
+      const superseded = new Set(supersededProviderIds);
+      const retainedPrevious = previousModels.filter((m) => !superseded.has(m.provider));
+      const supersededSlices = mergedModels.filter((m) => superseded.has(m.provider));
+      const overlaid =
+        superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
+      modelsCache.set(cacheKey, overlaid);
     } else {
       modelsCache.set(cacheKey, mergedModels);
     }
@@ -197,7 +203,7 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
       const result = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
         applyProviderLoadOutcome(result);
-        applyRefreshedModels(cacheKey, result.models, previousModels);
+        applyRefreshedModels(cacheKey, result.models, previousModels, result.supersededProviderIds);
       }
       /* v8 ignore next 2 */
     } catch {}
@@ -231,6 +237,7 @@ interface ModelsLoadResult {
   models: ModelInfo[];
   succeededProviderIds: string[];
   loadedProviderIds: string[];
+  supersededProviderIds: string[];
   failures: ProviderLoadFailure[];
 }
 
@@ -282,6 +289,7 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
   const allModels: ModelInfo[] = [];
   const succeededProviderIds: string[] = [];
   const loadedProviderIds: string[] = [];
+  const supersededProviderIds: string[] = [];
   const failures: ProviderLoadFailure[] = [];
   results.forEach((result, index) => {
     const provider = providers[index];
@@ -294,6 +302,7 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
       const cachedSlice =
         modelsCache.get('global')?.filter((m) => m.provider === provider.id) ?? [];
       allModels.push(...cachedSlice);
+      supersededProviderIds.push(provider.id);
       return;
     }
     allModels.push(...result.value.models);
@@ -310,7 +319,13 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
     }
   });
 
-  return { models: allModels, succeededProviderIds, loadedProviderIds, failures };
+  return {
+    models: allModels,
+    succeededProviderIds,
+    loadedProviderIds,
+    supersededProviderIds,
+    failures,
+  };
 }
 
 function applyProviderLoadOutcome(result: ModelsLoadResult): void {
@@ -441,6 +456,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
       models: [],
       succeededProviderIds: [],
       loadedProviderIds: [],
+      supersededProviderIds: [],
       failures: [{ providerId, ...classifyProviderFailure(error) }],
     });
     return;
@@ -596,7 +612,7 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
       return;
     }
     applyProviderLoadOutcome(result);
-    applyRefreshedModels(cacheKey, result.models, previousModels);
+    applyRefreshedModels(cacheKey, result.models, previousModels, result.supersededProviderIds);
   })();
 
   refreshInProgress.set(cacheKey, refreshPromise);
