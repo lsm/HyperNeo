@@ -507,6 +507,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       await handler.handleMessage(sessionState('idle'));
 
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy.mock.calls[0]).toEqual([]);
       expect(replayCount()).toBe(1);
       expect(readFlags(handler)).toEqual(resetFlags);
     });
@@ -555,6 +556,25 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         suppressIdleOnNextResult: true,
         clearMessageInFlight: true,
       });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
+    it('a result-less idle event with an armed but unsent clear also uses the suppressed transition', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        suppressDeliveryWaiters: true,
+        suppressIdlePublish: true,
+        suppressIdleCallback: true,
+      });
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnNextResult: true });
 
       handler.clearIdleSuppression();
       expect(await wait).toBe('reset');
@@ -1312,6 +1332,129 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(setIdleSpy.mock.calls[0]).toEqual([]);
       expect(replayCount()).toBe(1);
       expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a failing setIdle on a first idle event retains the mode flag without the expectation', async () => {
+      setIdleSpy.mockImplementation(async () => {
+        throw new Error('setIdle transition failed');
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, usesSessionStateChangedTurnEnd: true });
+    });
+
+    it('a failing suppressed setIdle on a result-less idle retains the armed clear', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      setIdleSpy.mockImplementation(async () => {
+        throw new Error('setIdle transition failed');
+      });
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+
+      expect(settled).toBe(null);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        usesSessionStateChangedTurnEnd: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
+    it('a rejected publication of a first idle event leaves flags and thinking counters untouched', async () => {
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('idle-pub-reject-prime'));
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        currentThinkingTokensEstimate: 120,
+        lastStampedThinkingTokensEstimate: 120,
+      });
+    });
+
+    it('a rejected idle-event publication under an armed clear retains the clear untouched', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+
+      expect(settled).toBe(null);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
+    it('a failed save of a nested result during an armed clear leaves the clear untouched', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await handler.handleMessage(
+        successResult('save-fail-nested', { parent_tool_use_id: 'toolu-1' })
+      );
+
+      expect(settled).toBe(null);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
     });
   });
 
