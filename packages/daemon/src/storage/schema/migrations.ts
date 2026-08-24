@@ -477,6 +477,8 @@ export function runMigrations(
 
   rewrite(migrationMarkerKey(211), () => runMigration211(db));
 
+  rewrite(migrationMarkerKey(212), () => runMigration212(db));
+
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
 
@@ -7959,6 +7961,55 @@ export function runMigration211(db: BunDatabase): void {
     ensureStableMessageSearchIds(db);
   }
   db.exec(createReclaims);
+}
+
+export function runMigration212(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  const storedSql = tableCreateSql(db, 'sdk_messages');
+  if (!!storedSql && /\bseq\s+INTEGER\s+PRIMARY KEY\b/i.test(storedSql)) return;
+
+  const columns = (
+    db.prepare(`PRAGMA table_xinfo('sdk_messages')`).all() as Array<{
+      name: string;
+      hidden: number;
+    }>
+  ).filter((column) => column.hidden === 0 && column.name !== 'seq');
+  const columnNames = columns.map((column) => column.name);
+  const indexRows = db
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sdk_messages' AND sql IS NOT NULL`
+    )
+    .all() as Array<{ sql: string }>;
+
+  const newSql = (storedSql ?? '').replace(
+    /\bid\s+TEXT\s+PRIMARY\s+KEY\b/i,
+    'seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE'
+  );
+
+  const foreignKeys = (
+    db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
+  )?.foreign_keys;
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(`ALTER TABLE sdk_messages RENAME TO sdk_messages_m212_old`);
+    db.exec(newSql.replace(/CREATE TABLE\s+"?sdk_messages"?/i, 'CREATE TABLE sdk_messages'));
+    db.exec(`
+      INSERT INTO sdk_messages (seq, ${columnNames.join(', ')})
+      SELECT rowid, ${columnNames.join(', ')}
+      FROM sdk_messages_m212_old
+    `);
+    db.exec(`DROP TABLE sdk_messages_m212_old`);
+    for (const index of indexRows) {
+      db.exec(index.sql);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
+  }
 }
 
 function ensureStableMessageSearchIds(db: BunDatabase): void {

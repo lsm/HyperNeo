@@ -140,6 +140,7 @@ describe('migration space reclaim', () => {
     expect(firstPending).toEqual([
       { migrationKey: 'migration_183' },
       { migrationKey: 'migration_211' },
+      { migrationKey: 'migration_212' },
     ]);
     const afterRewrite = db
       .prepare(`
@@ -167,7 +168,7 @@ describe('migration space reclaim', () => {
       kind: 'reclaimed',
       vacuumed: true,
       freelistBefore: freelistBefore.freelist_count,
-      reclaimedMigrations: 2,
+      reclaimedMigrations: 3,
     });
     expect(db.prepare('PRAGMA main.freelist_count').get()).toEqual({ freelist_count: 0 });
     const acknowledgmentCheckpoint = db.prepare('PRAGMA main.wal_checkpoint(PASSIVE)').get() as {
