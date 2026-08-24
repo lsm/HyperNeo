@@ -18,7 +18,10 @@ import {
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry';
 import { registerBuiltInProvider } from '../providers/factory.js';
-import { classifyProviderFailure } from '../providers/provider-failure-store.js';
+import {
+  applyRecordedFailureToAuthStatus,
+  classifyProviderFailure,
+} from '../providers/provider-failure-store.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
@@ -104,7 +107,10 @@ export function setupAuthHandlers(
           };
         }
 
-        return authStatus;
+        return {
+          ...authStatus,
+          ...applyRecordedFailureToAuthStatus(provider.id, authStatus),
+        };
       })
     );
 
