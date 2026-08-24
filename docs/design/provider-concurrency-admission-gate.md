@@ -1002,7 +1002,17 @@ by pre-existing suites):
    via the `chargeResetArmed` flag — the timer path is the one that would silently
    march to the 4-hour cap); billing-terminal **closure** (arms the non-timed
    closed state — the old exclusion assertion is replaced by: closed admits
-   nothing, parks durably at the sentinel, requeues on credential change);
+   nothing, parks durably at the sentinel, requeues on credential change, and
+   clears via manual Retry or the bounded daily health probe without any
+   credential change); the consult-before-destructive-setup pin (a denied
+   recursive retry falls through with `_lastConsumedUserMessage` intact);
+   per-event poll rollback (completed events are not reprocessed; the denied
+   event persists to the inbox and drains on normal clears too); GitHub
+   agents recreated from new credentials before replay;
+   refinement-vs-running-probe (unconsumed grant revoked, consumed grant
+   recorded for next episode); batch split-on-park (all members stamped +
+   registered in FIFO order); post-logout unavailable-key retention (backlog
+   waits for usable credentials);
    probe rule both-edges
    (completion before arm + floor timer; completion after floor; no clear before
    floor; no clear for reset-bearing saturation); `reportRefinedReset` replaces a
