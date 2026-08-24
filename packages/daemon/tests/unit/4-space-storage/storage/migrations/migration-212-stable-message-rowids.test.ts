@@ -125,9 +125,9 @@ describe('Migration 212: stable sdk_messages rowids', () => {
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
        VALUES ('message-new', 'session-1', 'user', '{}', '2026-08-24T00:00:00.000Z')`
     ).run();
-    expect(db.prepare(`SELECT rowid FROM sdk_messages WHERE id = 'message-new'`).get()).toEqual({
-      rowid: 25,
-    });
+    expect(
+      db.prepare(`SELECT rowid AS cursor FROM sdk_messages WHERE id = 'message-new'`).get()
+    ).toEqual({ cursor: 25 });
     expect(() =>
       db
         .prepare(
