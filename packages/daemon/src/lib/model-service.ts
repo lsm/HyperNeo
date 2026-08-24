@@ -640,8 +640,12 @@ export async function getSessionModelInfo(
   if (!providerId) return null;
   const modelInfo = await getModelInfo(session.config.model, cacheKey, providerId);
   if (modelInfo) return modelInfo;
-  const unfiltered = await getModelInfoUnfiltered(session.config.model, cacheKey);
-  if (unfiltered) return unfiltered;
+  const rawModels = readCachedModels(cacheKey);
+  if (rawModels) {
+    const providerModels = rawModels.filter((m) => m.provider === providerId);
+    const fromRaw = findInModels(providerModels, session.config.model);
+    if (fromRaw) return fromRaw;
+  }
   const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
   return findInModels(staticProviderModels, session.config.model) ?? null;
 }

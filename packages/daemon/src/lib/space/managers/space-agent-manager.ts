@@ -14,7 +14,12 @@ type LongHorizonAgentHandleSource = {
   listBySpaceId(spaceId: string): Array<{ id: string; handle: string }>;
 };
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug';
-import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
+import {
+  isValidModel,
+  getAvailableModels,
+  getModelsCache,
+  getModelInfoUnfiltered,
+} from '../../model-service';
 import { Logger } from '../../logger';
 import { getPresetAgentTemplates, type PresetAgentTemplate } from '../agents/seed-agents';
 import { computeAgentTemplateHash } from '../agents/agent-template-hash';
@@ -352,7 +357,7 @@ export class SpaceAgentManager {
 
   private async validateModel(model: string, provider?: string | null): Promise<string | null> {
     const available = getAvailableModels('global');
-    if (available.length === 0) return null;
+    if (available.length === 0 && !getModelsCache().has('global')) return null;
 
     if (provider) {
       const valid = await isValidModel(model, 'global', provider);

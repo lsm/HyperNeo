@@ -1305,6 +1305,45 @@ describe('Model Service', () => {
       expect(model).toMatchObject({ id: 'opus' });
     });
 
+    it('scopes the preserved session metadata to the session provider', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
+      const sharedId = 'claude-sonnet-4.6';
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: sharedId,
+                name: 'Claude Sonnet 4.6 (Anthropic)',
+                alias: 'sonnet-4.6',
+                family: 'sonnet',
+                provider: 'anthropic',
+                contextWindow: 200000,
+                available: true,
+              },
+              {
+                id: sharedId,
+                name: 'Claude Sonnet 4.6 (Copilot)',
+                alias: 'copilot-sonnet',
+                family: 'sonnet',
+                provider: 'anthropic-copilot',
+                contextWindow: 272000,
+                available: true,
+              },
+            ] as ModelInfo[],
+          ],
+        ])
+      );
+
+      const model = await getSessionModelInfo({
+        config: { model: sharedId, provider: 'anthropic-copilot' },
+      } as any);
+
+      expect(model).toMatchObject({ id: sharedId, provider: 'anthropic-copilot' });
+    });
+
     it('should return null when the session provider is missing', async () => {
       const model = await getSessionModelInfo({
         config: {
