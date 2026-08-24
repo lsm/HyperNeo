@@ -10100,4 +10100,70 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await extension.stop();
     }
   });
+
+  test('a first scan with no published verdicts still seeds the per-PR review watermark', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const crowdOutRows = Array.from({ length: 10 }, (_, index) =>
+      createPullRequestRow(20 + index, {
+        updated_at: `2026-03-01T00:00:${String(index).padStart(2, '0')}Z`,
+      })
+    );
+    const pendingOnly = [{ id: 805, state: 'PENDING', user: { login: 'dev', type: 'User' } }];
+    let pullsRows: Record<string, unknown>[] = [createPullRequestRow(7)];
+    let reviewsPayload: unknown[] = pendingOnly;
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls/comments')) return pollingResponse([]);
+      if (path.endsWith('/pulls')) return pollingResponse(pullsRows);
+      if (path.endsWith('/pulls/7')) {
+        return pollingResponse({
+          ...createPullRequestRow(7),
+          mergeable: true,
+          mergeable_state: 'clean',
+        });
+      }
+      if (path.endsWith('/pulls/7/reviews')) return pollingResponse(reviewsPayload);
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listPollingRepos()[0];
+      await extension.pollWatchedRepo(repo, fetchImpl);
+      expect(received.filter((item) => item.topic.endsWith('.review_submitted'))).toHaveLength(0);
+      expect(repo.id).toBeTruthy();
+
+      pullsRows = crowdOutRows;
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+
+      pullsRows = [createPullRequestRow(7, { updated_at: '2026-04-01T00:00:00Z' })];
+      reviewsPayload = [
+        {
+          id: 805,
+          state: 'APPROVED',
+          submitted_at: '2026-01-07T00:00:00Z',
+          user: { login: 'dev', type: 'User' },
+        },
+      ];
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      const verdicts = received.filter((item) => item.topic.endsWith('.review_submitted'));
+      expect(verdicts).toHaveLength(1);
+      expect(verdicts[0].payload.reviewId).toBe('805');
+    } finally {
+      await extension.stop();
+    }
+  });
 });

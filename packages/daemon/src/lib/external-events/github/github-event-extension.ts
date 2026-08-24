@@ -2883,6 +2883,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         break;
       }
       const reviewQuery = new URLSearchParams({ per_page: '100' });
+      if (!(prNumber in reviewLastSeenAt)) {
+        reviewLastSeenAt[prNumber] = watermarks.committed;
+      }
       let reviewPage = 1;
       let reviewScanComplete = false;
       let reviewScanSinglePage = false;
