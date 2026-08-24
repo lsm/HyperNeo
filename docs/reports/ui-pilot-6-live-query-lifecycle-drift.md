@@ -105,11 +105,17 @@ rule-of-three; see the ADR 0004 pilot note added by this PR).
 
 ### U1. Enable the snapshot watchdog everywhere (kill rows 2/3 drift)
 
-Flip PRJ/MIL/GRP to default config (drop `snapshotRetryEnabled: false`).
+Flip PRJ/MIL/GRP to default config **and implement the machine's
+`retry-with-backoff` / `schedule-cleanup` effects in each executor** — only
+`useSpaceTaskMessages` schedules the watchdog timer today; the other three
+facades ignore `retry-with-backoff` (and some ignore `schedule-cleanup`), so
+setting `snapshotRetryEnabled: true` would arm the machine but never re-fire it.
+A smaller path is to land U3 first and make the watchdog a shared-executor
+config.
 - **Value:** a dead/hung query stops claiming `isLoading` forever; all four
-  copies get the same bounded wait (~10s) and settle-empty recovery; rows 2 and
-  3 collapse (row 4 needs U3 — the machine has no request-failure event either
-  way).
+  copies get the same bounded wait (~10s) and settle-empty recovery once the
+  executor handles `retry-with-backoff`; rows 2 and 3 collapse (row 4 needs U3
+  — the machine has no request-failure event either way).
 - **Risk:** observable behavior change on three surfaces — up to 5 extra
   subscribe/snapshot exchanges per query whose subscribe RPC succeeds but whose
   snapshot never arrives (lost or slow push; a *rejected* subscribe — e.g. an
@@ -173,8 +179,9 @@ First store consumers; a fresh machine per actual subscription lifecycle
   ref-counted across overlapping consumers (`useSkills`, `ToolsModal`,
   `AppMcpServersSettings`) — acquisition reuses the live subscription — so the
   adapter keys machine creation to the 0→1 transition, never to each
-  acquisition call. The delta-gating caveat above applies: pick the watchdog or
-  accept the row-10 policy change. The three singleton stores already carry
+  acquisition call. The delta-gating caveat above applies: add a delta-emitting
+  adapter/configuration, or explicitly accept and record the row-10 policy change
+  (the watchdog does not preserve these deltas). The three singleton stores already carry
   direct lifecycle pins (`lib/__tests__/app-mcp-store.test.ts`,
   `lib/__tests__/space-mcp-store.test.ts`, `lib/skills-store.test.ts` — subscribe
   failures, loading/snapshot, deltas, stale events, reconnect, unsubscribe): keep
