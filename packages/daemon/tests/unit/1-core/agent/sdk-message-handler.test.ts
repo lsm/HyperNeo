@@ -217,6 +217,7 @@ describe('SDKMessageHandler', () => {
       onInitSlashCommands: mock(async () => {}),
       onCommandsChanged: mock(async () => {}),
       bumpDeliveryTurnActivity: bumpDeliveryTurnActivitySpy,
+      onDeliveryTurnAccepted: mock(() => {}),
     };
 
     handler = new SDKMessageHandler(mockContext);
@@ -3953,6 +3954,13 @@ describe('SDKMessageHandler', () => {
       ]);
       expect(winner).toBe('timeout');
       waiter.cancel();
+    });
+
+    it('notifies the delivery layer when a consumed ACP kickoff is accepted (Codex P1)', () => {
+      const onDeliveryTurnAccepted = mockContext.onDeliveryTurnAccepted as ReturnType<typeof mock>;
+      getMessageByStatusAndUuidSpy.mockImplementation(() => ({ id: 'db-consumed' }));
+      handler.markMessageAccepted('msg-accepted');
+      expect(onDeliveryTurnAccepted).toHaveBeenCalled();
     });
   });
 

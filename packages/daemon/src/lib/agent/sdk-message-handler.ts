@@ -87,6 +87,7 @@ export interface SDKMessageHandlerContext {
 
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
+  onDeliveryTurnAccepted?(): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -558,6 +559,7 @@ export class SDKMessageHandler {
     );
     if (consumed) {
       this.completeDeliveryAcceptance(messageId);
+      this.ctx.onDeliveryTurnAccepted?.();
     }
   }
 
