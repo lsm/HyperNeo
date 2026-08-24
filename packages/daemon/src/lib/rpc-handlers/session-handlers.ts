@@ -761,7 +761,9 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('models.list', async (data) => {
     try {
-      const { getAvailableModels, refreshModels } = await import('../model-service.js');
+      const { getAvailableModels, getModelsCache, refreshModels } = await import(
+        '../model-service.js'
+      );
 
       const params = data as {
         forceRefresh?: boolean;
@@ -776,7 +778,7 @@ export function setupSessionHandlers(
 
       let availableModels = getAvailableModels('global');
 
-      if (!forceRefresh && availableModels.length === 0) {
+      if (!forceRefresh && availableModels.length === 0 && !getModelsCache().has('global')) {
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;

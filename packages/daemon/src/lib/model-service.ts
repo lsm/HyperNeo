@@ -118,15 +118,17 @@ function filterModelsByCuration(models: ModelInfo[]): ModelInfo[] {
   });
 }
 
-function registeredFallbackModels(): ModelInfo[] {
-  const registry = getProviderRegistry();
-  return filterModelsByCuration(FALLBACK_MODELS.filter((model) => registry.has(model.provider)));
-}
-
 function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
   const modelMap = new Map<string, ModelInfo>();
+  const registry = getProviderRegistry();
 
-  for (const model of [...registeredFallbackModels(), ...filterModelsByCuration(providerModels)]) {
+  for (const model of FALLBACK_MODELS) {
+    if (registry.has(model.provider)) {
+      modelMap.set(`${model.provider}:${model.id}`, model);
+    }
+  }
+
+  for (const model of providerModels) {
     modelMap.set(`${model.provider}:${model.id}`, model);
   }
 
@@ -150,10 +152,7 @@ function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): Mode
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
-    merged = [
-      ...merged.filter((model) => model.provider !== providerId),
-      ...filterProviderModels(providerId, slice),
-    ];
+    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
   }
   return merged;
 }
@@ -192,21 +191,20 @@ function applyRefreshedModels(
   fetchedModels: ModelInfo[],
   previousModels: ModelInfo[] | undefined
 ): void {
-  const visiblePreviousModels = previousModels
-    ? mergeWithFallbackModels(filterModelsByCuration(previousModels))
-    : previousModels;
-  const mergedModels = mergeWithFallbackModels(fetchedModels);
-  if (
-    fetchedModels.length > 0 &&
-    visiblePreviousModels &&
-    visiblePreviousModels.length > mergedModels.length
-  ) {
-    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, visiblePreviousModels));
+  if (fetchedModels.length > 0) {
+    const mergedModels = mergeWithFallbackModels(fetchedModels);
+    if (previousModels && previousModels.length > mergedModels.length) {
+      modelsCache.set(cacheKey, previousModels);
+    } else {
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
+    }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
   }
-  if (fetchedModels.length > 0 || !visiblePreviousModels || visiblePreviousModels.length === 0) {
-    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
+  if (!previousModels || previousModels.length === 0) {
+    const registry = getProviderRegistry();
+    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+    modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
     cacheTimestamps.set(cacheKey, Date.now());
   }
 }
@@ -268,12 +266,9 @@ type ProviderModelLoadResult =
 function fallbackModelsFor(provider: Provider): ModelInfo[] {
   const cached = provider.getCachedModels?.();
   if (cached && cached.length > 0) {
-    return filterProviderModels(provider.id, cached);
+    return cached;
   }
-  return filterProviderModels(
-    provider.id,
-    STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id)
-  );
+  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
 }
 
 async function loadProviderModels(provider: Provider): Promise<ProviderModelLoadResult> {
@@ -285,9 +280,9 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
     if (
       models.length > 0 ||
       provider.hasCuratedModelList?.() ||
-      getProviderRegistry().getCuratedModels(provider.id)?.length === 0
+      getCuratedModelIds(provider.id)?.size === 0
     ) {
-      return { status: 'loaded', models: filterProviderModels(provider.id, models) };
+      return { status: 'loaded', models };
     }
     return { status: 'failed', models: fallbackModelsFor(provider) };
   } catch (error) {
@@ -410,7 +405,9 @@ export async function initializeModels(): Promise<void> {
       if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
         return;
       }
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, registeredFallbackModels()));
+      const registry = getProviderRegistry();
+      const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
       cacheTimestamps.set(cacheKey, Date.now());
     }
   })();
@@ -528,11 +525,10 @@ export function updateProviderModelsInCache(
     return false;
   }
 
-  const visibleModels = filterProviderModels(providerId, models);
   pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
   modelsCache.set(cacheKey, [
     ...cachedModels.filter((model) => model.provider !== providerId),
-    ...visibleModels,
+    ...models,
   ]);
   const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
   const inFlight = refreshInProgress.get(cacheKey);
@@ -544,7 +540,7 @@ export function updateProviderModelsInCache(
         if (!current) return;
         modelsCache.set(cacheKey, [
           ...current.filter((model) => model.provider !== providerId),
-          ...filterProviderModels(providerId, models),
+          ...models,
         ]);
       })
       .catch(() => {});
@@ -642,7 +638,12 @@ export async function getSessionModelInfo(
 ): Promise<ModelInfo | null> {
   const providerId = session.config.provider;
   if (!providerId) return null;
-  return getModelInfo(session.config.model, cacheKey, providerId);
+  const modelInfo = await getModelInfo(session.config.model, cacheKey, providerId);
+  if (modelInfo) return modelInfo;
+  const unfiltered = await getModelInfoUnfiltered(session.config.model, cacheKey);
+  if (unfiltered) return unfiltered;
+  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  return findInModels(staticProviderModels, session.config.model) ?? null;
 }
 
 export async function getModelInfoUnfiltered(

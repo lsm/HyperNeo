@@ -473,7 +473,7 @@ describe('Model Service', () => {
       expect(await isValidModel('opus', 'global', 'anthropic')).toBe(true);
     });
 
-    it('filters provider-slice updates before they reach the global cache', async () => {
+    it('filters provider-slice updates at the read boundary while storing them raw', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const visibleModel: ModelInfo = {
         id: 'acp-default',
@@ -499,6 +499,28 @@ describe('Model Service', () => {
       expect(getAvailableModels('global').filter((model) => model.provider === 'acp')).toEqual([
         visibleModel,
       ]);
+      expect(
+        getModelsCache()
+          .get('global')
+          ?.map((model) => model.id)
+      ).toContain('curated-out-acp-model');
+    });
+
+    it('keeps the raw cache across refreshes so the unfiltered seam still resolves curated-out models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => mockModels,
+        isAvailable: async () => true,
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
+      expect(getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
     });
   });
 
@@ -1267,6 +1289,20 @@ describe('Model Service', () => {
 
       expect(model?.id).toBe('gpt-5.6-sol');
       expect(model?.contextWindow).toBe(1050000);
+    });
+
+    it('preserves metadata for a session already on a curated-out model', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+
+      const model = await getSessionModelInfo({
+        config: { model: 'opus', provider: 'anthropic' },
+      } as any);
+
+      expect(model).toMatchObject({ id: 'opus' });
     });
 
     it('should return null when the session provider is missing', async () => {

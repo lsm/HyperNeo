@@ -217,6 +217,33 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
   });
 
+  it('does not refresh when the cache is populated but curation leaves it empty', async () => {
+    let getModelCalls = 0;
+    getProviderRegistry().register({
+      id: 'curated-empty-provider',
+      displayName: 'Curated Empty',
+      isAvailable: () => true,
+      getModels: async () => {
+        getModelCalls++;
+        return [];
+      },
+      ownsModel: () => false,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as unknown as Provider);
+    getProviderRegistry().setCuratedModels('curated-empty-provider', []);
+    setModelsCache(new Map([['global', []]]));
+
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+      cached: boolean;
+    };
+
+    expect(result.models).toEqual([]);
+    expect(getModelCalls).toBe(0);
+  });
+
   it('returns cached models when cache is populated', async () => {
     const testCache = new Map<
       string,
