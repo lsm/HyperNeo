@@ -698,6 +698,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceGoalService,
       goalAutomationService,
       spaceAgentInactivityWatchdog,
+      cancelInactivityWatchdog,
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
@@ -1087,6 +1088,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         inactivityWatchdogTimer = null;
       }
       inactivityShutdownStarted = true;
+      cancelInactivityWatchdog();
       if (inactivityScan !== null) {
         await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
       }

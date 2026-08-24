@@ -43,6 +43,7 @@ export interface InactivityWatchdogDeps {
   scannerToken: string;
   now?: () => number;
   deliveryTimeoutMs?: number;
+  shouldAbort?: () => boolean;
   getSessionSnapshot(spaceId: string, agentId: string): InactivityWatchdogSessionSnapshot | null;
   isNagDeliveryPending(spaceId: string, agentId: string, claimKey: string): boolean;
   isNagDeliveryFailed(spaceId: string, agentId: string, claimKey: string): boolean;
@@ -70,6 +71,7 @@ export class SpaceAgentInactivityWatchdogService {
     const space = await this.deps.spaceManager.getSpace(spaceId);
     if (!space || space.status !== 'active' || space.paused || space.stopped) return;
     for (const config of this.deps.configRepo.listEnabled(spaceId)) {
+      if (this.deps.shouldAbort?.()) return;
       try {
         await this.scanAgent(spaceId, config.agentId);
       } catch (err) {
@@ -112,6 +114,8 @@ export class SpaceAgentInactivityWatchdogService {
       claim.state === 'accepted' &&
       !this.deps.isNagDeliveryPending(spaceId, agentId, claim.claimKey)
     ) {
+      const deliveryFailed = this.deps.isNagDeliveryFailed(spaceId, agentId, claim.claimKey);
+      const superseded = claim.configRevision !== config.configRevision;
       this.deps.claimRepo.applyReset(
         spaceId,
         agentId,
@@ -119,7 +123,7 @@ export class SpaceAgentInactivityWatchdogService {
         claim.claimKey,
         claim.ownerToken,
         claim.configRevision,
-        this.deps.isNagDeliveryFailed(spaceId, agentId, claim.claimKey)
+        deliveryFailed && !superseded
           ? { releaseClaim: false, markDegraded: true, advanceAttemptGeneration: true }
           : { releaseClaim: true, markDegraded: false, advanceAttemptGeneration: false }
       );

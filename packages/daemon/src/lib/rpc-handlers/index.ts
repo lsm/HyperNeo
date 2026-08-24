@@ -314,11 +314,13 @@ export interface RPCHandlerSetupResult {
   spaceGoalService: SpaceGoalService;
   goalAutomationService: GoalAutomationService;
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
+  cancelInactivityWatchdog: () => void;
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
   const pendingInactivityRunNow = new Set<Promise<void>>();
   let inactivityRunNowCancelled = false;
+  let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
   setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -746,6 +748,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       agentRepo: longHorizonAgentRepo,
       spaceManager: deps.spaceManager,
       scannerToken: `inactivity-scanner:${deps.db.getDatabasePath()}`,
+      shouldAbort: () => inactivityAborted,
       getSessionSnapshot: (spaceId, agentId): InactivityWatchdogSessionSnapshot | null => {
         const agent = longHorizonAgentRepo.getById(agentId);
         if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return null;
@@ -776,12 +779,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           )
           .get(agent.sessionId) as { n?: number } | null;
         let status = 'idle';
-        try {
-          const parsed = sessionRow?.processing_state
-            ? (JSON.parse(sessionRow.processing_state) as { status?: unknown })
-            : null;
-          if (parsed && typeof parsed.status === 'string') status = parsed.status;
-        } catch {}
+        const liveSession = deps.sessionManager?.getCachedSession(agent.sessionId);
+        if (liveSession) {
+          status = liveSession.stateManager.getState().status;
+        } else {
+          try {
+            const parsed = sessionRow?.processing_state
+              ? (JSON.parse(sessionRow.processing_state) as { status?: unknown })
+              : null;
+            if (parsed && typeof parsed.status === 'string') status = parsed.status;
+          } catch {}
+        }
         return {
           latestConsumedMessageAt: toEpochMs(consumedRow?.ts),
           sessionCreatedAt: toEpochMs(sessionRow?.created_at),
@@ -1191,5 +1199,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceGoalService,
     goalAutomationService,
     spaceAgentInactivityWatchdog,
+    cancelInactivityWatchdog: () => {
+      inactivityAborted = true;
+    },
   };
 }
