@@ -207,9 +207,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
       for (const step of goal.nextSteps) sections.push(`- ${step}`);
     }
     sections.push(
-      goal.type === 'recurring'
-        ? 'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, metrics, and next steps.'
-        : 'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, progress, metrics, and next steps.'
+      'When this task finishes, record a concise outcome summary in its result. The goal owner reviews reported outcomes and applies goal updates — do not mutate the goal rolling state yourself.'
     );
   }
 
