@@ -233,6 +233,7 @@ export class SpaceAgentInactivityClaimRepository {
   applyReset(
     spaceId: string,
     agentId: string,
+    expectedClaimId: string,
     expectedClaimKey: string,
     expectedOwnerToken: string | null,
     expectedConfigRevision: number | null,
@@ -247,6 +248,7 @@ export class SpaceAgentInactivityClaimRepository {
       const existing = this.getByAgent(spaceId, agentId);
       if (existing === null) return null;
       if (
+        existing.id !== expectedClaimId ||
         existing.claimKey !== expectedClaimKey ||
         existing.ownerToken !== expectedOwnerToken ||
         existing.configRevision !== expectedConfigRevision

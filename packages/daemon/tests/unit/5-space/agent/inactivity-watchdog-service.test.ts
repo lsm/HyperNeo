@@ -229,6 +229,8 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     expect(bounded.endsWith('…')).toBe(true);
     expect([...bounded].length).toBe(INACTIVITY_NAG_PROMPT_MAX_CHARS);
     expect(bounded.includes('�')).toBe(false);
+    const astralUnderLimit = '😀'.repeat(INACTIVITY_NAG_PROMPT_MAX_CHARS / 2 + 1);
+    expect(boundInactivityNagPrompt(astralUnderLimit)).toBe(astralUnderLimit);
   });
 
   it('holds the claim when a delivery times out and applies the late outcome', async () => {

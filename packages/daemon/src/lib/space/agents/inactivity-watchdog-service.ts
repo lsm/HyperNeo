@@ -55,8 +55,8 @@ export interface InactivityWatchdogDeps {
 export function boundInactivityNagPrompt(prompt: string | null): string {
   const trimmed = (prompt ?? '').trim();
   const value = trimmed.length > 0 ? trimmed : DEFAULT_INACTIVITY_NAG_PROMPT;
-  if (value.length <= INACTIVITY_NAG_PROMPT_MAX_CHARS) return value;
   const codePoints = [...value];
+  if (codePoints.length <= INACTIVITY_NAG_PROMPT_MAX_CHARS) return value;
   return `${codePoints.slice(0, INACTIVITY_NAG_PROMPT_MAX_CHARS - 1).join('')}…`;
 }
 
@@ -138,6 +138,7 @@ export class SpaceAgentInactivityWatchdogService {
     await this.deliver(
       spaceId,
       agentId,
+      acquired.claim.id,
       decision.claimKey,
       decision.configRevision,
       boundInactivityNagPrompt(config.prompt)
@@ -147,6 +148,7 @@ export class SpaceAgentInactivityWatchdogService {
   private async deliver(
     spaceId: string,
     agentId: string,
+    claimId: string,
     claimKey: string,
     acquiredConfigRevision: number | null,
     prompt: string
@@ -164,6 +166,7 @@ export class SpaceAgentInactivityWatchdogService {
       this.applyOutcome(
         spaceId,
         agentId,
+        claimId,
         claimKey,
         acquiredConfigRevision,
         'pre_admission_failure'
@@ -179,6 +182,7 @@ export class SpaceAgentInactivityWatchdogService {
     const currentClaim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     if (
       currentClaim === null ||
+      currentClaim.id !== claimId ||
       currentClaim.claimKey !== claimKey ||
       currentClaim.ownerToken !== this.deps.scannerToken ||
       currentClaim.configRevision !== acquiredConfigRevision
@@ -207,6 +211,7 @@ export class SpaceAgentInactivityWatchdogService {
       this.applyOutcome(
         spaceId,
         agentId,
+        claimId,
         claimKey,
         acquiredConfigRevision,
         'pre_admission_failure'
@@ -218,6 +223,7 @@ export class SpaceAgentInactivityWatchdogService {
       outcome = await this.deliverNagBounded({
         spaceId,
         agentId,
+        claimId,
         prompt,
         idempotencyKey: claimKey,
         acquiredConfigRevision,
@@ -231,12 +237,13 @@ export class SpaceAgentInactivityWatchdogService {
       outcome = 'terminal_failure';
     }
     if (outcome === 'pending') return;
-    this.applyOutcome(spaceId, agentId, claimKey, acquiredConfigRevision, outcome);
+    this.applyOutcome(spaceId, agentId, claimId, claimKey, acquiredConfigRevision, outcome);
   }
 
   private async deliverNagBounded(args: {
     spaceId: string;
     agentId: string;
+    claimId: string;
     prompt: string;
     idempotencyKey: string;
     acquiredConfigRevision: number | null;
@@ -256,6 +263,7 @@ export class SpaceAgentInactivityWatchdogService {
                 this.applyOutcome(
                   args.spaceId,
                   args.agentId,
+                  args.claimId,
                   args.idempotencyKey,
                   args.acquiredConfigRevision,
                   outcome
@@ -269,6 +277,7 @@ export class SpaceAgentInactivityWatchdogService {
                 this.applyOutcome(
                   args.spaceId,
                   args.agentId,
+                  args.claimId,
                   args.idempotencyKey,
                   args.acquiredConfigRevision,
                   'terminal_failure'
@@ -286,6 +295,7 @@ export class SpaceAgentInactivityWatchdogService {
   private applyOutcome(
     spaceId: string,
     agentId: string,
+    claimId: string,
     claimKey: string,
     acquiredConfigRevision: number | null,
     outcome: InactivityNagDeliveryOutcome
@@ -297,6 +307,7 @@ export class SpaceAgentInactivityWatchdogService {
     this.deps.claimRepo.applyReset(
       spaceId,
       agentId,
+      claimId,
       claimKey,
       this.deps.scannerToken,
       acquiredConfigRevision,
