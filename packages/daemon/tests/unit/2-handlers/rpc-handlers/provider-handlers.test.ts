@@ -704,6 +704,9 @@ describe('Provider RPC handlers', () => {
       await handlers.get('providers.setDefault')!({ id: b.id }, {});
       expect(repo.getProvider(a.id)?.isDefault).toBe(false);
       expect(repo.getProvider(b.id)?.isDefault).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
   });
 

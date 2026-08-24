@@ -410,6 +410,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   messageHub.onRequest('providers.setDefault', async (data: { id: string }) => {
     return withProviderLock(async () => {
       providerRepo.setDefaultProvider(data.id);
+      await clearCacheAndNotifyProvidersChanged(internalEventBus);
       return { success: true };
     });
   });

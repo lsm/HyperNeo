@@ -397,6 +397,45 @@ describe('ProvidersSettings', () => {
     expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
   });
 
+  it('reconciles after reconnecting when an event refresh exhausts its retry', async () => {
+    connectionState.value = 'connected';
+    mockListProviders
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+      })
+      .mockRejectedValueOnce(new Error('handler error'))
+      .mockRejectedValueOnce(new Error('retry error'))
+      .mockResolvedValueOnce({
+        providers: [createMockProvider('2', 'kimi', { displayName: 'Kimi' })],
+      });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+
+    mockGetHubIfConnected.mockReturnValue(null);
+    await act(async () => {
+      connectionState.value = 'disconnected';
+    });
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
+    await act(async () => {
+      connectionState.value = 'connected';
+    });
+
+    await waitFor(() => {
+      expect(mockListProviders).toHaveBeenCalledTimes(4);
+      expect(container.textContent).toContain('Kimi');
+    });
+    expect(container.textContent).not.toContain('Anthropic');
+  });
+
   it('uses current OAuth state when an event refresh removes its provider', async () => {
     const provider = createMockProvider('1', 'anthropic-copilot', {
       displayName: 'Copilot',

@@ -227,9 +227,11 @@ export function ProvidersSettings() {
       if (hasLoadedProvidersRef.current) reconnectPendingRef.current = true;
       return;
     }
-    if (reconnectPendingRef.current && !loadError) {
+    if (reconnectPendingRef.current) {
       reconnectPendingRef.current = false;
-      loadProvidersRef.current(false);
+      if (!loadError || autoRetriedRef.current) {
+        loadProvidersRef.current(false);
+      }
     }
     const unsub = hub.onEvent('providers.changed', () => {
       loadProvidersRef.current(false);
