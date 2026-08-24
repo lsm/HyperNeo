@@ -1752,7 +1752,7 @@ describe('Model Service', () => {
       } as unknown as Parameters<typeof registry.register>[0]);
       registry.setCuratedModels('glm', [{ id: 'glm-5' }]);
 
-      expect(isValidModel('glm-5', 'global', 'glm')).resolves.toBe(false);
+      await expect(isValidModel('glm-5', 'global', 'glm')).resolves.toBe(false);
       expect(isCuratedOutModel('glm-5', 'glm')).toBe(false);
     });
   });

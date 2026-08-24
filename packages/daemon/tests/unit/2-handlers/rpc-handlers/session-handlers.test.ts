@@ -1294,6 +1294,20 @@ describe('Session RPC Handlers — session.update model curation', () => {
 
     expect(updateSession).toHaveBeenCalledWith('s1', { config: { provider: 'anthropic-copilot' } });
   });
+
+  it('rejects a curated-out model write on a session with no stored provider', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'sonnet';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(handler!({ sessionId: 's1', config: { model: 'opus' } }, {})).rejects.toThrow(
+      "Model 'opus' is curated out for provider 'anthropic'"
+    );
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('Session RPC Handlers — session.appendVoiceDraft', () => {

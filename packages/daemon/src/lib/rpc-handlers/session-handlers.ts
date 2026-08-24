@@ -24,7 +24,7 @@ import {
   isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
-import { getProviderRegistry } from '../providers/registry.js';
+import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
@@ -358,7 +358,10 @@ export function setupSessionHandlers(
         agentSessionForUpdate?.getSessionData().config ??
         sessionManager.getSessionFromDB(targetSessionId)?.config;
       const effectiveModel = configUpdate.model ?? existingConfig?.model;
-      const providerId = configUpdate.provider ?? existingConfig?.provider;
+      const providerId =
+        configUpdate.provider ??
+        existingConfig?.provider ??
+        (effectiveModel ? inferProviderForModel(effectiveModel) : undefined);
       const rewritesOwnPair =
         existingConfig !== undefined &&
         effectiveModel === existingConfig.model &&
