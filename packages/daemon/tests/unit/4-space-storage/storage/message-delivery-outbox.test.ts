@@ -219,6 +219,67 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       })
     ).toThrow(/no uuid/);
   });
+
+  describe('role-arbitration call-site characterization (A1b)', () => {
+    it('has no same-UUID ownership precheck — a second persist enqueues a duplicate (turn then steer)', () => {
+      const first = persistAndEnqueueDelivery({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('dup'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'chat' },
+      });
+      expect(first.role).toBe('turn');
+      const second = persistAndEnqueueDelivery({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('dup'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'chat' },
+      });
+      expect(second.role).toBe('steer');
+      const jobs = db
+        .prepare(`SELECT payload FROM job_queue WHERE queue = ?`)
+        .all(MESSAGE_DELIVERY) as Array<{ payload: string }>;
+      const dupJobs = jobs.filter(
+        (j) => (JSON.parse(j.payload) as { messageUuid?: string }).messageUuid === 'dup'
+      );
+      expect(dupJobs).toHaveLength(2);
+      const roles = dupJobs.map((j) => (JSON.parse(j.payload) as { role: string }).role).sort();
+      expect(roles).toEqual(['steer', 'turn']);
+      const rows = db
+        .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+        .get(SESSION, 'dup') as { c: number };
+      expect(rows.c).toBe(2);
+    });
+
+    it('converts an implicit turn collision to steer inside the transaction — the save COMMITS with the steer (no rollback)', () => {
+      jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: { sessionId: SESSION, messageUuid: 'anchor', role: 'turn', origin: 'chat' },
+      });
+      const { role, dbMessageId } = persistAndEnqueueDelivery({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('collide'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'chat' },
+      });
+      expect(role).toBe('steer');
+      const saved = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get(dbMessageId) as { send_status: string } | undefined;
+      expect(saved).not.toBeUndefined();
+      expect(saved?.send_status).toBe('enqueued');
+      expect(jobPayload(db, SESSION, 'collide')?.role).toBe('steer');
+    });
+  });
 });
 
 describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)', () => {
