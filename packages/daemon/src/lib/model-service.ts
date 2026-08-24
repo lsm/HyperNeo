@@ -155,6 +155,8 @@ const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
 
+let cacheClearSequence = 0;
+
 const PROVIDER_RETRY_BACKOFF_MS = 60_000;
 
 interface ProviderRetryEntry {
@@ -796,6 +798,7 @@ function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
 }
 
 export function clearModelsCache(cacheKey?: string): void {
+  cacheClearSequence += 1;
   if (cacheKey) {
     const hadInFlight = refreshInProgress.has(cacheKey);
     modelsCache.delete(cacheKey);
@@ -965,8 +968,8 @@ export function updateProviderModelsInCache(
   return true;
 }
 
-export function getModelsCacheGeneration(cacheKey: string = 'global'): number {
-  return cacheGeneration.get(cacheKey) ?? 0;
+export function getModelsCacheClearSequence(): number {
+  return cacheClearSequence;
 }
 
 export function applyDiscoveredProviderModels(
@@ -981,10 +984,10 @@ export function applyDiscoveredProviderModels(
   );
 }
 
-export function markProviderRefreshSucceeded(providerId: string): void {
+export function markProviderRefreshSucceeded(providerId: string): boolean {
   providerAppliedSeq.set(providerId, ++modelLoadSequence);
-  clearProviderFailure(providerId);
   clearProviderRetry(providerId);
+  return clearProviderFailure(providerId);
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {

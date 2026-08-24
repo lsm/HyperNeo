@@ -611,7 +611,7 @@ describe('Provider RPC handlers', () => {
       });
     });
 
-    it('discards everything when the global cache generation moved mid-fetch', async () => {
+    it('discards everything when an in-flight refresh invalidation lands mid-fetch', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
@@ -903,6 +903,61 @@ describe('Provider RPC handlers', () => {
       expect(result.success).toBe(true);
       expect(getProviderFailure('remote')).toBeUndefined();
       expect(hasRefreshBeenAttemptedFor('remote')).toBe(false);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('discards everything when a global cache clear lands mid-fetch', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => {
+          clearModelsCache();
+          return [makeDiscoveredModel('remote-a')];
+        },
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('rejects the refresh when the saved config cannot fit the discovery wrapper', async () => {
+      const pad = 'x'.repeat(64 * 1024 - 20);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ pad }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.refreshDiscovery')!({ id: created.id }, {})
+      ).rejects.toThrow('no capacity to persist discovery results');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(JSON.stringify({ pad }));
+      expect(getModelsCache().get('global')).toEqual([makeDiscoveredModel('existing')]);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
     it('caps the persisted blob by remaining config capacity for large existing payloads', async () => {

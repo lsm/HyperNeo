@@ -357,11 +357,11 @@ function persistLastGoodDiscoveredModels(
       base = {};
     }
   }
-  const lastGood = buildLastGoodDiscoveredModels(
-    record.providerId,
-    discovered,
-    lastGoodDiscoveryBudget(base)
-  );
+  const budget = lastGoodDiscoveryBudget(base);
+  if (budget < 2) {
+    throw new Error('Provider config has no capacity to persist discovery results');
+  }
+  const lastGood = buildLastGoodDiscoveredModels(record.providerId, discovered, budget);
   base[LAST_GOOD_DISCOVERY_KEY] = lastGood;
   providerRepo.updateProvider(record.id, { configJson: JSON.stringify(base) });
   return lastGood.truncated === true;
@@ -434,50 +434,52 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
   messageHub.onRequest('providers.refreshDiscovery', async (data: unknown) => {
     const request = validateRefreshDiscoveryRequest(data);
-    const record = providerRepo.getProvider(request.id);
-    if (!record) throw new Error(`Provider ${request.id} not found`);
-    const provider = getProviderRegistry().get(record.providerId);
-    if (!provider) throw new Error(`Provider ${record.providerId} is not registered`);
-    if (!provider.listRemoteModels) {
-      throw new Error(`Provider ${record.providerId} does not support remote model listing`);
-    }
+    return withProviderLock(async () => {
+      const record = providerRepo.getProvider(request.id);
+      if (!record) throw new Error(`Provider ${request.id} not found`);
+      const provider = getProviderRegistry().get(record.providerId);
+      if (!provider) throw new Error(`Provider ${record.providerId} is not registered`);
+      if (!provider.listRemoteModels) {
+        throw new Error(`Provider ${record.providerId} does not support remote model listing`);
+      }
 
-    const {
-      getModelsCacheGeneration,
-      applyDiscoveredProviderModels,
-      markProviderRefreshSucceeded,
-    } = await import('../model-service.js');
-    const generationAtStart = getModelsCacheGeneration();
-    const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
-    const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
+      const {
+        getModelsCacheClearSequence,
+        applyDiscoveredProviderModels,
+        markProviderRefreshSucceeded,
+      } = await import('../model-service.js');
+      const clearsAtStart = getModelsCacheClearSequence();
+      const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
+      const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
 
-    const discovered = await provider.listRemoteModels({ force: true });
-    if (discovered.length === 0) {
-      throw new Error(`Provider ${record.providerId} returned no models`);
-    }
-    const models = await provider.getModels();
+      const discovered = await provider.listRemoteModels({ force: true });
+      if (discovered.length === 0) {
+        throw new Error(`Provider ${record.providerId} returned no models`);
+      }
+      const models = await provider.getModels();
 
-    if (
-      getModelsCacheGeneration() !== generationAtStart ||
-      JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
-      !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
-    ) {
-      return { success: false, reason: 'superseded' };
-    }
-    if (models.length === 0) {
-      throw new Error(`Provider ${record.providerId} returned no models`);
-    }
+      if (
+        getModelsCacheClearSequence() !== clearsAtStart ||
+        JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
+        !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
+      ) {
+        return { success: false, reason: 'superseded' };
+      }
+      if (models.length === 0) {
+        throw new Error(`Provider ${record.providerId} returned no models`);
+      }
 
-    const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
-    applyDiscoveredProviderModels(record.providerId, models);
-    markProviderRefreshSucceeded(record.providerId);
-    notifyProvidersChanged(internalEventBus);
+      const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
+      applyDiscoveredProviderModels(record.providerId, models);
+      const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
+      if (!recoveredFailure) notifyProvidersChanged(internalEventBus);
 
-    return {
-      success: true,
-      ...(truncated ? { truncated: true } : {}),
-      models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
-    };
+      return {
+        success: true,
+        ...(truncated ? { truncated: true } : {}),
+        models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
+      };
+    });
   });
 
   messageHub.onRequest(
