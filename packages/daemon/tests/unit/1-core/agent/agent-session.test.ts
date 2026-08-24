@@ -15,6 +15,7 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   waitForDeliveryConsumption,
+  withSessionLock,
   withSessionResetCoordination,
 } from '../../../../src/lib/agent/message-delivery';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -5715,10 +5716,21 @@ describe('AgentSession', () => {
       expected: 'aborted' | 'park' | 'promote' | 'awaiting_acceptance' | 'consumed';
     };
 
+    function rowExpectsAdmission(row: Omit<SteerRow, 'name'>): boolean {
+      return (
+        row.expected === 'consumed' || (row.expected === 'awaiting_acceptance' && !row.pending)
+      );
+    }
+
     async function settleFeedAck(
       steerPromise: Promise<unknown>,
-      queue: MessageQueue
+      queue: MessageQueue,
+      expectsAdmission: boolean
     ): Promise<void> {
+      if (!expectsAdmission) {
+        await steerPromise;
+        return;
+      }
       for (let i = 0; i < 200; i++) {
         const done = await Promise.race([
           steerPromise.then(
@@ -5728,6 +5740,12 @@ describe('AgentSession', () => {
           Promise.resolve().then(() => queue.remove(steerUuid) || false),
         ]);
         if (done) return;
+      }
+    }
+
+    async function waitForQueueEntry(queue: MessageQueue): Promise<void> {
+      for (let i = 0; i < 200 && queue.size() === 0; i++) {
+        await Promise.resolve();
       }
     }
 
@@ -5784,7 +5802,7 @@ describe('AgentSession', () => {
         null,
         claimGuard
       );
-      await settleFeedAck(steerPromise, queue);
+      await settleFeedAck(steerPromise, queue, rowExpectsAdmission(row));
       const outcome = await steerPromise;
       return { db, queue, outcome };
     }
@@ -5827,6 +5845,16 @@ describe('AgentSession', () => {
         queryPromise: 'present',
         provider: 'acp',
         pending: true,
+        claimGuard: 'held',
+        expected: 'park',
+      },
+      {
+        name: 'queued parks even with an absent query and a fresh valid delivery',
+        status: 'queued',
+        delivery: 'enqueued',
+        queryPromise: 'absent',
+        provider: 'anthropic',
+        pending: false,
         claimGuard: 'held',
         expected: 'park',
       },
@@ -5926,7 +5954,7 @@ describe('AgentSession', () => {
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('enqueued');
           }
-          if (row.expected === 'awaiting_acceptance' && row.pending) {
+          if (!rowExpectsAdmission(row)) {
             expect(queue.size()).toBe(0);
           }
         } finally {
@@ -5935,7 +5963,7 @@ describe('AgentSession', () => {
       });
     }
 
-    it('pins: a live query ending before the SDK consumes the steer reopens the delivery and throws', async () => {
+    it('pins: a claim superseded while waiting for the session lock aborts after acquisition', async () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
@@ -5964,14 +5992,80 @@ describe('AgentSession', () => {
           { autoReplayPendingMessages: false }
         );
         await agentSession.stateManager.setProcessing(steerUuid);
-        agentSession.queryPromise = Promise.resolve();
-        await expect(
-          agentSession.feedDeliverySteer(steerUuid, steerContent, null, () => true)
-        ).rejects.toThrow('Steer target query ended before the SDK consumed the steer');
-        expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe(
+        agentSession.queryPromise = new Promise<void>(() => {});
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const hold = withSessionLock(sessionId, () => held);
+        let claimHeld = true;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => claimHeld
+        );
+        claimHeld = false;
+        release();
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        await hold;
+      } finally {
+        db.close();
+      }
+    });
+
+    it('pins: a live query ending after the steer was SDK-yielded and consumed reopens the delivery and throws', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
           'enqueued'
         );
-        expect(agentSession.messageQueue.size()).toBe(1);
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing(steerUuid);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
+        await generator.next();
+        repo.markDeliveryConsumedByUuid(sessionId, steerUuid);
+        resolveQuery();
+        await expect(steerPromise).rejects.toThrow(
+          'Steer target query ended before the SDK consumed the steer'
+        );
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
+        expect(queue.size()).toBe(1);
       } finally {
         db.close();
       }
