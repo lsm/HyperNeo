@@ -505,7 +505,8 @@ export function createTables(db: BunDatabase): void {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         UNIQUE(space_id, agent_id),
-        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
       )
     `);
 
@@ -525,7 +526,8 @@ export function createTables(db: BunDatabase): void {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         UNIQUE(space_id, agent_id),
-        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
       )
     `);
 

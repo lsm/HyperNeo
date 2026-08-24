@@ -138,17 +138,23 @@ export class SpaceAgentInactivityClaimRepository {
     const now = Date.now();
     const result = this.db.transaction(() => {
       const existing = this.getByAgent(params.spaceId, params.agentId);
+      if (
+        existing !== null &&
+        existing.state !== 'none' &&
+        !existing.degraded &&
+        existing.claimKey === params.claimKey &&
+        existing.ownerToken === params.ownerToken
+      ) {
+        return { acquired: true, claim: existing };
+      }
       const blocksCurrentWindow =
         existing !== null &&
         existing.state !== 'none' &&
         !existing.degraded &&
         existing.windowAnchoredAt === params.windowAnchoredAt &&
         existing.configRevision === params.configRevision;
-      if (
-        blocksCurrentWindow &&
-        (existing!.claimKey !== params.claimKey || existing!.ownerToken !== params.ownerToken)
-      ) {
-        return { acquired: false, claim: existing! };
+      if (blocksCurrentWindow) {
+        return { acquired: false, claim: existing };
       }
       const id = existing?.id ?? generateUUID();
       const createdAt = existing?.createdAt ?? now;
@@ -199,6 +205,7 @@ export class SpaceAgentInactivityClaimRepository {
   applyReset(
     spaceId: string,
     agentId: string,
+    expectedClaimKey: string,
     reset: {
       releaseClaim: boolean;
       markDegraded: boolean;
@@ -209,6 +216,7 @@ export class SpaceAgentInactivityClaimRepository {
     return this.db.transaction(() => {
       const existing = this.getByAgent(spaceId, agentId);
       if (existing === null) return null;
+      if (existing.claimKey !== expectedClaimKey) return existing;
       if (reset.releaseClaim) {
         this.db.prepare(`DELETE FROM space_agent_inactivity_claims WHERE id = ?`).run(existing.id);
         return null;

@@ -530,7 +530,8 @@ export function createSpaceTables(db: BunDatabase): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(space_id, agent_id),
-      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
     )
   `);
   db.exec(`
@@ -549,7 +550,8 @@ export function createSpaceTables(db: BunDatabase): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(space_id, agent_id),
-      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agent_inactivity_claims_space

@@ -16,6 +16,27 @@ describe('SpaceAgentInactivity repositories', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceTables(db);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS space_long_horizon_agents (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        handle TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        template_key TEXT DEFAULT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        session_id TEXT DEFAULT NULL,
+        instructions TEXT NOT NULL DEFAULT '',
+        autonomy_level INTEGER DEFAULT NULL,
+        model TEXT DEFAULT NULL,
+        thinking_level TEXT DEFAULT NULL,
+        provider TEXT DEFAULT NULL,
+        setting_sources TEXT DEFAULT NULL,
+        tool_permissions_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+      )
+    `);
     configRepo = new SpaceAgentInactivityConfigRepository(db as never);
     claimRepo = new SpaceAgentInactivityClaimRepository(db as never);
     spaceId = new SpaceRepository(db as never).createSpace({
@@ -23,6 +44,13 @@ describe('SpaceAgentInactivity repositories', () => {
       slug: 'w',
       name: 'W',
     }).id;
+    for (const agentId of ['agent-1', 'agent-2']) {
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, instructions, tool_permissions_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, '', '{}', 1, 1)`
+      ).run(agentId, spaceId, agentId, agentId);
+    }
   });
 
   afterEach(() => {
@@ -175,7 +203,7 @@ describe('SpaceAgentInactivity repositories', () => {
         configRevision: 1,
       });
       claimRepo.markInFlight(spaceId, 'agent-1', 'k');
-      const held = claimRepo.applyReset(spaceId, 'agent-1', {
+      const held = claimRepo.applyReset(spaceId, 'agent-1', 'k', {
         releaseClaim: false,
         markDegraded: false,
         advanceAttemptGeneration: false,
@@ -234,7 +262,7 @@ describe('SpaceAgentInactivity repositories', () => {
       });
 
       expect(
-        claimRepo.applyReset(spaceId, 'agent-1', {
+        claimRepo.applyReset(spaceId, 'agent-1', 'k', {
           releaseClaim: true,
           markDegraded: false,
           advanceAttemptGeneration: false,
@@ -251,7 +279,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      const degraded = claimRepo.applyReset(spaceId, 'agent-1', {
+      const degraded = claimRepo.applyReset(spaceId, 'agent-1', 'k2', {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: true,
@@ -259,6 +287,74 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(degraded?.degraded).toBe(true);
       expect(degraded?.attemptGeneration).toBe(1);
       expect(degraded?.state).toBe('none');
+    });
+
+    it('preserves in-flight state through an idempotent owner reacquisition', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      claimRepo.markInFlight(spaceId, 'agent-1', 'k');
+      const reacquired = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(reacquired.acquired).toBe(true);
+      expect(reacquired.claim.state).toBe('in_flight');
+    });
+
+    it('ignores a late reset callback for a claim that was already replaced', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'old',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'new',
+        windowAnchoredAt: 200,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-b',
+        configRevision: 1,
+      });
+      const result = claimRepo.applyReset(spaceId, 'agent-1', 'old', {
+        releaseClaim: true,
+        markDegraded: false,
+        advanceAttemptGeneration: false,
+      });
+      expect(result?.claimKey).toBe('new');
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')?.claimKey).toBe('new');
+    });
+
+    it('cascades config and claim rows when the agent is deleted', () => {
+      configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: 1000 });
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = 'agent-1'`).run();
+      expect(configRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
     });
 
     it('clears a degraded tombstone on explicit recovery', () => {
@@ -271,7 +367,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      claimRepo.applyReset(spaceId, 'agent-1', {
+      claimRepo.applyReset(spaceId, 'agent-1', 'k', {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: false,
