@@ -451,8 +451,14 @@ callback's boolean contract (started / not-started) cannot express this —
 `false` would push the watchdog into its startup-retry loop and eventually
 `startupExhausted`, `true` would `notifyResume` as though a query started — so
 the callback's result widens to `started | parked`, and `parked` makes the
-watchdog relinquish its cooldown timer without startup retries and without
-`notifyResume`: the registry now owns that row's wake. This closes the last
+watchdog relinquish its cooldown timer without startup retries and
+**publishes the pause-clearing resume variant** (distinct from a started
+resume: it clears `session.rate_limit_pause` so
+`TaskAgentManager.limitedSessionsByTask` drops the session — an unmatched
+pause would keep the parent task restricted and its injections deferring
+through `parentTaskLimited` instead of registering with the provider queue —
+while signaling the provider-queued state for the UI): the registry now owns
+that row's wake. This closes the last
 uncoordinated provider-call starter. (The fallback arm — `switchAndRetryForFallback`
 — is exempt by construction: it has already switched the session's provider, and
 admission is always evaluated against the *current* `session.config.provider`, so
@@ -496,11 +502,15 @@ type ProviderAdmission =
 steer fed into a live turn via `feedDeliverySteer` rides the turn's existing
 provider call; it adds none — and parking it while the live turn waits on that
 very input would deadlock the turn whose completion could clear saturation);
-else `(!accountAvailable || closed) && !closureProbe` → `queue_until` with
-**no deadline** (reason `closed`, `untilMs` null — neither kind has a reset;
-closure re-opens via the closure probes below or a credential change,
-logout-retention via usable credentials appearing again, so callers treat
-both as queue-indefinitely / surface to the user, never tick-retry); else
+else `!accountAvailable` → `queue_until` with **no deadline** (reason
+`closed`) — evaluated **independently and first**: no credential, no call,
+and `closureProbe` cannot bypass it (a health probe or manual Retry on a
+logged-out account would be an unauthenticated SDK call; those callers
+consult again after `auth.login`); else `closed && !closureProbe` →
+`queue_until` with **no deadline** (reason `closed`, `untilMs` null — the
+billing kind has no reset; it re-opens via the closure probes below or a
+credential change, so callers treat it as queue-indefinitely / surface to
+the user, never tick-retry); else
 saturated → `queue_until` with the registry's deadline; else
 probing without the grant → `queue_until` (reason `probing`, until = the probe
 tick); else if `configuredCap !== null && inFlight >= configuredCap` →
@@ -1113,9 +1123,11 @@ by pre-existing suites):
    consumed only by the outstanding probe's completion; evidence expiry at arm
    time; the
    clean-completion flag derived from turn classification, not iteration
-   fulfillment; **keying** — distinct effective `providerConfig` (apiKey /
-   baseUrl / region, normalized) produces distinct provider keys, absent ≡
-   effectively-default; **idempotent registration** — a parked job
+   fulfillment; **keying** — **credential-centric**: distinct effective
+   credential digests produce distinct keys; endpoint/region differences do
+   NOT (same credential through endpoints X and Y shares one key — X's limit
+   gates Y, per the keying contract); absent `providerConfig` ≡
+   effectively-default; stored-credential rotation changes the key; **idempotent registration** — a parked job
    re-consulting every probe tick never duplicates its uuid, grant identity is
    the composite `(sessionId, messageUuid)`, drain order is global arrival
    order (cross-session FIFO: A1, B1, A2), scan-past-manual never lets a
