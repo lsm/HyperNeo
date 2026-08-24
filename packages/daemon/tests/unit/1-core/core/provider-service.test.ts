@@ -950,6 +950,59 @@ describe('ProviderService', () => {
       expect(fetchCount).toBe(1);
     });
 
+    it('reuses the provider catalog across consecutive title selections', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      let fetchCount = 0;
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [
+            {
+              id: 'custom-turbo',
+              name: 'Custom Turbo',
+              alias: 'custom-turbo',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Turbo',
+              releaseDate: '',
+              available: true,
+            },
+            {
+              id: 'custom-1',
+              name: 'Custom Model 1',
+              alias: 'custom1',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Model 1',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => 'custom-1',
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      expect(await realService.getCheapTierModel('custom-endpoint')).toBe('custom-turbo');
+      expect(await realService.getCheapTierModel('custom-endpoint')).toBe('custom-turbo');
+      expect(await realService.getTitleGenerationModel('custom-endpoint', 'custom-1')).toBe(
+        'custom-turbo'
+      );
+      expect(fetchCount).toBe(1);
+    });
+
     it('re-reads curation after catalog discovery', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

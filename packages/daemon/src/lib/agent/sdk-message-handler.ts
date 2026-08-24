@@ -1315,7 +1315,10 @@ export class SDKMessageHandler {
     const primaryModelBeforeGuard = session.config.model;
     const scopedApiKeyBefore = session.config.providerConfig?.apiKey;
     const scopedBaseUrlBefore = session.config.providerConfig?.baseUrl;
-    const sessionScopedProvider = Boolean(scopedApiKeyBefore || scopedBaseUrlBefore);
+    const scopedRegionBefore = session.config.providerConfig?.region;
+    const sessionScopedProvider = Boolean(
+      scopedApiKeyBefore || scopedBaseUrlBefore || scopedRegionBefore
+    );
     const fallbackExcluded = sessionScopedProvider
       ? isCuratedOutModel(fallbackModel, providerId)
       : await isModelExcludedByCuration(fallbackModel, providerId);
@@ -1326,7 +1329,8 @@ export class SDKMessageHandler {
       liveConfig.fallbackModel !== configuredFallbackModel ||
       liveConfig.model !== primaryModelBeforeGuard ||
       liveConfig.providerConfig?.apiKey !== scopedApiKeyBefore ||
-      liveConfig.providerConfig?.baseUrl !== scopedBaseUrlBefore
+      liveConfig.providerConfig?.baseUrl !== scopedBaseUrlBefore ||
+      liveConfig.providerConfig?.region !== scopedRegionBefore
     ) {
       this.logger.warn(
         `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`

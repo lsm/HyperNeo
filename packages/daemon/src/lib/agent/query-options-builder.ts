@@ -306,7 +306,9 @@ export class QueryOptionsBuilder {
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
       const sessionScopedProvider = Boolean(
-        config.providerConfig?.apiKey || config.providerConfig?.baseUrl
+        config.providerConfig?.apiKey ||
+          config.providerConfig?.baseUrl ||
+          config.providerConfig?.region
       );
       const fallbackExcluded = sessionScopedProvider
         ? isCuratedOutModel(config.fallbackModel, providerId)
@@ -330,6 +332,7 @@ export class QueryOptionsBuilder {
     const configuredPrimaryModel = config.model;
     const configuredScopedApiKey = config.providerConfig?.apiKey;
     const configuredScopedBaseUrl = config.providerConfig?.baseUrl;
+    const configuredScopedRegion = config.providerConfig?.region;
     this.effectiveFallbackCaptured = true;
     this.effectiveFallbackModel = configuredFallbackModel;
 
@@ -407,7 +410,8 @@ export class QueryOptionsBuilder {
         }
         const sessionScopedProvider = Boolean(
           this.ctx.session.config.providerConfig?.apiKey ||
-            this.ctx.session.config.providerConfig?.baseUrl
+            this.ctx.session.config.providerConfig?.baseUrl ||
+            this.ctx.session.config.providerConfig?.region
         );
         const fallbackExcluded = sessionScopedProvider
           ? isCuratedOutModel(fallbackAtRequest, providerId)
@@ -421,7 +425,8 @@ export class QueryOptionsBuilder {
           configAfter.fallbackModel !== fallbackAtRequest ||
           configAfter.model !== configuredPrimaryModel ||
           configAfter.providerConfig?.apiKey !== configuredScopedApiKey ||
-          configAfter.providerConfig?.baseUrl !== configuredScopedBaseUrl
+          configAfter.providerConfig?.baseUrl !== configuredScopedBaseUrl ||
+          configAfter.providerConfig?.region !== configuredScopedRegion
         ) {
           return { behavior: 'cancelled' };
         }

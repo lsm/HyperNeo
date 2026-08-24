@@ -1096,7 +1096,8 @@ export async function resolveVisibleCanonicalModelId(
 
   if (cachedId) {
     if (liveModels === null) return cachedId;
-    return liveModels.some((model) => model.id === cachedId) ? cachedId : null;
+    if (liveModels.some((model) => model.id === cachedId)) return cachedId;
+    return findInModels(liveModels, idOrAlias)?.id ?? null;
   }
   if (liveModels === null) return null;
   return findInModels(liveModels, idOrAlias)?.id ?? null;

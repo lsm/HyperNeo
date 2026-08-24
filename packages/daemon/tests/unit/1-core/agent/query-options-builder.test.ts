@@ -250,6 +250,33 @@ describe('QueryOptionsBuilder', () => {
         }
       });
 
+      it('treats a region-scoped provider as session-scoped', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
+        try {
+          mockSession.config.fallbackModel = 'ghost-fallback';
+          mockSession.config.providerConfig = { region: 'global' };
+          const options = await builder.build();
+          expect(options.fallbackModel).toBeDefined();
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('declines the refusal dialog when the session region changes after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        mockSession.config.providerConfig = { region: 'china' };
+        const options = await builder.build();
+        mockSession.config = { ...mockSession.config, providerConfig: { region: 'global' } };
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
       it('declines the refusal dialog when the fallback changes during the async curation check', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
         try {

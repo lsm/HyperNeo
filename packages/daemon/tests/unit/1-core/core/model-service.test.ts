@@ -1986,6 +1986,55 @@ describe('Model Service', () => {
         true
       );
     });
+
+    it('retries a stale cached alias against the live catalog', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'ollama-new',
+            name: 'Ollama New',
+            alias: 'shared-alias',
+            family: 'llama',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'New',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-new' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'ollama-old',
+                name: 'Ollama Old',
+                alias: 'shared-alias',
+                family: 'llama',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Old',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      await expect(isModelExcludedByCuration('shared-alias', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('ollama-old', 'ollama')).resolves.toBe(true);
+    });
   });
 
   describe('getAvailableModels', () => {

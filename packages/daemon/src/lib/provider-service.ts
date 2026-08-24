@@ -86,8 +86,14 @@ function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
   return envVars;
 }
 
+const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
+
 export class ProviderService {
   private readonly logger = new Logger('provider-service');
+  private readonly catalogCache = new WeakMap<
+    RegisteredProvider,
+    { models: ModelInfo[]; at: number }
+  >();
 
   private getRegistry() {
     return initializeProviders();
@@ -222,19 +228,25 @@ export class ProviderService {
     providerId: string,
     provider: RegisteredProvider
   ): Promise<ModelInfo[]> {
-    try {
-      const models = await provider.getModels();
-      if (models.length > 0 || provider.hasCuratedModelList?.()) {
-        return models;
-      }
-      const curated = this.getRegistry().getCuratedModels(providerId);
-      if (curated !== undefined && curated.length === 0) {
-        return models;
-      }
-      return fallbackModelsFor(provider);
-    } catch {
-      return fallbackModelsFor(provider);
+    const cached = this.catalogCache.get(provider);
+    if (cached && Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS) {
+      return cached.models;
     }
+    let models: ModelInfo[];
+    try {
+      const fetched = await provider.getModels();
+      if (fetched.length > 0 || provider.hasCuratedModelList?.()) {
+        models = fetched;
+      } else {
+        const curated = this.getRegistry().getCuratedModels(providerId);
+        models =
+          curated !== undefined && curated.length === 0 ? fetched : fallbackModelsFor(provider);
+      }
+    } catch {
+      models = fallbackModelsFor(provider);
+    }
+    this.catalogCache.set(provider, { models, at: Date.now() });
+    return models;
   }
 
   private async resolveVisibleCuratedModel(
