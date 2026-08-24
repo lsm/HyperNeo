@@ -28,7 +28,7 @@ import type {
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
-import { ErrorManager, type StructuredError } from '../error-manager.ts';
+import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { SettingsManager } from '../settings-manager.ts';
@@ -124,7 +124,10 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
+import {
+  isSDKResultSuccess,
+  isSDKSessionStateChangedMessage,
+} from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import { resolveModelAlias } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
@@ -200,6 +203,13 @@ import {
   type SessionConfigHandlerContext,
 } from './session-config-handler.ts';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
+import {
+  buildTaskNotificationRequeryEscalationEvent,
+  TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+  TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+  resolveTaskNotificationRequery,
+  taskNotificationRequeryDelayMs,
+} from './task-notification-requery.ts';
 
 export class AgentSession
   implements
@@ -282,6 +292,19 @@ export class AgentSession
     observer: MessageDeliveryAttemptObserver;
     pendingStart?: boolean;
   } | null = null;
+
+  private taskNotificationRequeryAttempts = 0;
+  private taskNotificationRequeryExhausted = false;
+  private taskNotificationRequeryTimer: ReturnType<typeof setTimeout> | null = null;
+  private taskNotificationRequeryPending = false;
+  private taskNotificationRequeryPendingDelayMs: number | null = null;
+  private taskNotificationRequeryInterruptionGeneration: number | null = null;
+  private taskNotificationRequerySuppressedGeneration: number | null = null;
+  private taskNotificationRequeryContinueMessageId: string | null = null;
+  private taskNotificationRequeryEpisodeToken = 0;
+  private taskNotificationRequeryAwaitingSdkIdle = false;
+  private taskNotificationRequeryBusyInterruptGeneration: number | null = null;
+  private taskNotificationRequeryObservingResultDepth = 0;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -474,6 +497,7 @@ export class AgentSession
 
     this.stateManager.setOnIdleCallback(async () => {
       await this.lifecycleManager.executeDeferredRestartIfPending();
+      this.flushPendingTaskNotificationRequery();
       void this.reconcileStrandedDeliveries().catch((error) => {
         this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
       });
@@ -766,7 +790,7 @@ export class AgentSession
   ): Promise<
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
-    return withSessionLock(this.session.id, async () => {
+    const result = await withSessionLock(this.session.id, async () => {
       const result =
         mode === 'remove'
           ? this.db.deletePendingUserMessage(this.session.id, messageDbId)
@@ -785,6 +809,8 @@ export class AgentSession
         removedFromMemory,
       };
     });
+    this.flushPendingTaskNotificationRequery();
+    return result;
   }
 
   async handleInterrupt(opts?: {
@@ -793,8 +819,29 @@ export class AgentSession
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
     this.messageHandler.cancelSuppressedResultWait();
+    const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
+    if (
+      yieldedContinuationId &&
+      this.stateManager.getState().status === 'idle' &&
+      (this.messageQueue.isRunning() || this.queryPromise)
+    ) {
+      await this.stateManager.setProcessing(yieldedContinuationId, 'initializing');
+    }
 
     await this.interruptHandler.handleInterrupt(opts);
+  }
+
+  onInterruptRequested(): void {
+    const status = this.stateManager.getState().status;
+    if (status !== 'idle' && status !== 'interrupted') {
+      this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
+    } else if (
+      this.taskNotificationRequeryAwaitingSdkIdle ||
+      this.taskNotificationRequeryContinueMessageId !== null
+    ) {
+      this.taskNotificationRequeryBusyInterruptGeneration = this.getQueryGeneration();
+    }
+    this.resetTaskNotificationRequery();
   }
 
   isInterruptInProgress(): boolean {
@@ -1379,6 +1426,8 @@ export class AgentSession
 
   incrementQueryGeneration(): number {
     const next = ++this._queryGeneration;
+    this.taskNotificationRequeryAwaitingSdkIdle = false;
+    this.taskNotificationRequeryBusyInterruptGeneration = null;
     if (this.deliveryResponseObserver?.pendingStart) {
       this.deliveryResponseObserver.generation = next;
       this.deliveryResponseObserver.pendingStart = false;
@@ -1395,7 +1444,473 @@ export class AgentSession
   }
 
   async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
-    await this.messageHandler.handleMessage(message);
+    const queryGeneration = this.getQueryGeneration();
+    if (
+      this.session.config.provider !== 'acp' &&
+      isSDKSessionStateChangedMessage(message) &&
+      message.state !== 'idle'
+    ) {
+      this.taskNotificationRequeryAwaitingSdkIdle = true;
+    }
+    const observingResult = message.type === 'result';
+    if (observingResult) {
+      this.taskNotificationRequeryObservingResultDepth += 1;
+    }
+    try {
+      try {
+        await this.messageHandler.handleMessage(message);
+      } catch (error) {
+        if (this.getQueryGeneration() === queryGeneration) {
+          this.observeTaskNotificationResult(message);
+        }
+        throw error;
+      }
+      if (this.getQueryGeneration() !== queryGeneration) return;
+      this.observeTaskNotificationResult(message);
+    } finally {
+      if (observingResult) {
+        this.taskNotificationRequeryObservingResultDepth -= 1;
+        if (this.taskNotificationRequeryObservingResultDepth === 0) {
+          this.flushPendingTaskNotificationRequery();
+        }
+      }
+    }
+  }
+
+  private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
+    if (this.session.config.provider === 'acp') return;
+    if (isSDKSessionStateChangedMessage(message)) {
+      if (message.state === 'idle') {
+        this.taskNotificationRequeryAwaitingSdkIdle = false;
+        this.taskNotificationRequeryBusyInterruptGeneration = null;
+        this.flushPendingTaskNotificationRequery();
+      } else {
+        this.taskNotificationRequeryAwaitingSdkIdle = true;
+      }
+      return;
+    }
+    if (message.type !== 'result') return;
+    const parentToolUseId = (
+      message as import('@hyperneo/shared/sdk').SDKMessage & {
+        parent_tool_use_id?: string | null;
+      }
+    ).parent_tool_use_id;
+    if (parentToolUseId !== null && parentToolUseId !== undefined) return;
+    this.taskNotificationRequeryContinueMessageId = null;
+    const decision = resolveTaskNotificationRequery({
+      message,
+      attempts: this.taskNotificationRequeryAttempts,
+      exhausted: this.taskNotificationRequeryExhausted,
+      followUpQueued: this.hasQueuedFollowUpDelivery(),
+    });
+    if (decision.action === 'reset') {
+      this.resetTaskNotificationRequery();
+      return;
+    }
+    if (decision.action === 'hold') {
+      if (!this.taskNotificationRequeryExhausted && this.hasQueuedFollowUpDelivery()) {
+        this.taskNotificationRequeryEpisodeToken += 1;
+        this.clearTaskNotificationRequeryTimer();
+        this.taskNotificationRequeryPending = true;
+        this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
+          this.taskNotificationRequeryAttempts
+        );
+        this.attachTaskNotificationRequerySettlementWatcher();
+      }
+      return;
+    }
+    if (decision.action === 'escalate') {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryPending = false;
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
+    if (
+      this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration() ||
+      this.taskNotificationRequeryBusyInterruptGeneration === this.getQueryGeneration()
+    ) {
+      return;
+    }
+    this.taskNotificationRequeryEpisodeToken += 1;
+    this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
+    if (
+      !this.taskNotificationRequeryAwaitingSdkIdle &&
+      this.stateManager.getState().status === 'idle'
+    ) {
+      this.scheduleTaskNotificationRequery(decision.delayMs);
+    } else {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = decision.delayMs;
+      this.attachTaskNotificationRequerySettlementWatcher();
+    }
+  }
+
+  private hasQueuedFollowUpDelivery(): boolean {
+    if (this.messageQueue.size() > 0) return true;
+    const status = this.stateManager.getState().status;
+    if (status === 'queued' || status === 'waiting_for_input' || status === 'interrupted') {
+      return true;
+    }
+    const jobQueue = this.db.getJobQueueRepo?.();
+    const activeUuids = jobQueue?.activeDeliveryMessageUuids(this.session.id);
+    if (!activeUuids || activeUuids.size === 0) return false;
+    for (const uuid of activeUuids) {
+      const consumed = this.db.getMessageByStatusAndUuid?.(this.session.id, 'consumed', uuid);
+      if (!consumed) return true;
+    }
+    return false;
+  }
+
+  private scheduleTaskNotificationRequery(delayMs: number): void {
+    this.clearTaskNotificationRequeryTimer();
+    const timer = setTimeout(() => {
+      this.taskNotificationRequeryTimer = null;
+      void this.runTaskNotificationRequeryContinue();
+    }, delayMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.taskNotificationRequeryTimer = timer;
+    this.attachTaskNotificationRequerySettlementWatcher();
+  }
+
+  private attachTaskNotificationRequerySettlementWatcher(): void {
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
+    const owningQuery = this.queryPromise;
+    if (!owningQuery) return;
+    const onSettled = () => this.releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken);
+    void owningQuery.then(onSettled, onSettled);
+  }
+
+  private releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken: number): void {
+    if (
+      this._isCleaningUp ||
+      episodeToken !== this.taskNotificationRequeryEpisodeToken ||
+      (!this.taskNotificationRequeryAwaitingSdkIdle && !this.taskNotificationRequeryPending)
+    ) {
+      return;
+    }
+    this.taskNotificationRequeryAwaitingSdkIdle = false;
+    this.taskNotificationRequeryBusyInterruptGeneration = null;
+    this.flushPendingTaskNotificationRequery();
+  }
+
+  private clearTaskNotificationRequeryTimer(): void {
+    if (!this.taskNotificationRequeryTimer) return;
+    clearTimeout(this.taskNotificationRequeryTimer);
+    this.taskNotificationRequeryTimer = null;
+  }
+
+  resetTaskNotificationRequery(): void {
+    this.clearTaskNotificationRequeryTimer();
+    const continueMessageId = this.taskNotificationRequeryContinueMessageId;
+    if (continueMessageId) {
+      this.messageQueue.remove(continueMessageId);
+    }
+    this.taskNotificationRequeryAttempts = 0;
+    this.taskNotificationRequeryExhausted = false;
+    this.taskNotificationRequeryPending = false;
+    this.taskNotificationRequeryPendingDelayMs = null;
+    this.taskNotificationRequeryInterruptionGeneration = null;
+    this.taskNotificationRequeryContinueMessageId = null;
+    this.taskNotificationRequeryEpisodeToken += 1;
+  }
+
+  private flushPendingTaskNotificationRequery(): void {
+    if (this.taskNotificationRequeryObservingResultDepth > 0) return;
+    if (!this.taskNotificationRequeryPending) return;
+    this.taskNotificationRequeryPending = false;
+    const delayMs = this.taskNotificationRequeryPendingDelayMs ?? 0;
+    this.taskNotificationRequeryPendingDelayMs = null;
+    if (
+      this.taskNotificationRequeryInterruptionGeneration !== null &&
+      this.taskNotificationRequeryInterruptionGeneration !== this.getQueryGeneration()
+    ) {
+      this.logger.warn(
+        `task-notification requery: query replaced while a continuation was pending for session ` +
+          `${this.session.id}; dropping the stale episode`
+      );
+      this.resetTaskNotificationRequery();
+      return;
+    }
+    if (
+      this._isCleaningUp ||
+      this.stateManager.getState().status === 'rate_limit_cooldown' ||
+      this.taskNotificationRequeryAwaitingSdkIdle
+    ) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = delayMs;
+      return;
+    }
+    if (this.isLimitRecoveryPending()) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = delayMs;
+      this.scheduleTaskNotificationRequery(1000);
+      return;
+    }
+    if (this.stateManager.getState().status !== 'idle') {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = delayMs;
+      return;
+    }
+    this.scheduleTaskNotificationRequery(delayMs);
+  }
+
+  private async runTaskNotificationRequeryContinue(): Promise<void> {
+    if (this._isCleaningUp) return;
+    if (this.db.getSession(this.session.id)?.status === 'archived') return;
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
+    if (
+      this.taskNotificationRequeryInterruptionGeneration !== null &&
+      this.taskNotificationRequeryInterruptionGeneration !== this.getQueryGeneration()
+    ) {
+      this.logger.warn(
+        `task-notification requery: query replaced since the hollow result ` +
+          `(generation ${this.taskNotificationRequeryInterruptionGeneration} -> ` +
+          `${this.getQueryGeneration()}); standing down for session ${this.session.id}`
+      );
+      this.resetTaskNotificationRequery();
+      return;
+    }
+    if (
+      this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration() ||
+      this.taskNotificationRequeryBusyInterruptGeneration === this.getQueryGeneration()
+    ) {
+      return;
+    }
+    if (this.taskNotificationRequeryAwaitingSdkIdle) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = 0;
+      return;
+    }
+    if (this.hasQueuedFollowUpDelivery()) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = 0;
+      return;
+    }
+    if (this.stateManager.getState().status !== 'idle') {
+      this.taskNotificationRequeryPending = true;
+      return;
+    }
+    if (this.isLimitRecoveryPending()) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = 0;
+      this.scheduleTaskNotificationRequery(1000);
+      return;
+    }
+    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
+    if (!this.messageQueue.isRunning() || !this.queryPromise) {
+      if (!this.messageQueue.isRunning() && this.queryPromise) {
+        this.scheduleTaskNotificationRequery(200);
+        return;
+      }
+      if (this.session.config.queryMode === 'manual') {
+        this.logger.warn(
+          `task-notification requery: query is not live for manual-mode session ` +
+            `${this.session.id}; standing down in favor of the runtime idle-watch backstop`
+        );
+        return;
+      }
+      try {
+        const started = await this.lifecycleManager.ensureQueryStarted();
+        if (started === 'blocked') {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          return;
+        }
+        if (
+          this._isCleaningUp ||
+          episodeToken !== this.taskNotificationRequeryEpisodeToken ||
+          this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()
+        ) {
+          return;
+        }
+        if (this.hasQueuedFollowUpDelivery()) {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          return;
+        }
+        if (this.taskNotificationRequeryAwaitingSdkIdle) {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          return;
+        }
+        if (this.isLimitRecoveryPending()) {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          this.scheduleTaskNotificationRequery(1000);
+          return;
+        }
+        if (this.stateManager.getState().status !== 'idle') {
+          this.taskNotificationRequeryPending = true;
+          return;
+        }
+        this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
+      } catch (error) {
+        if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
+        this.logger.warn(
+          `task-notification requery: could not restart the dead query for session ` +
+            `${this.session.id}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.taskNotificationRequeryAttempts += 1;
+        this.handleTaskNotificationRequeryFailure();
+        return;
+      }
+    }
+    this.taskNotificationRequeryAttempts += 1;
+    this.taskNotificationRequeryPending = false;
+    this.taskNotificationRequeryPendingDelayMs = null;
+    const attempt = this.taskNotificationRequeryAttempts;
+    this.logger.warn(
+      `task-notification requery: turn ended on a hollow task-notification result; ` +
+        `issuing bare-continue follow-up turn ${attempt}/${TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS} ` +
+        `for session ${this.session.id}`
+    );
+    const continueMessageId = generateUUID();
+    this.taskNotificationRequeryContinueMessageId = continueMessageId;
+    try {
+      await this.messageQueue.enqueueWithId(
+        continueMessageId,
+        TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
+        true
+      );
+      const settledQuery = this.queryPromise;
+      if (settledQuery) {
+        const onSettled = () => this.recoverTaskNotificationRequeryAfterSettlement(episodeToken);
+        void settledQuery.then(onSettled, onSettled);
+      }
+    } catch (error) {
+      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
+      this.logger.warn(
+        `task-notification requery: bare-continue delivery failed for session ${this.session.id}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+      if (this.taskNotificationRequeryContinueMessageId === continueMessageId) {
+        this.taskNotificationRequeryContinueMessageId = null;
+      }
+      this.handleTaskNotificationRequeryFailure();
+    }
+  }
+
+  private recoverTaskNotificationRequeryAfterSettlement(episodeToken: number): void {
+    if (
+      this._isCleaningUp ||
+      this.taskNotificationRequeryExhausted ||
+      episodeToken !== this.taskNotificationRequeryEpisodeToken ||
+      this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration() ||
+      this.taskNotificationRequeryBusyInterruptGeneration === this.getQueryGeneration()
+    ) {
+      return;
+    }
+    this.taskNotificationRequeryAwaitingSdkIdle = false;
+    this.taskNotificationRequeryBusyInterruptGeneration = null;
+    this.taskNotificationRequeryPending = true;
+    this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
+      this.taskNotificationRequeryAttempts
+    );
+    this.flushPendingTaskNotificationRequery();
+  }
+
+  private handleTaskNotificationRequeryFailure(): void {
+    if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
+    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
+    this.scheduleTaskNotificationRequery(
+      taskNotificationRequeryDelayMs(this.taskNotificationRequeryAttempts)
+    );
+  }
+
+  private async escalateTaskNotificationRequeryExhaustion(): Promise<void> {
+    const attempts = this.taskNotificationRequeryAttempts;
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
+    const execution = this.db.getNodeExecutionRepo?.().getByAgentSessionId(this.session.id) ?? null;
+    const event = buildTaskNotificationRequeryEscalationEvent({
+      sessionId: this.session.id,
+      spaceId: this.session.context?.spaceId,
+      taskId: this.session.context?.taskId,
+      workflowRunId: execution?.workflowRunId,
+      attempts,
+      timestamp: new Date().toISOString(),
+    });
+    if (!event) {
+      this.logger.warn(
+        `task-notification requery budget exhausted after ${attempts} attempt(s) for session ` +
+          `${this.session.id}; needs attention: no space context resolved, surfacing a ` +
+          'recoverable session error'
+      );
+      await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
+      return;
+    }
+    this.logger.warn(
+      `task-notification requery budget exhausted after ${attempts} attempt(s); needs attention: ` +
+        `session=${this.session.id} run=${event.runId} task=${event.taskId}`
+    );
+    let payload: (typeof event & import('../internal-event-bus.ts').InternalEventPayload) | null =
+      null;
+    try {
+      payload = {
+        ...event,
+        handledBySpaceService: false,
+      } as typeof event & import('../internal-event-bus.ts').InternalEventPayload;
+      await this.internalEventBus.publish('space.workflowRun.needsAttention', payload);
+      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
+      if (!payload.handledBySpaceService) {
+        this.logger.warn(
+          `task-notification requery: needs-attention escalation had no handler for space ` +
+            `${event.spaceId}; surfacing a recoverable session error instead`
+        );
+        await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
+      }
+    } catch (error) {
+      if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
+      if (payload?.handledBySpaceService) {
+        this.logger.warn(
+          `task-notification requery: needs-attention escalation was delivered to space ` +
+            `${event.spaceId} despite a partial publish failure: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+        return;
+      }
+      this.logger.warn(
+        `task-notification requery: failed to publish needs-attention escalation: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+      await this.surfaceTaskNotificationRequeryExhaustionError(attempts, episodeToken);
+    }
+  }
+
+  private async surfaceTaskNotificationRequeryExhaustionError(
+    attempts: number,
+    episodeToken: number
+  ): Promise<void> {
+    if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
+    try {
+      await this.errorManager.handleError(
+        this.session.id,
+        new Error(`task-notification re-query budget exhausted after ${attempts} attempt(s)`),
+        ErrorCategory.SYSTEM,
+        'A background-task notification could not be delivered to the model after repeated ' +
+          'automatic retries. Send a message to continue the session and consume it.',
+        this.stateManager.getState(),
+        { taskNotificationRequeryAttempts: attempts },
+        () => episodeToken === this.taskNotificationRequeryEpisodeToken
+      );
+    } catch (error) {
+      this.logger.warn(
+        `task-notification requery: failed to surface exhaustion error: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   async onSlashCommandsFetched(): Promise<void> {
@@ -2535,6 +3050,7 @@ export class AgentSession
     }
     this.messageHandler.cancelSuppressedResultWait();
     this.clearDeliveryTurnStall();
+    this.resetTaskNotificationRequery();
     for (const unsub of this.deliveryErrorSubs) {
       try {
         unsub();

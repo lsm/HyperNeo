@@ -83,6 +83,8 @@ export interface SDKMessageHandlerContext {
 
   isLimitRecoveryPending?(): boolean;
 
+  resetTaskNotificationRequery?(): void;
+
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
 }
@@ -319,6 +321,7 @@ export class SDKMessageHandler {
 
     try {
       messageQueue.clear();
+      this.ctx.resetTaskNotificationRequery?.();
       this.resetCircuitBreaker();
       await internalEventBus.publish('session.errorClear', {
         sessionId: session.id,

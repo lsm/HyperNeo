@@ -2006,6 +2006,160 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('startup retry arm decision table', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    async function runStartupArmRow(row: {
+      attempt: number;
+      status: 'idle' | 'processing' | 'interrupted';
+      abort: boolean;
+      cleaning: boolean;
+      redeliver: 'none' | 'queue' | 'consumed';
+    }) {
+      if (row.status !== 'idle') {
+        getStateSpy.mockReturnValue({ status: row.status });
+      }
+
+      if (row.redeliver === 'queue') {
+        sizeSpy.mockReturnValue(1);
+      }
+
+      const abortController = new AbortController();
+      if (row.abort) {
+        abortController.abort();
+      }
+
+      const ctx = createContext({
+        isCleaningUp: () => row.cleaning,
+        queryAbortController: row.abort ? abortController : null,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as { _consumedUserMessages: Map<number, unknown[]> };
+
+      if (row.redeliver === 'consumed') {
+        runnerPrivate._consumedUserMessages.set(1, [
+          { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+        ]);
+      }
+
+      if (row.attempt === 0) {
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+      } else {
+        ctx.incrementQueryGeneration();
+        await (
+          runner as unknown as {
+            runQuery: (
+              queryGeneration: number,
+              retryAttempt: number,
+              recoveryState: { rateLimitCooldownScheduled: boolean }
+            ) => Promise<void>;
+          }
+        ).runQuery(1, 1, { rateLimitCooldownScheduled: false });
+      }
+    }
+
+    function assertStartupArmOutcome(row: {
+      attempt: number;
+      status: 'idle' | 'processing' | 'interrupted';
+      abort: boolean;
+      cleaning: boolean;
+      redeliver: 'none' | 'queue' | 'consumed';
+    }) {
+      const shouldRetry =
+        row.attempt === 0 &&
+        !row.cleaning &&
+        row.status !== 'interrupted' &&
+        row.redeliver !== 'none';
+      const shouldHandleError = !row.cleaning;
+      const buildCalls = shouldRetry ? 2 : 1;
+      const saveSDKMessageCalls = shouldRetry ? 1 : 0;
+      const terminateCalls = shouldRetry ? 1 : 0;
+      const clearCalls = shouldHandleError ? 1 : 0;
+      const enqueueCalls = shouldRetry && row.redeliver === 'consumed' ? 1 : 0;
+
+      expect(buildSpy).toHaveBeenCalledTimes(buildCalls);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(shouldHandleError ? 1 : 0);
+      expect(saveSDKMessageSpy).toHaveBeenCalledTimes(saveSDKMessageCalls);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(terminateCalls);
+      expect(clearSpy).toHaveBeenCalledTimes(clearCalls);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(enqueueCalls);
+
+      if (shouldRetry) {
+        expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+              content: expect.arrayContaining([
+                expect.objectContaining({
+                  text: expect.stringContaining('Retrying once'),
+                }),
+              ]),
+            }),
+          })
+        );
+
+        if (row.redeliver === 'consumed') {
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+            'consumed-uuid',
+            expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+            false,
+            { prepend: true }
+          );
+        }
+      }
+
+      if (shouldHandleError) {
+        expect(handleErrorSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.any(Error),
+          ErrorCategory.TIMEOUT,
+          expect.anything(),
+          expect.anything(),
+          expect.anything()
+        );
+      }
+    }
+
+    const attempts = [0, 1] as const;
+    const statuses = ['idle', 'processing', 'interrupted'] as const;
+    const aborts = [false, true] as const;
+    const cleanings = [false, true] as const;
+    const redelivers = ['none', 'queue', 'consumed'] as const;
+
+    for (const attempt of attempts) {
+      for (const status of statuses) {
+        for (const abort of aborts) {
+          for (const cleaning of cleanings) {
+            for (const redeliver of redelivers) {
+              const name = `attempt=${attempt} status=${status} abort=${abort} cleaning=${cleaning} redeliver=${redeliver}`;
+              it(name, async () => {
+                await runStartupArmRow({ attempt, status, abort, cleaning, redeliver });
+                assertStartupArmOutcome({ attempt, status, abort, cleaning, redeliver });
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
   describe('auto-recovery removal regression guards (Task 2.3)', () => {
     it('should not have onStartupTimeoutAutoRecover in QueryRunnerContext', () => {
       const ctx = createContext();
