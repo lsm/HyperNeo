@@ -189,8 +189,12 @@ export class SpaceAgentRepository {
               .prepare(`SELECT 1 FROM space_long_horizon_agents WHERE id = ? AND space_id = ?`)
               .get(id, row.space_id)
           : false;
-      if (hasInbox && !hasSiblingLhAgent) {
-        this.db.prepare(`DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ?`).run(id);
+      if (hasInbox && !hasSiblingLhAgent && row != null) {
+        this.db
+          .prepare(
+            `DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ? AND space_id = ?`
+          )
+          .run(id, row.space_id);
       }
       this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
     })();
