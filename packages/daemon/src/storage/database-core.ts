@@ -13,7 +13,12 @@ import { Logger } from '../lib/logger';
 import { runMessageSearchMerge } from '../lib/message-search-merge';
 import { DatabaseLock } from './database-lock';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability';
-import { configureMessageSearchFts, createTables, runMigrations } from './schema';
+import {
+  configureMessageSearchFts,
+  createTables,
+  reclaimPendingMigrationSpace,
+  runMigrations,
+} from './schema';
 import { Database as BunDatabase } from './sqlite-compat';
 
 const MIGRATION_BACKUP_RETENTION = 3;
@@ -68,7 +73,14 @@ export class DatabaseCore {
 
       this.db.exec('PRAGMA foreign_keys = ON');
 
-      runMigrations(this.db, () => this.createBackup());
+      const pendingSpaceReclaims = runMigrations(this.db, () => this.createBackup());
+      const reclaim = reclaimPendingMigrationSpace(this.db, pendingSpaceReclaims);
+      if (reclaim.kind === 'reclaimed') {
+        this.logger.info(
+          `[Database] Reclaimed space after ${reclaim.reclaimedMigrations} rewrite migrations` +
+            ` (${reclaim.freelistBefore} free pages${reclaim.vacuumed ? '' : ', no vacuum needed'})`
+        );
+      }
 
       createTables(this.db);
 

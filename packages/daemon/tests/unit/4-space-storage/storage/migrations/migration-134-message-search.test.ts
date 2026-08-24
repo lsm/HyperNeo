@@ -2,7 +2,11 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import { runMigration134, runMigration141 } from '../../../../../src/storage/schema/index.ts';
+import {
+  runMigration134,
+  runMigration141,
+  runMigration211,
+} from '../../../../../src/storage/schema/index.ts';
 
 function tableExists(db: BunDatabase, table: string): boolean {
   const row = db
@@ -83,7 +87,7 @@ describe('Migration 134: message search FTS', () => {
     expect(tableExists(db, 'message_search_fts')).toBe(true);
     const rows = db
       .prepare(
-        `SELECT msc.kind, msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+        `SELECT msc.kind, msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
       )
       .all('needle') as Array<{ kind: string; source_id: string }>;
     expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
@@ -110,7 +114,7 @@ describe('Migration 134: message search FTS', () => {
 
     const rows = db
       .prepare(
-        `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+        `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
       )
       .all('sentinel') as Array<{ source_id: string }>;
     expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
@@ -125,7 +129,7 @@ describe('Migration 134: message search FTS', () => {
 
     const rows = db
       .prepare(
-        `SELECT msc.kind, msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+        `SELECT msc.kind, msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
       )
       .all('needle') as Array<{ kind: string; source_id: string }>;
     expect(rows.map((row) => `${row.kind}:${row.source_id}`).sort()).toEqual([
@@ -155,7 +159,7 @@ describe('Migration 134: message search FTS', () => {
 
     const rows = db
       .prepare(
-        `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+        `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
       )
       .all('sentinel') as Array<{ source_id: string }>;
     expect(rows.map((row) => row.source_id)).toEqual(['sentinel']);
@@ -186,7 +190,7 @@ describe('Migration 134: message search FTS', () => {
       .prepare(
         `SELECT msc.kind, msc.source_id
 				 FROM message_search_fts
-				 JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				 JOIN message_search_content msc ON msc.id = message_search_fts.rowid
 				 WHERE message_search_fts MATCH ?`
       )
       .all('needle') as Array<{ kind: string; source_id: string }>;
@@ -194,6 +198,100 @@ describe('Migration 134: message search FTS', () => {
       'message:msg-1',
       'task:task-1',
     ]);
+  });
+
+  test('migration 211 gives legacy FTS content stable ids without losing search rows', () => {
+    seedSearchFixtures(db);
+    runMigration134(db);
+    db.exec(`
+      DROP TRIGGER message_search_content_ai;
+      DROP TRIGGER message_search_content_ad;
+      DROP TRIGGER message_search_content_au;
+      DROP TABLE message_search_fts;
+      ALTER TABLE message_search_content RENAME TO message_search_content_m211_seed;
+      CREATE TABLE message_search_content (
+        kind TEXT NOT NULL CHECK(kind IN ('message', 'task')),
+        source_id TEXT NOT NULL,
+        message_id TEXT,
+        session_id TEXT,
+        task_id TEXT,
+        space_id TEXT,
+        task_number INTEGER,
+        message_type TEXT,
+        title TEXT,
+        body TEXT,
+        timestamp INTEGER,
+        PRIMARY KEY (kind, source_id)
+      );
+      INSERT INTO message_search_content (
+        kind, source_id, message_id, session_id, task_id, space_id, task_number,
+        message_type, title, body, timestamp
+      )
+      SELECT
+        kind, source_id, message_id, session_id, task_id, space_id, task_number,
+        message_type, title, body, timestamp
+      FROM message_search_content_m211_seed;
+      DROP TABLE message_search_content_m211_seed;
+      CREATE VIRTUAL TABLE message_search_fts USING fts5(
+        title,
+        body,
+        content='message_search_content',
+        content_rowid='rowid',
+        detail=column,
+        tokenize = 'unicode61'
+      );
+      CREATE TRIGGER message_search_content_ai
+      AFTER INSERT ON message_search_content BEGIN
+        INSERT INTO message_search_fts(rowid, title, body)
+        VALUES (new.rowid, new.title, new.body);
+      END;
+      CREATE TRIGGER message_search_content_ad
+      AFTER DELETE ON message_search_content BEGIN
+        INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
+        VALUES ('delete', old.rowid, old.title, old.body);
+      END;
+      CREATE TRIGGER message_search_content_au
+      AFTER UPDATE OF title, body ON message_search_content BEGIN
+        INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
+        VALUES ('delete', old.rowid, old.title, old.body);
+        INSERT INTO message_search_fts(rowid, title, body)
+        VALUES (new.rowid, new.title, new.body);
+      END;
+      INSERT INTO message_search_fts(message_search_fts) VALUES('rebuild');
+    `);
+
+    const before = db
+      .prepare(
+        `SELECT msc.kind, msc.source_id
+         FROM message_search_fts
+         JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+         WHERE message_search_fts MATCH ?
+         ORDER BY msc.kind, msc.source_id`
+      )
+      .all('needle');
+
+    runMigration211(db);
+    db.exec('VACUUM');
+
+    const contentSql = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE name = 'message_search_content'`)
+      .get() as { sql: string };
+    const ftsSql = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE name = 'message_search_fts'`)
+      .get() as { sql: string };
+    expect(contentSql.sql).toContain('id INTEGER PRIMARY KEY');
+    expect(ftsSql.sql).toContain("content_rowid='id'");
+    expect(
+      db
+        .prepare(
+          `SELECT msc.kind, msc.source_id
+           FROM message_search_fts
+           JOIN message_search_content msc ON msc.id = message_search_fts.rowid
+           WHERE message_search_fts MATCH ?
+           ORDER BY msc.kind, msc.source_id`
+        )
+        .all('needle')
+    ).toEqual(before);
   });
 
   test('migration 141 prunes policy-excluded rows after legacy FTS upgrade', () => {
@@ -236,7 +334,7 @@ describe('Migration 134: message search FTS', () => {
       .prepare(
         `SELECT msc.source_id
 				 FROM message_search_fts
-				 JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				 JOIN message_search_content msc ON msc.id = message_search_fts.rowid
 				 WHERE message_search_fts MATCH ?`
       )
       .all('manual') as Array<{ source_id: string }>;

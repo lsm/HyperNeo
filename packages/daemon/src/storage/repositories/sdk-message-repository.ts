@@ -1789,12 +1789,12 @@ export class SDKMessageRepository {
       : '';
     let candidateSql = `
 			SELECT
-				msc.rowid,
+				msc.id,
 				${broadQuery ? '0' : 'bm25(message_search_fts)'} AS rank,
 				msc.timestamp,
 				msc.source_id
 			FROM message_search_fts
-			JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+			JOIN message_search_content msc ON msc.id = message_search_fts.rowid
 			${sessionJoin}
 			${taskJoin}
 			WHERE message_search_fts MATCH ?
@@ -1831,29 +1831,29 @@ export class SDKMessageRepository {
     values.push(limit, offset);
 
     const candidates = this.db.prepare(candidateSql).all(...values) as Array<{
-      rowid: number;
+      id: number;
       rank: number;
     }>;
     if (candidates.length === 0) return { results: [], limit, offset };
 
-    const rankByRowId = new Map(candidates.map((row) => [row.rowid, row.rank]));
-    const orderByRowId = new Map(candidates.map((row, index) => [row.rowid, index]));
+    const rankById = new Map(candidates.map((row) => [row.id, row.rank]));
+    const orderById = new Map(candidates.map((row, index) => [row.id, index]));
     const placeholders = candidates.map(() => '?').join(', ');
     const rawRows = this.db
       .prepare(
         `
 				SELECT
-					msc.rowid, msc.kind, msc.source_id, msc.message_id, msc.session_id, msc.task_id,
+					msc.id, msc.kind, msc.source_id, msc.message_id, msc.session_id, msc.task_id,
 					msc.space_id, msc.task_number, msc.message_type, msc.title,
 					snippet(message_search_fts, 1, '<mark>', '</mark>', '…', 16) AS snippet,
 					msc.timestamp
 				FROM message_search_fts
-				JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid
+				JOIN message_search_content msc ON msc.id = message_search_fts.rowid
 				WHERE message_search_fts.rowid IN (${placeholders})
 				  AND message_search_fts MATCH ?`
       )
-      .all(...candidates.map((row) => row.rowid), ftsQuery) as Array<{
-      rowid: number;
+      .all(...candidates.map((row) => row.id), ftsQuery) as Array<{
+      id: number;
       kind: 'message' | 'task';
       source_id: string;
       message_id: string | null;
@@ -1866,15 +1866,15 @@ export class SDKMessageRepository {
       snippet: string | null;
       timestamp: string | null;
     }>;
-    const seenRowId = new Set<number>();
+    const seenId = new Set<number>();
     const rows = rawRows.filter((row) => {
-      if (seenRowId.has(row.rowid)) return false;
-      seenRowId.add(row.rowid);
+      if (seenId.has(row.id)) return false;
+      seenId.add(row.id);
       return true;
     });
 
     const results: MessageSearchResult[] = rows
-      .sort((a, b) => (orderByRowId.get(a.rowid) ?? 0) - (orderByRowId.get(b.rowid) ?? 0))
+      .sort((a, b) => (orderById.get(a.id) ?? 0) - (orderById.get(b.id) ?? 0))
       .map((row) => {
         const timestamp = parseSearchTimestamp(row.timestamp);
         return {
@@ -1892,7 +1892,7 @@ export class SDKMessageRepository {
           loadTarget: row.session_id
             ? { sessionId: row.session_id, before: timestamp + 1 }
             : undefined,
-          rank: rankByRowId.get(row.rowid) ?? 0,
+          rank: rankById.get(row.id) ?? 0,
         };
       });
 
