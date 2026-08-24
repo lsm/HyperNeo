@@ -6,6 +6,7 @@ import {
   clearProviderFailure,
   classifyProviderFailure,
   getAllProviderFailures,
+  getProviderFailure,
   recordClassifiedProviderFailure,
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
@@ -118,7 +119,20 @@ const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
 
-const refreshedMissingProviders = new Set<string>();
+const PROVIDER_RETRY_BACKOFF_MS = 60_000;
+
+interface ProviderRetryEntry {
+  lastAttemptAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const providerRetryEntries = new Map<string, ProviderRetryEntry>();
+
+let providerRetryGeneration = 0;
+
+let modelLoadSequence = 0;
+
+const providerAppliedSeq = new Map<string, number>();
 
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
@@ -168,12 +182,18 @@ function getAvailableProviders(): Provider[] {
 function applyRefreshedModels(
   cacheKey: string,
   fetchedModels: ModelInfo[],
-  previousModels: ModelInfo[] | undefined
+  previousModels: ModelInfo[] | undefined,
+  supersededProviderIds: string[] = []
 ): void {
   if (fetchedModels.length > 0) {
     const mergedModels = mergeWithFallbackModels(fetchedModels);
     if (previousModels && previousModels.length > mergedModels.length) {
-      modelsCache.set(cacheKey, previousModels);
+      const superseded = new Set(supersededProviderIds);
+      const retainedPrevious = previousModels.filter((m) => !superseded.has(m.provider));
+      const supersededSlices = mergedModels.filter((m) => superseded.has(m.provider));
+      const overlaid =
+        superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
+      modelsCache.set(cacheKey, overlaid);
     } else {
       modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
     }
@@ -200,8 +220,14 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
     try {
       const result = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
-        applyProviderLoadOutcome(result);
-        applyRefreshedModels(cacheKey, result.models, previousModels);
+        const current = pruneSupersededProviders(result);
+        applyProviderLoadOutcome(current);
+        applyRefreshedModels(
+          cacheKey,
+          current.models,
+          previousModels,
+          current.supersededProviderIds
+        );
       }
       /* v8 ignore next 2 */
     } catch {}
@@ -234,7 +260,33 @@ interface ProviderLoadFailure {
 interface ModelsLoadResult {
   models: ModelInfo[];
   succeededProviderIds: string[];
+  loadedProviderIds: string[];
+  supersededProviderIds: string[];
   failures: ProviderLoadFailure[];
+  loadSeq: number;
+  providerIds: string[];
+}
+
+function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
+  const superseded = new Set(result.supersededProviderIds);
+  const newlySuperseded = result.providerIds.filter(
+    (providerId) =>
+      (providerAppliedSeq.get(providerId) ?? 0) > result.loadSeq && !superseded.has(providerId)
+  );
+  if (newlySuperseded.length === 0) return result;
+  for (const providerId of newlySuperseded) superseded.add(providerId);
+  const models = result.models.filter((m) => !m.provider || !superseded.has(m.provider));
+  for (const providerId of superseded) {
+    models.push(...(modelsCache.get('global')?.filter((m) => m.provider === providerId) ?? []));
+  }
+  return {
+    ...result,
+    models,
+    succeededProviderIds: result.succeededProviderIds.filter((id) => !superseded.has(id)),
+    loadedProviderIds: result.loadedProviderIds.filter((id) => !superseded.has(id)),
+    failures: result.failures.filter((f) => !superseded.has(f.providerId)),
+    supersededProviderIds: Array.from(superseded),
+  };
 }
 
 type ProviderModelLoadResult =
@@ -259,7 +311,11 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
     if (models.length > 0 || provider.hasCuratedModelList?.()) {
       return { status: 'loaded', models };
     }
-    return { status: 'failed', models: fallbackModelsFor(provider) };
+    return {
+      status: 'failed',
+      models: fallbackModelsFor(provider),
+      error: new Error('Provider returned no models'),
+    };
   } catch (error) {
     return { status: 'failed', models: fallbackModelsFor(provider), error };
   }
@@ -274,6 +330,7 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
     await waitForOptionalProviderRegistration(registry);
   }
   const providers = getAvailableProviders();
+  const loadSeq = ++modelLoadSequence;
 
   const results = await Promise.allSettled(
     providers.map((provider) => loadProviderModels(provider))
@@ -281,27 +338,43 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
 
   const allModels: ModelInfo[] = [];
   const succeededProviderIds: string[] = [];
+  const loadedProviderIds: string[] = [];
+  const supersededProviderIds: string[] = [];
   const failures: ProviderLoadFailure[] = [];
   results.forEach((result, index) => {
     const provider = providers[index];
     /* v8 ignore next 2 */
     if (result.status !== 'fulfilled') return;
+    if ((providerAppliedSeq.get(provider.id) ?? 0) > loadSeq) {
+      const cachedSlice =
+        modelsCache.get('global')?.filter((m) => m.provider === provider.id) ?? [];
+      allModels.push(...cachedSlice);
+      supersededProviderIds.push(provider.id);
+      return;
+    }
     allModels.push(...result.value.models);
-    if (result.value.status === 'failed') {
-      if (result.value.error !== undefined) {
-        failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
-      } else {
-        failures.push({
-          providerId: provider.id,
-          ...classifyProviderFailure(new Error('Provider returned no models')),
-        });
-      }
-    } else {
-      succeededProviderIds.push(provider.id);
+    if (result.value.status === 'failed' && result.value.error !== undefined) {
+      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+      return;
+    }
+    if (result.value.status === 'unavailable') {
+      return;
+    }
+    succeededProviderIds.push(provider.id);
+    if (result.value.status === 'loaded') {
+      loadedProviderIds.push(provider.id);
     }
   });
 
-  return { models: allModels, succeededProviderIds, failures };
+  return {
+    models: allModels,
+    succeededProviderIds,
+    loadedProviderIds,
+    supersededProviderIds,
+    failures,
+    loadSeq,
+    providerIds: providers.map((provider) => provider.id),
+  };
 }
 
 function applyProviderLoadOutcome(result: ModelsLoadResult): void {
@@ -309,17 +382,159 @@ function applyProviderLoadOutcome(result: ModelsLoadResult): void {
   for (const failure of getAllProviderFailures()) {
     if (!registry.has(failure.providerId)) {
       removeProviderFailure(failure.providerId);
+      clearProviderRetry(failure.providerId);
     }
   }
   for (const providerId of result.succeededProviderIds) {
+    providerAppliedSeq.set(providerId, result.loadSeq);
+  }
+  for (const providerId of result.loadedProviderIds) {
     clearProviderFailure(providerId);
+    clearProviderRetry(providerId);
+  }
+  for (const providerId of result.succeededProviderIds) {
+    if (result.loadedProviderIds.includes(providerId)) continue;
+    if (getProviderFailure(providerId)?.errorKind === 'transient') {
+      armProviderRetryTimer(providerId);
+    }
   }
   for (const failure of result.failures) {
     if (!registry.has(failure.providerId)) {
       continue;
     }
+    providerAppliedSeq.set(failure.providerId, result.loadSeq);
     recordClassifiedProviderFailure(failure.providerId, failure);
+    if (failure.errorKind === 'transient') {
+      armProviderRetryTimer(failure.providerId);
+    } else {
+      cancelProviderRetryTimer(failure.providerId);
+    }
   }
+}
+
+function getOrCreateProviderRetryEntry(providerId: string): ProviderRetryEntry {
+  let entry = providerRetryEntries.get(providerId);
+  if (!entry) {
+    entry = { lastAttemptAt: Date.now(), timer: null };
+    providerRetryEntries.set(providerId, entry);
+  }
+  return entry;
+}
+
+function cancelProviderRetryTimer(providerId: string): void {
+  const entry = providerRetryEntries.get(providerId);
+  if (!entry?.timer) return;
+  clearTimeout(entry.timer);
+  entry.timer = null;
+}
+
+function clearProviderRetry(providerId: string): void {
+  cancelProviderRetryTimer(providerId);
+  providerRetryEntries.delete(providerId);
+  providerProbesInFlight.delete(providerId);
+}
+
+function armProviderRetryTimer(providerId: string): void {
+  const entry = getOrCreateProviderRetryEntry(providerId);
+  if (entry.timer) return;
+  entry.lastAttemptAt = Date.now();
+  const timer = setTimeout(() => {
+    entry.timer = null;
+    entry.lastAttemptAt = Date.now();
+    void runScheduledProviderRetry(providerId);
+  }, PROVIDER_RETRY_BACKOFF_MS);
+  timer.unref?.();
+  entry.timer = timer;
+}
+
+function cancelAllProviderRetries(): void {
+  for (const entry of providerRetryEntries.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+  }
+  providerRetryEntries.clear();
+  providerAppliedSeq.clear();
+  providerProbesInFlight.clear();
+  providerRetryGeneration += 1;
+}
+
+function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
+  const cacheKey = 'global';
+  const pending = pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId));
+  const slice = pending ?? models;
+  const existing = modelsCache.get(cacheKey);
+  if (!existing || existing.length === 0) {
+    modelsCache.set(cacheKey, mergeWithFallbackModels(slice));
+    return;
+  }
+  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...slice]);
+}
+
+const PROVIDER_RETRY_PROBE_TIMEOUT_MS = 30_000;
+
+function raceProviderProbe<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+const providerProbesInFlight = new Map<string, Promise<ProviderModelLoadResult>>();
+
+async function runScheduledProviderRetry(providerId: string): Promise<void> {
+  const generationAtStart = providerRetryGeneration;
+  const probeSeq = ++modelLoadSequence;
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) {
+    providerRetryEntries.delete(providerId);
+    return;
+  }
+  if (providerProbesInFlight.has(providerId)) {
+    armProviderRetryTimer(providerId);
+    return;
+  }
+  const probe = loadProviderModels(provider);
+  providerProbesInFlight.set(providerId, probe);
+  void probe
+    .finally(() => {
+      if (providerProbesInFlight.get(providerId) === probe) {
+        providerProbesInFlight.delete(providerId);
+      }
+    })
+    .catch(() => {});
+  const result = await raceProviderProbe(probe, PROVIDER_RETRY_PROBE_TIMEOUT_MS);
+  if (
+    providerRetryGeneration !== generationAtStart ||
+    (providerAppliedSeq.get(providerId) ?? 0) > probeSeq
+  ) {
+    return;
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    armProviderRetryTimer(providerId);
+    return;
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
+    return;
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -363,7 +578,7 @@ export async function initializeModels(): Promise<void> {
       if (!isCurrentGeneration) {
         return;
       }
-      applyProviderLoadOutcome(result);
+      applyProviderLoadOutcome(pruneSupersededProviders(result));
       if (result.models.length > 0) {
         const mergedModels = mergePendingProviderSlices(
           cacheKey,
@@ -407,6 +622,9 @@ export function clearModelsCache(cacheKey?: string): void {
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
+    if (cacheKey === 'global') {
+      cancelAllProviderRetries();
+    }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
@@ -420,16 +638,23 @@ export function clearModelsCache(cacheKey?: string): void {
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
-    refreshedMissingProviders.clear();
+    cancelAllProviderRetries();
   }
 }
 
 export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
-  return refreshedMissingProviders.has(providerId);
+  const entry = providerRetryEntries.get(providerId);
+  if (entry && Date.now() - entry.lastAttemptAt < PROVIDER_RETRY_BACKOFF_MS) {
+    return true;
+  }
+  return getProviderFailure(providerId)?.errorKind === 'credential';
 }
 
 export function markRefreshAttemptedFor(providerIds: string[]): void {
-  for (const id of providerIds) refreshedMissingProviders.add(id);
+  const now = Date.now();
+  for (const id of providerIds) {
+    getOrCreateProviderRetryEntry(id).lastAttemptAt = now;
+  }
 }
 
 export async function refreshModels(signal?: AbortSignal): Promise<void> {
@@ -463,8 +688,9 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
     if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
       return;
     }
-    applyProviderLoadOutcome(result);
-    applyRefreshedModels(cacheKey, result.models, previousModels);
+    const current = pruneSupersededProviders(result);
+    applyProviderLoadOutcome(current);
+    applyRefreshedModels(cacheKey, current.models, previousModels, current.supersededProviderIds);
   })();
 
   refreshInProgress.set(cacheKey, refreshPromise);
