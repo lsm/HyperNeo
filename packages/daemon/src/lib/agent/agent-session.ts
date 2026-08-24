@@ -269,6 +269,7 @@ export class AgentSession
   private taskNotificationRequeryEpisodeToken = 0;
   private taskNotificationRequeryAwaitingSdkIdle = false;
   private taskNotificationRequeryBusyInterruptGeneration: number | null = null;
+  private taskNotificationRequerySuppressFlushWhileObserving = false;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -1416,9 +1417,22 @@ export class AgentSession
     ) {
       this.taskNotificationRequeryAwaitingSdkIdle = true;
     }
-    await this.messageHandler.handleMessage(message);
-    if (this.getQueryGeneration() !== queryGeneration) return;
-    this.observeTaskNotificationResult(message);
+    const observingResult = message.type === 'result';
+    if (observingResult) {
+      this.taskNotificationRequerySuppressFlushWhileObserving = true;
+    }
+    try {
+      await this.messageHandler.handleMessage(message);
+      if (this.getQueryGeneration() !== queryGeneration) return;
+      this.observeTaskNotificationResult(message);
+    } finally {
+      if (observingResult) {
+        this.taskNotificationRequerySuppressFlushWhileObserving = false;
+        if (this.getQueryGeneration() === queryGeneration) {
+          this.flushPendingTaskNotificationRequery();
+        }
+      }
+    }
   }
 
   private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
@@ -1458,6 +1472,7 @@ export class AgentSession
         this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
           this.taskNotificationRequeryAttempts
         );
+        this.attachTaskNotificationRequerySettlementWatcher();
       }
       return;
     }
@@ -1561,6 +1576,7 @@ export class AgentSession
   }
 
   private flushPendingTaskNotificationRequery(): void {
+    if (this.taskNotificationRequerySuppressFlushWhileObserving) return;
     if (!this.taskNotificationRequeryPending) return;
     this.taskNotificationRequeryPending = false;
     const delayMs = this.taskNotificationRequeryPendingDelayMs ?? 0;
@@ -1828,7 +1844,8 @@ export class AgentSession
         'A background-task notification could not be delivered to the model after repeated ' +
           'automatic retries. Send a message to continue the session and consume it.',
         this.stateManager.getState(),
-        { taskNotificationRequeryAttempts: attempts }
+        { taskNotificationRequeryAttempts: attempts },
+        () => episodeToken === this.taskNotificationRequeryEpisodeToken
       );
     } catch (error) {
       this.logger.warn(

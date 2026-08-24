@@ -140,6 +140,23 @@ describe('task-notification requery policy', () => {
       ).toEqual({ action: 'reset' });
     });
 
+    it('keeps an active episode armed across failed continuation results', () => {
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          attempts: 3,
+          message: buildApiErrorTerminalResult(),
+        })
+      ).toEqual({ action: 'requery', delayMs: taskNotificationRequeryDelayMs(3) });
+      expect(
+        resolveTaskNotificationRequery({
+          ...base,
+          attempts: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+          message: buildApiErrorTerminalResult(),
+        })
+      ).toEqual({ action: 'escalate' });
+    });
+
     it('holds on non-result and nested-result messages', () => {
       expect(
         resolveTaskNotificationRequery({ ...base, message: { type: 'user' } as SDKMessage })
@@ -1412,6 +1429,96 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       }
       return { delivered: 1, failures: [] };
     });
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
+      undefined
+    );
+  });
+
+  it('watches held follow-up episodes for query settlement', async () => {
+    const ensureQueryStarted = mock(async () => 'started' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    const holder: { resolve?: () => void } = {};
+    agentSession.queryPromise = new Promise<void>((resolve) => {
+      holder.resolve = resolve;
+    });
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    holder.resolve?.();
+    agentSession.queryPromise = null;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(continueCalls()).toBe(0);
+    expect(ensureQueryStarted.mock.calls.length).toBe(0);
+
+    activeDeliveryUuids.clear();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('observes real results before flushing pending continuations', async () => {
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+
+    const originalHandler = (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage;
+    (
+      agentSession.messageHandler as unknown as { handleMessage: (m: SDKMessage) => Promise<void> }
+    ).handleMessage = async (message: SDKMessage) => {
+      await (originalHandler as (m: SDKMessage) => Promise<void>).call(
+        agentSession.messageHandler,
+        message
+      );
+      if ((message as { type?: string }).type === 'result') {
+        await agentSession.stateManager.setIdle();
+      }
+    };
+
+    await agentSession.onSDKMessage(buildRealSuccessResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('suppresses the fallback publication when the episode resets inside handleError', async () => {
+    publishSpy.mockImplementation(async (event?: unknown) => {
+      if (event === 'space.workflowRun.needsAttention') {
+        throw new Error('bus boom');
+      }
+      return { delivered: 1, failures: [] };
+    });
+    const errorManagerRef = agentSession.errorManager as unknown as {
+      handleError: (...args: unknown[]) => Promise<unknown>;
+    };
+    const originalHandleError = errorManagerRef.handleError.bind(agentSession.errorManager);
+    errorManagerRef.handleError = async (...args: unknown[]) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      agentSession.resetTaskNotificationRequery();
+      return originalHandleError(...args);
+    };
     (
       agentSession as unknown as { taskNotificationRequeryAttempts: number }
     ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;

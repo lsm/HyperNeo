@@ -48,7 +48,13 @@ export function resolveTaskNotificationRequery(args: {
   const parentToolUseId = (args.message as SDKMessage & { parent_tool_use_id?: string | null })
     .parent_tool_use_id;
   if (parentToolUseId !== null && parentToolUseId !== undefined) return { action: 'hold' };
-  if (!isTopLevelHollowTaskNotificationResult(args.message)) return { action: 'reset' };
+  if (!isTopLevelHollowTaskNotificationResult(args.message)) {
+    const isError =
+      (args.message as SDKMessage & { is_error?: unknown }).is_error === true ||
+      typeof (args.message as SDKMessage & { terminal_reason?: unknown }).terminal_reason ===
+        'string';
+    if (!isError || args.attempts <= 0) return { action: 'reset' };
+  }
   if (args.followUpQueued) return { action: 'hold' };
   if (args.exhausted) return { action: 'hold' };
   if (args.attempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) return { action: 'escalate' };
