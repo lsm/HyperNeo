@@ -1078,6 +1078,70 @@ describe('Provider RPC handlers', () => {
       expect(afterIds).not.toContain('refreshed-a');
     });
 
+    it('retains the deferred slice for the next initialization when no load is in flight', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const refreshed = [makeDiscoveredModel('refreshed-a')];
+      registerRemoteProvider({
+        listRemoteModels: async () => refreshed,
+        getModels: async () => refreshed,
+      });
+      getProviderRegistry().register({
+        id: 'later-provider',
+        isAvailable: async () => true,
+        getModels: async () => [
+          { ...makeDiscoveredModel('later-model'), provider: 'later-provider' },
+        ],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      await initializeModels();
+
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('refreshed-a');
+      expect(ids).toContain('later-model');
+    });
+
+    it('strips persisted discovery when an update changes the effective configuration', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china', extra: true }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
+
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: JSON.stringify({ region: 'global' }) } },
+        {}
+      );
+
+      const updated = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(updated.region).toBe('global');
+      expect(updated).not.toHaveProperty('discoveredModels');
+    });
+
     it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {
       const created = repo.createProvider({
         providerId: 'remote',

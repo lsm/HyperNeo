@@ -375,6 +375,20 @@ function persistLastGoodDiscoveredModels(
   return lastGood.truncated === true;
 }
 
+function stripPersistedDiscovery(configJson: string | undefined): string | undefined {
+  if (!configJson) return configJson;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(configJson) as Record<string, unknown>;
+  } catch {
+    return configJson;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return configJson;
+  if (!(LAST_GOOD_DISCOVERY_KEY in parsed)) return configJson;
+  delete parsed[LAST_GOOD_DISCOVERY_KEY];
+  return JSON.stringify(parsed);
+}
+
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
@@ -485,9 +499,20 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         releaseAppliedProviderSlice(record.providerId);
       } else {
         const inFlight = getCurrentCacheLoad();
-        if (inFlight) await inFlight.catch(() => {});
-        applyDiscoveredProviderModels(record.providerId, models);
-        releaseAppliedProviderSlice(record.providerId);
+        if (inFlight) {
+          await inFlight.catch(() => {});
+          const supersededDuringWait =
+            getModelsCacheClearSequence() !== clearsAtStart ||
+            JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
+            !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig);
+          if (supersededDuringWait) {
+            providerRepo.updateProvider(request.id, { configJson: record.configJson });
+            return { success: false, reason: 'superseded' };
+          }
+          if (applyDiscoveredProviderModels(record.providerId, models)) {
+            releaseAppliedProviderSlice(record.providerId);
+          }
+        }
       }
       const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
       if (!recoveredFailure) notifyProvidersChanged(internalEventBus);
@@ -644,6 +669,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 data.credentials
               );
               await syncProviderToRegistry(record, creds);
+            }
+            const strippedConfig = stripPersistedDiscovery(
+              providerRepo.getProvider(data.id)?.configJson
+            );
+            if (strippedConfig !== record.configJson) {
+              providerRepo.updateProvider(data.id, { configJson: strippedConfig });
             }
           }
 
