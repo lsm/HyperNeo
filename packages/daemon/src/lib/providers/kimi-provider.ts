@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  ListRemoteModelsOptions,
   ModelTier,
   Provider,
   ProviderAuthStatusInfo,
@@ -10,6 +11,11 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import {
+  buildModelListUrl,
+  fetchRemoteModelList,
+  type RemoteModelListEntry,
+} from './shared/model-list.js';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -131,6 +137,7 @@ export class KimiProvider implements Provider {
   private defaultRegion: KimiRegion = 'china';
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
 
   constructor(
@@ -144,6 +151,7 @@ export class KimiProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
+    this.modelListCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -335,6 +343,22 @@ export class KimiProvider implements Provider {
     return KimiProvider.MODELS;
   }
 
+  async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
+    }
+    const region = this.resolveDiscoveryRegion(options.baseUrl);
+    const baseUrl = options.baseUrl ?? KimiProvider.getOpenAiBaseUrlForRegion(region);
+    const models = await fetchRemoteModelList({
+      url: buildModelListUrl(baseUrl, 'openai-chat'),
+      headers: { Authorization: `Bearer ${apiKey}` },
+      force: options.force,
+      cache: options.baseUrl === undefined ? this.modelListCache : undefined,
+    });
+    return models.map((model) => this.toRemoteModelInfo(model));
+  }
+
   ownsModel(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
     return (
@@ -473,6 +497,33 @@ export class KimiProvider implements Provider {
 
   getTitleGenerationModel(): string {
     return KimiProvider.DEFAULT_MODEL;
+  }
+
+  private resolveDiscoveryRegion(baseUrl?: string): KimiRegion {
+    const explicitRegion = this.env.KIMI_REGION;
+    if (explicitRegion) return resolveKimiRegion(explicitRegion);
+    const configuredBaseUrl = baseUrl ?? this.env.KIMI_BASE_URL;
+    return configuredBaseUrl
+      ? (KimiProvider.resolveRegionFromBaseUrl(configuredBaseUrl) ?? this.defaultRegion)
+      : this.defaultRegion;
+  }
+
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
+    const staticModel = KimiProvider.MODELS.find((candidate) => candidate.id === model.id);
+    if (staticModel) return staticModel;
+    return {
+      id: model.id,
+      name: model.name ?? model.id,
+      alias: model.id,
+      family: 'kimi',
+      provider: this.id,
+      contextWindow: this.capabilities.maxContextWindow,
+      preferContextWindowMetadata: true,
+      thinkingModes: this.capabilities.thinkingModes,
+      description: `${model.name ?? model.id} via Kimi`,
+      releaseDate: '',
+      available: true,
+    };
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
