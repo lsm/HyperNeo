@@ -3500,6 +3500,8 @@ export class TaskAgentManager {
           processingStatus: state.status,
           inRateLimitCooldown,
           parentTaskLimited: parentLimited,
+          inputKind,
+          isSynthetic: isSyntheticMessage,
         });
       }
       if (capFold) {
@@ -3511,6 +3513,8 @@ export class TaskAgentManager {
           processingStatus: state.status,
           inRateLimitCooldown,
           parentTaskLimited: parentLimited,
+          inputKind,
+          isSynthetic: isSyntheticMessage,
         });
       }
       return deferredDbId;
@@ -3671,12 +3675,16 @@ export class TaskAgentManager {
     processingStatus: string;
     inRateLimitCooldown: boolean;
     parentTaskLimited: boolean;
+    inputKind: MessageInputKind;
+    isSynthetic: boolean;
   }): void {
     if (!isMessageDeliveryV2Enabled()) return;
     if (
       args.processingStatus !== 'processing' ||
       args.inRateLimitCooldown ||
-      args.parentTaskLimited
+      args.parentTaskLimited ||
+      !args.isSynthetic ||
+      args.inputKind !== 'system'
     ) {
       return;
     }
@@ -4001,6 +4009,18 @@ export class TaskAgentManager {
         );
         return;
       }
+    }
+    const postPassengerSession = this.getTrackedSession(sessionId);
+    if (
+      !postPassengerSession ||
+      postPassengerSession.getProcessingState().status !== 'processing'
+    ) {
+      log.debug(
+        `TaskAgentManager: direct steer for session ${sessionId} aborted — session left ` +
+          `processing while preserving passengers; rows stay deferred`
+      );
+      discardPassengerCopy();
+      return;
     }
     const eventCount = steerEssences.length;
     const steerText = buildExternalEventDigestMessage(steerEssences, {

@@ -160,6 +160,7 @@ interface Harness {
   memoryQueue: Array<{ messageId: string; content: unknown }>;
   setFailJobEnqueue(value: boolean): void;
   setProcessingStatus(status: string): void;
+  setPublishSideEffect(fn: ((payload: Record<string, unknown>) => void) | null): void;
   eventPayloads: Map<string, Record<string, unknown>>;
 }
 
@@ -172,6 +173,7 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
   let processingStatus = processingStatusArg;
   let failJobEnqueue = false;
   const eventPayloads = new Map<string, Record<string, unknown>>();
+  let publishSideEffect: ((payload: Record<string, unknown>) => void) | null = null;
 
   const session = {
     session: { id: SESSION_ID },
@@ -238,7 +240,9 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     },
     internalEventBus: {
       subscribe: mock(() => () => {}),
-      publish: mock(async () => {}),
+      publish: mock(async (_event: string, payload: Record<string, unknown>) => {
+        publishSideEffect?.(payload);
+      }),
     },
     nodeExecutionRepo: {
       getByAgentSessionId: () => null,
@@ -284,6 +288,9 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     },
     setProcessingStatus: (status: string) => {
       processingStatus = status;
+    },
+    setPublishSideEffect: (fn) => {
+      publishSideEffect = fn;
     },
     eventPayloads,
   };
@@ -1122,6 +1129,71 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(humanDeferredRows).toHaveLength(1);
     expect(harness.rows.find((row) => row.status === 'failed')).toBeDefined();
     expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+  });
+
+  it('does not steer human-injected messages even when they contain event-shaped JSON', async () => {
+    const harness = makeHarness();
+    await harness.manager.injectSubSessionMessage(
+      SESSION_ID,
+      reviewVerdictText('CHANGES_REQUESTED', 'human-paste'),
+      false,
+      undefined,
+      'defer',
+      'human'
+    );
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    expect(steerRows(harness.rows)).toHaveLength(0);
+    expect(steerJobs(harness.jobs)).toHaveLength(0);
+    expect(harness.rows[0]?.status).toBe('deferred');
+    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+  });
+
+  it('aborts the steer when the session leaves processing during passenger preservation', async () => {
+    const harness = makeHarness();
+    let deferredPublishes = 0;
+    harness.setPublishSideEffect((payload) => {
+      if (payload.status !== 'deferred') return;
+      deferredPublishes += 1;
+      if (deferredPublishes === 2) harness.setProcessingStatus('idle');
+    });
+    const essences = [
+      {
+        eventId: 'yield-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        eventType: 'pull_request_review_comment',
+        actor: 'codex[bot]',
+        body: 'bot feedback yield',
+        commentId: 'c-yield',
+      },
+      {
+        eventId: 'yield-human',
+        topic: 'github/lsm/hyperneo/pull_request/2828.comment_polled',
+        eventType: 'issue_comment',
+        action: 'polled',
+        actor: 'lsm',
+        body: 'YIELD_HUMAN_NOTE',
+        commentId: 'c-yield-human',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    expect(steerRows(harness.rows)).toHaveLength(0);
+    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+    const sourceRow = harness.rows.find((row) => rowText(row.message).includes('yield-review'));
+    expect(sourceRow?.status).toBe('deferred');
+    const humanMentioningRows = harness.rows.filter((row) =>
+      rowText(row.message).includes('YIELD_HUMAN_NOTE')
+    );
+    expect(humanMentioningRows).toHaveLength(2);
+    expect(humanMentioningRows.every((row) => row.status === 'deferred')).toBe(false);
+    const passengerCopyConsumed = harness.statusUpdates.some(
+      ({ dbIds, status }) => status === 'consumed' && dbIds.length === 1
+    );
+    expect(passengerCopyConsumed).toBe(true);
   });
 
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
