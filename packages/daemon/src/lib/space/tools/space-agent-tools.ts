@@ -461,6 +461,8 @@ export interface SpaceAgentToolsConfig {
     ) => Promise<string | null | undefined>;
   };
   externalEventStore?: ExternalEventStore;
+  inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
+  inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
 }
 
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
@@ -5295,6 +5297,92 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         }
       )
     );
+  }
+
+  if (config.inactivityConfigRepo) {
+    tools.push(
+      tool(
+        'inactivity_config_get',
+        "Return this agent's inactivity watchdog configuration: enabled, idle threshold in ms, nag prompt, and config revision.",
+        {},
+        async () => {
+          if (!config.myAgentId) {
+            throw new Error('No agent identity available for inactivity config');
+          }
+          const cfg = config.inactivityConfigRepo?.getByAgent(config.spaceId, config.myAgentId);
+          return { content: [{ type: 'text' as const, text: JSON.stringify(cfg ?? null) }] };
+        }
+      ),
+      tool(
+        'inactivity_config_set_enabled',
+        'Enable, pause, or resume the inactivity watchdog for this agent. Pausing keeps the threshold and prompt but stops new nags until resumed.',
+        {
+          enabled: z.boolean().describe('true to enable or resume, false to pause'),
+        },
+        async (args) => {
+          if (!config.myAgentId) {
+            throw new Error('No agent identity available for inactivity config');
+          }
+          const cfg = config.inactivityConfigRepo?.setEnabled(
+            config.spaceId,
+            config.myAgentId,
+            args.enabled
+          );
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({ ok: true, enabled: cfg?.enabled ?? args.enabled }),
+              },
+            ],
+          };
+        }
+      ),
+      tool(
+        'inactivity_config_set',
+        'Adjust the inactivity watchdog threshold (ms of idleness before a nag) or the nag prompt for this agent. Changing either bumps the config revision so a pending nag revalidates against the new settings.',
+        {
+          threshold_ms: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe('Idle time in milliseconds before the agent is nagged'),
+          prompt: z
+            .string()
+            .optional()
+            .describe('Custom nag prompt; pass an empty string to clear'),
+        },
+        async (args) => {
+          if (!config.myAgentId) {
+            throw new Error('No agent identity available for inactivity config');
+          }
+          config.inactivityConfigRepo?.upsert({
+            spaceId: config.spaceId,
+            agentId: config.myAgentId,
+            thresholdMs: args.threshold_ms,
+            prompt: args.prompt,
+          });
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] };
+        }
+      )
+    );
+    if (config.inactivityRunNow) {
+      tools.push(
+        tool(
+          'inactivity_run_now',
+          'Run the inactivity watchdog scan for this agent immediately, through the same admission gates as the periodic scan.',
+          {},
+          async () => {
+            if (!config.myAgentId) {
+              throw new Error('No agent identity available for inactivity config');
+            }
+            await config.inactivityRunNow?.(config.spaceId, config.myAgentId);
+            return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true }) }] };
+          }
+        )
+      );
+    }
   }
 
   const server = createSdkMcpServer({ name: 'space-agent', tools });

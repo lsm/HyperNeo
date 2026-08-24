@@ -162,6 +162,8 @@ export interface SpaceRuntimeServiceConfig {
   evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
+  inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
+  inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
 }
 
 export class SpaceRuntimeService {
@@ -1130,6 +1132,8 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
+      inactivityConfigRepo: this.config.inactivityConfigRepo,
+      inactivityRunNow: this.config.inactivityRunNow,
     });
   }
 
