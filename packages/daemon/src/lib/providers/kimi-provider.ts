@@ -367,9 +367,17 @@ export class KimiProvider implements Provider {
     for (const curated of this.curatedModels) {
       if (!this.ownsModel(curated.id)) continue;
       const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
-      if (info && !present.has(info.id)) {
-        merged.push(info);
-        present.add(info.id);
+      if (!info) continue;
+      if (info.id === curated.id) {
+        if (!present.has(info.id)) {
+          merged.push(info);
+          present.add(info.id);
+        }
+        continue;
+      }
+      if (!present.has(curated.id)) {
+        merged.push({ ...info, id: curated.id, name: curated.name ?? info.name });
+        present.add(curated.id);
       }
     }
     return merged;
@@ -473,7 +481,7 @@ export class KimiProvider implements Provider {
     if (id === 'k3' || id === 'kimi-k3' || id === 'moonshot-k3' || id.startsWith('moonshot-k3-')) {
       return (useLegacy ? 'k3' : 'kimi-k3') + (oneM ? '[1m]' : '');
     }
-    if (oneM) {
+    if (oneM && KimiProvider.isDiscoveredKimiModelId(modelId)) {
       return modelId;
     }
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {

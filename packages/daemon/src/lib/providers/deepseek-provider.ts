@@ -147,9 +147,17 @@ export class DeepSeekProvider implements Provider {
     for (const curated of this.curatedModels) {
       if (!this.ownsModel(curated.id)) continue;
       const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
-      if (info && !present.has(info.id)) {
-        merged.push(info);
-        present.add(info.id);
+      if (!info) continue;
+      if (info.id === curated.id) {
+        if (!present.has(info.id)) {
+          merged.push(info);
+          present.add(info.id);
+        }
+        continue;
+      }
+      if (!present.has(curated.id)) {
+        merged.push({ ...info, id: curated.id, name: curated.name ?? info.name });
+        present.add(curated.id);
       }
     }
     return merged;

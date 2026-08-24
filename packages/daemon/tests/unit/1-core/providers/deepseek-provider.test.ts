@@ -68,7 +68,11 @@ describe('DeepSeekProvider', () => {
       async () => new Response('{}', { status: 200 })
     ) as unknown as typeof fetch;
     const provider = new DeepSeekProvider(process.env, fetchImpl);
-    provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }, { id: 'glm-5' }]);
+    provider.setCuratedModels([
+      { id: 'deepseek-v5', name: 'DeepSeek V5' },
+      { id: 'deepseek-pro' },
+      { id: 'glm-5' },
+    ]);
 
     const models = await provider.getModels();
 
@@ -76,6 +80,7 @@ describe('DeepSeekProvider', () => {
       'deepseek-v4-pro',
       'deepseek-v4-flash',
       'deepseek-v5',
+      'deepseek-pro',
     ]);
     expect(models.find((m) => m.id === 'deepseek-v5')).toMatchObject({
       name: 'DeepSeek V5',
@@ -84,6 +89,10 @@ describe('DeepSeekProvider', () => {
       provider: 'deepseek',
       contextWindow: 128_000,
       available: true,
+    });
+    expect(models.find((m) => m.id === 'deepseek-pro')).toMatchObject({
+      name: 'DeepSeek V4 Pro',
+      contextWindow: 1_000_000,
     });
 
     provider.setCuratedModels(undefined);

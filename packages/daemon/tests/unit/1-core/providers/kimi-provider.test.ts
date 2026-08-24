@@ -119,6 +119,7 @@ describe('KimiProvider', () => {
       provider = makeProbeOkProvider();
       provider.setCuratedModels([
         { id: 'kimi-k4', name: 'Kimi K4' },
+        { id: 'kimi-k3' },
         { id: 'kimi-for-coding' },
         { id: 'gpt-4o' },
       ]);
@@ -131,6 +132,7 @@ describe('KimiProvider', () => {
         'kimi-k2.7-code-highspeed',
         'kimi-for-coding',
         'kimi-k4',
+        'kimi-k3',
       ]);
       const synthesized = models.find((m) => m.id === 'kimi-k4');
       expect(synthesized).toMatchObject({
@@ -141,6 +143,11 @@ describe('KimiProvider', () => {
         contextWindow: 262_144,
         thinkingModes: 'on',
         available: true,
+      });
+      expect(models.find((m) => m.id === 'kimi-k3')).toMatchObject({
+        name: 'Kimi K3',
+        contextWindow: 1_048_576,
+        thinkingModes: 'granular',
       });
 
       provider.setCuratedModels(undefined);
@@ -634,6 +641,7 @@ describe('KimiProvider', () => {
       expect(provider.buildSdkConfig('moonshot-k30').envVars.ANTHROPIC_MODEL).toBe('moonshot-k30');
       expect(provider.translateModelIdForSdk('moonshot-k30')).toBe('moonshot-k30');
       expect(findInModels(KimiProvider.MODELS, 'moonshot-k30')).toBeUndefined();
+      expect(findInModels(KimiProvider.MODELS, 'moonshot-k3[1m]')?.id).toBe('kimi-k3[1m]');
       expect(provider.getModelThinkingMode('moonshot-v1-32k')).toBeUndefined();
 
       const suffixed = provider.buildSdkConfig('kimi-k2.7-code[1m]');
@@ -650,8 +658,12 @@ describe('KimiProvider', () => {
       expect(provider.ownsModel('moonshot-k3:latest')).toBe(false);
 
       const config = provider.buildSdkConfig('gpt-4o');
+      const suffixedForeign = provider.buildSdkConfig('gpt-4o[1m]');
+      const suffixedColonTagged = provider.buildSdkConfig('moonshot-k4:latest[1m]');
 
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+      expect(suffixedForeign.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+      expect(suffixedColonTagged.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
     });
   });
 

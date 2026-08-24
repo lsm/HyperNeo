@@ -805,10 +805,11 @@ export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo 
     for (const model of models) {
       for (const rawPrefix of model.providerAliasPrefixes ?? []) {
         const prefix = rawPrefix.toLowerCase();
-        if (
-          (normalized === prefix || normalized.startsWith(`${prefix}-`)) &&
-          (!bestPrefix || prefix.length > bestPrefix.length)
-        ) {
+        const boundary =
+          normalized === prefix ||
+          normalized.startsWith(`${prefix}-`) ||
+          normalized.startsWith(`${prefix}[`);
+        if (boundary && (!bestPrefix || prefix.length > bestPrefix.length)) {
           bestPrefix = { model, length: prefix.length };
         }
       }
