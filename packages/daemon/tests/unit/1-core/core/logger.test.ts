@@ -89,6 +89,22 @@ describe('Logger', () => {
       expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(calls[1]).toContain('hyperneo:daemon:testprefix');
       expect(calls[2]).toBe('info message');
+      expect(calls.at(-1)).toMatch(/^\+\d+ms$/);
+    });
+
+    test('reports elapsed time across daemon Logger instances', () => {
+      const now = Date.now;
+      const start = now();
+      const timestamps = [start + 1_000, start + 1_145];
+      Date.now = () => timestamps.shift() ?? 0;
+      try {
+        new Logger('First').info('first message');
+        new Logger('Second').warn('second message');
+      } finally {
+        Date.now = now;
+      }
+
+      expect(consoleSpy.warn.mock.calls[0].at(-1)).toBe('+145ms');
     });
 
     test('debug should NOT output at INFO level', () => {

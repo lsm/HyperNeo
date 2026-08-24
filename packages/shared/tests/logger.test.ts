@@ -553,6 +553,33 @@ describe('Logger', () => {
     });
   });
 
+  describe('console deltas', () => {
+    test('appends elapsed time since the previous opted-in Logger console line', () => {
+      const now = Date.now;
+      const start = now();
+      const timestamps = [start + 1_000, start + 1_145];
+      Date.now = () => timestamps.shift() ?? 0;
+      try {
+        createLogger('first', { consoleDeltas: true }).info('first message');
+        createLogger('second', { consoleDeltas: true }).warn('second message');
+      } finally {
+        Date.now = now;
+      }
+
+      expect(consoleInfoMock.mock.calls[0].at(-1)).toMatch(/^\+\d+ms$/);
+      expect(consoleWarnMock.mock.calls[0].at(-1)).toBe('+145ms');
+    });
+
+    test('does not include console deltas in structured events', () => {
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+
+      createLogger('test', { consoleDeltas: true }).info('structured message');
+
+      expect(events[0]).toMatchObject({ message: 'structured message' });
+    });
+  });
+
   describe('timestamps', () => {
     test('should include timestamps when enabled', () => {
       configureLogger({ timestamps: true });

@@ -15,7 +15,9 @@ export class Logger {
   private sharedLogger: SharedLogger;
 
   constructor(prefix: string) {
-    this.sharedLogger = createLogger(`hyperneo:daemon:${prefix.toLowerCase()}`);
+    this.sharedLogger = createLogger(`hyperneo:daemon:${prefix.toLowerCase()}`, {
+      consoleDeltas: true,
+    });
   }
 
   log(...args: unknown[]): void {
