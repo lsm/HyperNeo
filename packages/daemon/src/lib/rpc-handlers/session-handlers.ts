@@ -777,14 +777,15 @@ export function setupSessionHandlers(
       }
 
       let availableModels = getAvailableModels('global');
+      const cachePopulated = getModelsCache().has('global');
 
-      if (!forceRefresh && availableModels.length === 0 && !getModelsCache().has('global')) {
+      if (!forceRefresh && availableModels.length === 0 && !cachePopulated) {
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
       }
 
-      if (!forceRefresh && availableModels.length > 0) {
+      if (!forceRefresh && (availableModels.length > 0 || cachePopulated)) {
         const stranded = await detectStrandedProviders(availableModels);
         if (stranded.length > 0) {
           const providersBefore = new Set(

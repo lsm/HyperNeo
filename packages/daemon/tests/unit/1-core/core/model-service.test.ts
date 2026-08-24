@@ -520,7 +520,7 @@ describe('Model Service', () => {
       await refreshModels();
 
       expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
-      expect(getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
+      expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
     });
   });
 

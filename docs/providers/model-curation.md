@@ -26,10 +26,12 @@ entries are all invalid parses as absent (no curation), never as `[]`.
 
 Parsing and application happen in the provider-sync path
 (`packages/daemon/src/lib/providers/provider-sync.ts`): `parseProviderConfig`
-reads the field, and `syncProviderToRegistry` applies it to every registered
-provider that implements the optional `Provider.setCuratedModels` method.
-`AcpProvider` is the reference implementation; other providers adopt the
-method as they gain curation support.
+reads the field, and `syncProviderToRegistry` stores it centrally in the
+`ProviderRegistry` for every provider, so the model-service read and
+validation seams enforce it regardless of provider support. Providers that
+implement the optional `Provider.setCuratedModels` method additionally
+receive the parsed list for provider-local behavior such as model synthesis;
+`AcpProvider` is the reference implementation.
 
 ## Migration note: existing empty-`models` ACP configs
 
