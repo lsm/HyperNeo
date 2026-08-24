@@ -354,6 +354,7 @@ export class KimiProvider implements Provider {
       headers: { Authorization: `Bearer ${apiKey}` },
       force: options.force,
       cache: options.baseUrl === undefined ? this.modelListCache : undefined,
+      fetchImpl: this.fetchImpl,
     });
     const knownModels = models
       .map((model) => this.toRemoteModelInfo(model))
@@ -502,8 +503,9 @@ export class KimiProvider implements Provider {
   }
 
   private resolveModelListBaseUrl(baseUrl?: string): string {
-    if (baseUrl) {
-      const normalizedBaseUrl = normalizeBaseUrl(baseUrl).toLowerCase();
+    const configuredBaseUrl = baseUrl ?? this.env.KIMI_BASE_URL;
+    if (configuredBaseUrl) {
+      const normalizedBaseUrl = normalizeBaseUrl(configuredBaseUrl).toLowerCase();
       if (normalizedBaseUrl === 'https://api.moonshot.cn/anthropic') {
         return 'https://api.moonshot.cn/v1';
       }
@@ -515,15 +517,10 @@ export class KimiProvider implements Provider {
           return KimiProvider.getOpenAiBaseUrlForRegion(region);
         }
       }
-      return baseUrl;
+      return configuredBaseUrl;
     }
-    const configuredBaseUrl = this.env.KIMI_BASE_URL;
     const explicitRegion = this.env.KIMI_REGION;
-    const region = explicitRegion
-      ? resolveKimiRegion(explicitRegion)
-      : configuredBaseUrl
-        ? (KimiProvider.resolveRegionFromBaseUrl(configuredBaseUrl) ?? this.defaultRegion)
-        : this.defaultRegion;
+    const region = explicitRegion ? resolveKimiRegion(explicitRegion) : this.defaultRegion;
     return KimiProvider.getOpenAiBaseUrlForRegion(region);
   }
 

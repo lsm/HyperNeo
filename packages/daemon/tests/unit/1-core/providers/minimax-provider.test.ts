@@ -221,6 +221,23 @@ describe('MinimaxProvider', () => {
       expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
     });
 
+    it('uses the injected fetch implementation', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      const fetchMock = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7', object: 'model' }] }), {
+            status: 200,
+          })
+      );
+      provider = new MinimaxProvider(process.env, fetchMock as unknown as typeof fetch);
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toEqual([MinimaxProvider.MODELS[2]]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.minimax.io/v1/models');
+    });
+
     it('filters discovered IDs that MiniMax cannot route', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       installModelListFetch([

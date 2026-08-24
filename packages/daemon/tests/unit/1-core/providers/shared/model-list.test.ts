@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildModelListUrl,
   extractAzureDeploymentModel,
@@ -143,6 +143,18 @@ describe('fetchRemoteModelList', () => {
   }
 
   const okResponse = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it('uses an injected fetch implementation', async () => {
+    const fetchImpl = mock(async () => okResponse({ data: [{ id: 'glm-4.7', object: 'model' }] }));
+
+    const models = await fetchRemoteModelList({
+      url: 'https://api.example.com/v1/models',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(models).toEqual([{ id: 'glm-4.7' }]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 
   it('fetches the provider-declared URL with the declared headers and normalizes the list', async () => {
     const calls = installFetch(async () =>

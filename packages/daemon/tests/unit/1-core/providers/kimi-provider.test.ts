@@ -330,6 +330,24 @@ describe('KimiProvider', () => {
       expect(String(calls[0]?.[0])).not.toContain('/anthropic/');
     });
 
+    it('preserves a custom environment base URL and uses the injected fetch', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      process.env.KIMI_BASE_URL = 'https://proxy.example.com/kimi';
+      const fetchMock = mock(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'kimi-for-coding', object: 'model' }] }), {
+            status: 200,
+          })
+      );
+      provider = new KimiProvider(process.env, undefined, fetchMock as unknown as typeof fetch);
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toEqual([KimiProvider.MODELS[3]]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://proxy.example.com/kimi/v1/models');
+    });
+
     it('maps known message-base overrides to listing endpoints without mutating the region', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       process.env.KIMI_REGION = 'china';

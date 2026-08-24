@@ -164,6 +164,7 @@ export class MinimaxProvider implements Provider {
       headers: { Authorization: `Bearer ${apiKey}` },
       force: options.force,
       cache: options.baseUrl === undefined ? this.modelListCache : undefined,
+      fetchImpl: this.fetchImpl,
     });
     return models
       .filter((model) => this.ownsModel(model.id))
