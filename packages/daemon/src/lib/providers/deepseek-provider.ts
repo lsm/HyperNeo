@@ -143,10 +143,12 @@ export class DeepSeekProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(DeepSeekProvider.BASE_URL, apiKey);
-    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    return discovered
-      ? mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered)
-      : DeepSeekProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      return mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
+    } catch {
+      return DeepSeekProvider.MODELS;
+    }
   }
 
   private discoveryFingerprint(): string {
@@ -168,6 +170,7 @@ export class DeepSeekProvider implements Provider {
     const models = await fetchRemoteModelList({
       url: DeepSeekProvider.MODEL_LIST_URL,
       headers: { Authorization: `Bearer ${apiKey}` },
+      fetchImpl: this.fetchImpl,
     });
     if (credentialsVersion !== this.credentialsVersion) {
       this.clearModelCache();

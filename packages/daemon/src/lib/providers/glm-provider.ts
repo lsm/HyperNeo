@@ -206,8 +206,16 @@ export class GlmProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(GlmProvider.BASE_URL, apiKey);
-    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    return discovered ? mergeDiscoveredModels(GlmProvider.MODELS, discovered) : GlmProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      const staticBaseIds = new Set(GlmProvider.MODELS.map((m) => GlmProvider.baseModelId(m.id)));
+      const discoveredOnly = discovered.filter(
+        (m) => !staticBaseIds.has(GlmProvider.baseModelId(m.id))
+      );
+      return mergeDiscoveredModels(GlmProvider.MODELS, discoveredOnly);
+    } catch {
+      return GlmProvider.MODELS;
+    }
   }
 
   private discoveryFingerprint(): string {
@@ -229,6 +237,7 @@ export class GlmProvider implements Provider {
     const models = await fetchRemoteModelList({
       url: GlmProvider.MODEL_LIST_URL,
       headers: { Authorization: `Bearer ${apiKey}` },
+      fetchImpl: this.fetchImpl,
     });
     if (credentialsVersion !== this.credentialsVersion) {
       this.clearModelCache();
@@ -241,10 +250,14 @@ export class GlmProvider implements Provider {
     return discovered;
   }
 
+  private static baseModelId(id: string): string {
+    return id.toLowerCase().replace(/(\[1m\])+$/, '');
+  }
+
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
-    const baseId = model.id.toLowerCase().replace(/(\[1m\])+$/, '');
+    const baseId = GlmProvider.baseModelId(model.id);
     const staticModel = GlmProvider.MODELS.find(
-      (candidate) => candidate.id.toLowerCase().replace(/(\[1m\])+$/, '') === baseId
+      (candidate) => GlmProvider.baseModelId(candidate.id) === baseId
     );
     if (staticModel) return { ...staticModel, id: model.id };
     return {

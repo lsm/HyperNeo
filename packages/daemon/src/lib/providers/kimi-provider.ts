@@ -348,10 +348,12 @@ export class KimiProvider implements Provider {
       type: 'enabled',
       budget_tokens: 16_000,
     });
-    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    return discovered
-      ? mergeDiscoveredModels(KimiProvider.MODELS, discovered)
-      : KimiProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      return mergeDiscoveredModels(KimiProvider.MODELS, discovered);
+    } catch {
+      return KimiProvider.MODELS;
+    }
   }
 
   private discoveryFingerprint(): string {

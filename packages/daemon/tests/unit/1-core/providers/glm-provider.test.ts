@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
+import { PROVIDER_DISCOVERY_CACHE_TTL_MS } from '../../../../src/lib/providers/shared/discovery-cache';
 import {
   recordProviderFailure,
   resetProviderFailureStore,
@@ -183,7 +184,7 @@ describe('GlmProvider', () => {
 
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
       const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
       expect(url).toBe('https://open.bigmodel.cn/api/anthropic/v1/messages');
       expect(init?.method).toBe('POST');
@@ -222,7 +223,7 @@ describe('GlmProvider', () => {
       await provider.getModels();
       await provider.getModels();
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -232,7 +233,7 @@ describe('GlmProvider', () => {
       const fetchImpl = mock(
         async (_url: RequestInfo | URL, _init?: RequestInit) => await respond(++call)
       );
-      global.fetch = fetchImpl as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl as unknown as typeof fetch);
       return fetchImpl;
     }
 
@@ -298,13 +299,13 @@ describe('GlmProvider', () => {
     });
 
     it('clears the discovery cache when credentials change', async () => {
-      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
       const fetchImpl = installModelListFetch(
         async (call) =>
           new Response(JSON.stringify({ data: [{ id: `glm-${call}`, object: 'model' }] }), {
             status: 200,
           })
       );
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
 
       expect((await provider.listRemoteModels())[0]?.id).toBe('glm-1');
       provider.setCredentials({ type: 'api_key', apiKey: 'second-key' });
@@ -313,6 +314,29 @@ describe('GlmProvider', () => {
       expect((fetchImpl.mock.calls[1]?.[1] as RequestInit | undefined)?.headers).toEqual({
         Authorization: 'Bearer second-key',
       });
+    });
+
+    it('refetches once the discovery cache TTL expires', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(
+        async (call) =>
+          new Response(JSON.stringify({ data: [{ id: `glm-${call}`, object: 'model' }] }), {
+            status: 200,
+          })
+      );
+      const realNow = Date.now;
+      let now = 1_000_000;
+      Date.now = () => now;
+      try {
+        expect((await provider.listRemoteModels())[0]?.id).toBe('glm-1');
+        now += PROVIDER_DISCOVERY_CACHE_TTL_MS - 1;
+        expect((await provider.listRemoteModels())[0]?.id).toBe('glm-1');
+        now += 1;
+        expect((await provider.listRemoteModels())[0]?.id).toBe('glm-2');
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+      } finally {
+        Date.now = realNow;
+      }
     });
 
     it('propagates forced refresh failures without returning cached models', async () => {
@@ -343,7 +367,7 @@ describe('GlmProvider', () => {
           ? new Response(
               JSON.stringify({
                 data: [
-                  { id: 'glm-5-turbo', object: 'model' },
+                  { id: 'glm-5.2', object: 'model' },
                   { id: 'glm-new', object: 'model' },
                 ],
               }),

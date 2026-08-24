@@ -153,10 +153,12 @@ export class MinimaxProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(MinimaxProvider.BASE_URL, apiKey);
-    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
-    return discovered
-      ? mergeDiscoveredModels(MinimaxProvider.MODELS, discovered)
-      : MinimaxProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      return mergeDiscoveredModels(MinimaxProvider.MODELS, discovered);
+    } catch {
+      return MinimaxProvider.MODELS;
+    }
   }
 
   private discoveryFingerprint(): string {
