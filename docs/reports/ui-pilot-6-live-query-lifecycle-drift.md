@@ -58,8 +58,10 @@ MIL = `useTaskMilestones` (#2756), GRP = `useGroupMessages` (#2788).
 | 12 | Secondary subscription | `spaceTaskActiveTurn.byTask` side channel, fully hand-rolled beside the machine (own error/reconnect paths, rows cleared on failure) | none | none | none |
 | 13 | Row store | two `useState` row arrays | `useState` | `useState` | `useReducer` pagination (cutoff/hidden counts) — the adjacent machinery the pilot deliberately did not touch |
 
-Rows 4–8 are the behavior-relevant drift; rows 2/3/11 are pure config; rows 9–13
-are structural. Rows 1–12 are pinned: machine contract suite
+Rows 4–8 are the behavior-relevant drift; row 11 is pure config; rows 2/3 are
+config-plus-executor drift — PRJ/MIL/GRP's `executeEffects` does not schedule
+`retry-with-backoff` or `schedule-cleanup`, so flipping `snapshotRetryEnabled`
+alone does not enable the watchdog. Rows 9–13 are structural. Rows 1–12 are pinned: machine contract suite
 (`live-query-lifecycle.test.ts`, 22 tests incl. the full status×event table) plus
 four `.lifecycle.test.ts` characterization files (584/352/272/414 lines) written
 green against the pre-migration hooks and unchanged since. Row 13's pagination
