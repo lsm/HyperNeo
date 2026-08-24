@@ -6,6 +6,7 @@ import {
 } from '../../../../src/lib/providers/provider-failure-store';
 
 describe('GlmProvider', () => {
+  const originalFetch = global.fetch;
   let provider: GlmProvider;
   let originalEnv: NodeJS.ProcessEnv;
 
@@ -20,6 +21,7 @@ describe('GlmProvider', () => {
   afterEach(() => {
     resetProviderFailureStore();
     process.env = originalEnv;
+    global.fetch = originalFetch;
   });
 
   describe('basic properties', () => {
@@ -221,6 +223,117 @@ describe('GlmProvider', () => {
       await provider.getModels();
 
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('listRemoteModels', () => {
+    function installModelListFetch(respond: (call: number) => Response | Promise<Response>) {
+      let call = 0;
+      const fetchImpl = mock(
+        async (_url: RequestInfo | URL, _init?: RequestInit) => await respond(++call)
+      );
+      global.fetch = fetchImpl as unknown as typeof fetch;
+      return fetchImpl;
+    }
+
+    it('fetches the declared OpenAI-compatible URL with bearer auth and normalizes models', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: 'glm-5.2', object: 'model' },
+                { id: 'glm-new', object: 'model' },
+                { id: 'deepseek-chat', object: 'model' },
+              ],
+            }),
+            { status: 200 }
+          )
+      );
+
+      const models = await provider.listRemoteModels();
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchImpl.mock.calls[0] ?? [];
+      expect(String(url)).toBe('https://open.bigmodel.cn/api/paas/v4/models');
+      expect(init?.method).toBe('GET');
+      expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
+      expect(models).toEqual([
+        { ...GlmProvider.MODELS[2], id: 'glm-5.2' },
+        {
+          id: 'glm-new',
+          name: 'glm-new',
+          alias: 'glm-new',
+          family: 'glm',
+          provider: 'glm',
+          contextWindow: 200_000,
+          preferContextWindowMetadata: true,
+          thinkingModes: 'granular',
+          description: 'glm-new via Z.ai',
+          releaseDate: '',
+          available: true,
+        },
+      ]);
+      expect(provider.ownsModel('glm-new')).toBe(true);
+      expect(provider.buildSdkConfig('glm-new').envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
+        'glm-new'
+      );
+    });
+
+    it('serves its cache unless force is true and stores the forced result', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(
+        async (call) =>
+          new Response(JSON.stringify({ data: [{ id: `glm-${call}`, object: 'model' }] }), {
+            status: 200,
+          })
+      );
+
+      expect((await provider.listRemoteModels())[0]?.id).toBe('glm-1');
+      expect((await provider.listRemoteModels())[0]?.id).toBe('glm-1');
+      expect((await provider.listRemoteModels({ force: true }))[0]?.id).toBe('glm-2');
+      expect((await provider.listRemoteModels())[0]?.id).toBe('glm-2');
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears the discovery cache when credentials change', async () => {
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+      const fetchImpl = installModelListFetch(
+        async (call) =>
+          new Response(JSON.stringify({ data: [{ id: `glm-${call}`, object: 'model' }] }), {
+            status: 200,
+          })
+      );
+
+      expect((await provider.listRemoteModels())[0]?.id).toBe('glm-1');
+      provider.setCredentials({ type: 'api_key', apiKey: 'second-key' });
+      expect((await provider.listRemoteModels())[0]?.id).toBe('glm-2');
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect((fetchImpl.mock.calls[1]?.[1] as RequestInit | undefined)?.headers).toEqual({
+        Authorization: 'Bearer second-key',
+      });
+    });
+
+    it('propagates forced refresh failures without returning cached models', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(async (call) =>
+        call === 1
+          ? new Response(JSON.stringify({ data: [{ id: 'glm-cached', object: 'model' }] }), {
+              status: 200,
+            })
+          : new Response('unavailable', { status: 503 })
+      );
+
+      expect((await provider.listRemoteModels())[0]?.id).toBe('glm-cached');
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+        'Endpoint returned HTTP 503'
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('requires credentials', async () => {
+      await expect(provider.listRemoteModels()).rejects.toThrow('Z.ai API key not configured');
     });
   });
 
