@@ -327,19 +327,26 @@ describe('useModelSwitcher', () => {
       expect(result.current.availableModels.length).toBe(3);
     });
 
-    it('backfills current model info from the loaded model list', async () => {
+    it('backfills current model info by provider and id', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
           .mockResolvedValueOnce({
-            currentModel: 'custom-model',
+            currentModel: 'gpt-5.4',
+            currentProvider: 'custom:local',
             modelInfo: null,
           })
           .mockResolvedValueOnce({
             models: [
               {
-                id: 'custom-model',
+                id: 'gpt-5.4',
+                display_name: 'Built-in Codex',
+                description: '',
+                provider: 'anthropic-codex',
+              },
+              {
+                id: 'gpt-5.4',
                 display_name: 'Custom Model',
                 description: '',
                 provider: 'custom:local',
@@ -355,8 +362,9 @@ describe('useModelSwitcher', () => {
         expect(result.current.loading).toBe(false);
       });
 
-      expect(result.current.currentModelInfo?.id).toBe('custom-model');
+      expect(result.current.currentModelInfo?.id).toBe('gpt-5.4');
       expect(result.current.currentModelInfo?.provider).toBe('custom:local');
+      expect(result.current.currentModelInfo?.name).toBe('Custom Model');
     });
 
     it('should classify models by family correctly', async () => {

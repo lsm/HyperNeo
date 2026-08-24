@@ -258,16 +258,21 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
       if (!hub) return;
 
       let fetchedModelId = '';
+      let fetchedProvider = '';
       let fetchedModelInfo: ModelInfo | null = null;
       if (sessionId) {
         try {
-          const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
-            sessionId,
-          })) as {
+          const {
+            currentModel: modelId,
+            currentProvider,
+            modelInfo,
+          } = (await hub.request('session.model.get', { sessionId })) as {
             currentModel: string;
+            currentProvider: string;
             modelInfo: ModelInfo | null;
           };
           fetchedModelId = modelId;
+          fetchedProvider = currentProvider;
           fetchedModelInfo = modelInfo;
           setCurrentModel(modelId);
           setCurrentModelInfo(modelInfo);
@@ -281,8 +286,10 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
       const modelInfos = mapRawModelsToModelInfos(models);
       setAvailableModels(modelInfos);
 
-      if (fetchedModelId && !fetchedModelInfo) {
-        const matched = modelInfos.find((m) => m.id === fetchedModelId);
+      if (fetchedModelId && fetchedProvider && !fetchedModelInfo) {
+        const matched = modelInfos.find(
+          (m) => m.id === fetchedModelId && m.provider === fetchedProvider
+        );
         if (matched) setCurrentModelInfo(matched);
       }
     } catch {
