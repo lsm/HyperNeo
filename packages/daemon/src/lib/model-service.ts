@@ -974,6 +974,10 @@ export function getModelsCacheClearSequence(): number {
   return cacheClearSequence;
 }
 
+export function getCurrentCacheLoad(cacheKey: string = 'global'): Promise<void> | undefined {
+  return refreshInProgress.get(cacheKey);
+}
+
 export function applyDiscoveredProviderModels(
   providerId: string,
   models: ModelInfo[],

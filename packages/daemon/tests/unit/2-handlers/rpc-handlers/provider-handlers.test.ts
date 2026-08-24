@@ -1047,10 +1047,11 @@ describe('Provider RPC handlers', () => {
         },
       } as unknown as Provider);
       const refreshed = [makeDiscoveredModel('refreshed-a')];
-      registerRemoteProvider({
-        listRemoteModels: async () => refreshed,
-        getModels: async () => refreshed,
-      });
+      const { listRemoteModels: listRemoteModelsMock, getModels: getModelsMock } =
+        registerRemoteProvider({
+          listRemoteModels: async () => refreshed,
+          getModels: async () => refreshed,
+        });
       const handlers = setup();
 
       const initPromise = initializeModels();
@@ -1066,6 +1067,15 @@ describe('Provider RPC handlers', () => {
       const ids = models.map((model) => model.id).sort();
       expect(ids).toContain('slow-provider-model');
       expect(ids).toContain('refreshed-a');
+
+      const replaced = [makeDiscoveredModel('replaced-b')];
+      listRemoteModelsMock.mockImplementation(async () => replaced);
+      getModelsMock.mockImplementation(async () => replaced);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      const afterIds = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(afterIds).not.toContain('refreshed-a');
     });
 
     it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {

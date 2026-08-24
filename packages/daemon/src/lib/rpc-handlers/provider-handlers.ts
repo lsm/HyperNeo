@@ -453,6 +453,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
       const {
         getModelsCacheClearSequence,
+        getCurrentCacheLoad,
         applyDiscoveredProviderModels,
         releaseAppliedProviderSlice,
         markProviderRefreshSucceeded,
@@ -480,7 +481,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
       const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
       const applied = applyDiscoveredProviderModels(record.providerId, models);
-      if (applied) releaseAppliedProviderSlice(record.providerId);
+      if (applied) {
+        releaseAppliedProviderSlice(record.providerId);
+      } else {
+        const inFlight = getCurrentCacheLoad();
+        if (inFlight) await inFlight.catch(() => {});
+        applyDiscoveredProviderModels(record.providerId, models);
+        releaseAppliedProviderSlice(record.providerId);
+      }
       const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
       if (!recoveredFailure) notifyProvidersChanged(internalEventBus);
 
