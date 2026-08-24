@@ -47,6 +47,15 @@ export interface AcquireAgentInactivityClaimParams {
   configRevision: number | null;
 }
 
+function requireAgentInSpace(db: BunDatabase, spaceId: string, agentId: string): void {
+  const row = db
+    .prepare(`SELECT 1 FROM space_long_horizon_agents WHERE id = ? AND space_id = ?`)
+    .get(agentId, spaceId);
+  if (row == null) {
+    throw new Error(`Agent "${agentId}" does not belong to space "${spaceId}"`);
+  }
+}
+
 export class SpaceAgentInactivityConfigRepository {
   constructor(private db: BunDatabase) {}
 
@@ -68,6 +77,7 @@ export class SpaceAgentInactivityConfigRepository {
   }
 
   upsert(params: UpsertAgentInactivityConfigParams): SpaceAgentInactivityConfig {
+    requireAgentInSpace(this.db, params.spaceId, params.agentId);
     const existing = this.getByAgent(params.spaceId, params.agentId);
     const now = Date.now();
     if (existing === null) {
@@ -137,13 +147,16 @@ export class SpaceAgentInactivityClaimRepository {
   } {
     const now = Date.now();
     const result = this.db.transaction(() => {
+      requireAgentInSpace(this.db, params.spaceId, params.agentId);
       const existing = this.getByAgent(params.spaceId, params.agentId);
       if (
         existing !== null &&
         existing.state !== 'none' &&
         !existing.degraded &&
         existing.claimKey === params.claimKey &&
-        existing.ownerToken === params.ownerToken
+        existing.ownerToken === params.ownerToken &&
+        existing.windowAnchoredAt === params.windowAnchoredAt &&
+        existing.configRevision === params.configRevision
       ) {
         return { acquired: true, claim: existing };
       }
@@ -206,6 +219,7 @@ export class SpaceAgentInactivityClaimRepository {
     spaceId: string,
     agentId: string,
     expectedClaimKey: string,
+    expectedOwnerToken: string | null,
     reset: {
       releaseClaim: boolean;
       markDegraded: boolean;
@@ -216,7 +230,9 @@ export class SpaceAgentInactivityClaimRepository {
     return this.db.transaction(() => {
       const existing = this.getByAgent(spaceId, agentId);
       if (existing === null) return null;
-      if (existing.claimKey !== expectedClaimKey) return existing;
+      if (existing.claimKey !== expectedClaimKey || existing.ownerToken !== expectedOwnerToken) {
+        return existing;
+      }
       if (reset.releaseClaim) {
         this.db.prepare(`DELETE FROM space_agent_inactivity_claims WHERE id = ?`).run(existing.id);
         return null;

@@ -203,7 +203,7 @@ describe('SpaceAgentInactivity repositories', () => {
         configRevision: 1,
       });
       claimRepo.markInFlight(spaceId, 'agent-1', 'k');
-      const held = claimRepo.applyReset(spaceId, 'agent-1', 'k', {
+      const held = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
         releaseClaim: false,
         markDegraded: false,
         advanceAttemptGeneration: false,
@@ -262,7 +262,7 @@ describe('SpaceAgentInactivity repositories', () => {
       });
 
       expect(
-        claimRepo.applyReset(spaceId, 'agent-1', 'k', {
+        claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
           releaseClaim: true,
           markDegraded: false,
           advanceAttemptGeneration: false,
@@ -279,7 +279,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      const degraded = claimRepo.applyReset(spaceId, 'agent-1', 'k2', {
+      const degraded = claimRepo.applyReset(spaceId, 'agent-1', 'k2', 'scanner-a', {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: true,
@@ -341,6 +341,74 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(claimRepo.getByAgent(spaceId, 'agent-1')?.claimKey).toBe('new');
     });
 
+    it('replaces a same-key claim when only the revision changed', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      const reacquired = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 2,
+      });
+      expect(reacquired.acquired).toBe(true);
+      expect(reacquired.claim.configRevision).toBe(2);
+    });
+
+    it('ignores a late reset from a previous owner even when the claim key matches', () => {
+      claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-b',
+        configRevision: 2,
+      });
+      const result = claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
+        releaseClaim: true,
+        markDegraded: false,
+        advanceAttemptGeneration: false,
+      });
+      expect(result?.ownerToken).toBe('scanner-b');
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')?.ownerToken).toBe('scanner-b');
+    });
+
+    it('rejects config and claim writes for an agent outside the space', () => {
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES ('space-other', 'other', '/o', 'Other', 1, 1)`
+      ).run();
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, instructions, tool_permissions_json, created_at, updated_at)
+         VALUES ('agent-other', 'space-other', 'agent-other', 'agent-other', '', '{}', 1, 1)`
+      ).run();
+      expect(() => configRepo.upsert({ spaceId, agentId: 'agent-other', enabled: true })).toThrow(
+        /does not belong to space/
+      );
+      expect(() =>
+        claimRepo.acquire({
+          spaceId,
+          agentId: 'agent-other',
+          claimKey: 'k',
+          windowAnchoredAt: 100,
+          attemptGeneration: 0,
+          ownerToken: 'scanner-a',
+          configRevision: 1,
+        })
+      ).toThrow(/does not belong to space/);
+    });
+
     it('cascades config and claim rows when the agent is deleted', () => {
       configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: 1000 });
       claimRepo.acquire({
@@ -367,7 +435,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      claimRepo.applyReset(spaceId, 'agent-1', 'k', {
+      claimRepo.applyReset(spaceId, 'agent-1', 'k', 'scanner-a', {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: false,
