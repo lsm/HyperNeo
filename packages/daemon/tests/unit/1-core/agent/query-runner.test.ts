@@ -3641,6 +3641,7 @@ describe('QueryRunner', () => {
       isLimitRecoveryPending?: boolean;
       attempt?: number;
       recoveryState?: { rateLimitCooldownScheduled: boolean };
+      rejectsWith?: string;
     }
 
     async function runLifecycleRow(options: LifecycleRowOptions) {
@@ -3682,11 +3683,19 @@ describe('QueryRunner', () => {
       if (options.attempt !== undefined) {
         ctx.incrementQueryGeneration();
         isRunningSpy.mockReturnValue(true);
-        await runnerPrivate.runQuery(
+        const attemptPromise = runnerPrivate.runQuery(
           1,
           options.attempt,
           options.recoveryState ?? { rateLimitCooldownScheduled: false }
         );
+        if (options.rejectsWith !== undefined) {
+          await expect(attemptPromise).rejects.toThrow(options.rejectsWith);
+        } else {
+          await attemptPromise;
+        }
+      } else if (options.rejectsWith !== undefined) {
+        runner.start();
+        await expect(ctx.queryPromise).rejects.toThrow(options.rejectsWith);
       } else {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
@@ -3977,6 +3986,7 @@ describe('QueryRunner', () => {
           name: 'rejecting cooldown handoff → no terminal handling, finalizer still idles, query rejects',
           options: {
             message: LIMIT_429_MSG,
+            rejectsWith: 'watchdog handoff failed',
             onRateLimit: () => {
               throw new Error('watchdog handoff failed');
             },
