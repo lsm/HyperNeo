@@ -201,31 +201,6 @@ describe('parseDeferredExternalEventText', () => {
     });
   });
 
-  it('bounds events flattened from a single rate-limit burst row', () => {
-    const ids = Array.from({ length: 250 }, (_, i) => ({
-      id: `burst-${i}`,
-      topic: 'github/o/r/pull_request/7.check_failed',
-    }));
-    const burst =
-      '250 events received for topics: github/o/r/pull_request/7.check_failed ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      `Event IDs: ${JSON.stringify(ids)}. ` +
-      'Use get_external_event(eventId) for full details.';
-    const partition = partitionDeferredExternalEventRows([row('db-burst', 'u-burst', burst)]);
-    expect(partition.digestEvents).toHaveLength(200);
-    expect(partition.droppedCount).toBe(50);
-    expect(partition.digestEvents[0]).toMatchObject({ eventId: 'burst-50' });
-    const digest = buildExternalEventDigestMessage(partition.digestEvents, {
-      droppedEventCount: partition.droppedCount,
-    });
-    expect(digest.split('\n')[0]).toBe(
-      'External events while you were working (250 events, PR #7):'
-    );
-    expect(digest).toContain(
-      '50 older events were folded out of earlier batches and are superseded.'
-    );
-  });
-
   it('returns null for non-external-event text', () => {
     expect(parseDeferredExternalEventText('a human follow-up')).toBeNull();
     expect(parseDeferredExternalEventText('{"type":"chat","topic":"x"}')).toBeNull();
@@ -832,6 +807,31 @@ describe('buildExternalEventDigestMessage', () => {
 });
 
 describe('partitionDeferredExternalEventRows', () => {
+  it('bounds events flattened from a single rate-limit burst row', () => {
+    const ids = Array.from({ length: 250 }, (_, i) => ({
+      id: `burst-${i}`,
+      topic: 'github/o/r/pull_request/7.check_failed',
+    }));
+    const burst =
+      '250 events received for topics: github/o/r/pull_request/7.check_failed ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      `Event IDs: ${JSON.stringify(ids)}. ` +
+      'Use get_external_event(eventId) for full details.';
+    const partition = partitionDeferredExternalEventRows([row('db-burst', 'u-burst', burst)]);
+    expect(partition.digestEvents).toHaveLength(200);
+    expect(partition.droppedCount).toBe(50);
+    expect(partition.digestEvents[0]).toMatchObject({ eventId: 'burst-50' });
+    const digest = buildExternalEventDigestMessage(partition.digestEvents, {
+      droppedEventCount: partition.droppedCount,
+    });
+    expect(digest.split('\n')[0]).toBe(
+      'External events while you were working (250 events, PR #7):'
+    );
+    expect(digest).toContain(
+      '50 older events were folded out of earlier batches and are superseded.'
+    );
+  });
+
   it('splits digest-tier external rows from everything else', () => {
     const external = row('db-1', 'u-1', checkText('chk-1', at(16), 'failure'));
     const plain = row('db-2', 'u-2', '─── Message from coder ───');
