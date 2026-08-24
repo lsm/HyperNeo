@@ -258,7 +258,28 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
       try {
         await expect(p.isAvailable()).resolves.toBe(false);
+        await expect(p.getAuthStatus()).resolves.toMatchObject({
+          isAuthenticated: false,
+          errorKind: 'transient',
+        });
         await expect(p.getCredentials()).resolves.toBeNull();
+      } finally {
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+
+    it('uses a fallback token when stored credentials are malformed', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
+      fs.writeFileSync(path.join(authDir, 'auth.json'), '{invalid json');
+      const p = new AnthropicToCopilotBridgeProvider(
+        '/tmp',
+        { COPILOT_GITHUB_TOKEN: 'gho_env' },
+        authDir
+      );
+
+      try {
+        await expect(p.getAuthStatus()).resolves.toMatchObject({ isAuthenticated: true });
+        await expect(p.isAvailable()).resolves.toBe(true);
       } finally {
         fs.rmSync(authDir, { recursive: true, force: true });
       }

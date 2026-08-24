@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
@@ -250,8 +250,10 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [switching, setSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
   const loadModelInfo = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     try {
       setLoading(true);
       const hub = connectionManager.getHubIfConnected();
@@ -274,27 +276,32 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
           fetchedModelId = modelId;
           fetchedProvider = currentProvider;
           fetchedModelInfo = modelInfo;
-          setCurrentModel(modelId);
-          setCurrentModelInfo(modelInfo);
+          if (requestId === requestIdRef.current) {
+            setCurrentModel(modelId);
+            setCurrentModelInfo(modelInfo);
+          }
         } catch {}
       }
 
       const { models } = (await hub.request('models.list', {
         useCache: true,
       })) as { models: RawModelEntry[] };
+      if (requestId !== requestIdRef.current) return;
 
       const modelInfos = mapRawModelsToModelInfos(models);
       setAvailableModels(modelInfos);
 
       if (fetchedModelId && fetchedProvider && !fetchedModelInfo) {
         const matched = modelInfos.find(
-          (m) => m.id === fetchedModelId && m.provider === fetchedProvider
+          (m) =>
+            (m.id === fetchedModelId || m.alias === fetchedModelId) &&
+            m.provider === fetchedProvider
         );
         if (matched) setCurrentModelInfo(matched);
       }
     } catch {
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [sessionId]);
 

@@ -435,10 +435,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     propagateStoredCredentialError = false
   ): Promise<{ token: string | undefined; source: TokenSource }> {
     let stored: string | undefined;
+    let storedCredentialError: unknown;
+    let storedCredentialLookupFailed = false;
     try {
       stored = await this.loadStoredGitHubToken();
     } catch (error) {
-      if (propagateStoredCredentialError) throw error;
+      storedCredentialError = error;
+      storedCredentialLookupFailed = true;
     }
     if (stored) return { token: stored, source: 'auth-file' };
 
@@ -451,7 +454,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const ghCliToken = await this.tryGhCliToken();
     if (ghCliToken) return { token: ghCliToken, source: 'gh-cli' };
 
-    return { token: await this.tryGhHostsToken(), source: 'hosts' };
+    const hostsToken = await this.tryGhHostsToken();
+    if (hostsToken) return { token: hostsToken, source: 'hosts' };
+
+    if (propagateStoredCredentialError && storedCredentialLookupFailed) {
+      throw storedCredentialError;
+    }
+
+    return { token: undefined, source: 'hosts' };
   }
 
   private async loadStoredGitHubToken(): Promise<string | undefined> {

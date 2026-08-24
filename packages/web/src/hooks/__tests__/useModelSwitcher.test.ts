@@ -367,6 +367,41 @@ describe('useModelSwitcher', () => {
       expect(result.current.currentModelInfo?.name).toBe('Custom Model');
     });
 
+    it('backfills current model info by provider and alias', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'copilot-anthropic-opus',
+            currentProvider: 'anthropic-copilot',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'claude-opus-4.6',
+                alias: 'copilot-anthropic-opus',
+                display_name: 'Claude Opus 4.6',
+                description: '',
+                provider: 'anthropic-copilot',
+              },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.currentModelInfo?.id).toBe('claude-opus-4.6');
+      expect(result.current.currentModelInfo?.alias).toBe('copilot-anthropic-opus');
+      expect(result.current.currentModelInfo?.provider).toBe('anthropic-copilot');
+    });
+
     it('should classify models by family correctly', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
@@ -1072,6 +1107,78 @@ describe('useModelSwitcher', () => {
   });
 
   describe('sessionId changes', () => {
+    it('discards a delayed model backfill from the previous session', async () => {
+      let resolveFirstModels!: (value: unknown) => void;
+      const firstModels = new Promise((resolve) => {
+        resolveFirstModels = resolve;
+      });
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi.fn((method, params) => {
+          if (method === 'session.model.get') {
+            if (params.sessionId === 'session-1') {
+              return Promise.resolve({
+                currentModel: 'old-alias',
+                currentProvider: 'custom:old',
+                modelInfo: null,
+              });
+            }
+            return Promise.resolve({
+              currentModel: 'new-model',
+              currentProvider: 'custom:new',
+              modelInfo: null,
+            });
+          }
+          if (mockHub.request.mock.calls.filter((call) => call[0] === 'models.list').length === 1) {
+            return firstModels;
+          }
+          return Promise.resolve({
+            models: [
+              {
+                id: 'new-model',
+                display_name: 'New Model',
+                description: '',
+                provider: 'custom:new',
+              },
+            ],
+          });
+        }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useModelSwitcher(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+
+      await waitFor(() => {
+        expect(mockHub.request).toHaveBeenCalledWith('models.list', { useCache: true });
+      });
+      rerender({ sessionId: 'session-2' });
+
+      await waitFor(() => {
+        expect(result.current.currentModelInfo?.provider).toBe('custom:new');
+      });
+
+      await act(async () => {
+        resolveFirstModels({
+          models: [
+            {
+              id: 'old-model',
+              alias: 'old-alias',
+              display_name: 'Old Model',
+              description: '',
+              provider: 'custom:old',
+            },
+          ],
+        });
+        await firstModels;
+      });
+
+      expect(result.current.currentModel).toBe('new-model');
+      expect(result.current.currentModelInfo?.provider).toBe('custom:new');
+      expect(result.current.availableModels[0]?.provider).toBe('custom:new');
+    });
+
     it('should reload when sessionId changes', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
