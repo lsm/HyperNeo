@@ -1858,8 +1858,13 @@ time onto a single pure machine, `packages/web/src/lib/live-query-lifecycle.ts`
 `error-retry`/`disposed`), six events, and a pure
 `(state, event) → { state, effects[] }` transition that only declares effects
 (`re-snapshot`, `retry-with-backoff`, `emit-to-store`, `schedule-cleanup`),
-never executes them. Stale-generation events are dropped structurally;
-snapshot-retry delay/budget/enabled are config so drifted copies adopt the
+never executes them. Events whose `generation` does not match the current
+machine state are dropped structurally (this guards the dispatch origin,
+promise completion, and retry timers that captured their generation; incoming
+LiveQuery snapshot/delta payloads have no embedded generation, so the listeners
+stamp them with `lifecycle.generation` at receipt time and that stamped value
+is what the guard tests). Snapshot-retry delay/budget/enabled are config so
+that drifted copies adopt the
 machine without forks (`snapshotRetryEnabled: false` arrived as an optional
 flag for exactly that). The hooks keep the shell role — subscription handles,
 timers, row stores, and effect execution; the sandwich is the same, the
@@ -1930,8 +1935,10 @@ owner decides.
   in ≥6 web production sites: `SpaceForge.tsx` alone hosts five guarded fetch
   closures (~27 guard checks), plus `ScopeDetailPanel`, `GitHubHealthPanel`
   (refresh generation), `SpaceTaskPane`, and `space-store`. A stale response
-  structurally cannot apply is the same discipline the lifecycle machine gives
-  subscriptions via generations — the combinator would give it to fetches.
+  structurally cannot apply is a sibling discipline: the lifecycle machine guards
+  its own dispatch generation and captured timers; `requestRun` would guard the
+  apply stage against a stale fetch return — the combinator would give it to
+  fetches.
 - **The `components/space` bucket is the next web surface.** 32.4k non-test
   source lines across 85 files at pilot close, unchanged from pilot start
   (32.2k) — 21.5k at the top level, `visual-editor/` 7.3k, `thread/` 3.4k; the

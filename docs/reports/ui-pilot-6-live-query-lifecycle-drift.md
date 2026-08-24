@@ -52,7 +52,7 @@ MIL = `useTaskMilestones` (#2756), GRP = `useGroupMessages` (#2788).
 | 6 | `liveQuery.error`, delta phase | `transport-error` → same-subscriptionId resubscribe (generation bump) | same | not wired (stream loss does not resubscribe) | same as STM |
 | 7 | Error surfaced to UI | yes (`lifecycle.error` mirrored; exhausted-watchdog settle keeps it `null`) | no | no | no |
 | 8 | Reconnect mechanism | `onConnection('connected')` → `transport-error` handler **plus** the `isConnected` dep rerun — on an observed disconnect sequence the rerun's cleanup unregisters the handler before `connected` arrives, so both paths exercise mainly in tests (which drive the handler directly) | same pairing, `onConnection` half guarded by `activeSubIdRef` | same as PRJ | **no `onConnection`** — reconnect rides the `isConnected` dep alone: full teardown, fresh subscriptionId, fresh machine (pinned, #2788) |
-| 9 | Stale-closure guards | generation guard only (effect teardown unsubscribes listeners) | generation + `activeSubIdRef` | generation + `activeSubIdRef` | generation + `activeSubIdRef` (also guards the ladder timers) |
+| 9 | Stale-generation guards | generation guard on `dispatch`/captured promise/timer events; incoming snapshot/delta events are stamped with `lifecycle.generation` at receipt time before being passed to `dispatch` | generation + `activeSubIdRef` | generation + `activeSubIdRef` | generation + `activeSubIdRef` (also guards the ladder timers) |
 | 10 | Pre-snapshot / mid-resubscribe deltas | dropped unless `live` (machine gating; end state restored by the resubscribe snapshot) | same (PR-4 drift rows 7–8) | same | same (PR-5 "window tightening") |
 | 11 | `settled-empty` | releases loading, no error | releases loading | releases loading | releases loading |
 | 12 | Secondary subscription | `spaceTaskActiveTurn.byTask` side channel, fully hand-rolled beside the machine (own error/reconnect paths, rows cleared on failure) | none | none | none |
@@ -145,8 +145,10 @@ half from STM/PRJ/MIL.
 Extract the dispatch/`executeEffects`/timer scaffolding (≈30–40 lines per hook,
 structurally identical) into one executor; per-hook config becomes declarative
 (query name/params, emission mapping, row store, retry ladder on/off).
-- **Value:** rows 4, 9, and 11 become config; the drift table shrinks to rows
-  5–8 (policy) + 12–13 (surface); the executor is exactly the body a future
+- **Value:** rows 9 and 11 become config; row 4's rejected-subscribe retry
+  policy becomes the executor's `retryLadder` config (GRP keeps three attempts,
+  STM/PRJ/MIL keep one); the drift table shrinks to rows 5–8 (policy) + 12–13
+  (surface); the executor is exactly the body a future
   `reduceRun` combinator would own, so this is the promotion path ADR 0004
   already sanctions at ≥3 uses (4 exist).
 - **Risk:** medium mechanical risk concentrated in emission mapping — STM
@@ -174,11 +176,17 @@ First store consumers; a fresh machine per actual subscription lifecycle
   accept the row-10 policy change. The three singleton stores already carry
   direct lifecycle pins (`lib/__tests__/app-mcp-store.test.ts`,
   `lib/__tests__/space-mcp-store.test.ts`, `lib/skills-store.test.ts` — subscribe
-  failures, loading/snapshot, deltas, stale events, reconnect, unsubscribe): the
-  migration must keep those suites green as the pins and add only genuinely
-  missing cases (e.g. snapshot-error settle), not re-pin from scratch.
-  `space-store`/`global-store`/`session-store` are where the pin gap actually
-  sits.
+  failures, loading/snapshot, deltas, stale events, reconnect, unsubscribe): keep
+  those suites green as the pins and add only missing cases (e.g. snapshot-error
+  settle). The bigger stores (`space-store`, `global-store`, `session-store`)
+  already carry lifecycle pins too; the new pin work is the machine bridge/gating
+  detailed above, not a from-scratch lifecycle suite. For the awaited-and-throwing
+  subscribe contract, do not reject `subscribe()` on later `error`/
+  `settled-empty` emissions: today the promise resolves when the
+  `liveQuery.subscribe` RPC succeeds (before the snapshot), and `liveQuery.error`
+  may arrive after the promise is already settled. Preserve the contract by
+  rejecting directly from the request effect's failure and surface later lifecycle
+  emissions through the existing loading/error signals.
 
 ### U5. Wire MIL's `liveQuery.error` listener (kill row 5/6 gap)
 
