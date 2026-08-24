@@ -5,6 +5,10 @@ import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import {
+  recordClassifiedProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -83,6 +87,7 @@ describe('Auth RPC Handlers', () => {
     messageHubData = createMockMessageHub();
 
     resetProviderRegistry();
+    resetProviderFailureStore();
     registry = getProviderRegistry();
 
     mockAuthManager.getAuthStatus.mockClear();
@@ -153,7 +158,7 @@ describe('Auth RPC Handlers', () => {
       expect(result.providers[0].isAuthenticated).toBe(false);
     });
 
-    it('handles errors from getAuthStatus', async () => {
+    it('classifies thrown getAuthStatus errors with errorKind', async () => {
       const testRegistry = getProviderRegistry();
       const mockProvider = createMockProvider({
         getAuthStatus: mock(async () => {
@@ -166,11 +171,112 @@ describe('Auth RPC Handlers', () => {
       expect(handler).toBeDefined();
 
       const result = (await handler!({}, {})) as {
-        providers: Array<{ id: string; isAuthenticated: boolean; error?: string }>;
+        providers: Array<{
+          id: string;
+          isAuthenticated: boolean;
+          error?: string;
+          errorKind?: string;
+        }>;
       };
 
       expect(result.providers[0].isAuthenticated).toBe(false);
       expect(result.providers[0].error).toBe('Auth check failed');
+      expect(result.providers[0].errorKind).toBe('transient');
+    });
+
+    it('classifies credential-pattern thrown getAuthStatus errors as credential', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => {
+          throw new Error('(http 401) invalid key');
+        }),
+      });
+      testRegistry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{
+          id: string;
+          isAuthenticated: boolean;
+          error?: string;
+          errorKind?: string;
+        }>;
+      };
+
+      expect(result.providers[0].isAuthenticated).toBe(false);
+      expect(result.providers[0].error).toBe('(http 401) invalid key');
+      expect(result.providers[0].errorKind).toBe('credential');
+    });
+
+    it('overlays transient provider failure when authenticated', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => ({ isAuthenticated: true })),
+      });
+      testRegistry.register(mockProvider);
+      recordClassifiedProviderFailure('test-provider', {
+        errorKind: 'transient',
+        message: 'network timeout',
+      });
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{ isAuthenticated: boolean; error?: string; errorKind?: string }>;
+      };
+
+      expect(result.providers[0].isAuthenticated).toBe(true);
+      expect(result.providers[0].error).toBe('network timeout');
+      expect(result.providers[0].errorKind).toBe('transient');
+    });
+
+    it('overlays credential provider failure as unauthenticated', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => ({ isAuthenticated: true })),
+      });
+      testRegistry.register(mockProvider);
+      recordClassifiedProviderFailure('test-provider', {
+        errorKind: 'credential',
+        message: '(http 401) invalid key',
+      });
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{ isAuthenticated: boolean; error?: string; errorKind?: string }>;
+      };
+
+      expect(result.providers[0].isAuthenticated).toBe(false);
+      expect(result.providers[0].error).toBe('(http 401) invalid key');
+      expect(result.providers[0].errorKind).toBe('credential');
+    });
+
+    it('does not overlay transient failure when provider is unauthenticated', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => ({ isAuthenticated: false, error: 'missing key' })),
+      });
+      testRegistry.register(mockProvider);
+      recordClassifiedProviderFailure('test-provider', {
+        errorKind: 'transient',
+        message: 'network timeout',
+      });
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{ isAuthenticated: boolean; error?: string; errorKind?: string }>;
+      };
+
+      expect(result.providers[0].isAuthenticated).toBe(false);
+      expect(result.providers[0].error).toBe('missing key');
+      expect(result.providers[0].errorKind).toBeUndefined();
     });
 
     it('propagates errorKind from provider auth status', async () => {

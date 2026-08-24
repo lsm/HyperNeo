@@ -1,6 +1,7 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+
 import {
   getProviderLabel,
   groupModelsByProvider,
@@ -44,6 +45,7 @@ export function NewChatModelPicker({
 }: NewChatModelPickerProps) {
   const dropdown = useModal();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
@@ -53,13 +55,13 @@ export function NewChatModelPicker({
   useClickOutside(dropdownRef, dropdown.close, dropdown.isOpen);
 
   const loadAuthStatuses = useCallback(() => {
-    let cancelled = false;
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) return () => {};
+    if (!hub) return;
+    const requestId = ++requestIdRef.current;
     hub
       .request<{ providers?: ProviderAuthStatus[] }>('auth.providers', {})
       .then((result) => {
-        if (cancelled) return;
+        if (requestId !== requestIdRef.current) return;
         const statusMap = new Map<string, ProviderAuthStatus>();
         for (const provider of result.providers ?? []) {
           statusMap.set(provider.id, provider);
@@ -67,14 +69,11 @@ export function NewChatModelPicker({
         setProviderAuthStatuses(statusMap);
       })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
     if (!isConnected) return;
-    return loadAuthStatuses();
+    loadAuthStatuses();
   }, [isConnected, loadAuthStatuses]);
 
   useEffect(() => {
