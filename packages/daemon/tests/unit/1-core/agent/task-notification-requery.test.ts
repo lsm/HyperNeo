@@ -563,6 +563,29 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await settleRequery();
     expect(continueCalls()).toBe(0);
     expect(needsAttentionPublishes()).toBe(0);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('keeps revoked-follow-up continuations behind the trailing SDK idle', async () => {
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    activeDeliveryUuids.clear();
+    revokedPendingMessage = { dbId: 'db-pending', uuid: 'queued-follow-up-uuid' };
+    await agentSession.revokePendingDelivery('db-pending', 'remove');
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
   });
 
   it('restarts a dead query to deliver the pending continuation', async () => {
