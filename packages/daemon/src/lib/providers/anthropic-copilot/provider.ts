@@ -170,8 +170,15 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     }
     if (starting) {
       const started = await starting.catch(() => undefined);
+      const lateClient = this.clientCache as CopilotClient | undefined;
+      if (lateClient) {
+        this.clientCache = undefined;
+      }
       if (started) {
         await started.stop().catch(() => {});
+      }
+      if (lateClient) {
+        await lateClient.stop().catch(() => {});
       }
     }
   }
@@ -652,6 +659,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         await this.saveCredentials(credentials);
         this.storedCredentialToken = null;
         this.tokenCache = null;
+        this.resetCredentialBoundCaches();
         this.notifyCredentialsChanged({ type: 'oauth', accessToken: data.access_token });
 
         logger.debug('GitHub Copilot OAuth login successful');

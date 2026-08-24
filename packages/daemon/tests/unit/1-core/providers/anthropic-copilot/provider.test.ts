@@ -892,6 +892,60 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['dynamicModelsCache']).toBeNull();
       expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
     });
+
+    it('resets the credential-bound runtime when the OAuth flow completes', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-oauth-reset-'));
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+      const stops: string[] = [];
+      (p as unknown as Record<string, unknown>)['serverCache'] = {
+        url: 'http://127.0.0.1:45680',
+        stop: async () => {
+          stops.push('server');
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        stop: async () => {
+          stops.push('client');
+        },
+      };
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith('/login/device/code')) {
+          return new Response(
+            JSON.stringify({
+              device_code: 'device-code',
+              user_code: 'ABCD-1234',
+              verification_uri: 'https://github.com/login/device',
+              expires_in: 5,
+              interval: 0,
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ access_token: 'gho_oauth_completed' }), {
+          status: 200,
+        });
+      });
+
+      try {
+        await p.startOAuthFlow();
+        for (let i = 0; i < 20 && stops.length < 2; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+
+        const state = p as unknown as Record<string, unknown>;
+        expect(stops).toEqual(['server', 'client']);
+        expect(state['serverCache']).toBeUndefined();
+        expect(state['clientCache']).toBeUndefined();
+        expect(state['dynamicModelsCache']).toBeNull();
+        expect(state['storedCredentialToken']).toBeNull();
+        expect(state['tokenCache']).toBeNull();
+      } finally {
+        fetchSpy.mockRestore();
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('ensureServerStarted() retry-after-failure', () => {

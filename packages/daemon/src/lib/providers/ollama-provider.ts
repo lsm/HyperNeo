@@ -98,9 +98,12 @@ export class OllamaProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
+    const previousApiKey = this.getApiKey();
     this.credentials = credentials;
     this.clearModelCache();
-    this.lastAuthError = undefined;
+    if (this.getApiKey() !== previousApiKey) {
+      this.lastAuthError = undefined;
+    }
   }
 
   getCredentials(): ProviderCredentials | null {

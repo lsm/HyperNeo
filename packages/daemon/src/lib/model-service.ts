@@ -583,7 +583,21 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
   ) {
     return true;
   }
-  if (result === 'timeout' || result.status !== 'loaded') {
+  if (result === 'timeout' || result.status === 'unavailable') {
+    armProviderRetryTimer(providerId);
+    return true;
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
     return true;
   }
   providerAppliedSeq.set(providerId, probeSeq);
