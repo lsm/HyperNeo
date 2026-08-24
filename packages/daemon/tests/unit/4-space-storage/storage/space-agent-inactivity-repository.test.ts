@@ -518,7 +518,7 @@ describe('SpaceAgentInactivity repositories', () => {
     });
 
     it('releases stale non-degraded claims older than the cutoff', () => {
-      claimRepo.acquire({
+      const acquired = claimRepo.acquire({
         spaceId,
         agentId: 'agent-1',
         claimKey: 'k',
@@ -527,7 +527,9 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      expect(claimRepo.releaseStale(spaceId, 'agent-1', Date.now() + 1000)).toBe(true);
+      expect(
+        claimRepo.releaseStale(spaceId, 'agent-1', acquired.claim.id, 100, Date.now() + 1000)
+      ).toBe(true);
       expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
     });
 
@@ -541,13 +543,31 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      expect(claimRepo.releaseStale(spaceId, 'agent-1', 1)).toBe(false);
+      expect(claimRepo.releaseStale(spaceId, 'agent-1', acquired.claim.id, 100, 1)).toBe(false);
       claimRepo.applyReset(spaceId, 'agent-1', acquired.claim.id, 'k', 'scanner-a', 1, {
         releaseClaim: false,
         markDegraded: true,
         advanceAttemptGeneration: false,
       });
-      expect(claimRepo.releaseStale(spaceId, 'agent-1', Date.now() + 1000)).toBe(false);
+      expect(
+        claimRepo.releaseStale(spaceId, 'agent-1', acquired.claim.id, 100, Date.now() + 1000)
+      ).toBe(false);
+    });
+
+    it('does not reclaim a claim with a newer window than the observed cutoff', () => {
+      const acquired = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 200,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(
+        claimRepo.releaseStale(spaceId, 'agent-1', acquired.claim.id, 100, Date.now() + 1000)
+      ).toBe(false);
+      expect(claimRepo.getByAgent(spaceId, 'agent-1')?.id).toBe(acquired.claim.id);
     });
 
     it('ignores a late reset when the claim revision moved on', () => {
@@ -582,7 +602,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-a',
         configRevision: 1,
       });
-      claimRepo.releaseStale(spaceId, 'agent-1', Date.now() + 1000);
+      claimRepo.releaseStale(spaceId, 'agent-1', first.claim.id, 100, Date.now() + 1000);
       const recreated = claimRepo.acquire({
         spaceId,
         agentId: 'agent-1',

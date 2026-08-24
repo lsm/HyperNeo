@@ -215,13 +215,19 @@ export class SpaceAgentInactivityClaimRepository {
     return result.changes > 0;
   }
 
-  releaseStale(spaceId: string, agentId: string, staleBefore: number): boolean {
+  releaseStale(
+    spaceId: string,
+    agentId: string,
+    expectedClaimId: string,
+    windowCutoff: number,
+    staleBefore: number
+  ): boolean {
     const result = this.db
       .prepare(
         `DELETE FROM space_agent_inactivity_claims
-         WHERE space_id = ? AND agent_id = ? AND state != 'none' AND degraded = 0 AND updated_at <= ?`
+         WHERE id = ? AND space_id = ? AND agent_id = ? AND window_anchored_at <= ? AND state != 'none' AND degraded = 0 AND updated_at <= ?`
       )
-      .run(spaceId, agentId, staleBefore);
+      .run(expectedClaimId, spaceId, agentId, windowCutoff, staleBefore);
     return result.changes > 0;
   }
 

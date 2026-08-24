@@ -101,9 +101,9 @@ export class SpaceAgentInactivityWatchdogService {
       !claim.degraded &&
       claim.updatedAt <= staleBefore
     ) {
-      this.deps.claimRepo.releaseStale(spaceId, agentId, staleBefore);
-      claim = null;
+      this.deps.claimRepo.releaseStale(spaceId, agentId, claim.id, lastActivityAt, staleBefore);
     }
+    claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     const decision = decideInactivityNag({
       now: this.deps.now?.() ?? Date.now(),
       enabled: config.enabled,
