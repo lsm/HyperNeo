@@ -9,7 +9,7 @@ import {
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
 import {
-  parseAcpConfig,
+  parseProviderConfig,
   syncProviderToRegistry,
   removeProviderFromRegistry,
 } from '../providers/provider-sync.js';
@@ -229,7 +229,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       const provider =
         registered instanceof AcpProvider && !useEnvCommand ? registered : new AcpProvider();
       if (!(registered instanceof AcpProvider) && !useEnvCommand) {
-        provider.setAcpCommand(parseAcpConfig(record.configJson).command);
+        provider.setAcpCommand(parseProviderConfig(record.configJson).command);
       }
       const models = await fetchAcpModels(provider, {
         command: commandOverride ? commandOverride : undefined,
@@ -285,7 +285,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             await syncProviderToRegistry(record, creds);
           } else if (record.kind === 'built_in') {
             markBuiltInProviderDisabled(record.providerId);
-            await removeProviderFromRegistry(record.providerId);
+            await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
           }
         } catch (err) {
           providerRepo.deleteProvider(record.id);
@@ -359,7 +359,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               if (record.kind === 'built_in') {
                 markBuiltInProviderDisabled(record.providerId);
               }
-              await removeProviderFromRegistry(record.providerId);
+              await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
             } else {
               const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
               await ensureBuiltInProviderRegistered(record.providerId);

@@ -85,16 +85,22 @@ vi.mock('../AcpEditorModal.tsx', () => ({
     command,
     models,
     envBacked,
+    configJson,
     onClose,
   }: {
     providerId: string;
     command: string;
-    models: Array<{ id: string }>;
+    models: Array<{ id: string }> | undefined;
     envBacked?: boolean;
+    configJson?: string;
     onClose: () => void;
   }) => (
     <div data-testid="acp-editor-modal">
       <span>{`${providerId}:${command}:${(models ?? []).map((model) => model.id).join(',')}`}</span>
+      <span data-testid="acp-editor-models-state">
+        {models === undefined ? 'absent' : models.length === 0 ? 'empty' : 'set'}
+      </span>
+      <span data-testid="acp-editor-config-json">{configJson ?? ''}</span>
       <span data-testid="acp-editor-env-backed">{envBacked ? 'env' : 'explicit'}</span>
       <button data-testid="acp-editor-close" onClick={onClose}>
         Close
@@ -196,6 +202,8 @@ vi.mock('../CustomEndpointEditor.tsx', () => ({
 
 import { ProvidersSettings } from '../ProvidersSettings.tsx';
 import { globalStore } from '../../../lib/global-store.ts';
+import { ConnectionNotReadyError } from '../../../lib/errors.ts';
+import { connectionState } from '../../../lib/state.ts';
 
 function createMockProvider(
   id: string,
@@ -226,6 +234,7 @@ describe('ProvidersSettings', () => {
     mockListProviders.mockResolvedValue({ providers: [] });
     mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
     globalStore.systemState.value = null;
+    connectionState.value = 'connecting';
   });
 
   afterEach(() => {
@@ -421,6 +430,38 @@ describe('ProvidersSettings', () => {
     );
   });
 
+  it('treats an all-invalid ACP models array as absent when opening the editor', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({ command: 'devin acp', models: [null] }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Edit'));
+
+    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('absent');
+  });
+
+  it('keeps an explicitly empty ACP models array distinct from absent', async () => {
+    const provider = createMockProvider('acp-1', 'acp', {
+      displayName: 'ACP Agent',
+      authType: 'none',
+      configJson: JSON.stringify({ command: 'devin acp', models: [] }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [provider] });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('ACP Agent'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Edit'));
+
+    expect(screen.getByTestId('acp-editor-models-state').textContent).toBe('empty');
+  });
+
   it('toggles provider enabled state', async () => {
     const providers = [
       createMockProvider('1', 'anthropic', { displayName: 'Anthropic', isEnabled: true }),
@@ -506,6 +547,229 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockTestProvider).toHaveBeenCalledWith('1');
     });
+  });
+
+  it('adopts fresh server kimi region on reload', async () => {
+    const kimiWithRegion = (region: string) =>
+      createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region }),
+      });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    mockTestProvider.mockResolvedValue({ healthy: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe('china');
+    });
+
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('global')] });
+    fireEvent.click(screen.getByText('Test connection'));
+
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe(
+        'global'
+      );
+    });
+  });
+
+  it('preserves an unsaved kimi region selection across reload', async () => {
+    const kimi = createMockProvider('k1', 'kimi', {
+      displayName: 'Kimi',
+      configJson: JSON.stringify({ region: 'china' }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [kimi] });
+    mockTestProvider.mockResolvedValue({ healthy: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    expect(regionSelect().value).toBe('global');
+
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' }), kimi],
+    });
+    fireEvent.click(screen.getByText('Test connection'));
+
+    await waitFor(() => expect(container.textContent).toContain('Anthropic'));
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+  });
+
+  it('drops stale kimi region state when the row is absent from a reload', async () => {
+    mockListProviders.mockResolvedValue({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region: 'china' }),
+        }),
+      ],
+    });
+    mockTestProvider.mockResolvedValue({ healthy: true });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe('china');
+    });
+
+    mockListProviders.mockResolvedValue({
+      providers: [createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' })],
+    });
+    fireEvent.click(screen.getByText('Test connection'));
+    await waitFor(() => {
+      expect(container.textContent).toContain('Anthropic');
+      expect(container.querySelector('#kimi-region-k1')).toBeNull();
+    });
+
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => expect(screen.getByText('Test connection')).toBeTruthy());
+
+    mockListProviders.mockResolvedValue({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region: 'global' }),
+        }),
+      ],
+    });
+    fireEvent.click(screen.getByText('Test connection'));
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    await waitFor(() => {
+      expect((container.querySelector('#kimi-region-k1') as HTMLSelectElement).value).toBe(
+        'global'
+      );
+    });
+  });
+
+  it('treats a saved kimi region as synchronized when reload returns a newer server value', async () => {
+    const kimiWithRegion = (region: string) =>
+      createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region }),
+      });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: kimiWithRegion('china') });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    mockListProviders.mockResolvedValue({ providers: [kimiWithRegion('china')] });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledWith(
+        'k1',
+        { configJson: JSON.stringify({ region: 'global' }) },
+        undefined
+      );
+    });
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+  });
+
+  it('preserves stored config fields when saving a kimi region change', async () => {
+    const kimi = createMockProvider('k1', 'kimi', {
+      displayName: 'Kimi',
+      configJson: JSON.stringify({
+        region: 'china',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      }),
+    });
+    mockListProviders.mockResolvedValue({ providers: [kimi] });
+    mockUpdateProvider.mockResolvedValue({ success: true, provider: kimi });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(mockUpdateProvider).toHaveBeenCalledTimes(1);
+      const [calledId, params] = mockUpdateProvider.mock.calls[0];
+      expect(calledId).toBe('k1');
+      expect(JSON.parse(params.configJson)).toEqual({
+        region: 'global',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      });
+    });
+  });
+
+  it('ignores an out-of-order reload that started before a kimi save', async () => {
+    type ProviderList = { providers: (ProviderRecord & { available: boolean })[] };
+    const listFor = (region: string): ProviderList => ({
+      providers: [
+        createMockProvider('k1', 'kimi', {
+          displayName: 'Kimi',
+          configJson: JSON.stringify({ region }),
+        }),
+        createMockProvider('a1', 'anthropic', { displayName: 'Anthropic' }),
+      ],
+    });
+    let listCall = 0;
+    let releaseStaleLoad: (value: ProviderList) => void;
+    const staleLoad = new Promise<ProviderList>((resolve) => {
+      releaseStaleLoad = resolve;
+    });
+    mockListProviders.mockImplementation(() => {
+      listCall += 1;
+      if (listCall === 2) return staleLoad;
+      return Promise.resolve(listFor(listCall === 1 ? 'china' : 'global'));
+    });
+    let releaseSave: () => void;
+    const saveUpdate = new Promise<{ success: boolean }>((resolve) => {
+      releaseSave = () => resolve({ success: true });
+    });
+    mockUpdateProvider.mockImplementation(() => saveUpdate);
+    let releaseTest: () => void;
+    const testProbe = new Promise<{ healthy: boolean }>((resolve) => {
+      releaseTest = () => resolve({ healthy: true });
+    });
+    mockTestProvider.mockImplementation(() => testProbe);
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Kimi'));
+    const rowHeaders = () =>
+      Array.from(container.querySelectorAll<HTMLDivElement>('div[class*="cursor-pointer"]'));
+    fireEvent.click(rowHeaders()[0]);
+    const regionSelect = () => container.querySelector('#kimi-region-k1') as HTMLSelectElement;
+    await waitFor(() => expect(regionSelect().value).toBe('china'));
+    fireEvent.change(regionSelect(), { target: { value: 'global' } });
+
+    fireEvent.click(screen.getByText('Save'));
+    fireEvent.click(rowHeaders()[1]);
+    await waitFor(() => expect(screen.getByText('Test connection')).toBeTruthy());
+    fireEvent.click(screen.getByText('Test connection'));
+
+    releaseTest!();
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(2));
+    releaseSave!();
+    await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(rowHeaders().length).toBeGreaterThan(0));
+    fireEvent.click(rowHeaders()[0]);
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+
+    releaseStaleLoad!(listFor('china'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(regionSelect().value).toBe('global'));
+    const saveButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Save')
+    ) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
   });
 
   it('updates API key for provider', async () => {
@@ -695,6 +959,85 @@ describe('ProvidersSettings', () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
     });
+  });
+
+  it('shows error toast and misleading empty state when mounted while disconnected', async () => {
+    mockListProviders.mockRejectedValue(new ConnectionNotReadyError('Not connected to server'));
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('No providers configured.');
+    });
+  });
+
+  it('fetches immediately on mount without gating on connection readiness', async () => {
+    let connectSettled = false;
+    let resolveConnect: () => void;
+    new Promise<void>((resolve) => {
+      resolveConnect = () => {
+        connectSettled = true;
+        resolve();
+      };
+    });
+
+    mockListProviders.mockImplementation(() => {
+      if (connectSettled) {
+        return Promise.resolve({
+          providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+        });
+      }
+      return Promise.reject(new ConnectionNotReadyError('Not connected to server'));
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('No providers configured.');
+    });
+
+    expect(mockListProviders).toHaveBeenCalledTimes(1);
+    expect(connectSettled).toBe(false);
+
+    resolveConnect!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(connectSettled).toBe(true);
+    expect(mockListProviders).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('No providers configured.');
+  });
+
+  it('performs no refetch after a later successful connect (terminal failure today)', async () => {
+    let connected = false;
+    mockListProviders.mockImplementation(() => {
+      if (connected) {
+        return Promise.resolve({
+          providers: [createMockProvider('1', 'anthropic', { displayName: 'Anthropic' })],
+        });
+      }
+      return Promise.reject(new ConnectionNotReadyError('Not connected to server'));
+    });
+    mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+
+    const { container } = render(<ProvidersSettings />);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith('Failed to load providers');
+      expect(container.textContent).toContain('No providers configured.');
+    });
+
+    connected = true;
+    connectionState.value = 'connected';
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockListProviders).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('No providers configured.');
+    expect(container.textContent).not.toContain('Anthropic');
   });
 
   it('shows warning toast when auth status fails', async () => {

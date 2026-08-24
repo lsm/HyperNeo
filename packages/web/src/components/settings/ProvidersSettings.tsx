@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -45,6 +45,24 @@ function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
   }
 }
 
+function mergeProviderConfig(
+  configJson: string | undefined,
+  patch: Record<string, unknown>
+): string {
+  let base: Record<string, unknown> = {};
+  if (configJson) {
+    try {
+      const parsed: unknown = JSON.parse(configJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      base = {};
+    }
+  }
+  return JSON.stringify({ ...base, ...patch });
+}
+
 function readAcpCommand(provider: EnrichedProvider): string {
   if (!provider.configJson) return '';
   try {
@@ -60,12 +78,14 @@ function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undef
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
     if (!Array.isArray(parsed.models)) return undefined;
-    return parsed.models.flatMap((model) => {
+    if (parsed.models.length === 0) return [];
+    const valid = parsed.models.flatMap((model) => {
       if (!model || typeof model !== 'object') return [];
       const { id, name } = model as { id?: unknown; name?: unknown };
       if (typeof id !== 'string') return [];
       return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
     });
+    return valid.length > 0 ? valid : undefined;
   } catch {
     return undefined;
   }
@@ -90,8 +110,11 @@ export function ProvidersSettings() {
     command: string;
     models?: AcpConfiguredModel[];
     envBacked?: boolean;
+    configJson?: string;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
+  const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
+  const providerLoadGeneration = useRef(0);
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
@@ -106,6 +129,7 @@ export function ProvidersSettings() {
     useFetchModels(customEditor);
 
   const loadProviders = async () => {
+    const generation = ++providerLoadGeneration.current;
     try {
       setLoading(true);
       const [{ providers: records }, authResponse] = await Promise.all([
@@ -115,6 +139,7 @@ export function ProvidersSettings() {
           return { providers: [] as ProviderAuthStatus[] };
         }),
       ]);
+      if (generation !== providerLoadGeneration.current) return;
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
         ...r,
@@ -127,7 +152,17 @@ export function ProvidersSettings() {
           nextRegions[p.id] = readKimiRegion(p);
         }
       }
-      setKimiRegions((prev) => ({ ...nextRegions, ...prev }));
+      const syncedRegions = lastSyncedKimiRegions.current;
+      setKimiRegions((prev) => {
+        const merged: Record<string, 'china' | 'global'> = { ...nextRegions };
+        for (const [id, edited] of Object.entries(prev)) {
+          if (id in nextRegions && edited !== syncedRegions[id]) {
+            merged[id] = edited;
+          }
+        }
+        return merged;
+      });
+      lastSyncedKimiRegions.current = nextRegions;
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
       }
@@ -240,8 +275,12 @@ export function ProvidersSettings() {
     setPendingId(provider.id);
     try {
       await updateProvider(provider.id, {
-        configJson: JSON.stringify({ region }),
+        configJson: mergeProviderConfig(provider.configJson, { region }),
       });
+      lastSyncedKimiRegions.current = {
+        ...lastSyncedKimiRegions.current,
+        [provider.id]: region,
+      };
       toast.success(`${provider.displayName} region set to ${KIMI_REGION_LABELS[region]}`);
       await loadProviders();
     } catch (err) {
@@ -737,6 +776,7 @@ export function ProvidersSettings() {
                                     command: readAcpCommand(provider),
                                     models: readAcpModels(provider),
                                     envBacked: !readAcpCommand(provider),
+                                    configJson: provider.configJson,
                                   })
                                 }
                                 disabled={isPending}
@@ -859,6 +899,7 @@ export function ProvidersSettings() {
           command={acpEditor.command}
           models={acpEditor.models}
           envBacked={acpEditor.envBacked}
+          configJson={acpEditor.configJson}
           onClose={() => setAcpEditor(null)}
           onSaved={() => {
             setAcpEditor(null);

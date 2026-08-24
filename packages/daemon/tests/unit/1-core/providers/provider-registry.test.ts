@@ -190,6 +190,69 @@ describe('ProviderRegistry', () => {
       expect(infos.find((i) => i.id === 'broken')?.models).toEqual([]);
       expect(infos.find((i) => i.id === 'anthropic')?.models).toContain('mock-1');
     });
+
+    it('falls back to an unavailable entry when isAvailable throws synchronously', async () => {
+      const healthy = makeAnthropicProvider();
+      const syncBroken = new (class extends MockProvider {
+        readonly id = 'sync-broken' as const;
+        override isAvailable(): boolean {
+          throw new Error('sync probe failure');
+        }
+      })();
+      registry.register(healthy);
+      registry.register(syncBroken);
+
+      const infos = await registry.getProviderInfo();
+
+      expect(infos.map((i) => i.id)).toEqual(['anthropic', 'sync-broken']);
+      expect(infos.find((i) => i.id === 'sync-broken')).toMatchObject({
+        available: false,
+        models: [],
+      });
+      expect(infos.find((i) => i.id === 'anthropic')?.available).toBe(true);
+    });
+
+    it('falls back to an unavailable entry when getModels throws synchronously', async () => {
+      const healthy = makeAnthropicProvider();
+      const syncBrokenModels = new (class extends MockProvider {
+        readonly id = 'sync-broken-models' as const;
+        override getModels(): Promise<ModelInfo[]> {
+          throw new Error('sync model failure');
+        }
+      })();
+      registry.register(healthy);
+      registry.register(syncBrokenModels);
+
+      const infos = await registry.getProviderInfo();
+
+      expect(infos.map((i) => i.id)).toEqual(['anthropic', 'sync-broken-models']);
+      expect(infos.find((i) => i.id === 'sync-broken-models')).toMatchObject({
+        available: false,
+        models: [],
+      });
+      expect(infos.find((i) => i.id === 'anthropic')?.models).toContain('mock-1');
+    });
+
+    it('falls back to an unavailable entry when getModels resolves without a model list', async () => {
+      const healthy = makeAnthropicProvider();
+      const nullModels = new (class extends MockProvider {
+        readonly id = 'null-models' as const;
+        override getModels(): Promise<ModelInfo[]> {
+          return Promise.resolve(null as unknown as ModelInfo[]);
+        }
+      })();
+      registry.register(healthy);
+      registry.register(nullModels);
+
+      const infos = await registry.getProviderInfo();
+
+      expect(infos.map((i) => i.id)).toEqual(['anthropic', 'null-models']);
+      expect(infos.find((i) => i.id === 'null-models')).toMatchObject({
+        available: false,
+        models: [],
+      });
+      expect(infos.find((i) => i.id === 'anthropic')?.models).toContain('mock-1');
+    });
   });
 
   describe('getAll', () => {

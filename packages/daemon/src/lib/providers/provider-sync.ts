@@ -1,8 +1,8 @@
 import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
-import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type { CuratedModel, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
-import { AcpProvider, type AcpConfiguredModel } from './acp-provider.js';
+import { AcpProvider } from './acp-provider.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -10,27 +10,31 @@ import { resolveKimiRegion } from './kimi-provider.js';
 
 const logger = new Logger('providers:sync');
 
-export function parseAcpConfig(configJson: string | undefined): {
+export function parseProviderConfig(configJson: string | undefined): {
   command?: string;
-  models?: AcpConfiguredModel[];
+  models?: CuratedModel[];
 } {
   if (!configJson) return {};
   try {
     const parsed = JSON.parse(configJson) as { command?: unknown; models?: unknown };
     const command = typeof parsed.command === 'string' ? parsed.command : undefined;
-    const models = Array.isArray(parsed.models)
-      ? parsed.models
+    let models: CuratedModel[] | undefined;
+    if (Array.isArray(parsed.models)) {
+      if (parsed.models.length === 0) {
+        models = [];
+      } else {
+        const valid = parsed.models
           .filter(
-            (model: unknown): model is AcpConfiguredModel =>
-              !!model &&
-              typeof model === 'object' &&
-              typeof (model as AcpConfiguredModel).id === 'string'
+            (model: unknown): model is CuratedModel =>
+              !!model && typeof model === 'object' && typeof (model as CuratedModel).id === 'string'
           )
           .map((model) => ({
             id: model.id,
             name: typeof model.name === 'string' ? model.name : undefined,
-          }))
-      : undefined;
+          }));
+        models = valid.length > 0 ? valid : undefined;
+      }
+    }
     return { command, models };
   } catch {
     return {};
@@ -58,11 +62,18 @@ export async function syncProviderToRegistry(
       (provider as { setDefaultRegion: (r: 'china' | 'global') => void }).setDefaultRegion(region);
       logger.info(`Kimi provider region set to '${region}'`);
     }
+    const { command, models } = parseProviderConfig(record.configJson);
     if (provider instanceof AcpProvider) {
-      const { command, models } = parseAcpConfig(record.configJson);
       provider.setAcpCommand(command);
-      provider.setAcpModels(models);
       logger.info(`ACP provider command ${command ? 'configured' : 'reset to env default'}`);
+    }
+    if (provider?.setCuratedModels) {
+      provider.setCuratedModels(models);
+      if (models !== undefined) {
+        logger.info(
+          `Applied model curation to ${record.providerId}: ${models.length} visible model(s)`
+        );
+      }
     }
     if (provider?.setCredentials && credentials) {
       if (isStartupSync && provider.logout && provider.getCredentials) {
@@ -137,12 +148,15 @@ export async function syncAllProviders(
   }
 }
 
-export async function removeProviderFromRegistry(providerId: string): Promise<void> {
+export async function removeProviderFromRegistry(
+  providerId: string,
+  options: { preserveCredentials?: boolean } = {}
+): Promise<void> {
   const registry = getProviderRegistry();
   const provider = registry.get(providerId);
   if (!provider) return;
 
-  if (provider.logout) {
+  if (provider.logout && !options.preserveCredentials) {
     try {
       await provider.logout();
     } catch (err) {

@@ -440,6 +440,47 @@ describe('Provider RPC handlers', () => {
       expect(getProviderRegistry().has('acp')).toBe(false);
     });
 
+    it('does not log out a live built-in provider when created as disabled', async () => {
+      const logout = mock(async () => {});
+      getProviderRegistry().register({
+        id: 'acp',
+        displayName: 'ACP Agent',
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        logout,
+        shutdown: mock(async () => {}),
+      } as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'acp',
+            displayName: 'ACP Agent',
+            kind: 'built_in',
+            authType: 'none',
+            isEnabled: false,
+          },
+        },
+        {}
+      )) as { provider: ProviderRecord };
+
+      expect(result.provider.isEnabled).toBe(false);
+      expect(getProviderRegistry().has('acp')).toBe(false);
+      expect(logout).not.toHaveBeenCalled();
+    });
+
     it('rolls back the provider row and surfaces keychain guidance when storeApiKey throws KeychainUnavailableError', async () => {
       creds.storeApiKey = mock(async () => {
         throw new KeychainUnavailableError('User interaction is not allowed.');
@@ -882,6 +923,55 @@ describe('Provider RPC handlers', () => {
 
       expect(await detectStrandedProviders(anthropicOnly)).toEqual(['glm']);
     });
+
+    it('disable preserves stored credentials: disable must not log the provider out', async () => {
+      const created = repo.createProvider({
+        providerId: 'glm',
+        displayName: 'GLM',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      await creds.storeOAuthTokens('glm', { accessToken: 'glm-oauth-token' });
+
+      const logout = mock(async () => {});
+      getProviderRegistry().register({
+        id: 'glm',
+        displayName: 'GLM',
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        logout,
+        shutdown: mock(async () => {}),
+      } as Provider);
+
+      const handlers = setup();
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: false } }, {});
+      expect(getProviderRegistry().has('glm')).toBe(false);
+      expect(logout).not.toHaveBeenCalled();
+      expect(await creds.getCredentials('glm')).toEqual({
+        type: 'oauth',
+        accessToken: 'glm-oauth-token',
+      });
+
+      await handlers.get('providers.update')!({ id: created.id, params: { isEnabled: true } }, {});
+      expect(getProviderRegistry().has('glm')).toBe(true);
+      expect(logout).not.toHaveBeenCalled();
+      expect(await creds.getCredentials('glm')).toEqual({
+        type: 'oauth',
+        accessToken: 'glm-oauth-token',
+      });
+    });
   });
 
   describe('providers.delete', () => {
@@ -908,6 +998,43 @@ describe('Provider RPC handlers', () => {
       await expect(handlers.get('providers.delete')!({ id: 'missing' }, {})).rejects.toThrow(
         'not found'
       );
+    });
+
+    it('logs the provider out on delete (destructive removal clears stored credentials)', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const logout = mock(async () => {});
+      getProviderRegistry().register({
+        id: 'anthropic',
+        displayName: 'Anthropic',
+        capabilities: {
+          streaming: false,
+          extendedThinking: false,
+          thinkingModes: 'off',
+          maxContextWindow: 1000,
+          functionCalling: false,
+          vision: false,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        logout,
+        shutdown: mock(async () => {}),
+      } as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.delete')!({ id: created.id }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(logout).toHaveBeenCalled();
     });
 
     it('blocks delete when removeCredentials throws KeychainUnavailableError for built_in', async () => {

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
-import { globalSettings } from '../../lib/state.ts';
+import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager';
@@ -447,6 +447,12 @@ export function ModelsSettings() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [loadError, setLoadError] = useState<{ message: string; forceRefresh: boolean } | null>(
+    null
+  );
+  const autoRetriedMessagesRef = useRef<Set<string>>(new Set());
+  const fetchInFlightRef = useRef(false);
+  const pendingForceRefreshRef = useRef(false);
 
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -464,24 +470,51 @@ export function ModelsSettings() {
   }, [settings]);
 
   const fetchModels = async (forceRefresh: boolean) => {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
-
-    const [modelsResponse, authResponse] = await Promise.all([
-      hub.request(
-        'models.list',
-        forceRefresh ? { forceRefresh: true } : { useCache: true }
-      ) as Promise<{ models: RawModelEntry[] }>,
-      listProviderAuthStatus().catch(() => ({ providers: [] })),
-    ]);
-
-    setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
-
-    const authMap = new Map<string, ProviderAuthStatus>();
-    for (const p of authResponse.providers) {
-      authMap.set(p.id, p);
+    if (fetchInFlightRef.current) {
+      if (forceRefresh) pendingForceRefreshRef.current = true;
+      return;
     }
-    setProviderAuthStatuses(authMap);
+
+    fetchInFlightRef.current = true;
+    setLoading(true);
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) {
+        setLoadError({ message: 'Not connected to server', forceRefresh });
+        return;
+      }
+
+      const [modelsResponse, authResponse] = await Promise.all([
+        hub.request(
+          'models.list',
+          forceRefresh ? { forceRefresh: true } : { useCache: true }
+        ) as Promise<{ models: RawModelEntry[] }>,
+        listProviderAuthStatus().catch(() => ({ providers: [] })),
+      ]);
+
+      setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
+
+      const authMap = new Map<string, ProviderAuthStatus>();
+      for (const p of authResponse.providers) {
+        authMap.set(p.id, p);
+      }
+      setProviderAuthStatuses(authMap);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError({
+        message: e instanceof Error ? e.message : 'Failed to load models',
+        forceRefresh,
+      });
+      throw e;
+    } finally {
+      fetchInFlightRef.current = false;
+      if (pendingForceRefreshRef.current) {
+        pendingForceRefreshRef.current = false;
+        loadModels(true);
+      } else {
+        setLoading(false);
+      }
+    }
   };
 
   const saveOpenRouterAllowlist = async () => {
@@ -524,19 +557,28 @@ export function ModelsSettings() {
     }
   };
 
+  const isConnected = connectionState.value === 'connected';
+
+  const loadModels = (forceRefresh: boolean) => {
+    void fetchModels(forceRefresh).catch(() => {});
+  };
+
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        await fetchModels(false);
-      } catch {
-      } finally {
-        setLoading(false);
-      }
-    };
-    void load();
+    loadModels(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!loadError) {
+      autoRetriedMessagesRef.current.clear();
+      return;
+    }
+    if (!isConnected) return;
+    if (autoRetriedMessagesRef.current.has(loadError.message)) return;
+    autoRetriedMessagesRef.current.add(loadError.message);
+    loadModels(loadError.forceRefresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, loadError]);
 
   const saveFallbackModels = async (models: FallbackModelEntry[]) => {
     setIsUpdating(true);
@@ -663,6 +705,23 @@ export function ModelsSettings() {
           Refresh models
         </Button>
       </div>
+      {loadError && (
+        <div
+          class="flex items-center justify-between gap-3 rounded-lg border border-red-300/20 px-4 py-3 text-sm text-red-200"
+          role="alert"
+        >
+          <span>{loadError.message}</span>
+          <Button
+            variant="ghost"
+            size="xs"
+            loading={loading}
+            disabled={refreshing}
+            onClick={() => loadModels(loadError.forceRefresh)}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       <div class="space-y-3">
         <div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
           <div>
