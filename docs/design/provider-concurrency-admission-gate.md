@@ -262,7 +262,13 @@ gate never sees. Re-flagging and admission are two separate rules:
   **request** with no `job.id` — denial fails the request with a typed
   retryable `provider_saturated` error the caller surfaces (the request
   completes with an explicit outcome, never hangs); and the workflow selector
-  runs inline with a deterministic fallback — denial selects the fallback
+  runs inline with a deterministic fallback — denial selects the fallback.
+  Those last two callers **abandon their denied work and are never
+  registered** (background-queue registration is for durable retryable work
+  only): nothing durable remains to run, so a registration could receive a
+  grant it can neither consume nor resolve, wedging the drain. Their retry
+  story is their own trigger — the next episode request or selection consults
+  again
   (rule-based selection) instead of deferring. These six surfaces (titles +
   three Space jobs + `github/router-agent.ts:198-244` and
   `github/security-agent.ts:147-204`, which `DaemonApp` supplies with the same
@@ -284,11 +290,13 @@ gate never sees. Re-flagging and admission are two separate rules:
   is unchanged, losing the skipped analysis anyway. **Rollback is
   per-event, not response-wide**: a multi-event response can contain events
   already routed before the denial, and `processEvent` has no event-id
-  dedupe before `deliverToRoom` — so the denied event is persisted for
-  targeted retry (the durable raw-event inbox, below) and the cursor
-  advances past the events that completed, rather than withholding the
-  response-wide cursor and reprocessing them; the event is re-processed by
-  the next poll once the account reopens; the **webhook path**
+  dedupe before `deliverToRoom`. **The inbox is the sole retry owner of a
+  denied event**: it persists there for targeted retry and the cursor
+  advances past every event in the response — completed events are not
+  reprocessed (no dedupe exists to protect them) and the denied event is not
+  reprocessed by the next poll either (dual owners would duplicate room
+  messages); the inbox wake drains each persisted event exactly once once
+  the account reopens; the **webhook path**
   (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
   callback — no job, no `job.id`) processes the event **without** agent
   analysis (records the raw event, skips the LLM triage) and answers the
@@ -458,7 +466,11 @@ interface ProviderAdmissionFacts {
   saturationUntilMs: number | null; // registry snapshot (null = no timed
                                     // saturation; closure is the separate flag)
   closed: boolean;                  // billing-terminal closure — no deadline,
-                                    // admits nothing until credential change
+                                    // admits nothing until reopened (manual
+                                    // retry, health probe, credential change)
+  accountAvailable: boolean;        // usable credentials present — false once
+                                    // auth.logout removes the last stored
+                                    // credential; denies like closed
   probing: boolean;                 // post-clear / post-restart: a probe grant
                                     // is outstanding and unresolved
   holdsProbeGrant: boolean;         // this delivery owns the grant
@@ -475,10 +487,12 @@ type ProviderAdmission =
 steer fed into a live turn via `feedDeliverySteer` rides the turn's existing
 provider call; it adds none — and parking it while the live turn waits on that
 very input would deadlock the turn whose completion could clear saturation);
-else closed → `queue_until` with **no deadline** (reason `closed`, `untilMs`
-null — the kind has no reset; only a credential/account change re-opens, so
-callers treat it as queue-indefinitely / surface to the user, never
-tick-retry); else saturated → `queue_until` with the registry's deadline; else
+else `!accountAvailable || closed` → `queue_until` with **no deadline**
+(reason `closed`, `untilMs` null — neither kind has a reset; closure
+re-opens via manual Retry, the bounded health probe, or a credential
+change, logout-retention via usable credentials appearing again, so callers
+treat both as queue-indefinitely / surface to the user, never tick-retry);
+else saturated → `queue_until` with the registry's deadline; else
 probing without the grant → `queue_until` (reason `probing`, until = the probe
 tick); else if `configuredCap !== null && inFlight >= configuredCap` →
 `queue_until` (reason `slot_pressure`, until = null-safe probe tick); else
@@ -761,21 +775,30 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   (`D/src/lib/internal-event-bus.ts:116-135`), while session handlers are
   subscribed under their session id — so the registry does **not** publish one
   provider-wide event (it would land in `__global__` and reach zero per-session
-  subscribers). **The wake has exactly one recipient: the session of the
-  grant-bound FIFO identity** (below) — with a single outstanding grant,
+  subscribers). **The wake has exactly one recipient: the grant-bound FIFO
+  identity, dispatched by its kind** — with a single outstanding grant,
   waking every registered session would load inactive sessions and scan their
   queues for a grant none of them holds, and the per-session broadcast from
-  earlier drafts contradicted the mint-bound contract. The registry publishes
-  `provider.concurrency.open {sessionId, providerId, messageUuid}` for that
-  session only; `event-subscription-setup.ts` (the wiring that binds
-  `query.trigger` at `:103-110`) subscribes each session, and the handler
-  re-runs the **full P1 admission for the bound uuid only** — manual-mode gate
-  included: if the bound row's session has switched to manual, the row is
-  retained and the grant re-binds to the next eligible identity (scan-past,
-  same as drain selection) — then promotes through the existing per-uuid
-  promotion path (the mechanism behind `session.messages.promotePending`,
-  `session-handlers.ts:1126-1182`: deferred → enqueued → delivery job; the
-  enqueued wake arm below for parked rows).
+  earlier drafts contradicted the mint-bound contract. Grant identities are
+  **typed**: `{kind: 'message', sessionId, messageUuid}` for chat/parked rows
+  and `{kind: 'job', jobKind, jobId}` / `{kind: 'inbox', eventId}` for
+  background waiters (a friction-analysis job carries only `scopeId`/`taskId`
+  and an inbox entry only its event id — neither has an `sdk_messages` UUID,
+  so routing every grant through a session-message wake leaves those bound
+  grants without a recipient until expiry). Each kind has its own dispatcher:
+  the **message** wake publishes
+  `provider.concurrency.open {sessionId, providerId, messageUuid}` through
+  `event-subscription-setup.ts` (the wiring that binds `query.trigger` at
+  `:103-110`) and re-runs the **full P1 admission for the bound uuid only** —
+  manual-mode gate included: if the bound row's session has switched to
+  manual, the row is retained and the grant re-binds to the next eligible
+  identity (scan-past, same as drain selection) — then promotes through the
+  existing per-uuid promotion path (the mechanism behind
+  `session.messages.promotePending`, `session-handlers.ts:1126-1182`:
+  deferred → enqueued → delivery job; the enqueued wake arm below for parked
+  rows); the **job** wake directly makes that durable job claimable
+  (`retryAt = now` under the same claim-token rules); the **inbox** wake
+  drains that event through the agents.
 - **Probing release — one probe grant, carried end-to-end, pushing the drain.**
   After **any** clear (probe rule, timer expiry, or startup reconstruction), the
   provider mints a single **probe grant — bound at mint time, not by race**:
@@ -832,15 +855,25 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   historical rows are invisible because the marker is cleared on exit (below).
   The wake path likewise resolves sessions on demand (`getSessionAsync`) rather
   than relying on already-subscribed sessions. **Archived sessions are
-  excluded, on both edges**: `archiveResources` cancels only delivery-job UUIDs
-  (`cancelForSessionWithMessages`, `session-lifecycle.ts:481-520`), and a
-  provider-queued `'deferred'` row deliberately has no job — so archiving also
-  retires marked rows atomically (marker cleared, registration removed), and
-  the scan joins against non-archived sessions, clearing any marker it finds on
-  archived rows as stale. Without this, the on-demand wake could load and
-  promote an archived conversation into a provider call after restart. The
-  first reconstructed registration mints the probe grant, so the restart drain
-  is serialized by the same one-at-a-time release. Saturation *state* is still lost, so that probe
+  excluded, on both edges — including their parked background jobs**:
+  `archiveResources` cancels only delivery-job UUIDs
+  (`cancelForSessionWithMessages`, `session-lifecycle.ts:481-520`) — a
+  provider-queued `'deferred'` row has no such job, and neither does a parked
+  title/analysis job — so archiving also retires marked rows atomically
+  (marker cleared, registration removed) **and cancels/deregisters the
+  session's parked background jobs** (a surviving job would later consume a
+  grant to run an unwanted query against an archived session), and the scans
+  join against non-archived sessions, clearing markers and skipping
+  archived-session jobs as stale. Without this, the on-demand wake could load and
+  promote an archived conversation into a provider call after restart.
+  **Reconstruction stages before it mints**: message rows, parked jobs, and
+  inbox entries are three different scans, so enumerating them one at a time
+  could bind the first grant onto an older background identity discovered
+  before a newer chat registration — violating chat-first priority from the
+  very first grant. The scan completes all three queues (ordered by the
+  persisted sequence) and only then selects and mints against the completed
+  queues, so the restart drain starts on the true head, serialized by the
+  same one-at-a-time release. Saturation *state* is still lost, so that probe
   may pay one discovery 429 — bounded, one charge.
 - **The enqueued wake arm addresses the existing job.** Waking a
   reconstructed/P3-parked `'enqueued'` row must NOT go through the deferred-row
@@ -1029,7 +1062,9 @@ by pre-existing suites):
    admission-generation-conditional (any state transition landing between
    consult and register re-admits immediately), the wake reaches only the bound identity's session
    (manual-mode bound row → retain and re-bind next eligible), billing-terminal
-   arms the non-timed closed state cleared only by credential change,
+   arms the non-timed closed state cleared by all three reopening paths
+   (manual Retry probing closure, bounded daily health probe, credential
+   change),
    **bound at mint to
    the FIFO head** (an unbound A2 cannot steal B1's grant), batching disabled
    while saturated-or-probing (a granted delivery is single-identity),
