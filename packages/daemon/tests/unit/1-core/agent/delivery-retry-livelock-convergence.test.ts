@@ -191,22 +191,28 @@ describe('delivery retry livelock convergence (task #1256 incident)', () => {
     return settled;
   }
 
-  async function runHappyAttempt(agentSession: AgentSessionType, uuid: string): Promise<unknown> {
-    const drive = agentSession.driveDeliveryTurn(uuid, 'go', null, false, () => true);
+  async function runHappyAttempt(
+    agentSession: AgentSessionType,
+    uuid: string,
+    alreadyConsumed = false
+  ): Promise<unknown> {
+    const drive = agentSession.driveDeliveryTurn(uuid, 'go', null, alreadyConsumed, () => true);
     const spawnedBefore = spawnedQueries.length;
     await waitFor(() => spawnedQueries.length > spawnedBefore);
-    const query = spawnedQueries[spawnedQueries.length - 1];
-    const promptIterator = (query.prompt as AsyncGenerator<unknown, void, unknown>)[
-      Symbol.asyncIterator
-    ]();
-    let pulledUuid: string | undefined;
-    for (let pull = 0; pull < 4 && pulledUuid !== uuid; pull++) {
-      const pulled = await promptIterator.next();
-      if (pulled.done) throw new Error('prompt generator ended before yielding the kickoff');
-      pulledUuid = (pulled.value as { uuid?: string }).uuid;
+    if (!alreadyConsumed) {
+      const query = spawnedQueries[spawnedQueries.length - 1];
+      const promptIterator = (query.prompt as AsyncGenerator<unknown, void, unknown>)[
+        Symbol.asyncIterator
+      ]();
+      let pulledUuid: string | undefined;
+      for (let pull = 0; pull < 4 && pulledUuid !== uuid; pull++) {
+        const pulled = await promptIterator.next();
+        if (pulled.done) throw new Error('prompt generator ended before yielding the kickoff');
+        pulledUuid = (pulled.value as { uuid?: string }).uuid;
+      }
+      expect(pulledUuid).toBe(uuid);
+      void promptIterator.next();
     }
-    expect(pulledUuid).toBe(uuid);
-    void promptIterator.next();
     await new Promise((resolve) => setTimeout(resolve, 20));
     db.getSDKMessageRepo().saveSDKMessage(SESSION_ID, {
       type: 'result',
@@ -273,7 +279,7 @@ describe('delivery retry livelock convergence (task #1256 incident)', () => {
 
     const first = (await runWedgeAttempt(agentSession, WEDGE_UUID)) as Error;
     expect(first).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-    expect(first.message).toBe('Turn query ended before the SDK consumed the kickoff');
+    expect(first.message).toBe('Turn ended without a response');
 
     const second = (await runWedgeAttempt(agentSession, WEDGE_UUID)) as Error;
     expect(second).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
@@ -318,6 +324,29 @@ describe('delivery retry livelock convergence (task #1256 incident)', () => {
     const fourth = (await runWedgeAttempt(agentSession, postProgressUuid)) as Error;
     expect(fourth).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
     expect(fourth).not.toBeInstanceOf(MessageDeliveryTerminalTurnError);
+  });
+
+  it('requeues a yielded kickoff when its query dies before the SDK confirms the send', async () => {
+    const agentSession = restoreSession();
+    const seams = agentSession as unknown as AgentSessionSeams;
+
+    const drive = agentSession.driveDeliveryTurn(WEDGE_UUID, 'go', null, false, () => true);
+    const spawnedBefore = spawnedQueries.length;
+    await waitFor(() => spawnedQueries.length > spawnedBefore);
+    const query = spawnedQueries[spawnedQueries.length - 1];
+    const promptIterator = (query.prompt as AsyncGenerator<unknown, void, unknown>)[
+      Symbol.asyncIterator
+    ]();
+    const pulled = await promptIterator.next();
+    expect((pulled.value as { uuid?: string }).uuid).toBe(WEDGE_UUID);
+    for (const pending of query.pendingNexts) {
+      pending.resolve({ value: undefined, done: true });
+    }
+    const failure = (await drive.catch((error: unknown) => error)) as Error;
+    expect(failure).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
+    expect(seams.messageQueue.hasPendingOrClaimed(WEDGE_UUID)).toBe(true);
+
+    expect(await runHappyAttempt(agentSession, WEDGE_UUID, true)).toEqual({ outcome: 'completed' });
   });
 
   it('never spends the zero-progress budget on already-consumed turn reclaims', async () => {

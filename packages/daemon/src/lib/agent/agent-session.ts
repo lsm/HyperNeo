@@ -273,7 +273,7 @@ export class AgentSession
 
   private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
   private deliveryTurnStalled = false;
-  private zeroProgressDeliveryFailures = 0;
+  private zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null = null;
   private deliveryResponseObserver: {
     generation: number;
     observer: MessageDeliveryAttemptObserver;
@@ -1659,7 +1659,7 @@ export class AgentSession
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
     if (started.kind === 'turn_terminated') {
-      this.zeroProgressDeliveryFailures = 0;
+      this.zeroProgressDeliveryFailures = null;
       return { outcome: 'turn_terminated' };
     }
     if (started.kind === 'aborted') {
@@ -1692,6 +1692,7 @@ export class AgentSession
     let activeTurnEnd = started.turnEnd;
     const responseObserver = started.responseObserver;
     let kickoffAcknowledged = false;
+    let kickoffDiedBeforeConsumption = false;
     try {
       if (started.acknowledgment) {
         const aborted = waitForDeliveryAbort(signal);
@@ -1709,6 +1710,7 @@ export class AgentSession
             await started.acknowledgment;
             kickoffWinner = 'acknowledged';
           } else {
+            if (this.peekTerminalTurnError(turnStartedAt)) throw error;
             const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
             throw terminal ?? error;
           }
@@ -1716,31 +1718,33 @@ export class AgentSession
           aborted.cancel();
         }
         if (kickoffWinner === 'query_ended') {
-          const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
-          throw (
-            terminal ??
-            new MessageDeliveryRecoverableTurnError(
-              'Turn query ended before the SDK consumed the kickoff'
-            )
+          this.logger.warn(
+            `delivery-turn: query ended before the SDK consumed the kickoff ` +
+              `(uuid=${messageUuid}, generation=${started.generation}); requeueing the ` +
+              `kickoff and classifying the turn outcome`
           );
+          this.messageQueue.requeueYielded(messageUuid);
+          kickoffDiedBeforeConsumption = true;
         }
-        kickoffAcknowledged = true;
-        this.zeroProgressDeliveryFailures = 0;
-        this.logger.debug(
-          `delivery-turn: kickoff consumed by SDK ` +
-            `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
-        );
-        deliveryMetrics.recordFeed(messageUuid);
-        observer?.reportStage('sdk_admitted', { generation: started.generation });
-        if (this.session.config.provider !== 'acp') {
-          const consumeSignalMs = Date.now();
-          this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
-          deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
-          signalDeliveryConsumed(this.session.id, messageUuid);
-          if (started.admittedBatchUuids) {
-            for (const memberUuid of started.admittedBatchUuids) {
-              if (memberUuid === messageUuid) continue;
-              signalDeliveryConsumed(this.session.id, memberUuid);
+        if (!kickoffDiedBeforeConsumption) {
+          kickoffAcknowledged = true;
+          this.zeroProgressDeliveryFailures = null;
+          this.logger.debug(
+            `delivery-turn: kickoff consumed by SDK ` +
+              `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
+          );
+          deliveryMetrics.recordFeed(messageUuid);
+          observer?.reportStage('sdk_admitted', { generation: started.generation });
+          if (this.session.config.provider !== 'acp') {
+            const consumeSignalMs = Date.now();
+            this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
+            deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+            signalDeliveryConsumed(this.session.id, messageUuid);
+            if (started.admittedBatchUuids) {
+              for (const memberUuid of started.admittedBatchUuids) {
+                if (memberUuid === messageUuid) continue;
+                signalDeliveryConsumed(this.session.id, memberUuid);
+              }
             }
           }
         }
@@ -1850,7 +1854,7 @@ export class AgentSession
         throw new MessageDeliveryRecoverableTurnError(completion.detail, completion.category);
       }
     }
-    this.zeroProgressDeliveryFailures = 0;
+    this.zeroProgressDeliveryFailures = null;
     return { outcome: 'completed' };
   }
 
@@ -1894,9 +1898,14 @@ export class AgentSession
   private async escalateZeroProgressDeliveryFailure(
     messageUuid: string
   ): Promise<MessageDeliveryTerminalTurnError | null> {
-    this.zeroProgressDeliveryFailures += 1;
-    if (this.zeroProgressDeliveryFailures < MAX_ZERO_PROGRESS_DELIVERY_FAILURES) return null;
-    this.zeroProgressDeliveryFailures = 0;
+    if (this.zeroProgressDeliveryFailures?.messageUuid !== messageUuid) {
+      this.zeroProgressDeliveryFailures = { messageUuid, count: 0 };
+    }
+    this.zeroProgressDeliveryFailures.count += 1;
+    if (this.zeroProgressDeliveryFailures.count < MAX_ZERO_PROGRESS_DELIVERY_FAILURES) {
+      return null;
+    }
+    this.zeroProgressDeliveryFailures = null;
     const detail =
       `Delivery for ${messageUuid} failed ${MAX_ZERO_PROGRESS_DELIVERY_FAILURES} consecutive ` +
       `times with zero SDK progress — every query backing the turn died before the message ` +
@@ -1946,6 +1955,12 @@ export class AgentSession
       }
       return true;
     });
+  }
+
+  private peekTerminalTurnError(turnStartedAt: number): StructuredError | null {
+    const entry = this.lastTerminalError;
+    if (!entry || entry.at < turnStartedAt) return null;
+    return entry.error;
   }
 
   private consumeTerminalTurnError(turnStartedAt: number): StructuredError | null {
@@ -2024,6 +2039,7 @@ export class AgentSession
       aborted.cancel();
     }
     if (steerWinner === 'query_ended') {
+      this.messageQueue.requeueYielded(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
     deliveryMetrics.recordFeed(messageUuid);
