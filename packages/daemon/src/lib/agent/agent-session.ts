@@ -791,7 +791,10 @@ export class AgentSession
     const status = this.stateManager.getState().status;
     if (status !== 'idle' && status !== 'interrupted') {
       this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
-    } else if (this.taskNotificationRequeryAwaitingSdkIdle) {
+    } else if (
+      this.taskNotificationRequeryAwaitingSdkIdle ||
+      this.taskNotificationRequeryContinueMessageId !== null
+    ) {
       this.taskNotificationRequeryBusyInterruptGeneration = this.getQueryGeneration();
     }
     this.resetTaskNotificationRequery();
@@ -1535,12 +1538,17 @@ export class AgentSession
     }
     if (
       this._isCleaningUp ||
-      this.isLimitRecoveryPending() ||
       this.stateManager.getState().status === 'rate_limit_cooldown' ||
       this.taskNotificationRequeryAwaitingSdkIdle
     ) {
       this.taskNotificationRequeryPending = true;
       this.taskNotificationRequeryPendingDelayMs = delayMs;
+      return;
+    }
+    if (this.isLimitRecoveryPending()) {
+      this.taskNotificationRequeryPending = true;
+      this.taskNotificationRequeryPendingDelayMs = delayMs;
+      this.scheduleTaskNotificationRequery(1000);
       return;
     }
     if (this.stateManager.getState().status !== 'idle') {
@@ -1624,6 +1632,11 @@ export class AgentSession
           return;
         }
         if (this.hasQueuedFollowUpDelivery()) {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          return;
+        }
+        if (this.taskNotificationRequeryAwaitingSdkIdle) {
           this.taskNotificationRequeryPending = true;
           this.taskNotificationRequeryPendingDelayMs = 0;
           return;

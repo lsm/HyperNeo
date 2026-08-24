@@ -927,6 +927,101 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     ).toBeDefined();
   });
 
+  it('probes pending episodes parked by a recovery-pending flush', async () => {
+    const isRecoveryPending = mock(() => true);
+    (
+      agentSession as unknown as {
+        rateLimitWatchdog: { isRecoveryPending: typeof isRecoveryPending };
+      }
+    ).rateLimitWatchdog = { isRecoveryPending };
+    activeDeliveryUuids.add('queued-follow-up-uuid');
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.stateManager.setIdle();
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    isRecoveryPending.mockImplementation(() => false);
+    activeDeliveryUuids.clear();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('rechecks the SDK-busy latch after the dead-query restart', async () => {
+    let sentBusy = false;
+    const ensureQueryStarted = mock(async () => {
+      if (!sentBusy) {
+        sentBusy = true;
+        await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+      }
+      return 'started' as const;
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('suppresses episodes after an interrupt lands on a yielded continuation', async () => {
+    enqueueSpy = mock(() => new Promise<void>(() => {}));
+    (agentSession.messageQueue as unknown as { enqueueWithId: typeof enqueueSpy }).enqueueWithId =
+      enqueueSpy;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.handleInterrupt();
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(2);
+  });
+
+  it('resets the episode when the circuit breaker stops the session', async () => {
+    enqueueSpy = mock(() => new Promise<void>(() => {}));
+    (agentSession.messageQueue as unknown as { enqueueWithId: typeof enqueueSpy }).enqueueWithId =
+      enqueueSpy;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(
+      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
+        .taskNotificationRequeryAttempts
+    ).toBe(1);
+
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+    await (
+      agentSession.messageHandler as unknown as {
+        handleCircuitBreakerTrip: (reason: string, userMessage: string) => Promise<void>;
+      }
+    ).handleCircuitBreakerTrip('error loop', 'too many consecutive errors');
+
+    expect(
+      (agentSession as unknown as { taskNotificationRequeryAttempts: number })
+        .taskNotificationRequeryAttempts
+    ).toBe(0);
+  });
+
   it('re-parks a scheduled retry when the SDK turns busy during the backoff', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     (
