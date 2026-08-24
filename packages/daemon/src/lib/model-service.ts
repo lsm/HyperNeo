@@ -1069,25 +1069,28 @@ function resolveCuratedCanonicalModelId(
 export async function resolveVisibleCanonicalModelId(
   idOrAlias: string,
   providerId: string,
-  cacheKey: string = 'global'
+  cacheKey: string = 'global',
+  preloadedModels?: ModelInfo[]
 ): Promise<string | null> {
   const cachedId = resolveCuratedCanonicalModelId(idOrAlias, providerId, cacheKey);
-  const provider = getProviderRegistry().get(providerId);
-  let liveModels: ModelInfo[] | null = null;
-  if (provider) {
-    try {
-      if (await provider.isAvailable()) {
-        const models = await provider.getModels();
-        const curated = getProviderRegistry().getCuratedModels(providerId);
-        liveModels =
-          models.length > 0 ||
-          provider.hasCuratedModelList?.() ||
-          (curated !== undefined && curated.length === 0)
-            ? models
-            : fallbackModelsFor(provider);
+  let liveModels: ModelInfo[] | null = preloadedModels ?? null;
+  if (preloadedModels === undefined) {
+    const provider = getProviderRegistry().get(providerId);
+    if (provider) {
+      try {
+        if (await provider.isAvailable()) {
+          const models = await provider.getModels();
+          const curated = getProviderRegistry().getCuratedModels(providerId);
+          liveModels =
+            models.length > 0 ||
+            provider.hasCuratedModelList?.() ||
+            (curated !== undefined && curated.length === 0)
+              ? models
+              : fallbackModelsFor(provider);
+        }
+      } catch {
+        liveModels = fallbackModelsFor(provider);
       }
-    } catch {
-      liveModels = provider.getCachedModels?.() ?? null;
     }
   }
 

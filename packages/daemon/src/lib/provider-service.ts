@@ -233,47 +233,39 @@ export class ProviderService {
       }
       return fallbackModelsFor(provider);
     } catch {
-      return provider.getCachedModels?.() ?? [];
+      return fallbackModelsFor(provider);
     }
   }
 
-  private async preferVisibleCuratedModel(
+  private async resolveVisibleCuratedModel(
     providerId: string,
     provider: RegisteredProvider,
     ...candidates: Array<string | undefined>
   ): Promise<string | undefined> {
-    if (this.getRegistry().getCuratedModels(providerId) === undefined) {
+    const registry = this.getRegistry();
+    if (registry.getCuratedModels(providerId) === undefined) {
       return candidates.find((candidate) => candidate !== undefined);
     }
-    const catalogIds = new Set(
-      (await this.getProviderCatalogModels(providerId, provider)).map((model) => model.id)
-    );
+    const catalogModels = await this.getProviderCatalogModels(providerId, provider);
+    const catalogIds = new Set(catalogModels.map((model) => model.id));
     for (const candidate of candidates) {
       if (!candidate) continue;
       const canonicalId =
-        (await resolveVisibleCanonicalModelId(candidate, providerId)) ?? candidate;
-      const curatedAfter = this.getRegistry().getCuratedModels(providerId);
+        (await resolveVisibleCanonicalModelId(candidate, providerId, 'global', catalogModels)) ??
+        candidate;
+      const curatedAfter = registry.getCuratedModels(providerId);
       if (curatedAfter === undefined) {
         return candidate;
       }
-      const curatedIds = new Set(curatedAfter.map((model) => model.id));
-      if (!curatedIds.has(canonicalId) || !catalogIds.has(canonicalId)) continue;
+      if (!curatedAfter.some((model) => model.id === canonicalId)) continue;
+      if (!catalogIds.has(canonicalId)) continue;
       return candidate;
     }
-    return undefined;
-  }
-
-  private async getVisibleProviderDefaultModelId(
-    providerId: string,
-    provider: RegisteredProvider
-  ): Promise<string | undefined> {
-    const models = await this.getProviderCatalogModels(providerId, provider);
-    const curated = this.getRegistry().getCuratedModels(providerId);
-    if (curated !== undefined) {
-      const catalogIds = new Set(models.map((model) => model.id));
-      return curated.find((entry) => catalogIds.has(entry.id))?.id;
+    const curatedAfter = registry.getCuratedModels(providerId);
+    if (curatedAfter === undefined) {
+      return catalogModels[0]?.id;
     }
-    return models[0]?.id;
+    return curatedAfter.find((entry) => catalogIds.has(entry.id))?.id;
   }
 
   async getTitleGenerationModels(
@@ -283,13 +275,10 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     let providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
-    if (
-      provider &&
-      !(await this.preferVisibleCuratedModel(providerId, provider, providerModelId))
-    ) {
-      const visibleModelId = await this.getVisibleProviderDefaultModelId(providerId, provider);
-      if (!visibleModelId) return null;
-      providerModelId = visibleModelId;
+    if (provider) {
+      const resolved = await this.resolveVisibleCuratedModel(providerId, provider, providerModelId);
+      if (!resolved) return null;
+      providerModelId = resolved;
     }
     let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
     try {
@@ -306,15 +295,13 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     if (!provider) return null;
-    const preferred = await this.preferVisibleCuratedModel(
+    const preferred = await this.resolveVisibleCuratedModel(
       providerId,
       provider,
       provider.getTitleGenerationModel?.(),
       provider.getModelForTier?.('haiku')
     );
-    if (preferred) return preferred;
-    if (registry.getCuratedModels(providerId) === undefined) return null;
-    return (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? null;
+    return preferred ?? null;
   }
 
   async getTitleGenerationModel(
@@ -343,9 +330,12 @@ export class ProviderService {
 
     const titleOverride = provider.getTitleGenerationModel?.();
     const tierFallback = provider.getModelForTier('haiku');
-    let modelId =
-      (await this.preferVisibleCuratedModel(providerId, provider, titleOverride, tierFallback)) ??
-      (await this.getVisibleProviderDefaultModelId(providerId, provider));
+    let modelId = await this.resolveVisibleCuratedModel(
+      providerId,
+      provider,
+      titleOverride,
+      tierFallback
+    );
     if (!modelId) {
       if (registry.getCuratedModels(providerId) !== undefined) return null;
       modelId = 'default';
