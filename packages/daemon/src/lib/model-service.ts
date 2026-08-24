@@ -358,18 +358,20 @@ function isCacheStale(cacheKey: string): boolean {
   return Date.now() - timestamp > CACHE_TTL;
 }
 
-export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
+function readCachedModels(cacheKey: string): ModelInfo[] | null {
   const cachedModels = modelsCache.get(cacheKey);
-
   if (!cachedModels || cachedModels.length === 0) {
-    return [];
+    return null;
   }
-
   if (isCacheStale(cacheKey)) {
     triggerBackgroundRefresh(cacheKey).catch(() => {});
   }
+  return cachedModels;
+}
 
-  return filterModelsByCuration(cachedModels);
+export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
+  const cachedModels = readCachedModels(cacheKey);
+  return cachedModels === null ? [] : filterModelsByCuration(cachedModels);
 }
 
 export async function initializeModels(): Promise<void> {
@@ -647,8 +649,8 @@ export async function getModelInfoUnfiltered(
   idOrAlias: string,
   cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
-  const availableModels = getAvailableModels(cacheKey);
-  return findInModels(availableModels, idOrAlias) ?? null;
+  const cachedModels = readCachedModels(cacheKey);
+  return cachedModels === null ? null : (findInModels(cachedModels, idOrAlias) ?? null);
 }
 
 export async function isValidModel(

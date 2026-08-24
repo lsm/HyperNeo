@@ -575,6 +575,15 @@ describe('Model Service', () => {
       });
     });
 
+    it('still resolves curated-out models through the unfiltered seam', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+      expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
+    });
+
     it('should return null for unknown model', async () => {
       const model = await getModelInfo('unknown-model', 'global', 'anthropic');
       expect(model).toBeNull();
