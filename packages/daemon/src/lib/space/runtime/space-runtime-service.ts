@@ -375,6 +375,12 @@ export class SpaceRuntimeService {
       ? await this.resolveCoordinatorSession(args.spaceId)
       : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
     if (!session) return 'terminal_failure';
+    const spaceAfter = await this.config.spaceManager.getSpace(args.spaceId);
+    if (!spaceAfter || spaceAfter.status !== 'active' || spaceAfter.paused || spaceAfter.stopped) {
+      return 'pre_admission_failure';
+    }
+    const agentAfter = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agentAfter || agentAfter.status !== 'active') return 'pre_admission_failure';
     const sessionId = session.getSessionData().id;
     try {
       await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {

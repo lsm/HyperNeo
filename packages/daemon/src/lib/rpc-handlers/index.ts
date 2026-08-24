@@ -712,7 +712,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           created_at?: string | number;
           processing_state?: string | null;
         } | null;
-        if (sessionRow == null) return null;
         const consumedRow = db
           .prepare(
             `SELECT MAX(timestamp) AS ts FROM sdk_messages
@@ -727,14 +726,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           .get(agent.sessionId) as { n?: number } | null;
         let status = 'idle';
         try {
-          const parsed = sessionRow.processing_state
+          const parsed = sessionRow?.processing_state
             ? (JSON.parse(sessionRow.processing_state) as { status?: unknown })
             : null;
           if (parsed && typeof parsed.status === 'string') status = parsed.status;
         } catch {}
         return {
           latestConsumedMessageAt: toEpochMs(consumedRow?.ts),
-          sessionCreatedAt: toEpochMs(sessionRow.created_at),
+          sessionCreatedAt: toEpochMs(sessionRow?.created_at),
           busyWithOtherWork:
             status === 'processing' ||
             status === 'queued' ||
