@@ -1308,6 +1308,20 @@ describe('Session RPC Handlers — session.update model curation', () => {
 
     expect(updateSession).not.toHaveBeenCalled();
   });
+
+  it('allows a verbatim model rewrite on a providerless session pinned to a curated-out model', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'opus', maxTokens: 456 } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: { model: 'opus', maxTokens: 456 },
+    });
+  });
 });
 
 describe('Session RPC Handlers — session.appendVoiceDraft', () => {

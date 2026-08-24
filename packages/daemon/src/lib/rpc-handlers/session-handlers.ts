@@ -357,15 +357,16 @@ export function setupSessionHandlers(
       const existingConfig =
         agentSessionForUpdate?.getSessionData().config ??
         sessionManager.getSessionFromDB(targetSessionId)?.config;
-      const effectiveModel = configUpdate.model ?? existingConfig?.model;
-      const providerId =
-        configUpdate.provider ??
+      const currentModel = existingConfig?.model;
+      const currentProvider =
         existingConfig?.provider ??
-        (effectiveModel ? inferProviderForModel(effectiveModel) : undefined);
+        (currentModel ? inferProviderForModel(currentModel) : undefined);
+      const effectiveModel = configUpdate.model ?? currentModel;
+      const providerId = configUpdate.provider ?? currentProvider;
       const rewritesOwnPair =
         existingConfig !== undefined &&
-        effectiveModel === existingConfig.model &&
-        providerId === existingConfig.provider;
+        effectiveModel === currentModel &&
+        providerId === currentProvider;
       if (
         providerId &&
         effectiveModel &&
