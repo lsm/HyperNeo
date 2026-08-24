@@ -23,6 +23,7 @@ import { runMigration206 } from './m206-restamp-reviewer-depth-tiers';
 import { runMigration207 } from './m207-restamp-reviewer-review-modes';
 import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields';
 import { runMigration209 } from './m209-drop-inbox-agent-fk';
+import { runMigration213 } from './m213-inactivity-watchdog';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 import {
   findPendingMigrationSpaceReclaims,
@@ -478,6 +479,8 @@ export function runMigrations(
   rewrite(migrationMarkerKey(211), () => runMigration211(db));
 
   rewrite(migrationMarkerKey(212), () => runMigration212(db));
+
+  run(migrationMarkerKey(213), () => runMigration213(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
