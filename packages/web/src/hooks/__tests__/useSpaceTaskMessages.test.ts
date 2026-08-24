@@ -234,6 +234,105 @@ describe('useSpaceTaskMessages', () => {
     expect(result.current.rows[0]).toMatchObject({ content: 'preview…', contentTruncated: true });
   });
 
+  it('preserves expanded content when a delta updates the same unchanged message', async () => {
+    const { result } = renderHook(() => useSpaceTaskMessages('task-abc'));
+    const subId = lastMessageSubscribeSubId();
+    act(() => {
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview…',
+            contentBytes: 5000,
+            contentTruncated: true,
+            deliveryState: 'queued',
+          },
+        ],
+        version: 1,
+      });
+    });
+
+    mockRequest.mockResolvedValueOnce({ sdkMessage: 'full-content' });
+    await act(async () => {
+      await result.current.expandMessage('m1');
+    });
+
+    act(() => {
+      fireEvent('liveQuery.delta', {
+        subscriptionId: subId,
+        updated: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview…',
+            contentBytes: 5000,
+            contentTruncated: true,
+            deliveryState: 'delivered',
+          },
+        ],
+        version: 2,
+      });
+    });
+
+    expect(result.current.rows[0]).toMatchObject({
+      content: 'full-content',
+      contentTruncated: false,
+      deliveryState: 'delivered',
+    });
+  });
+
+  it('drops the expansion when a delta reports a changed message', async () => {
+    const { result } = renderHook(() => useSpaceTaskMessages('task-abc'));
+    const subId = lastMessageSubscribeSubId();
+    act(() => {
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview…',
+            contentBytes: 5000,
+            contentTruncated: true,
+          },
+        ],
+        version: 1,
+      });
+    });
+
+    mockRequest.mockResolvedValueOnce({ sdkMessage: 'full-content' });
+    await act(async () => {
+      await result.current.expandMessage('m1');
+    });
+
+    act(() => {
+      fireEvent('liveQuery.delta', {
+        subscriptionId: subId,
+        updated: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'new-preview…',
+            contentBytes: 6000,
+            contentTruncated: true,
+          },
+        ],
+        version: 2,
+      });
+    });
+
+    expect(result.current.rows[0]).toMatchObject({
+      content: 'new-preview…',
+      contentTruncated: true,
+    });
+  });
+
   it('does not subscribe when taskId is null', () => {
     renderHook(() => useSpaceTaskMessages(null));
 

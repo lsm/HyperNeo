@@ -100,6 +100,26 @@ function activeTurnRowPosition(id: string): [number, number] {
   return [Number.isNaN(rowId) ? 0 : rowId, Number.isNaN(blockIdx) ? 0 : blockIdx];
 }
 
+function mergeIncomingRow(
+  prev: SpaceTaskThreadMessageRow | undefined,
+  incoming: SpaceTaskThreadMessageRow
+): SpaceTaskThreadMessageRow {
+  const keepsExpansion =
+    prev &&
+    prev.contentTruncated === false &&
+    incoming.contentTruncated === true &&
+    prev.contentBytes === incoming.contentBytes;
+  if (keepsExpansion) {
+    return {
+      ...incoming,
+      content: prev.content,
+      contentBytes: prev.contentBytes,
+      contentTruncated: false,
+    };
+  }
+  return incoming;
+}
+
 function applyDelta(
   currentRows: SpaceTaskThreadMessageRow[],
   event: LiveQueryDeltaEvent
@@ -109,10 +129,10 @@ function applyDelta(
     next.delete(String(row.id));
   }
   for (const row of (event.updated ?? []) as SpaceTaskThreadMessageRow[]) {
-    next.set(String(row.id), row);
+    next.set(String(row.id), mergeIncomingRow(next.get(String(row.id)), row));
   }
   for (const row of (event.added ?? []) as SpaceTaskThreadMessageRow[]) {
-    next.set(String(row.id), row);
+    next.set(String(row.id), mergeIncomingRow(next.get(String(row.id)), row));
   }
   return sortRows(Array.from(next.values()));
 }
@@ -241,7 +261,13 @@ export function useSpaceTaskMessages(
         }
         if (effect.emission.type === 'snapshot') {
           const snapshot = payload as LiveQuerySnapshotEvent | null;
-          setRows(sortRows((snapshot?.rows as SpaceTaskThreadMessageRow[]) ?? []));
+          setRows((prev) => {
+            const incoming = (snapshot?.rows as SpaceTaskThreadMessageRow[]) ?? [];
+            const prevById = new Map(prev.map((row) => [String(row.id), row]));
+            return sortRows(
+              incoming.map((row) => mergeIncomingRow(prevById.get(String(row.id)), row))
+            );
+          });
           setLoadedForTaskId(taskId);
           continue;
         }
