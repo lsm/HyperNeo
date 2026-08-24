@@ -328,7 +328,13 @@ gate never sees. Re-flagging and admission are two separate rules:
   normalized event id, which the normalizer regenerates per receipt
   (`crypto.randomUUID()`, github-normalizer.ts:1094), so a crash before the
   200 response would let GitHub's retry of the *same delivery* land as an
-  unrelated key and bypass the delivery-record dedupe — and the inbox
+  unrelated key and bypass the delivery-record dedupe — and for **polled**
+  events the replay key is the stable upstream tuple (repo + issue/PR
+  number + upstream `updated_at`): a crash after the inbox commit but
+  before `lastPollTime` persists (polling-service.ts:132) re-polls the same
+  object and normalization mints yet another fresh UUID
+  (event-normalizer.ts:10-11), so anything less stable than the upstream
+  tuple defeats the delivery-record dedupe — and the inbox
   entries **register as durable background waiters** — drained through the
   agents on **any** clear of their account key (normal timer/probe clears
   included, via the same wake that drains the background queue), not only by
@@ -506,7 +512,11 @@ interface ProviderAdmissionFacts {
                                     // credential; denies like closed
   closureProbe: boolean;            // this caller is the manual Retry or the
                                     // bounded daily health probe — the only
-                                    // admissions allowed while closed
+                                    // callers ELIGIBLE to probe closure
+                                    // (eligibility alone never admits)
+  holdsClosureProbeGrant: boolean;  // this caller holds the account's single
+                                    // atomic closure-probe grant — the fact
+                                    // the closed arm actually tests
   probing: boolean;                 // post-clear / post-restart: a probe grant
                                     // is outstanding and unresolved
   holdsProbeGrant: boolean;         // this delivery owns the grant
@@ -527,11 +537,14 @@ else `!accountAvailable` → `queue_until` with **no deadline** (reason
 `closed`) — evaluated **independently and first**: no credential, no call,
 and `closureProbe` cannot bypass it (a health probe or manual Retry on a
 logged-out account would be an unauthenticated SDK call; those callers
-consult again after `auth.login`); else `closed && !closureProbe` →
+consult again after `auth.login`); else `closed && !(closureProbe && holdsClosureProbeGrant)` →
 `queue_until` with **no deadline** (reason `closed`, `untilMs` null — the
 billing kind has no reset; it re-opens via the closure probes below or a
 credential change, so callers treat it as queue-indefinitely / surface to
-the user, never tick-retry); else
+the user, never tick-retry; the core tests grant OWNERSHIP, not probe
+eligibility — `closureProbe` alone must not admit, or concurrent Retry
+clicks and an overlapping health probe would all bypass and recreate the
+wave the atomic grant exists to prevent); else
 saturated → `queue_until` with the registry's deadline; else
 probing without the grant → `queue_until` (reason `probing`, until = the probe
 tick); else if `configuredCap !== null && inFlight >= configuredCap` →
@@ -568,7 +581,14 @@ one credential shares one key:
   digest changes when the stored credential does, so an
   `auth.logout`/`auth.login` rotation moves sessions and their backlog to a
   fresh key (the shared-credential re-admission hook fires on exactly that
-  fingerprint change).
+  fingerprint change). **OAuth refreshes are not rotations**:
+  `OAuthRefreshScheduler` periodically stores a new `accessToken` for the
+  *same upstream account* (oauth-refresh-scheduler.ts:51-82), so the digest
+  input is the **stable account identity, not the raw token** (for OAuth:
+  the provider + account identifier; for static keys: the key itself) — a
+  routine refresh keeps the key, keeping active saturation/closure on the
+  account it belongs to; only a genuine credential *change* (different
+  account identity) re-keys.
 - **Session overrides** (`providerConfig.apiKey`): the override digest keys
   the session — two built-in-provider sessions with different API keys are
   different accounts; neither queues behind the other.
@@ -703,12 +723,14 @@ not inherit):
   already-authoritative reset), the wake timer reschedules, and any outstanding
   probe grant is revoked (its delivery returns to the queue) so the next
   admission waits for the known reset. **Refinement vs a running probe**:
-  the episode token stays matchable only while the grant is *unconsumed* —
-  a matching refinement revokes the unconsumed grant (its delivery returns
-  to the queue) and converts to reset state; once the grant is *consumed*
+  the token is matchable for the whole episode life (per its own
+  declaration — matchability is never the gate); what the grant's state
+  gates is the *action*: a matching refinement against an **unconsumed**
+  grant revokes it (its delivery returns to the queue) and converts to
+  reset state; against a **consumed** grant
   (the probe's prompt has yielded — a running turn cannot be safely
-  un-yielded), the refinement is recorded against the episode but the
-  running probe resolves on its own termination (its 429 re-arms at the
+  un-yielded) the refinement is **recorded against the episode** — kept,
+  not discarded — and the running probe resolves on its own termination (its 429 re-arms at the
   refined deadline via `reportRefinedReset`, its clean completion opens and
   the recorded reset arms for the *next* episode), so no delivery is
   duplicated and the refinement's knowledge is never lost. The classifier's **own SDK query
@@ -999,6 +1021,12 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   time**, so their registrations under the old key are as stale as a
   switched session's; `space.update` joins the re-admission triggers,
   re-admitting the Space's parked jobs under the new effective key.
+  **Space archive/delete retires them**: those paths cancel no job-queue
+  rows today, and a conversation-friction job has only `{scopeId, taskId}`
+  with no owning session — so `space.archive`/`space.delete` cancel and
+  deregister the Space's marked background jobs (and reconstruction skips
+  archived/deleted Spaces), preventing a grant-funded analysis run for a
+  Space that no longer exists.
   **Logout closes, it does not re-admit**: the
   re-admission hook re-runs admission against the *new* key — and
   `ProviderAdmissionFacts` gains an `accountAvailable: boolean` fact (usable
