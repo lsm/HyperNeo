@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('AcpProvider', () => {
   let provider: AcpProvider;
@@ -11,10 +15,12 @@ describe('AcpProvider', () => {
     originalEnv = { ...process.env };
     delete process.env.HYPERNEO_ACP_COMMAND;
     delete process.env.HYPERNEO_ACP_CONTEXT_WINDOW;
+    resetProviderFailureStore();
     provider = new AcpProvider(process.env, noopProbe);
   });
 
   afterEach(() => {
+    resetProviderFailureStore();
     process.env = originalEnv;
   });
 
@@ -55,6 +61,30 @@ describe('AcpProvider', () => {
     it('should return false when HYPERNEO_ACP_COMMAND is empty', () => {
       process.env.HYPERNEO_ACP_COMMAND = '';
       expect(provider.isAvailable()).toBe(false);
+    });
+  });
+
+  describe('getAuthStatus', () => {
+    it('should surface a recorded credential failure as unauthenticated', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'broken-agent';
+      recordProviderFailure('acp', new Error('ACP agent process error: spawn broken-agent ENOENT'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('ACP agent process error: spawn broken-agent ENOENT');
+    });
+
+    it('should stay authenticated but degraded for a recorded transient failure', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      recordProviderFailure('acp', new Error('Request timed out after 10000ms: initialize'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.errorKind).toBe('transient');
+      expect(status.error).toBe('Request timed out after 10000ms: initialize');
     });
   });
 

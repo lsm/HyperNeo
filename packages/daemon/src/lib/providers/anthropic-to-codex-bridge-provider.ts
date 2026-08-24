@@ -22,6 +22,7 @@ import {
   codexBackendContextWindow,
 } from './codex-models.js';
 import { Logger } from '../logger.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -392,6 +393,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    return applyRecordedFailureToAuthStatus(this.id, await this.resolveCredentialAuthStatus());
+  }
+
+  private async resolveCredentialAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const hyperneoCreds = await this.loadCredentials();
     if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
       return {

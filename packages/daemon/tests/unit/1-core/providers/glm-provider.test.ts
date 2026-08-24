@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('GlmProvider', () => {
   let provider: GlmProvider;
@@ -9,10 +13,12 @@ describe('GlmProvider', () => {
     originalEnv = { ...process.env };
     delete process.env.GLM_API_KEY;
     delete process.env.ZHIPU_API_KEY;
+    resetProviderFailureStore();
     provider = new GlmProvider();
   });
 
   afterEach(() => {
+    resetProviderFailureStore();
     process.env = originalEnv;
   });
 
@@ -58,6 +64,65 @@ describe('GlmProvider', () => {
       delete process.env.GLM_API_KEY;
       delete process.env.ZHIPU_API_KEY;
       expect(provider.isAvailable()).toBe(false);
+    });
+  });
+
+  describe('getAuthStatus', () => {
+    it('reports plain key presence when no failure is recorded', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const status = await provider.getAuthStatus();
+
+      expect(status).toEqual({
+        isAuthenticated: true,
+        method: 'api_key',
+        error: undefined,
+      });
+    });
+
+    it('reports a credential failure as unauthenticated with the failure message', async () => {
+      process.env.GLM_API_KEY = 'invalid-key';
+      recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status).toEqual({
+        isAuthenticated: false,
+        method: 'api_key',
+        error: 'Z.ai API key rejected (HTTP 401)',
+        errorKind: 'credential',
+      });
+    });
+
+    it('reports a transient failure as authenticated but degraded', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      recordProviderFailure('glm', new Error('Z.ai probe timed out after 5000ms'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status).toEqual({
+        isAuthenticated: true,
+        method: 'api_key',
+        error: 'Z.ai probe timed out after 5000ms',
+        errorKind: 'transient',
+      });
+    });
+
+    it('propagates a live probe rejection into the auth status', async () => {
+      process.env.GLM_API_KEY = 'invalid-key';
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl);
+
+      await expect(provider.getModels()).rejects.toThrow('Z.ai API key rejected (HTTP 401)');
+      recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('Z.ai API key rejected (HTTP 401)');
     });
   });
 

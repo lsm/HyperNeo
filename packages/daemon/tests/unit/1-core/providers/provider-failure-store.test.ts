@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import {
+  applyRecordedFailureToAuthStatus,
   classifyProviderFailure,
   classifyProviderFailureMessage,
   clearProviderFailure,
   getAllProviderFailures,
   getProviderFailure,
+  type ProviderFailureChange,
   recordProviderFailure,
   removeProviderFailure,
   resetProviderFailureStore,
   subscribeProviderFailureChanges,
-  type ProviderFailureChange,
 } from '../../../../src/lib/providers/provider-failure-store';
 
 const T0 = new Date('2026-01-01T00:00:00Z').getTime();
@@ -19,6 +20,18 @@ describe('provider failure classification', () => {
     expect(classifyProviderFailureMessage('Z.ai API key rejected (HTTP 401)')).toBe('credential');
     expect(classifyProviderFailureMessage('Z.ai API key rejected (HTTP 403)')).toBe('credential');
     expect(classifyProviderFailureMessage('Codex credentials rejected (HTTP 401)')).toBe(
+      'credential'
+    );
+  });
+
+  it('classifies raw SDK authentication errors as credential', () => {
+    expect(
+      classifyProviderFailureMessage(
+        '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'
+      )
+    ).toBe('credential');
+    expect(classifyProviderFailureMessage('invalid_api_key')).toBe('credential');
+    expect(classifyProviderFailureMessage('Request failed: invalid api key provided')).toBe(
       'credential'
     );
   });
@@ -205,5 +218,68 @@ describe('provider failure store', () => {
     expect(getProviderFailure('glm')?.errorKind).toBe('transient');
     expect(getProviderFailure('kimi')?.errorKind).toBe('credential');
     expect(getAllProviderFailures()).toHaveLength(2);
+  });
+});
+
+describe('applyRecordedFailureToAuthStatus', () => {
+  beforeEach(() => {
+    resetProviderFailureStore();
+  });
+
+  it('returns the status unchanged when no failure is recorded', () => {
+    const status = { isAuthenticated: true, method: 'api_key' as const };
+
+    expect(applyRecordedFailureToAuthStatus('glm', status)).toBe(status);
+  });
+
+  it('flips a credential failure to unauthenticated with the failure message', () => {
+    recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+
+    expect(
+      applyRecordedFailureToAuthStatus('glm', { isAuthenticated: true, method: 'api_key' })
+    ).toEqual({
+      isAuthenticated: false,
+      method: 'api_key',
+      error: 'Z.ai API key rejected (HTTP 401)',
+      errorKind: 'credential',
+    });
+  });
+
+  it('keeps a transient failure authenticated but degraded', () => {
+    recordProviderFailure('glm', new Error('Z.ai probe timed out after 5000ms'));
+
+    expect(
+      applyRecordedFailureToAuthStatus('glm', { isAuthenticated: true, method: 'api_key' })
+    ).toEqual({
+      isAuthenticated: true,
+      method: 'api_key',
+      error: 'Z.ai probe timed out after 5000ms',
+      errorKind: 'transient',
+    });
+  });
+
+  it('leaves an unauthenticated status untouched for a transient failure', () => {
+    const status = { isAuthenticated: false, method: 'api_key' as const, error: 'no key' };
+
+    recordProviderFailure('glm', new Error('Z.ai probe failed (HTTP 503)'));
+
+    expect(applyRecordedFailureToAuthStatus('glm', status)).toBe(status);
+  });
+
+  it('only consults the failure record of the given provider', () => {
+    recordProviderFailure('kimi', new Error('Kimi API key rejected (HTTP 401)'));
+
+    const status = { isAuthenticated: true, method: 'api_key' as const };
+
+    expect(applyRecordedFailureToAuthStatus('glm', status)).toBe(status);
+  });
+
+  it('reverts to the plain status once the failure clears', () => {
+    recordProviderFailure('glm', new Error('Z.ai API key rejected (HTTP 401)'));
+    clearProviderFailure('glm');
+
+    expect(
+      applyRecordedFailureToAuthStatus('glm', { isAuthenticated: true, method: 'api_key' })
+    ).toEqual({ isAuthenticated: true, method: 'api_key' });
   });
 });
