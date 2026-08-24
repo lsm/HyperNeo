@@ -2273,16 +2273,17 @@ describe('QueryRunner', () => {
       const rejectingHandoff = mock(async (): Promise<boolean> => {
         throw new Error('handoff boom');
       });
-
-      const ctx = await runTerminalFailure('429 Too Many Requests', {
-        onRateLimitExhausted: rejectingHandoff,
-      });
-
-      const settled = await ctx.queryPromise?.then(
+      buildSpy.mockRejectedValue(new Error('429 Too Many Requests'));
+      const ctx = createContext({ onRateLimitExhausted: rejectingHandoff });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      const settled = ctx.queryPromise?.then(
         (): string => 'resolved',
         (error: unknown): string => String(error)
       );
-      expect(settled).toBe('Error: handoff boom');
+      const outcome = await settled;
+
+      expect(outcome).toBe('Error: handoff boom');
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(setIdleSpy.mock.calls.length).toBe(1);
@@ -2550,6 +2551,15 @@ describe('QueryRunner', () => {
           if (!value) events.push('firstMsg.reset');
         },
       });
+      let originalEnvVars: QueryRunnerContext['originalEnvVars'] = {};
+      Object.defineProperty(ctx, 'originalEnvVars', {
+        configurable: true,
+        get: () => originalEnvVars,
+        set: (value: QueryRunnerContext['originalEnvVars']) => {
+          originalEnvVars = value;
+          if (Object.keys(value).length === 0) events.push('env.restore');
+        },
+      });
       return () => timerValue;
     }
 
@@ -2645,6 +2655,7 @@ describe('QueryRunner', () => {
         'timer.clear',
         'exit.reset',
         'queue.stop',
+        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -2681,6 +2692,7 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
+        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -2714,6 +2726,7 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
+        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -2743,6 +2756,7 @@ describe('QueryRunner', () => {
         'display',
         'query.close',
         'exit.reset',
+        'env.restore',
         'enqueue:pm1',
         'build#2',
         'queue.clear',
@@ -2751,6 +2765,7 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
+        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
@@ -2777,6 +2792,7 @@ describe('QueryRunner', () => {
         'exit.reset',
         'queue.stop',
         'query.close',
+        'env.restore',
         'idle',
       ]);
       expect(notices).toEqual([]);
@@ -2799,6 +2815,7 @@ describe('QueryRunner', () => {
         'exit.reset',
         'queue.stop',
         'query.close',
+        'env.restore',
         'idle',
       ]);
       expect(notices.length).toBe(1);
