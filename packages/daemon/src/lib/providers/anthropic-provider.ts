@@ -6,6 +6,7 @@ import type {
   ProviderCredentials,
   ProviderSdkConfig,
   ModelTier,
+  ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
@@ -80,6 +81,8 @@ export class AnthropicProvider implements Provider {
 
   private modelCache: ModelInfo[] | null = null;
   private credentials: ProviderCredentials | null = null;
+  private credentialsVersion = 0;
+  private credentialSignature: string | undefined;
   private readonly capturedAnthropicBaseUrl: string | undefined;
 
   constructor(
@@ -90,6 +93,12 @@ export class AnthropicProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.credentialsVersion++;
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
   }
 
@@ -131,7 +140,25 @@ export class AnthropicProvider implements Provider {
       return [];
     }
 
+    return this.listRemoteModels();
+  }
+
+  async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
+    if (!this.isAvailable()) {
+      throw new Error('Anthropic is not authenticated');
+    }
+
+    if (options?.force) {
+      this.clearModelCache();
+    } else if (this.modelCache) {
+      return this.modelCache;
+    }
+
+    const credentialsVersion = this.credentialsVersion;
     const models = await this.loadModelsFromSdk();
+    if (credentialsVersion !== this.credentialsVersion) {
+      throw new Error('Anthropic credentials changed during model discovery');
+    }
     this.modelCache = models;
     return models;
   }

@@ -174,6 +174,51 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(await p.isAvailable()).toBe(false);
     });
 
+    it('versions an externally discovered token change after cache expiry', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      (p as unknown as Record<string, unknown>)['tokenCache'] = {
+        token: 'gho_old_account',
+        expiresAt: Date.now() - 1,
+        source: 'auth-file',
+      };
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'discoverGitHubToken' as never
+      ).mockResolvedValue({ token: 'gho_new_account', source: 'auth-file' } as never);
+
+      expect(await p.isAvailable()).toBe(true);
+      expect((p as unknown as Record<string, unknown>)['credentialsVersion']).toBe(1);
+      expect((p as unknown as Record<string, unknown>)['tokenCache']).toEqual(
+        expect.objectContaining({ token: 'gho_new_account' })
+      );
+    });
+
+    it('discards an in-flight token discovery superseded by new credentials', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      let resolveDiscovery: ((result: { token: string; source: 'auth-file' }) => void) | undefined;
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'discoverGitHubToken' as never
+      ).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveDiscovery = resolve;
+          })
+      );
+      const available = p.isAvailable();
+      while (!resolveDiscovery) {
+        await Promise.resolve();
+      }
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+      resolveDiscovery({ token: 'gho_old_account', source: 'auth-file' });
+
+      expect(await available).toBe(true);
+      expect((p as unknown as Record<string, unknown>)['tokenCache']).toEqual(
+        expect.objectContaining({ token: 'gho_new_account' })
+      );
+    });
+
     it('returns true when auth.json has a stored token', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       spyOn(
@@ -498,6 +543,8 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         url: fakeServerUrl,
         stop: async () => {},
       };
+      const internals = provider as unknown as Record<string, number>;
+      internals['clientCredentialsVersion'] = internals['credentialsVersion'];
     });
 
     it('throws when embedded server has not been started', () => {
@@ -548,6 +595,14 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('claude-opus-4.6');
     });
 
+    it('resolves static aliases when the dynamic model cache is empty', () => {
+      (provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [];
+
+      const cfg = provider.buildSdkConfig('copilot-anthropic-opus');
+
+      expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('claude-opus-4.6');
+    });
+
     it('sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', () => {
       const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
       expect(cfg.envVars['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC']).toBe('1');
@@ -564,6 +619,83 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
         cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
       );
+    });
+
+    it('reports a curated catalog only after a successful remote listing', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+      const internals = p as unknown as Record<string, unknown>;
+      expect(p.hasCuratedModelList()).toBe(false);
+
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      internals['clientCache'] = { listModels: async () => [] };
+      internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+
+      expect(await p.listRemoteModels({ force: true })).toEqual([]);
+      expect(p.hasCuratedModelList()).toBe(true);
+
+      spyOn(p, 'ensureServerStarted').mockRejectedValue(new Error('start failed') as never);
+      expect(await p.getModels()).toEqual([]);
+      expect(p.hasCuratedModelList()).toBe(false);
+    });
+  });
+
+  describe('credential-change bridge invalidation', () => {
+    it('rejects buildSdkConfig until the scheduled restart replays the new credentials', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+        COPILOT_GITHUB_TOKEN: 'gho_env',
+      });
+      const internals = p as unknown as Record<string, unknown>;
+      internals['serverCache'] = { url: 'http://127.0.0.1:9999', stop: async () => {} };
+      internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+
+      expect(p.buildSdkConfig('copilot-anthropic-sonnet').envVars['ANTHROPIC_BASE_URL']).toBe(
+        'http://127.0.0.1:9999'
+      );
+
+      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+        async () => {
+          internals['clientCache'] = { listModels: async () => [], stop: async () => {} };
+          internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+          return { url: 'http://127.0.0.1:10000', stop: async () => {} };
+        }
+      );
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+
+      expect(() => p.buildSdkConfig('copilot-anthropic-sonnet')).toThrow('credentials changed');
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(p.buildSdkConfig('copilot-anthropic-sonnet').envVars['ANTHROPIC_BASE_URL']).toBe(
+        'http://127.0.0.1:10000'
+      );
+    });
+
+    it('clears a failed background restart so discovery can retry', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+        COPILOT_GITHUB_TOKEN: 'gho_env',
+      });
+      const internals = p as unknown as Record<string, unknown>;
+      internals['serverCache'] = { url: 'http://127.0.0.1:9999', stop: async () => {} };
+      internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+      let attempts = 0;
+      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+        async () => {
+          attempts++;
+          if (attempts === 1) throw new Error('startup failed');
+          internals['clientCache'] = { listModels: async () => [], stop: async () => {} };
+          internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+          return { url: 'http://127.0.0.1:10001', stop: async () => {} };
+        }
+      );
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(internals['serverStarting']).toBeUndefined();
+
+      await expect(p.ensureServerStarted()).resolves.toBe('http://127.0.0.1:10001');
+      expect(attempts).toBe(2);
     });
   });
 
@@ -663,6 +795,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       (p as unknown as Record<string, unknown>)['clientCache'] = {
         listModels: async () => fakeSdkModels,
       };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
 
       const models = await p.getModels();
 
@@ -688,6 +821,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
           throw new Error('API error');
         },
       };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
 
       const models = await p.getModels();
       expect(models.length).toBeGreaterThan(0);
@@ -721,6 +855,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
           ];
         },
       };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
 
       await p.getModels();
       expect(callCount).toBe(1);
@@ -745,12 +880,252 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       (p as unknown as Record<string, unknown>)['clientCache'] = {
         listModels: async () => [],
       };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
 
       const models = await p.getModels();
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
       expect(models.find((m) => m.id === 'gpt-5.4')?.contextWindow).toBe(272000);
       expect(models.find((m) => m.id === 'gpt-5.5')?.contextWindow).toBe(272000);
+    });
+  });
+
+  describe('listRemoteModels()', () => {
+    const sdkModel = (id: string) => ({
+      id,
+      name: id,
+      capabilities: {
+        supports: { vision: false, reasoningEffort: false },
+        limits: { max_context_window_tokens: 128000 },
+      },
+      policy: { state: 'enabled' as const, terms: '' },
+    });
+
+    it('reuses a fresh cache unless force refreshes and replaces it', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+        COPILOT_GITHUB_TOKEN: 'gho_env',
+      });
+      const ensureServer = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+        'http://127.0.0.1:9999' as never
+      );
+      let calls = 0;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: async () => {
+          calls++;
+          return [sdkModel('gpt-refreshed')];
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+        {
+          id: 'gpt-cached',
+          name: 'Cached',
+          alias: 'copilot-gpt-cached',
+          family: 'gpt',
+          provider: 'anthropic-copilot',
+          contextWindow: 128000,
+          description: 'Cached',
+          releaseDate: '2025-01-01',
+          available: true,
+        },
+      ];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      expect((await p.listRemoteModels()).map((model) => model.id)).toEqual(['gpt-cached']);
+      expect(calls).toBe(0);
+      expect(ensureServer).not.toHaveBeenCalled();
+
+      expect((await p.listRemoteModels({ force: true })).map((model) => model.id)).toEqual([
+        'gpt-refreshed',
+      ]);
+      expect(calls).toBe(1);
+      expect(ensureServer).toHaveBeenCalledTimes(1);
+
+      expect((await p.listRemoteModels()).map((model) => model.id)).toEqual(['gpt-refreshed']);
+      expect(calls).toBe(1);
+    });
+
+    it('rejects cached and forced discovery when credentials are no longer available', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      const ensureServer = spyOn(p, 'ensureServerStarted');
+      let calls = 0;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: async () => {
+          calls++;
+          return [sdkModel('gpt-stale')];
+        },
+      };
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+        {
+          id: 'gpt-stale',
+          name: 'Stale',
+          alias: 'copilot-gpt-stale',
+          family: 'gpt',
+          provider: 'anthropic-copilot',
+          contextWindow: 128000,
+          description: 'Stale',
+          releaseDate: '2025-01-01',
+          available: true,
+        },
+      ];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      await expect(p.listRemoteModels()).rejects.toThrow('not authenticated');
+      await expect(p.listRemoteModels({ force: true })).rejects.toThrow('not authenticated');
+      expect(ensureServer).not.toHaveBeenCalled();
+      expect(calls).toBe(0);
+    });
+
+    it('recreates the client before forced discovery after credentials change', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      let oldClientCalls = 0;
+      let oldClientStopped = false;
+      let oldServerStopped = false;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: async () => {
+          oldClientCalls++;
+          return [sdkModel('gpt-old-account')];
+        },
+        stop: async () => {
+          oldClientStopped = true;
+        },
+      };
+      (p as unknown as Record<string, unknown>)['serverCache'] = {
+        url: 'http://127.0.0.1:9998',
+        stop: async () => {
+          oldServerStopped = true;
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+        async () => {
+          (p as unknown as Record<string, unknown>)['clientCache'] = {
+            listModels: async () => [sdkModel('gpt-new-account')],
+            stop: async () => {},
+          };
+          (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 1;
+          return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+        }
+      );
+
+      expect((await p.listRemoteModels({ force: true })).map((model) => model.id)).toEqual([
+        'gpt-new-account',
+      ]);
+      expect(oldServerStopped).toBe(true);
+      expect(oldClientStopped).toBe(true);
+      expect(oldClientCalls).toBe(0);
+    });
+
+    it('rejects and leaves the cache empty when credentials change during discovery', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_old_account' });
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      let resolveModels: ((models: ReturnType<typeof sdkModel>[]) => void) | undefined;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: () =>
+          new Promise<ReturnType<typeof sdkModel>[]>((resolve) => {
+            resolveModels = resolve;
+          }),
+      };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 1;
+      const discovery = p.listRemoteModels({ force: true });
+      while (!resolveModels) {
+        await Promise.resolve();
+      }
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+      resolveModels([sdkModel('gpt-old-account')]);
+
+      await expect(discovery).rejects.toThrow('credentials changed during model discovery');
+      expect((p as unknown as Record<string, unknown>)['dynamicModelsCache']).toBeNull();
+    });
+
+    it('rejects before querying a client invalidated after server startup', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_old_account' });
+      let calls = 0;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: async () => {
+          calls++;
+          return [sdkModel('gpt-old-account')];
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 1;
+      spyOn(p, 'ensureServerStarted').mockImplementation(async () => {
+        p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+        return 'http://127.0.0.1:9999';
+      });
+
+      await expect(p.listRemoteModels({ force: true })).rejects.toThrow(
+        'credentials changed before model discovery'
+      );
+      expect(calls).toBe(0);
+    });
+
+    it('propagates a forced client failure instead of serving stale or static models', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+        COPILOT_GITHUB_TOKEN: 'gho_env',
+      });
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: async () => {
+          throw new Error('Copilot refresh failed');
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
+        {
+          id: 'gpt-stale',
+          name: 'Stale',
+          alias: 'copilot-gpt-stale',
+          family: 'gpt',
+          provider: 'anthropic-copilot',
+          contextWindow: 128000,
+          description: 'Stale',
+          releaseDate: '2025-01-01',
+          available: true,
+        },
+      ];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      await expect(p.listRemoteModels({ force: true })).rejects.toThrow('Copilot refresh failed');
+      expect((p as unknown as Record<string, unknown>)['dynamicModelsCache']).toEqual([
+        expect.objectContaining({ id: 'gpt-stale' }),
+      ]);
+    });
+
+    it('returns an empty successful response without caching it', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+        COPILOT_GITHUB_TOKEN: 'gho_env',
+      });
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      let calls = 0;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: async () => {
+          calls++;
+          return [];
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCredentialsVersion'] = 0;
+
+      expect(await p.listRemoteModels({ force: true })).toEqual([]);
+      expect(await p.listRemoteModels()).toEqual([]);
+      expect(calls).toBe(2);
+      expect((p as unknown as Record<string, unknown>)['dynamicModelsCache']).toBeNull();
     });
   });
 
@@ -816,6 +1191,38 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(url2).toBe('http://127.0.0.1:9999');
       expect(url3).toBe('http://127.0.0.1:9999');
     });
+
+    it('shares one restart across concurrent calls after credentials change', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_new_account' });
+      let oldServerStops = 0;
+      let oldClientStops = 0;
+      let createCount = 0;
+      (p as unknown as Record<string, unknown>)['serverCache'] = {
+        url: 'http://127.0.0.1:9998',
+        stop: async () => {
+          oldServerStops++;
+        },
+      };
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        stop: async () => {
+          oldClientStops++;
+        },
+      };
+      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+        async () => {
+          createCount++;
+          return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+        }
+      );
+
+      const urls = await Promise.all([p.ensureServerStarted(), p.ensureServerStarted()]);
+
+      expect(urls).toEqual(['http://127.0.0.1:9999', 'http://127.0.0.1:9999']);
+      expect(oldServerStops).toBe(1);
+      expect(oldClientStops).toBe(1);
+      expect(createCount).toBe(1);
+    });
   });
 
   describe('shutdown()', () => {
@@ -843,6 +1250,37 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       await provider.shutdown();
       expect(clientStopped).toBe(true);
       expect((provider as unknown as Record<string, unknown>)['clientCache']).toBeUndefined();
+    });
+
+    it('waits for an in-flight restart and stops its server', async () => {
+      let resolveServer: ((server: { url: string; stop: () => Promise<void> }) => void) | undefined;
+      let stopped = false;
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'createServer' as never
+      ).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveServer = resolve;
+          })
+      );
+      const starting = provider.ensureServerStarted();
+      while (!resolveServer) {
+        await Promise.resolve();
+      }
+
+      const shutdown = provider.shutdown();
+      resolveServer({
+        url: 'http://127.0.0.1:12345',
+        stop: async () => {
+          stopped = true;
+        },
+      });
+
+      await expect(shutdown).resolves.toBeUndefined();
+      await expect(starting).rejects.toThrow('shutting down');
+      expect(stopped).toBe(true);
+      expect((provider as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
     });
 
     it('is safe to call when server was never started', async () => {
@@ -1018,6 +1456,120 @@ describe('logout()', () => {
     await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
     expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBeNull();
     expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
+  });
+
+  it('stops the running bridge on logout', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    let serverStopped = false;
+    let clientStopped = false;
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    internals['serverCache'] = {
+      url: 'http://127.0.0.1:9999',
+      stop: async () => {
+        serverStopped = true;
+      },
+    };
+    internals['clientCache'] = {
+      stop: async () => {
+        clientStopped = true;
+      },
+    };
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+
+    await expect(p.logout()).resolves.toBeUndefined();
+
+    expect(serverStopped).toBe(true);
+    expect(clientStopped).toBe(true);
+    expect(internals['serverCache']).toBeUndefined();
+    expect(internals['clientCache']).toBeUndefined();
+  });
+
+  it('rejects bridge restarts after a successful logout until new credentials arrive', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    let createCalls = 0;
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      async () => {
+        createCalls++;
+        return { url: 'http://127.0.0.1:10002', stop: async () => {} };
+      }
+    );
+
+    await p.logout();
+
+    await expect(p.ensureServerStarted()).rejects.toThrow('logged out');
+    expect(createCalls).toBe(0);
+    expect(internals['serverCache']).toBeUndefined();
+
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_new_login' });
+    internals['clientCache'] = { listModels: async () => [], stop: async () => {} };
+    internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+    await expect(p.ensureServerStarted()).resolves.toBe('http://127.0.0.1:10002');
+    expect(createCalls).toBe(1);
+  });
+
+  it('keeps the running bridge when logout is refused by an external source', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+    const internals = p as unknown as Record<string, unknown>;
+    let serverStopped = false;
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    internals['serverCache'] = {
+      url: 'http://127.0.0.1:9999',
+      stop: async () => {
+        serverStopped = true;
+      },
+    };
+    internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+    internals['tokenCache'] = {
+      token: 'gho_stored_tok',
+      expiresAt: Number.POSITIVE_INFINITY,
+      source: undefined,
+    };
+    const dynamicCatalog = [
+      {
+        id: 'gpt-dynamic',
+        name: 'Dynamic',
+        alias: 'copilot-gpt-dynamic',
+        family: 'gpt',
+        provider: 'anthropic-copilot',
+        contextWindow: 128000,
+        description: 'Dynamic',
+        releaseDate: '2025-01-01',
+        available: true,
+      },
+    ];
+    const dynamicExpiry = Date.now() + 60_000;
+    internals['dynamicModelsCache'] = dynamicCatalog;
+    internals['dynamicModelsCacheExpiresAt'] = dynamicExpiry;
+
+    await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
+
+    expect(serverStopped).toBe(false);
+    expect(internals['serverCache']).toBeDefined();
+    expect(internals['storedCredentialToken']).toBeNull();
+    expect(internals['tokenCache']).toEqual(expect.objectContaining({ token: 'gho_stored_tok' }));
+    expect((internals['tokenCache'] as { expiresAt: number }).expiresAt).toBeLessThan(
+      Number.POSITIVE_INFINITY
+    );
+    expect(internals['dynamicModelsCache']).toEqual(dynamicCatalog);
+    expect(internals['dynamicModelsCacheExpiresAt']).toBe(dynamicExpiry);
+    expect(internals['credentialsVersion']).toBe(internals['clientCredentialsVersion']);
+    expect(p.buildSdkConfig('copilot-gpt-dynamic').envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe(
+      'gpt-dynamic'
+    );
   });
 
   it('does not block logout for an unusable classic PAT (ghp_) in COPILOT_GITHUB_TOKEN', async () => {

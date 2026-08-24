@@ -60,6 +60,8 @@ export class DeepSeekProvider implements Provider {
   ];
 
   private credentials: ProviderCredentials | null = null;
+  private credentialsVersion = 0;
+  private credentialSignature: string | undefined;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
@@ -71,9 +73,14 @@ export class DeepSeekProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.credentialsVersion++;
+      this.probeCache.clear();
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
-    this.probeCache.clear();
-    this.clearModelCache();
   }
 
   clearModelCache(): void {
@@ -137,12 +144,17 @@ export class DeepSeekProvider implements Provider {
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error('DeepSeek API key not configured');
+    const credentialsVersion = this.credentialsVersion;
     const models = await fetchRemoteModelList({
       url: DeepSeekProvider.MODEL_LIST_URL,
       headers: { Authorization: `Bearer ${apiKey}` },
       force: options.force,
       cache: this.modelListCache,
     });
+    if (credentialsVersion !== this.credentialsVersion) {
+      this.clearModelCache();
+      throw new Error('DeepSeek credentials changed during model discovery');
+    }
     return models
       .filter((model) => this.ownsModel(model.id))
       .map((model) => this.toRemoteModelInfo(model));
