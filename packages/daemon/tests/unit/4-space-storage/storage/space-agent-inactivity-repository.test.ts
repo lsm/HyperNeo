@@ -197,9 +197,9 @@ describe('SpaceAgentInactivity repositories', () => {
       const contested = claimRepo.acquire({
         spaceId,
         agentId: 'agent-1',
-        claimKey: 'inactivity-nag:agent-1:200:0',
-        windowAnchoredAt: 200,
-        attemptGeneration: 0,
+        claimKey: 'inactivity-nag:agent-1:100:1',
+        windowAnchoredAt: 100,
+        attemptGeneration: 1,
         ownerToken: 'scanner-b',
         configRevision: 1,
       });
