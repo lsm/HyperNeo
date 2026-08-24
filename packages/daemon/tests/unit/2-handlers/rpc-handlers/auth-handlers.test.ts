@@ -172,6 +172,35 @@ describe('Auth RPC Handlers', () => {
       expect(result.providers[0].isAuthenticated).toBe(false);
       expect(result.providers[0].error).toBe('Auth check failed');
     });
+
+    it('passes errorKind through to the provider status', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => ({
+          isAuthenticated: false,
+          method: 'api_key' as const,
+          error: 'Z.ai API key rejected (HTTP 401)',
+          errorKind: 'credential' as const,
+        })),
+      });
+      testRegistry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{
+          id: string;
+          isAuthenticated: boolean;
+          error?: string;
+          errorKind?: 'credential' | 'transient';
+        }>;
+      };
+
+      expect(result.providers[0].isAuthenticated).toBe(false);
+      expect(result.providers[0].error).toBe('Z.ai API key rejected (HTTP 401)');
+      expect(result.providers[0].errorKind).toBe('credential');
+    });
   });
 
   describe('auth.login', () => {
@@ -456,6 +485,39 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('managed by environment variables');
       expect(credentialManager.removeCredentials).not.toHaveBeenCalled();
+    });
+
+    it('surfaces externally-managed message and completes app-side cleanup on refused external logout', async () => {
+      const credentialManager = {
+        getCredentials: mock(async () => ({ type: 'oauth' as const, accessToken: 'gho_stored' })),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => false),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        logout: mock(async () => {
+          throw new Error(
+            'GitHub Copilot credentials are managed by the COPILOT_GITHUB_TOKEN environment variable. Remove that source to log out.'
+          );
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('COPILOT_GITHUB_TOKEN');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
     it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {

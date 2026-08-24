@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  applyBodyNonemptyGate,
+  applyEligibilityGate,
+  applyIndexGate,
+  applySearchableTypeGate,
+  applySupersededGate,
+  applyUserStatusGate,
   decideMessageSearchAdmission,
   isMessageSearchIndexEligible,
   isOlderThanMessageSearchTtl,
+  type MessageSearchAdmissionCtx,
+  type MessageSearchAdmissionDecision,
   type MessageSearchAdmissionInput,
   type MessageSearchEligibilityRow,
 } from '../../../../src/storage/repositories/message-search-admission';
@@ -208,5 +216,90 @@ describe('isMessageSearchIndexEligible', () => {
     });
     expect(isMessageSearchIndexEligible(row, NOW)).toBe(false);
     expect(isMessageSearchIndexEligible(row, NOW - 2 * DAY_MS)).toBe(true);
+  });
+});
+
+describe('gate pass-through identity (ADR 0004 Decision item 6b)', () => {
+  function gateCtx(overrides: Partial<MessageSearchAdmissionCtx> = {}): MessageSearchAdmissionCtx {
+    return {
+      messageType: 'user',
+      body: 'searchable body',
+      now: NOW,
+      eligibility: eligibleRow(),
+      isSuperseded: false,
+      isSearchableUserStatus: true,
+      decision: null,
+      ...overrides,
+    };
+  }
+
+  test('passing gates return the ctx unchanged by reference', () => {
+    const passingGates = [
+      applySupersededGate,
+      applySearchableTypeGate,
+      applyEligibilityGate,
+      applyBodyNonemptyGate,
+      applyUserStatusGate,
+    ];
+    for (const gate of passingGates) {
+      const ctx = gateCtx();
+      expect(gate(ctx)).toBe(ctx);
+    }
+  });
+
+  function assertDecides(
+    gate: (ctx: MessageSearchAdmissionCtx) => MessageSearchAdmissionCtx,
+    overrides: Partial<MessageSearchAdmissionCtx>,
+    decision: MessageSearchAdmissionDecision
+  ): void {
+    const input = gateCtx(overrides);
+    const expected = { ...input, decision };
+    const result = gate(input);
+    expect(result).not.toBe(input);
+    expect(result).toEqual(expected);
+  }
+
+  test('each deciding gate stamps its skip reason on a copied ctx', () => {
+    assertDecides(
+      applySupersededGate,
+      { isSuperseded: true },
+      {
+        action: 'skip',
+        reason: 'superseded',
+      }
+    );
+    assertDecides(
+      applySearchableTypeGate,
+      { messageType: 'result' },
+      {
+        action: 'skip',
+        reason: 'non_searchable_type',
+      }
+    );
+    assertDecides(
+      applyEligibilityGate,
+      { eligibility: eligibleRow({ session_status: 'archived' }) },
+      { action: 'skip', reason: 'ineligible' }
+    );
+    assertDecides(
+      applyBodyNonemptyGate,
+      { body: '' },
+      {
+        action: 'skip',
+        reason: 'empty_body',
+      }
+    );
+    assertDecides(
+      applyUserStatusGate,
+      { isSearchableUserStatus: false },
+      {
+        action: 'skip',
+        reason: 'user_status_not_searchable',
+      }
+    );
+  });
+
+  test('the index gate always decides', () => {
+    assertDecides(applyIndexGate, {}, { action: 'index' });
   });
 });

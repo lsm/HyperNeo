@@ -28,6 +28,7 @@ import {
   type AnthropicMessagesBridgeServer,
 } from './anthropic-messages-bridge/server.js';
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeBaseUrlForProbe } from './shared/credential-probe.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import {
   createOllamaNativeBridgeServer,
   type OllamaNativeBridgeConfig,
@@ -257,10 +258,10 @@ export class CustomEndpointProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: true,
       method: 'api_key',
-    };
+    });
   }
 
   async shutdown(): Promise<void> {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -14,7 +14,9 @@ import {
   refreshProvider,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import { credentialStoreStatus } from '../../lib/state.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
+import { ConnectionNotReadyError, ConnectionTimeoutError } from '../../lib/errors.ts';
+import { connectionState, credentialStoreStatus } from '../../lib/state.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { Button } from '../ui/Button.tsx';
 import { AddProviderModal } from './AddProviderModal.tsx';
@@ -45,6 +47,24 @@ function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
   }
 }
 
+function mergeProviderConfig(
+  configJson: string | undefined,
+  patch: Record<string, unknown>
+): string {
+  let base: Record<string, unknown> = {};
+  if (configJson) {
+    try {
+      const parsed: unknown = JSON.parse(configJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      base = {};
+    }
+  }
+  return JSON.stringify({ ...base, ...patch });
+}
+
 function readAcpCommand(provider: EnrichedProvider): string {
   if (!provider.configJson) return '';
   try {
@@ -60,12 +80,14 @@ function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undef
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
     if (!Array.isArray(parsed.models)) return undefined;
-    return parsed.models.flatMap((model) => {
+    if (parsed.models.length === 0) return [];
+    const valid = parsed.models.flatMap((model) => {
       if (!model || typeof model !== 'object') return [];
       const { id, name } = model as { id?: unknown; name?: unknown };
       if (typeof id !== 'string') return [];
       return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
     });
+    return valid.length > 0 ? valid : undefined;
   } catch {
     return undefined;
   }
@@ -76,9 +98,18 @@ const KIMI_REGION_LABELS: Record<'china' | 'global', string> = {
   global: 'Global (api.moonshot.ai)',
 };
 
+const CONNECTION_GATE_TIMEOUT_MS = 10000;
+
 export function ProvidersSettings() {
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [gateTimeout, setGateTimeout] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(
+    () => new URLSearchParams(window.location.search).get('reason') === 'session_expired'
+  );
+  const loadGenerationRef = useRef(0);
+  const autoRetriedRef = useRef(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -90,8 +121,10 @@ export function ProvidersSettings() {
     command: string;
     models?: AcpConfiguredModel[];
     envBacked?: boolean;
+    configJson?: string;
   } | null>(null);
   const [kimiRegions, setKimiRegions] = useState<Record<string, 'china' | 'global'>>({});
+  const lastSyncedKimiRegions = useRef<Record<string, 'china' | 'global'>>({});
   const [customEditor, setCustomEditor] = useState<EditorState | null>(null);
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
@@ -106,8 +139,13 @@ export function ProvidersSettings() {
     useFetchModels(customEditor);
 
   const loadProviders = async () => {
+    const generation = ++loadGenerationRef.current;
     try {
       setLoading(true);
+      setLoadError(false);
+      setGateTimeout(false);
+      await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
+      if (generation !== loadGenerationRef.current) return;
       const [{ providers: records }, authResponse] = await Promise.all([
         listProviders(),
         listProviderAuthStatus().catch((_err) => {
@@ -115,6 +153,19 @@ export function ProvidersSettings() {
           return { providers: [] as ProviderAuthStatus[] };
         }),
       ]);
+      if (generation !== loadGenerationRef.current) return;
+      autoRetriedRef.current = false;
+      if (sessionExpired) {
+        setSessionExpired(false);
+        const params = new URLSearchParams(window.location.search);
+        params.delete('reason');
+        const query = params.toString();
+        window.history.replaceState(
+          null,
+          '',
+          `${window.location.pathname}${query ? `?${query}` : ''}`
+        );
+      }
       const authById = new Map(authResponse.providers.map((a) => [a.id, a]));
       const enriched = records.map((r) => ({
         ...r,
@@ -127,20 +178,54 @@ export function ProvidersSettings() {
           nextRegions[p.id] = readKimiRegion(p);
         }
       }
-      setKimiRegions((prev) => ({ ...nextRegions, ...prev }));
+      const syncedRegions = lastSyncedKimiRegions.current;
+      setKimiRegions((prev) => {
+        const merged: Record<string, 'china' | 'global'> = { ...nextRegions };
+        for (const [id, edited] of Object.entries(prev)) {
+          if (id in nextRegions && edited !== syncedRegions[id]) {
+            merged[id] = edited;
+          }
+        }
+        return merged;
+      });
+      lastSyncedKimiRegions.current = nextRegions;
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
       }
-    } catch {
+    } catch (err) {
+      if (generation !== loadGenerationRef.current) return;
+      setLoadError(true);
+      setGateTimeout(
+        err instanceof ConnectionTimeoutError || err instanceof ConnectionNotReadyError
+      );
       toast.error('Failed to load providers');
     } finally {
-      setLoading(false);
+      if (generation === loadGenerationRef.current) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     loadProviders();
+    return () => {
+      loadGenerationRef.current++;
+    };
   }, []);
+
+  useEffect(() => {
+    if (connectionState.value !== 'connected' || !loadError) return;
+    if (autoRetriedRef.current) return;
+    autoRetriedRef.current = true;
+    loadProviders();
+  }, [connectionState.value, loadError]);
+
+  const handleRetry = () => {
+    if (!connectionManager.isConnected()) {
+      connectionManager.reconnect();
+    }
+    loadProviders();
+  };
 
   useEffect(() => {
     if (!oauthFlow) return;
@@ -240,8 +325,12 @@ export function ProvidersSettings() {
     setPendingId(provider.id);
     try {
       await updateProvider(provider.id, {
-        configJson: JSON.stringify({ region }),
+        configJson: mergeProviderConfig(provider.configJson, { region }),
       });
+      lastSyncedKimiRegions.current = {
+        ...lastSyncedKimiRegions.current,
+        [provider.id]: region,
+      };
       toast.success(`${provider.displayName} region set to ${KIMI_REGION_LABELS[region]}`);
       await loadProviders();
     } catch (err) {
@@ -446,12 +535,45 @@ export function ProvidersSettings() {
             </div>
           )}
 
-          {providers.length === 0 && (
+          {loadError && providers.length > 0 && (
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2">
+              <p class="text-sm text-red-300">
+                {sessionExpired
+                  ? 'Your session expired.'
+                  : gateTimeout
+                    ? 'Could not reach the HyperNeo daemon — showing cached providers.'
+                    : 'Failed to reload providers — showing cached providers.'}
+              </p>
+              <Button size="sm" variant="secondary" onClick={handleRetry}>
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {loadError && providers.length === 0 ? (
+            <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-6 text-center">
+              <p class="text-sm text-red-300">
+                {sessionExpired ? 'Your session expired.' : 'Failed to load providers.'}
+              </p>
+              <p class="text-xs text-gray-400 mt-1">
+                {sessionExpired
+                  ? 'Re-authenticate, then retry to reload your providers.'
+                  : gateTimeout
+                    ? 'Could not reach the HyperNeo daemon — check that it is running, then retry.'
+                    : 'The load failed. Try again in a moment.'}
+              </p>
+              <div class="mt-3">
+                <Button size="sm" variant="secondary" onClick={handleRetry}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : providers.length === 0 ? (
             <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
               <p class="text-sm text-gray-400">No providers configured.</p>
               <p class="text-xs text-gray-500 mt-1">Add a provider to start using AI models.</p>
             </div>
-          )}
+          ) : null}
 
           {providers.length > 0 && (
             <div class="space-y-2">
@@ -737,6 +859,7 @@ export function ProvidersSettings() {
                                     command: readAcpCommand(provider),
                                     models: readAcpModels(provider),
                                     envBacked: !readAcpCommand(provider),
+                                    configJson: provider.configJson,
                                   })
                                 }
                                 disabled={isPending}
@@ -859,6 +982,7 @@ export function ProvidersSettings() {
           command={acpEditor.command}
           models={acpEditor.models}
           envBacked={acpEditor.envBacked}
+          configJson={acpEditor.configJson}
           onClose={() => setAcpEditor(null)}
           onSaved={() => {
             setAcpEditor(null);

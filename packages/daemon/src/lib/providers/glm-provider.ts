@@ -9,6 +9,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 
 export class GlmProvider implements Provider {
   readonly id = 'glm';
@@ -149,11 +150,11 @@ export class GlmProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: 'api_key',
       error: apiKey ? undefined : 'Set GLM_API_KEY or ZHIPU_API_KEY to enable GLM models.',
-    };
+    });
   }
 
   private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {

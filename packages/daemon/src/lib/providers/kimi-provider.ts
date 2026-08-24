@@ -8,6 +8,7 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 
 function normalizeBaseUrl(url: string): string {
@@ -476,11 +477,11 @@ export class KimiProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: 'api_key',
       error: apiKey ? undefined : 'Set KIMI_API_KEY or MOONSHOT_API_KEY to enable Kimi models.',
-    };
+    });
   }
 
   async shutdown(): Promise<void> {}

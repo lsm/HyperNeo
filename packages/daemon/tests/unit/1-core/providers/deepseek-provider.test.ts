@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { DeepSeekProvider } from '../../../../src/lib/providers/deepseek-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('DeepSeekProvider', () => {
   const originalKey = process.env.DEEPSEEK_API_KEY;
@@ -69,5 +73,37 @@ describe('DeepSeekProvider', () => {
     expect(provider.ownsModel('deepseek-v4-pro')).toBe(true);
     expect(provider.ownsModel('deepseek-pro')).toBe(true);
     expect(provider.ownsModel('deepseek-r1:latest')).toBe(false);
+  });
+
+  describe('getAuthStatus', () => {
+    beforeEach(() => {
+      resetProviderFailureStore();
+    });
+
+    afterEach(() => {
+      resetProviderFailureStore();
+    });
+
+    it('surfaces a recorded credential failure as unauthenticated', async () => {
+      const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'invalid-key' });
+      recordProviderFailure('deepseek', new Error('DeepSeek API key rejected (HTTP 401)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('DeepSeek API key rejected (HTTP 401)');
+    });
+
+    it('stays authenticated but degraded for a recorded transient failure', async () => {
+      const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'test-key' });
+      recordProviderFailure('deepseek', new Error('DeepSeek probe failed (HTTP 503)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.errorKind).toBe('transient');
+      expect(status.error).toBe('DeepSeek probe failed (HTTP 503)');
+    });
   });
 });

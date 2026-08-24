@@ -3,6 +3,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ConnectionManager } from '../connection-manager';
 
+const { mockStartAutoFlush, mockStopAutoFlush, mockStartVoice, mockStopVoice } = vi.hoisted(() => ({
+  mockStartAutoFlush: vi.fn(),
+  mockStopAutoFlush: vi.fn(),
+  mockStartVoice: vi.fn(),
+  mockStopVoice: vi.fn(),
+}));
+
+vi.mock('../outbound-queue', () => ({
+  startAutoFlush: mockStartAutoFlush,
+  stopAutoFlush: mockStopAutoFlush,
+}));
+
+vi.mock('../voice/voice-transcript-outbox', () => ({
+  startVoiceTranscriptOutboxFlush: mockStartVoice,
+  stopVoiceTranscriptOutboxFlush: mockStopVoice,
+}));
+
 const mockHubObj: {
   registerTransport: ReturnType<typeof vi.fn>;
   onConnection: ReturnType<typeof vi.fn>;
@@ -916,6 +933,68 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
 
       consoleSpy.mockRestore();
       addEventListenerSpy.mockRestore();
+    });
+  });
+
+  describe('auth-expiry redirect (one-shot)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it('should redirect to the providers settings page on an auth error', async () => {
+      mockTransportObj.initialize.mockResolvedValue(undefined);
+      mockHubObj.isConnected.mockReturnValue(true);
+      mockTransportObj.isReady.mockReturnValue(true);
+      await manager.getHub();
+
+      const hrefSetter = vi.spyOn(window.location, 'href', 'set');
+
+      mockHubObj._connectionCallback('error', new Error('HTTP 401 Unauthorized'));
+
+      expect(hrefSetter).toHaveBeenCalledTimes(1);
+      expect(hrefSetter).toHaveBeenCalledWith('/settings?tab=providers&reason=session_expired');
+      expect(mockTransportObj.close).toHaveBeenCalled();
+      hrefSetter.mockRestore();
+    });
+
+    it('should not redirect again while the URL already carries reason=session_expired', async () => {
+      const stubLocation = {
+        href: 'http://localhost/settings?tab=providers&reason=session_expired',
+        search: '?tab=providers&reason=session_expired',
+      };
+      vi.stubGlobal('location', stubLocation);
+
+      mockTransportObj.initialize.mockResolvedValue(undefined);
+      mockHubObj.isConnected.mockReturnValue(true);
+      mockTransportObj.isReady.mockReturnValue(true);
+      await manager.getHub();
+
+      mockHubObj._connectionCallback('error', new Error('HTTP 401 Unauthorized'));
+      mockHubObj._connectionCallback('error', new Error('Session expired'));
+
+      expect(stubLocation.href).toBe(
+        'http://localhost/settings?tab=providers&reason=session_expired'
+      );
+    });
+
+    it('should restart flush services after an auth-error stop once reconnected', async () => {
+      mockTransportObj.initialize.mockResolvedValue(undefined);
+      mockHubObj.isConnected.mockReturnValue(true);
+      mockTransportObj.isReady.mockReturnValue(true);
+      await manager.getHub();
+
+      mockHubObj._connectionCallback('error', new Error('HTTP 401 Unauthorized'));
+      expect(mockStopAutoFlush).toHaveBeenCalledTimes(1);
+      expect(mockStopVoice).toHaveBeenCalledTimes(1);
+
+      mockStartAutoFlush.mockClear();
+      mockStartVoice.mockClear();
+
+      mockHubObj._connectionCallback('connected');
+
+      expect(mockStartAutoFlush).toHaveBeenCalledTimes(1);
+      expect(mockStartVoice).toHaveBeenCalledTimes(1);
     });
   });
 });

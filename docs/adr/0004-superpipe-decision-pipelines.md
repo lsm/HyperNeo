@@ -40,6 +40,14 @@ already gained consumers just before the chain: transition-table enforcement
 #2682, `casStatus` #2684). See "Pilot 7" below for the pinned behavior deltas,
 the Pilot 3 spawn-seam race closure, and the boundary caveats.
 
+Validated further by pilot 9 / chain C (2026-08-23): the message-search FTS
+admission gates as a `decisionRun` core and the delivery-status family as a
+routing table under `src/storage/` — the first pilot whose cores live in the
+repository layer — with the second production FTS admission implementation
+(`SessionRepository.rebuildMessageSearchRows`) aligned to the extracted
+vocabulary and parity-pinned. See "Pilot 9" below for the lazy-fact caveats
+and the deliberate rebuild residual.
+
 Validated further by pilot 10 / chain A (2026-08-23): the `sdk_messages`
 read-projection layer of `SDKMessageRepository` extracted as pure transforms
 into `sdk-message-projections.ts` — the widened scope's P1 pure-transform form
@@ -47,6 +55,25 @@ applied below the runtime, at the persistence boundary. See "Pilot 10" below
 for the policy-parameterization discipline the chain settled on and its
 closing sweep. (Pilot 8 is reserved for chain I, the pending-queue drain +
 injection shell, by Pilot 7's closing note; pilot 9 is chain C's.)
+
+Validated further by pilot 11 / chain B (2026-08-23): the `sdk_messages`
+write side — save admission as a pure core over a normalized input, badge
+maintenance as an instruction set, and the delivery-status flip as a
+plan/interpret whose per-instruction CAS guards apply inside one
+transaction (a Phase 4 relative at the storage layer: guarded effects
+inside the transaction, not after commit). See "Pilot 11" below for
+the coupled TS/SQL badge predicate, the per-variant admission placement
+divergence, and the closing sweep.
+
+Validated further by pilot 8 / chain I (2026-08-23): the pending-queue
+drain — admission gates and envelope transforms as pure cores, the drain
+admission as a `decisionRun`, two flush sites as its gather → decide →
+interpret consumers — and the injection shell around the Pilot 4 inject
+decision, which stays single-sourced in `decideInjectDelivery` while its
+delivery-row steps and v1/v2 branch moved to a steps module. See
+"Pilot 8" below for the boundary caveats, the envelope-detector
+retirement, and the remaining mini-pilot shelf for
+`task-agent-manager.ts`.
 
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
@@ -1180,6 +1207,156 @@ Chain P's close unblocks Chain I (sub-pilot 8: the pending-queue drain +
 injection shell, tasks #1243+), which shares `injectMessageIntoSession`
 call sites with the spawn seam and was sequenced behind the P5 apply.
 
+## Pilot 9 — chain C: message-search FTS admission + delivery-status routing (2026-08-23)
+
+Chain C carried the sandwich below `src/lib/`, into the storage layer's
+message-repository cluster — the third-ranked chain of the sdk-message-repository
+survey (`docs/reports/sdk-message-repository-superpipe-survey.md`). Five PRs:
+C1 the characterization pins (#2755 — the delivery-transition window matrix,
+the turn-end batch semantics, and the FTS flush boundary incl.
+delete-then-decide ordering and both malformed-payload outcomes), C2 the
+admission core (#2771), C3 the routing table (#2791), C4 the session-rebuild
+alignment (#2804), and this closing sweep.
+
+Extracted:
+
+- `message-search-admission.ts` (160 lines) — `decideMessageSearchAdmission`,
+  a real `decisionRun` over six gates (superseded → searchable-type →
+  eligibility → body-nonempty → user-status → index), first-skip-wins; the FTS
+  policy vocabulary (retention TTL, room-session prefixes and types, terminal
+  space-task statuses, searchable message types) exported as data; and every
+  retention check evaluated against an injected `now` — the survey's purity
+  finding was that the old `isOlderThanMessageSearchTtl` read `Date.now()`
+  internally, and the synchronous fallback path
+  (`scheduleMessageSearchIndex` with no pending table) means *every* admission
+  shell, not just the 2 s flush, must supply a clock.
+- `delivery-status-routing.ts` (47 lines) — `DELIVERY_TRANSITION_RULES`: the
+  seven delivery-transition actions' accepted from-status windows and targets
+  as one table, consumed through `routeDeliveryTransition` (boolean routing)
+  and `deliveryTransitionRule` (window + target, for SQL interpolation) —
+  `task-transition-routing.ts`'s precedent at repository scale.
+
+Interpreters: `upsertMessageSearchRow` keeps the delete-then-decide order and
+the body-extraction-first placement the C1 pins protect (a JSON-valid but
+invalid payload throws inside the flush transaction, so the pending row is
+retained for retry; syntactically invalid JSON returns before the old-row
+delete). The ten `markDelivery*`/`reopenDelivery*` wrappers select their
+target row through `deliveryTransitionRule`'s window — `send_status IN
+(acceptedFrom)` in the SELECT — and then flip it through the shared
+`updateMessageStatus`, which chain B's B4 (landed beside this chain's merge)
+has since rebuilt as plan/interpret whose guard splits by action family:
+only consumed/failed targets build planned rows, so only the fail and
+consume wrappers get the expected-status guard on their status UPDATE and
+turn/seq statements, while the submit, reopen, retry, and uuid-keyed defer
+wrappers target statuses that never plan and always take the unplanned
+by-id update; a row that leaves the pending window between selection and
+plan joins them there. The select-to-update window is closed for the planned
+arm and remains, in theory, everywhere else. The dbId-keyed
+`deferEnqueuedUserMessage` keeps its own guarded UPDATE
+(`AND send_status = ?`) rather than going through the shared effect — its
+distinct lookup, return shape, and conditional-update semantics preserved.
+
+**The session-rebuild outcome: routed vocabulary, deliberate residual.** The
+survey flagged `SessionRepository.rebuildMessageSearchRows` as a second
+production FTS admission implementation drifting against the repo's. C4 routed
+its *policy* through the core — the bulk WHERE interpolates the exported
+vocabulary, and both retention cutoffs bind as millisecond parameters from one
+injected clock (`updateSession`'s optional third parameter), ms-exact and
+NULL-keeping to match `isOlderThanMessageSearchTtl`, replacing SQLite's
+`'now'` — while the *shape* stays set-based, and that residual duplication is
+deliberate: the rebuild remains one DELETE plus one `INSERT … SELECT` per
+session flip rather than a per-row JS loop over the shared predicates; its
+supersession match keeps the codebase-wide `COALESCE(sdk_uuid, id)` fallback,
+which is stricter than the repo path for one row shape — a searchable row
+with neither a payload UUID nor a `sdk_uuid` column value whose replacement
+edge targets its database id is rejected by the rebuild's match while
+`isMessageSuperseded` returns false on the absent payload UUID; edges carry
+payload UUIDs (`retracted_message_uuids`), never db ids, so that shape cannot
+arise in practice (dead defensive symmetry, pilot 3's rebind-guard precedent)
+and the parity matrix deliberately contains no such row; and its body
+assembly stays SQL `GROUP_CONCAT`, where non-string text/thinking scalars
+(and non-ASCII whitespace-only bodies) can still diverge from
+`extractVisibleSearchText` for malformed-content rows. Writing the parity
+matrix (`session-search-rebuild-parity.test.ts`) surfaced five real
+divergences, all fixed: second-truncated SQL kept rows the core rejected
+(sub-second-in-second), the `COALESCE(…, 0)` task cutoff rejected
+null-timestamp terminal tasks the core keeps, empty-body rows were inserted,
+room-prefixed session ids typed as Space sessions were admitted, and
+self-supersession edges were dropped — the same incident-shaped payoff as
+pilot 4's pins.
+
+Boundary caveats, recorded for the same reason as pilot 3's:
+
+1. **The expensive facts are thunks — one eager in practice, one lazy.**
+   `isSuperseded` and `isSearchableUserMessageStatus` enter the core as
+   thunks (pilot 3's lazy-thunk pattern), but only the trailing one is
+   actually skipped by earlier gates: supersession is the FIRST gate, so its
+   replacement-table read is forced for every JSON-valid row that reaches
+   the core — including rows later rejected for type, eligibility, or empty
+   body — while the user-status thunk sits last and is the one an earlier
+   skip avoids. The suite pins both positions directly: superseded consulted
+   first, user-status last, the user-status fact never consulted when an
+   earlier gate skips and never for non-user rows.
+2. **The gates are wiring, not surface.** The six `applyXGate` functions are
+   production-internal — composed intra-module into the run that
+   `decideMessageSearchAdmission` executes — and directly test-consumed by
+   the identity pins. The suite pins the decision table through the composed
+   run's precedence ("superseded wins over every later gate") *and* the
+   per-gate pass-through identity of Decision item 6(b) — the identity pin is
+   the one part the composed run cannot prove: a gate returning a spread copy
+   instead of the same ctx reference still composes, so only the per-gate
+   `gate(ctx) === ctx` assertion catches it.
+3. **The fact suppliers stay repo-private.** `isMessageSuperseded` and
+   `isSearchableUserMessageStatus` remain private methods — the reads the core
+   delegates. The searchable-user-status policy also survives as SQL
+   (`COALESCE(send_status, 'consumed') IN ('consumed', 'failed')`) in the
+   read-projection builders (survey zone 1: do-not-extract, hand-tuned SQL)
+   and one line of the rebuild's WHERE — the same policy in three syntaxes,
+   unified only at the gate.
+
+**The closing sweep found no dead inline copies.** The ten wrappers'
+hardcoded status windows and the old five-gate FTS cascade are gone from both
+files; knip (files/dependencies/exports), oxlint, and `tsc --noEmit` are
+clean. Live near-duplicates deliberately kept: the pending-selection window —
+set-equal to `fail`'s acceptedFrom but a distinct predicate (rows still
+pending delivery, keyed on target ∈ {consumed, failed}, driving
+turn-promotion side effects) — was still inline when this chain closed, and
+chain B's B4 has since lifted it into the named `PENDING_ROW_FROM_STATUSES`
+in `sdk-message-status-plan.ts`, keeping it a separate concept rather than
+folding it onto the delivery routing table; `deletePendingUserMessage`'s
+inline `('deferred', 'enqueued')` pending set remains unconverted B-chain
+mutator territory; and the searchable-user-status SQL family of caveat 3.
+Every core export is production-consumed or pinned by the C suites:
+the five vocabulary constants by `session-repository.ts`'s rebuild (the TTL
+also by the parity suite), `decideMessageSearchAdmission` by
+`upsertMessageSearchRow` and both suites, `isMessageSearchIndexEligible` and
+`isOlderThanMessageSearchTtl` by the admission suite (the former also
+intra-module as the eligibility gate), the six gates both — composed into
+the production run and pinned by the identity describe —
+`routeDeliveryTransition` by `deferEnqueuedUserMessage` and the
+routing suite, `deliveryTransitionRule` by the four wrapper call sites and the
+suite, `DeliveryTransitionAction` by the wrapper signatures, and the remaining
+types intra-module.
+
+**Costs:** production +167 across C2–C4 — the two cores +207 (160 + 47),
+`sdk-message-repository.ts` net −78 from chain C's own PRs (1,943 lines at
+the chain's close, 1,867 after dev's interleaved extractions — chain A PRs
+4–5 and the rewind-operator dedup — landed beside it; chains A and B account
+for the rest of the shrink from the survey's 2,199-line base),
+`session-repository.ts` +38 for the vocabulary interpolation and
+parameterized cutoffs. Tests +1,672:
+C1's pins +585 net (window matrix, turn-end batch semantics, flush boundary),
+the admission suite +305 (212 across C2 plus this closing sweep's 93
+identity-pin lines, reworked twice in review), the routing suite +98, the
+parity matrix +684 —
+again the value is testability, and here the parity matrix paid for itself by
+surfacing the five rebuild divergences on identical rows.
+
+Pilot 9 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chain A
+landed beside this chain as pilot 10; chain B (save admission) from the same
+survey remains in flight and lands its own note.
+
+
 ## Pilot 10 — chain A: sdk-message read projections (2026-08-23)
 
 Chain A applied the widened scope (pure transforms, P1) to the persistence
@@ -1272,6 +1449,393 @@ tests net ≈ +1,457 (A1 +794 characterization pins; projections suite +204
 A2, +163 A3, +246 A4, +50 A5). As in pilots 3–7, the value is testability:
 the A1 pins run against pure functions, no database fixture required for the
 policy tables.
+
+## Pilot 11 — chain B: save admission, badge instruction set, status-plan interpreter (2026-08-23)
+
+Chain B is the write-side chain of the `sdk_messages` superpipe survey (task
+#1249, #2713): the three save paths' admission and badge decisions extracted
+as pure cores, and the delivery-status flip extracted as a pure planner plus
+a transaction-shell interpreter that owns its own SQL — the repository
+keeping the surrounding reads, transactions, and notifications. Five PRs:
+B1 the save-admission
+drift pins (#2736), B2 the admission core (#2767), B3 the badge instruction
+set (#2794), B4 the `updateMessageStatus` plan/interpret (#2815), and this
+closing sweep. The chain ran interleaved with chains A (read projections)
+and C (FTS admission + delivery-status routing) on the same file; changes
+from those chains and their review fixes are theirs, not credited here.
+
+Extracted:
+
+- `sdk-message-admission.ts` (169 lines) — `decideMessageAdmission` over a
+  normalized input, returning one admission record (`isRenderable`,
+  `isTerminal`, `isConversationAnchor`, `countsTowardsBadge`,
+  `parentToolUseId`, `sdkUuid`, `replacementEdges`), plus the per-fact
+  extractors (`computeIsRenderable`, `computeIsTerminal`,
+  `extractParentToolUseId`, `extractSdkUuid`, `extractReplacementEdges`) and
+  the `SendStatus` type.
+- `sdk-message-badge.ts` (16 lines) — the badge planners:
+  `planAdmissionBadgeUpdate` (delta `+1` iff the admission record counts) and
+  `planBadgeRecompute`, over the `BadgeUpdateInstruction` union.
+- `sdk-message-status-plan.ts` (137 lines) — `planMessageStatusApplication`
+  over the pending-row snapshot, producing the ordered instruction list
+  (`touch-timestamp` / `promote-turn` / `allocate-consumed-seq`), and
+  `applyMessageStatusPlan`, the transaction-shell interpreter with the
+  expected-status guards. The module's halves differ in kind: the planner is
+  pure, the interpreter is not — it prepares its own statements, reads the
+  clock, invokes the sequence allocator, and writes — so this module is a
+  planner/interpreter pair, not a third pure core.
+
+**Shape call: pure function, not `decisionRun`.** The save gates are
+independent derivations off one message — renderability, terminality,
+anchorhood, badge visibility, uuid, replacement edges — with no precedence
+among them; a gate list would have manufactured a first-decision-wins order
+the facts do not have. The ADR's original sanction (pilot 1) already covered
+plain pure-function admission gates. Chain B's addition is the *normalized
+input*: `normalizeMessageAdmissionInput` folds the disjoint
+`HyperNeoActionMessage` shape into a synthetic `SDKMessage`, so the three
+save sites — `saveSDKMessage`, `saveUserMessageCore`,
+`saveHyperNeoActionMessage` — consume one core. The deliberate divergences
+split by where they live: the one the core itself owns — the anchor status
+gate — becomes an explicit `variant` parameter, while `consumed_seq`
+allocation stays site-local policy interpreting the shared record:
+
+- **Anchor status gate.** `isConversationAnchor` requires `sendStatus`
+  `consumed`/`failed` on the user variant only; the SDK variant takes no send
+  status (the INSERT omits the column, so the schema default `'consumed'`
+  applies) and bypasses only that send-status arm — renderability and
+  user-type still gate the anchor, so non-user or non-renderable SDK rows
+  anchor exactly as they would on the user path.
+- **`consumed_seq` at insert.** The SDK variant allocates a sequence for
+  terminal results inside its insert transaction; the user variant leaves the
+  column NULL at insert and allocates only at the consumed flip. B1 pinned
+  this as the divergence a shared `isTerminal` field must not flatten — the
+  allocation decision stays at the sites (the flip side is B4's
+  interpreter-owned instruction), so the record carries the fact and each
+  site keeps its policy.
+- **Badge visibility** rides the same record (`countsTowardsBadge`) —
+  previously a repository-private predicate invoked at each site, now a core
+  field whose delta/recompute split B3 unified.
+
+**B3 — badge maintenance as an instruction set.** A save whose admission
+counts emits `delta(+1)`; a non-counting save emits the union's no-op
+`none` (hidden-subtype rows, tool-child rows, pending user rows); the
+status flip, both rewind operators, and `deletePendingUserMessage` emit a
+**recompute** instruction (authoritative `COUNT(*)` + conditional update,
+which also repairs pre-existing counter drift) — never delta subtraction,
+which would preserve exactly that drift. Two notification asymmetries are
+pinned, not normalized: `deletePendingUserMessage` recomputes but emits no
+`sessions` notification, while the rewind operators notify iff the recompute
+changed the row; and `recomputeVisibleMessageCount` stays public and
+notification-free for the recovery script (`scripts/recover-messages.ts:276`).
+The interpreter is the four-line `applyBadgeUpdate`; the rewind pair itself
+later collapsed into one `deleteMessagesFromTimestamp` (interleaved #2812,
+finishing B3's unification).
+
+**B4 — a plan/interpret flip with per-instruction CAS guards.**
+`updateMessageStatus` gathers the pending-row snapshot and plans *before*
+opening the transaction, then interprets inside it: the timestamp, turn,
+and sequence instructions execute first, each itself a guarded conditional
+update, and the final `send_status` flip is the last guarded statement in
+the same transaction, with the badge recompute alongside and only the
+notifications and search-index scheduling after commit. That ordering —
+effects-before-status-CAS, all inside the transaction — is a *relative* of
+the ADR's Phase 4 wording (read → plan → CAS within transaction → apply
+effects *after commit*), not an instance of it: the effects here are DB-only
+rows guarded by the same predicate, so transactionality, not commit
+ordering, is what makes them safe. The snapshot-to-apply gap is exactly
+why the expected-status guards below exist, and the synchronous
+single-threaded connection is why it stays theoretical today; the
+plan/interpret boundary must not widen it. Two disciplines carried
+structurally. First, *newly allocated values never appear in the plan*:
+turn promotion reads the live `MAX(conversation_turn_index)` per task (a
+shared-turn base frozen once per task inside the transaction), and a fresh
+`consumed_seq` comes from the atomic single-row `UPDATE … RETURNING`
+allocator — both invoked by the interpreter inside the open transaction,
+because pre-transaction allocation of either axis would make planning
+effectful or let a concurrent writer advancing the same task invalidate the
+plan. The one deliberate exception is a caller-provided sequence:
+`markDeliveriesConsumedAtTurnEnd` passes the result row's existing
+`consumed_seq` as `options.consumedSeq`, the planner stores it in each
+`allocate-consumed-seq` instruction as `providedSeq`, and the interpreter
+reuses it without spending an atomic allocation — pinned as such. Second,
+*every planned transition carries an expected-status guard*
+(`AND send_status IN (pending set)`): a row outside the pending set at
+apply time fails its whole transition — no stale timestamp, turn, or
+sequence instruction executes on it — and (the PR-review fix) the
+seq-allocation arm re-probes the window before spending an atomic sequence,
+so a rejected row does not burn one. The guard is membership-at-apply, not
+continuous membership since the snapshot — no version or status history is
+recorded — so an ABA round trip between snapshot and apply (say
+`enqueued → failed → enqueued` through the live reopen route) re-admits the
+row and its planned effects land. The guard's scope is the planned set
+only, because the snapshot is gathered solely for `consumed`/`failed`
+targets: intermediate-target updates (`enqueued`, `deferred`, `submitted` —
+the re-queue paths call these live) take the unconditional arm with no
+`send_status` predicate at all, as do ids outside the snapshot on terminal
+targets — flipping without turn/seq/timestamp effects, the pre-existing
+behavior for already-settled rows, now pinned as such. The options-carrying
+callers (`sharedTurn`, `consumedSeq`) are repository-internal delivery
+wrappers; the `Database` facade exposes the 2-arg form only.
+
+**Boundary caveats.**
+
+1. **The badge predicate lives twice.** The core's TypeScript
+   `isVisibleBadgeRow` (delta path) and `recomputeVisibleMessageCount`'s SQL
+   `WHERE` (authoritative path) encode the same membership — no
+   `parent_tool_use_id`, hidden subtypes excluded, user rows counted only
+   when consumed/failed — in two languages and two modules, and the
+   hidden-subtype list is itself defined twice (`BADGE_HIDDEN_SUBTYPES` in
+   the core; `EXCLUDED_FROM_PAGINATION_SQL_LIST` in the repository, whose
+   name records its first job — pagination and badge exclusion share one
+   list). The pair is coupled by design — recompute is what repairs delta
+   drift — but a change to either predicate must be mirrored in the other,
+   or recompute silently "repairs" the counter toward a different definition
+   of visible.
+2. **Admission placement diverges by site, preserved — and the placement is
+   not itself an invariant.** The SDK variant computes its record before its
+   transaction; the user variant computes it inside the composed transaction
+   (the `saveUserMessage` wrapper and the delivery outbox both call
+   `saveUserMessageCore` transactionally). The derivation reads only the
+   in-scope message and its options — no repository, clock, or other
+   mutable state — so the two placements cannot observe different inputs;
+   nothing about admission freshness pins the code where it is. What the
+   placement is load-bearing for is composition shape: the user core is
+   itself the transactional unit its callers compose (core inside the
+   transaction, `runPostSaveSideEffects` after commit), so hoisting its
+   admission computation out would change that seam, not correctness.
+   Recorded so the divergence is not read as a discipline.
+3. **The normalized input is a type seam.** Folding `HyperNeoActionMessage`
+   into a synthetic `SDKMessage` is an `as unknown as SDKMessage` cast. The
+   core reads `type`, `subtype`, and `uuid` off every input, and additionally
+   `message.content` (renderability), `parent_tool_use_id`, and
+   `supersedes`/`retracted_message_uuids` (replacement edges) where present —
+   the synthetic object omits all of those, and the omissions are
+   load-bearing defaults (non-array content renders, no parent, no edges). A
+   new admission fact reading deeper structure must extend the normalizer's
+   synthetic shape or its omissions become silent defaults; the seam is why
+   the disjoint shape crosses at all.
+4. **The repository re-export block is suite-pinned.** `computeIsRenderable`,
+   `computeIsTerminal`, `extractParentToolUseId`, and `extractReplacementEdges`
+   re-export from `sdk-message-repository.ts` for the helpers suite, which
+   pins them through the facade (`extractSdkUuid` is production-consumed by
+   the delivery outbox; `SendStatus` widely) — the pilots 6/7
+   pinned-export phenomenon, recorded rather than folded.
+
+**Worker and recovery-script contracts, verified by this sweep.** The
+constructor stays `(db, reactiveDb?)`: the message-search worker constructs
+the repository on a read-only connection (`{readonly: true}` plus
+`PRAGMA query_only`, `message-search-worker.ts:29`), while the recovery
+script constructs it on a writable one whose writes include the recompute's
+`UPDATE` (`scripts/recover-messages.ts:276`) — what the two share is the
+absence of a reactive database, against which every notification is a `?.`
+no-op, and `recomputeVisibleMessageCount` is the script's public entry. The
+module tops stay worker-safe across the repository and every module it
+imports: module-scope initialization exists — constant `Set`s,
+`message-search-admission.ts` composing its `decisionRun` pipeline at
+import, and the shared logger's `globalConfig` reading
+`NODE_ENV`/`LOG_LEVEL`/`LOG_FILTER` — but none of it touches database or
+reactive state, which is the requirement the worker's import graph
+actually imposes; the logging env read is the accepted exception, harmless
+on the worker's read-only connection. The facade
+(`storage/index.ts`) and the reactive proxy's `METHOD_TABLE_MAP` were not
+touched by any chain B PR. The proxy dispatches with `.apply(target, args)`,
+but the proxied facade method is itself 2-arg — `Database.updateMessageStatus`
+forwards `(messageIds, newStatus)` and would discard a third — so the
+options-bearing callers work because they are repository-internal wrappers
+calling `this.updateMessageStatus` directly, bypassing the facade; that
+narrowing is the recorded shape, not transparent passthrough. The
+interleaved `willEmitTableChange` addition (#2814) was that PR's own
+incident fix, not chain B's.
+
+**The closing sweep found no dead inline admission derivations.** B2
+deleted the inline copies as it landed — `isVisibleBadgeRow`, the per-site
+`isRenderable`/`isTerminal`/`isConversationAnchor`/`countsTowardsBadge`
+derivations at all three save sites — and B3 the bare
+`bumpVisibleMessageCount(…, 1)` calls; every save site now reads
+`admission.*` only, and knip (files/dependencies/exports), oxlint, and
+`tsc --noEmit` are clean, verified in this sweep. Live near-duplicates
+deliberately kept: the badge SQL mirror of caveat 1; `message-queue.ts`'s
+local `extractParentToolUseId` — a different function on a different input
+shape (queued content blocks, not an `SDKMessage`), never a core consumer
+despite the name; and the per-variant admission placement of caveat 2.
+
+**Costs:** production +418/−203 across B2–B4, chain-B-attributable only —
+three extracted modules +322 (169 + 16 + 137: two pure cores plus the
+planner/interpreter pair), the repository itself +96/−203
+(net −107; the survey's 2,199-line file was simultaneously shrinking under
+chains A and C). Tests +1,321: B1's drift matrix and task-id-resolution
+reactive harness +618, the admission suite +202, the badge suite +193, the
+status-plan suite +308. B1's matrix is the chain's parity proof (its save
+cells are one fixed-status `saveSDKMessage` row plus five send-status
+`saveUserMessageCore` rows — the SDK save API takes no status, so no
+pair × status grid exists — alongside the fixed-shape hyperneo-action
+table and the core/side-effects composition contract); B4's suite pins
+the CAS guards, including the probe's allocator skip.
+
+Pilot 11 PRs: #2736, #2767, #2794, #2815, plus this closing sweep. Numbering
+ledger for the survey's chains: pilot 7 is chain P; 8 stays reserved for chain I
+per pilot 7's note; 9 is chain C per its in-flight closing sweep; 10 is chain A
+(#2819); 11 is chain B.
+
+## Pilot 8 — chain I: pending-queue drain + injection shell (2026-08-23)
+
+Chain I is the chain Pilot 7's close unblocked: the durable pending-message
+queue's drain paths and the injection shell that delivers into sub-sessions —
+the code that shares `injectMessageIntoSession` call sites with the spawn seam.
+Six PRs: I1 the characterization pins (#2799 — 1,143 lines pinning drain
+admission, envelope formatting, per-row outcomes, the space-agent flush, the
+terminal guard, and pending-drain-through-the-v2-shell, plus 82
+reset-context-per-turn pins), I2 the drain/envelope cores (#2809), I3 the
+injection-shell delivery steps (#2817), I4 the drain admission composed as a
+`decisionRun` (#2829), I5 the space-agent flush as the pipeline's second
+consumer (#2840), and this closing sweep.
+
+Extracted:
+
+- `pending-drain-gates.ts` — `derivePendingQueueTargetNames` (the bare +
+  node-prefixed target-name pair) and `selectDrainablePendingRows`
+  (targetKind filter, executionless-safety filter, id dedup, createdAt
+  ordering).
+- `pending-envelope.ts` — `pendingSourceLevel`, `hasAgentMessageEnvelope`,
+  `isHumanPendingSource`, and the two row formatters
+  (`formatPendingRowForNodeAgent`, `formatPendingRowForSpaceAgent`) that pass
+  through already-enveloped bodies or re-envelope bare ones.
+- `injection-delivery-steps.ts` — the recurring delivery-row transitions
+  (`reopenFailedDeliveryRow`, `flipDeliveryRowToDeferred`,
+  `failDeliveryRowInBackground`, `settleDeliveryRowStatus`) plus
+  `deliverInjectedMessage` (the v1/v2 delivery branch).
+- `pending-drain-decision-pipeline.ts` — the `decisionRun` composition
+  (empty-listings short-circuit → drainable-rows admission → terminal skip),
+  exposed as `decidePendingDrainAdmission`.
+
+**The injection shell composes on the Pilot 4 core — no second decision core.**
+The chain's standing constraint was that the inject decision stays
+single-sourced in `decideInjectDelivery`. What I3 extracted from
+`injectMessageIntoSession` is everything *around* that call: the row-status
+transitions its interpreter performs per decision arm, and the terminal v1/v2
+delivery cascade. The shell is now gather → `decideInjectDelivery` →
+interpret, with the interpreter's shared effects in the steps module and the
+decision inputs (parent-task rate/usage status, slot reset, active delivery
+job, unconsumed work) still gathered shell-side. The two flush sites —
+`flushPendingMessagesForTarget` (node agents) and, since I5,
+`flushPendingMessagesForSpaceAgent` — are the drain pipeline's two gather →
+decide → interpret consumers; the per-row delivery loop stays shell-owned at
+both (the ADR Q3 never-the-loop rule), as do the injection lock and the double
+terminal guard in `injectSubSessionMessageWithOrigin` (checked before and
+after lock acquisition).
+
+Boundary caveats, recorded for the same reason as pilot 3's:
+
+1. **Maintenance effects run ahead of the core.** Both flush sites call
+   `enforceRetention` and `expireStale` before the admission decision —
+   mutate, then gather listings, then decide. A skip decision is therefore
+   not a no-op: expired rows are already gone. The ordering is maintain →
+   gather → decide → interpret here, recorded rather than normalized
+   (retention belongs to the queue, not to the drain decision).
+2. **The dual-name gather carries a defensive dedup and a tiebreak seam.**
+   The two target names are disjoint selectors (`target_agent_name = ?`), so
+   the core's `seenIds` dedup can never fire in production — dead defensive
+   symmetry, pilot 3's rebind-guard precedent. Ordering is split across two
+   syntaxes: each SQL listing orders `created_at ASC, rowid ASC`, and the core
+   re-sorts the merged set by `createdAt` only, so a same-millisecond tie
+   between rows from the two listings resolves by listing order (bare name
+   first), not rowid.
+3. **The space-agent site pins its admission inputs.** I5 hardcodes
+   `executionPresent: true`: the injector-presence check ahead of the core is
+   the real gate, and the pre-pipeline behavior admitted every `space_agent`
+   row regardless of `workflowNodeId`, so the executionless-safety filter
+   must not apply (pinned: node-scoped space_agent rows still drain). Pilot
+   3's defused-gate phenomenon — the gate list is not the complete drain
+   policy.
+4. **The injection interpreter re-derives a gated input with no await
+   between.** `hasActiveDeliveryJob` feeds the core (it gates the
+   `delivery_job_active` refusal) and is re-checked at the
+   `clear_before_deliver` branch — with nothing awaited on that path between
+   decision and re-check, so the second read can only diverge through
+   synchronous mutation. A pre-existing double-check carried verbatim (pilot
+   5's re-derived-predicate caveat in its weakest form); recorded rather than
+   removed.
+5. **The typed skip reasons collapse at both shells.** The pipeline
+   distinguishes `no_pending_rows` from `no_drainable_rows`; both production
+   consumers map any skip to the same early return, so the distinction is
+   carried by the decision value and pinned by the suite only — the
+   shadowed-arms phenomenon in its mildest form.
+6. **The v1/v2 branch rides an env boolean through the step.**
+   `deliverInjectedMessage` takes `deliveryV2Enabled` as an input and keeps
+   the V1 memory-queue path inside the extracted step — pilot 4's deliberate
+   non-goal (the V1 env-gated legacy path untouched) carried into the module.
+
+**The envelope detector is retired from production paths.** Pre-I2,
+`hasAgentMessageEnvelopeForTest` was the envelope detector *misnamed as
+test-only* and exported from `task-agent-manager.ts` — while both production
+flush paths called it directly. I2 folded it into `pending-envelope.ts` as the
+production-named `hasAgentMessageEnvelope`, consumed only through the two row
+formatters; the `ForTest` export and its dedicated describe block are gone,
+and no reference to the old name remains anywhere (verified in this sweep).
+Recorded with it, I3's one review-driven behavior fix: the original step
+voided the async fail step from the `onEnqueueFailure`/`terminalizeOnTimeout`
+callbacks, turning a synchronous `markDeliveryFailedByUuid` throw into a
+detached rejection the fatal process logger treats as exit-worthy;
+`failDeliveryRowInBackground` keeps the mark synchronous (throws propagate
+through `awaitDeliveryConsumption` as before) and leaves only the status
+publish fire-and-forget with its own swallow.
+
+**The closing sweep found no dead inline copies.** Each conversion PR deleted
+its inline copy as it landed — the envelope-format ternaries (I2), the
+delivery-row transitions and the v1/v2 cascade (I3), the bare
+`selectDrainablePendingRows` call (I4), and the space-agent inline
+targetKind filter + empty check (I5). knip (files/dependencies/exports),
+oxlint, and `tsc --noEmit` are clean, verified in this sweep. Live
+near-duplicates deliberately kept: the defer arm's direct
+`markDeliveryDeferredByUuid` — the mark-without-publish variant, since
+`settleDeliveryRowStatus` publishes 'deferred' immediately after and routing
+through `flipDeliveryRowToDeferred` would double-publish — and, one file over,
+`repairQueuedWorkflowNodeHandoffs`'s own inline `targetKind === 'node_agent'`
+filter, which belongs to Pilot 3's recorded phase-1 mini-pilot, not this
+chain. Every core export is production-consumed or pinned by the suites
+(Decision item 6); the three pipeline gates are production-internal wiring
+composed into the run and directly test-consumed by the identity pins —
+pilot 9's caveat-2 shape.
+
+**Costs:** production +330 lines of new modules (38 + 84 + 159 + 49) against
+`task-agent-manager.ts` +103/−188 (net −85); tests +2,064/−41 across I1–I5 —
+I1's pin suites (1,143 + 82) and the four module suites
+(149 + 228 + 330 + 203), plus I5's space-agent admission pin. As in the
+earlier pilots, the value is testability: the drain admission and envelope
+tables now run against pure functions with no runtime fixture.
+
+Pilot 8 PRs: #2799, #2809, #2817, #2829, #2840, plus this closing sweep.
+
+**Remaining mini-pilot shelf for `task-agent-manager.ts`**, recorded as
+future candidates (each pinned by a decision-table test before extraction,
+per the pilot-3 non-goal discipline):
+
+- **The MCP-factory task-tool handlers onto the Pilot 5 routing cores.** The
+  bound node-agent MCP callbacks (`onCreateStandaloneTask`, `onPublishTask`,
+  `onArchiveTask`, exposed through `node-agent-tools.ts`'s task handlers)
+  still re-implement gates inline: `onArchiveTask` repeats the
+  archive-active-run gate with its own message variant, and `onPublishTask`
+  enforces no draft-only gate at all — it calls a bare `publishTask`
+  (`setTaskStatus(taskId, 'open')`), so the node-agent publish path can
+  publish a non-draft task that both the MCP tool (`routePublishTask`) and
+  the RPC handler reject. Pilot 5's sweep recorded this surface as
+  never-converted; folding it onto `task-transition-routing.ts` is the
+  candidate.
+- **The `rehydrateSubSession` failure-cleanup asymmetry.** The catch around
+  `startStreamingQuery`/`replayPendingMessagesAfterRuntimeProvisioning`
+  unwinds the registration set (bookkeeping, index, conditional
+  session-manager unregister), but the guarded window covers only that final
+  stage: a throw between registration and the try — the tool-continuation
+  listing or transcript sanitization — leaves the session fully registered
+  with no unwind. The inverse set and the registration set are not aligned;
+  pin first, then narrow the window or move registration inside it.
+- **The rehydrate admission gates.** `performSubSessionRehydrate`'s
+  early-return ladder (already-indexed → no execution → no parent task →
+  parent cancelled/archived/stopped → space missing → run cancelled →
+  restore-null) is a decision table living in control flow; the
+  `rehydrateSubSession` wrapper's dedup + restore-lock is shell, but the
+  ladder is extraction material once pinned.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1297,13 +1861,33 @@ policy tables.
   consumption ledger, the superseded-outcome pins, and the Pilot 3
   spawn-seam race closure, and whose close unblocks Chain I (pending-drain +
   injection shell).
+- **Done (chain C / pilot 9):** the message-search FTS admission gates
+  (`decisionRun`) and the delivery-status routing table under
+  `src/storage/repositories/`, with the session-rebuild parity alignment —
+  see "Pilot 9" above for the lazy-fact caveats and the deliberate rebuild
+  residual. Chain B (save admission) from the same survey remains in flight.
 - **Done (chain A / pilot 10):** the `sdk_messages` read-projection layer of
   `SDKMessageRepository` extracted as the pure `sdk-message-projections.ts`
   (parse/inflate, text/content shapers over an explicit first-block-only /
   join-all policy parameter, renderable-text projection, page composition) —
   see "Pilot 10" above for the policy-parameterization idiom and the closing
   sweep. The repository's read projections are done; the write/admission side
-  is chain C's (pilot 9), not revisited here.
+  is chain B's (pilot 11), not revisited here.
+- **Done (chain B / pilot 11):** the save-admission core, badge instruction
+  set, and `updateMessageStatus` plan interpreter under
+  `src/storage/repositories/` — see "Pilot 11" above for the
+  variant-parameterized divergences, the badge predicate's coupled TS/SQL
+  pair, and the worker/recovery-script contract. Chain C from the same
+  survey lands its own note.
+- **Done (chain I / pilot 8):** the pending-queue drain (admission gates,
+  envelope transforms, the `decisionRun` composition) with both flush sites
+  as gather → decide → interpret consumers, and the injection-shell delivery
+  steps around the Pilot 4 inject core, which stays single-sourced in
+  `decideInjectDelivery` — see "Pilot 8" above for the boundary caveats, the
+  envelope-detector retirement, and the mini-pilot shelf (the MCP-factory
+  task-tool handlers onto the Pilot 5 routing cores, the
+  `rehydrateSubSession` failure-cleanup asymmetry, the rehydrate admission
+  gates).
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1406,11 +1990,34 @@ policy tables.
   interpreter in `task-agent-manager.ts` (`stopSessionsVerified` /
   `stopSessionVerified` and the deps builder). Pilot 6 PRs: #2709, #2717,
   #2729, #2763, #2787, plus this closing sweep.
+- Pilot 9 (chain C) files:
+  `packages/daemon/src/storage/repositories/{message-search-admission,delivery-status-routing}.ts`;
+  interpreters in `sdk-message-repository.ts` (`upsertMessageSearchRow`, the
+  ten delivery wrappers, `deferEnqueuedUserMessage`) and
+  `session-repository.ts` (`rebuildMessageSearchRows`); survey and C4 outcome
+  in `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 9 PRs:
+  #2755, #2771, #2791, #2804, plus this closing sweep.
 - Pilot 10 (chain A) files:
   `packages/daemon/src/storage/repositories/sdk-message-projections.ts`;
   consumer in `sdk-message-repository.ts`. Characterization pins in
   `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
   (A1), module suite in `sdk-message-projections.test.ts`. Pilot 10 PRs:
   #2730, #2766, #2793, #2811, plus this closing sweep.
+- Pilot 11 (chain B) files:
+  `packages/daemon/src/storage/repositories/{sdk-message-admission,sdk-message-badge,sdk-message-status-plan}.ts`;
+  interpreters in `sdk-message-repository.ts` (`saveSDKMessage`,
+  `saveUserMessageCore`, `saveHyperNeoActionMessage`, `updateMessageStatus`,
+  `applyBadgeUpdate`); pins in
+  `packages/daemon/tests/unit/4-space-storage/storage/{sdk-message-save-admission-drift,sdk-message-admission,sdk-message-badge,sdk-message-status-plan,task-id-resolution-cache}.test.ts`;
+  survey and chain plan in
+  `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 11 PRs:
+  #2736, #2767, #2794, #2815, plus this closing sweep.
+- Pilot 8 (chain I) files:
+  `packages/daemon/src/lib/space/runtime/{pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.ts`;
+  interpreters in `task-agent-manager.ts` (`injectMessageIntoSession`,
+  `flushPendingMessagesForTarget`, `flushPendingMessagesForSpaceAgent`); pins
+  in
+  `packages/daemon/tests/unit/5-space/runtime/{task-agent-manager-pending-drain,reset-context-per-turn,pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.test.ts`.
+  Pilot 8 PRs: #2799, #2809, #2817, #2829, #2840, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

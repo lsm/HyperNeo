@@ -86,7 +86,7 @@ export function initializeProviders(): ProviderRegistry {
   }
 
   if (!disabledBuiltInProviderIds.has('anthropic-copilot')) {
-    registerCopilotProvider(registry);
+    registerCopilotProvider(registry, false);
   }
 
   initialized = true;
@@ -128,7 +128,7 @@ export async function registerBuiltInProvider(
       registry.register(new AnthropicToCodexBridgeProvider());
       break;
     case 'anthropic-copilot':
-      await waitForOptionalProviderRegistration(registry);
+      await waitForOptionalProviderRegistration(registry, true);
       break;
     case 'acp':
       registry.register(new AcpProvider());
@@ -213,18 +213,15 @@ function registerIfMissing(registry: ProviderRegistry, provider: Provider): void
   }
 }
 
-function registerCopilotProvider(registry: ProviderRegistry): void {
-  copilotProviderModule ??= import('./anthropic-copilot/index.js').catch((err) => {
-    logger.warn(`Skipping Anthropic Copilot provider registration: ${err}`);
-    return null;
-  });
-  void registerLoadedCopilotProvider(registry);
+function registerCopilotProvider(registry: ProviderRegistry, force: boolean): void {
+  void registerLoadedCopilotProvider(registry, force);
 }
 
 export async function waitForOptionalProviderRegistration(
-  registry?: ProviderRegistry
+  registry?: ProviderRegistry,
+  force = false
 ): Promise<void> {
-  await registerLoadedCopilotProvider(registry ?? initializeProviders());
+  await registerLoadedCopilotProvider(registry ?? initializeProviders(), force);
 }
 
 export async function ensureBuiltInProviderRegistered(providerId: string): Promise<void> {
@@ -258,7 +255,7 @@ export async function ensureBuiltInProviderRegistered(providerId: string): Promi
       registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
       break;
     case 'anthropic-copilot':
-      registerCopilotProvider(registry);
+      registerCopilotProvider(registry, true);
       await waitForOptionalProviderRegistration(registry);
       break;
     case 'acp':
@@ -269,18 +266,69 @@ export async function ensureBuiltInProviderRegistered(providerId: string): Promi
   }
 }
 
-async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promise<void> {
+async function registerLoadedCopilotProvider(
+  registry: ProviderRegistry,
+  force = false
+): Promise<void> {
   if (registry.has('anthropic-copilot')) return;
   if (disabledBuiltInProviderIds.has('anthropic-copilot')) return;
 
-  const providerModule = await copilotProviderModule;
-  if (providerModule && !registry.has('anthropic-copilot')) {
+  const providerModule = await loadCopilotProviderModule(force);
+  if (
+    providerModule &&
+    !registry.has('anthropic-copilot') &&
+    !disabledBuiltInProviderIds.has('anthropic-copilot')
+  ) {
     registerIfMissing(registry, new providerModule.AnthropicToCopilotBridgeProvider(process.cwd()));
   }
 }
 
-let copilotProviderModule: Promise<typeof import('./anthropic-copilot/index.js') | null> | null =
-  null;
+type CopilotProviderModule = typeof import('./anthropic-copilot/index.js');
+
+const COPILOT_IMPORT_RETRY_BACKOFF_MS = 60_000;
+
+const defaultCopilotModuleImporter = async (attempt: number): Promise<CopilotProviderModule> => {
+  if (attempt === 0) {
+    return import('./anthropic-copilot/index.js');
+  }
+  try {
+    return (await import(`./anthropic-copilot/index.js?retry=${attempt}`)) as CopilotProviderModule;
+  } catch {
+    return import('./anthropic-copilot/index.js');
+  }
+};
+
+let importCopilotProviderModule = defaultCopilotModuleImporter;
+
+let copilotProviderModule: Promise<CopilotProviderModule | null> | null = null;
+
+let copilotImportAttempts = 0;
+
+let copilotImportRetryNotBefore = 0;
+
+function loadCopilotProviderModule(force: boolean): Promise<CopilotProviderModule | null> {
+  if (!copilotProviderModule) {
+    if (!force && Date.now() < copilotImportRetryNotBefore) {
+      return Promise.resolve(null);
+    }
+    const attempt = copilotImportAttempts;
+    copilotImportAttempts += 1;
+    copilotProviderModule = importCopilotProviderModule(attempt).catch((err) => {
+      logger.warn(`Anthropic Copilot provider import failed; retry on next registration: ${err}`);
+      copilotProviderModule = null;
+      copilotImportRetryNotBefore = Date.now() + COPILOT_IMPORT_RETRY_BACKOFF_MS;
+      return null;
+    });
+  }
+  return copilotProviderModule;
+}
+
+/** @public */
+export function setCopilotProviderModuleImporter(
+  importer: (attempt: number) => Promise<CopilotProviderModule>
+): void {
+  importCopilotProviderModule = importer;
+}
 
 const lastSyncedConfigByProviderId = new Map<string, string>();
 
@@ -296,11 +344,15 @@ export function getProviderContextManager(): ProviderContextManager {
 export function resetProviderFactory(): void {
   initialized = false;
   copilotProviderModule = null;
+  importCopilotProviderModule = defaultCopilotModuleImporter;
+  copilotImportAttempts = 0;
+  copilotImportRetryNotBefore = 0;
   lastSyncedConfigByProviderId.clear();
   disabledBuiltInProviderIds.clear();
 }
 
 export type {
+  ModelTier,
   Provider,
   ProviderCapabilities,
   ProviderContext,
@@ -308,5 +360,4 @@ export type {
   ProviderInfo,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
 } from '@hyperneo/shared/provider';

@@ -22,6 +22,7 @@ import {
   codexBackendContextWindow,
 } from './codex-models.js';
 import { Logger } from '../logger.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -143,6 +144,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   >();
 
   private cachedBridgeAuth: OpenAIResponsesBridgeAuth | null | undefined = undefined;
+  private cachedBridgeAuthMissExpiresAt = 0;
 
   private cachedApiKey: string | undefined = undefined;
 
@@ -157,6 +159,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private static readonly PROBE_TTL_MS = 30_000;
   private static readonly PROBE_TIMEOUT_MS = 5000;
+  private static readonly NEGATIVE_AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
 
   constructor(
     private readonly env: Record<string, string | undefined> = process.env,
@@ -242,7 +245,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
 
     if (this.cachedBridgeAuth !== undefined) {
-      return this.cachedBridgeAuth ?? undefined;
+      if (this.cachedBridgeAuth !== null || Date.now() < this.cachedBridgeAuthMissExpiresAt) {
+        return this.cachedBridgeAuth ?? undefined;
+      }
+      this.cachedBridgeAuth = undefined;
     }
 
     const hyperneoCreds = await this.loadCredentials();
@@ -263,6 +269,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     }
 
     this.cachedBridgeAuth = null;
+    this.cachedBridgeAuthMissExpiresAt =
+      Date.now() + AnthropicToCodexBridgeProvider.NEGATIVE_AUTH_CACHE_TTL_MS;
     this.cachedApiKey = '';
     return undefined;
   }
@@ -385,6 +393,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    return applyRecordedFailureToAuthStatus(this.id, await this.resolveCredentialAuthStatus());
+  }
+
+  private async resolveCredentialAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const hyperneoCreds = await this.loadCredentials();
     if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
       return {
@@ -612,6 +624,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     this.bridgeServerAuthKeys.clear();
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
+    this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
   }
 
@@ -791,6 +804,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async logout(): Promise<void> {
     this.cachedCredentials = null;
     this.cachedBridgeAuth = undefined;
+    this.cachedBridgeAuthMissExpiresAt = 0;
     this.cachedApiKey = undefined;
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
