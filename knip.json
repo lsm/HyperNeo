@@ -48,6 +48,7 @@
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
+    "packages/daemon/src/lib/agent/usage-accounting.ts": ["exports"],
     "packages/daemon/src/lib/db-query/scope-config.ts": ["exports"],
     "packages/daemon/src/lib/external-events/topic-trie.ts": ["exports"],
     "packages/daemon/src/lib/model-service.ts": ["exports"],
