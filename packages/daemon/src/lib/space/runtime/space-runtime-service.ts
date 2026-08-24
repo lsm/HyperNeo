@@ -163,6 +163,7 @@ export interface SpaceRuntimeServiceConfig {
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
+  inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
 }
 
@@ -345,7 +346,14 @@ export class SpaceRuntimeService {
     agentId: string;
     message: string;
     idempotencyKey: string;
-  }): Promise<'consumed' | 'accepted' | 'terminal_failure'> {
+    expectedConfigRevision?: number | null;
+  }): Promise<
+    | 'consumed'
+    | 'accepted'
+    | 'terminal_failure'
+    | 'terminal_failure_after_consumption'
+    | 'pre_admission_failure'
+  > {
     const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
     if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
       return 'terminal_failure';
@@ -354,17 +362,35 @@ export class SpaceRuntimeService {
     if (!space || space.status !== 'active' || space.paused || space.stopped) {
       return 'terminal_failure';
     }
-    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    if (args.expectedConfigRevision !== undefined) {
+      const config = this.config.inactivityConfigRepo?.getByAgent(args.spaceId, args.agentId);
+      if (!config || !config.enabled || config.configRevision !== args.expectedConfigRevision) {
+        return 'pre_admission_failure';
+      }
+    }
+    const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(args.spaceId);
+    const isCoordinator =
+      agent.id === coordinatorLongHorizonAgentId(args.spaceId) || coordinator?.id === agent.id;
+    const session = isCoordinator
+      ? await this.resolveCoordinatorSession(args.spaceId)
+      : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
     if (!session) return 'terminal_failure';
+    const sessionId = session.getSessionData().id;
     try {
       await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
         terminalizeOnTimeout: false,
       });
+      const row = this.config.reactiveDb?.db
+        .getSDKMessageRepo()
+        .getDeliveryContent(sessionId, args.idempotencyKey);
+      if (row !== null && row !== undefined && row.sendStatus === 'failed') {
+        return 'terminal_failure_after_consumption';
+      }
       return isMessageDeliveryV2Enabled() ? 'consumed' : 'accepted';
     } catch {
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()
-        .getDeliveryContent(session.getSessionData().id, args.idempotencyKey);
+        .getDeliveryContent(sessionId, args.idempotencyKey);
       return row !== null && row !== undefined && row.sendStatus !== 'failed'
         ? 'accepted'
         : 'terminal_failure';
@@ -1136,6 +1162,10 @@ export class SpaceRuntimeService {
         agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
           ? this.config.inactivityConfigRepo
           : undefined,
+      inactivityClaimRepo:
+        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
+          ? this.config.inactivityClaimRepo
+          : undefined,
       inactivityRunNow:
         agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
           ? this.config.inactivityRunNow
@@ -1882,6 +1912,7 @@ export class SpaceRuntimeService {
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
       inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
+      inactivityClaimRepo: coordinator ? this.config.inactivityClaimRepo : undefined,
       inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
     });
 

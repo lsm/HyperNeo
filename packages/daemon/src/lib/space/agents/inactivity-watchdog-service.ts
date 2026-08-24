@@ -44,11 +44,13 @@ export interface InactivityWatchdogDeps {
   now?: () => number;
   deliveryTimeoutMs?: number;
   getSessionSnapshot(spaceId: string, agentId: string): InactivityWatchdogSessionSnapshot | null;
+  isNagDeliveryPending(spaceId: string, agentId: string, claimKey: string): boolean;
   deliverNag(args: {
     spaceId: string;
     agentId: string;
     prompt: string;
     idempotencyKey: string;
+    configRevision: number | null;
   }): Promise<InactivityNagDeliveryOutcome>;
 }
 
@@ -102,6 +104,27 @@ export class SpaceAgentInactivityWatchdogService {
       claim.updatedAt <= staleBefore
     ) {
       this.deps.claimRepo.releaseStale(spaceId, agentId, claim.id, lastActivityAt, staleBefore);
+    }
+    claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
+    if (
+      claim !== null &&
+      claim.state === 'accepted' &&
+      !this.deps.isNagDeliveryPending(spaceId, agentId, claim.claimKey)
+    ) {
+      this.deps.claimRepo.applyReset(
+        spaceId,
+        agentId,
+        claim.id,
+        claim.claimKey,
+        claim.ownerToken,
+        claim.configRevision,
+        {
+          releaseClaim: true,
+          markDegraded: false,
+          advanceAttemptGeneration: false,
+        }
+      );
+      claim = null;
     }
     claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     const decision = decideInactivityNag({
@@ -226,7 +249,7 @@ export class SpaceAgentInactivityWatchdogService {
         claimId,
         prompt,
         idempotencyKey: claimKey,
-        acquiredConfigRevision,
+        configRevision: acquiredConfigRevision,
       });
     } catch (err) {
       log.warn(
@@ -246,7 +269,7 @@ export class SpaceAgentInactivityWatchdogService {
     claimId: string;
     prompt: string;
     idempotencyKey: string;
-    acquiredConfigRevision: number | null;
+    configRevision: number | null;
   }): Promise<InactivityNagDeliveryOutcome | 'pending'> {
     const timeoutMs = this.deps.deliveryTimeoutMs ?? INACTIVITY_NAG_DELIVERY_TIMEOUT_MS;
     if (timeoutMs <= 0) return this.deps.deliverNag(args);
@@ -266,7 +289,7 @@ export class SpaceAgentInactivityWatchdogService {
                     args.agentId,
                     args.claimId,
                     args.idempotencyKey,
-                    args.acquiredConfigRevision,
+                    args.configRevision,
                     outcome
                   ),
                 (err) => {
@@ -280,7 +303,7 @@ export class SpaceAgentInactivityWatchdogService {
                     args.agentId,
                     args.claimId,
                     args.idempotencyKey,
-                    args.acquiredConfigRevision,
+                    args.configRevision,
                     'terminal_failure'
                   );
                 }

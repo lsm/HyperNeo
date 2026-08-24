@@ -1036,7 +1036,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
     if (process.env.NODE_ENV !== 'test') {
+      let inactivityScanInProgress = false;
       const scanInactivityWatchdog = async () => {
+        if (inactivityScanInProgress) return;
+        inactivityScanInProgress = true;
         try {
           const spaces = await spaceManager.listSpaces(false);
           for (const space of spaces) {
@@ -1044,6 +1047,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           }
         } catch (err) {
           logError('[Daemon] Inactivity watchdog scan failed:', err);
+        } finally {
+          inactivityScanInProgress = false;
         }
       };
       void scanInactivityWatchdog();

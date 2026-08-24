@@ -642,6 +642,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceAgentInactivityConfigRepo = new SpaceAgentInactivityConfigRepository(
     deps.db.getDatabase()
   );
+  const spaceAgentInactivityClaimRepo = new SpaceAgentInactivityClaimRepository(
+    deps.db.getDatabase()
+  );
 
   const spaceRuntimeService: SpaceRuntimeService = new SpaceRuntimeService({
     db: deps.db.getDatabase(),
@@ -683,6 +686,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     outcomeNotificationRepo,
     enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,
     inactivityConfigRepo: spaceAgentInactivityConfigRepo,
+    inactivityClaimRepo: spaceAgentInactivityClaimRepo,
     inactivityRunNow: (spaceId, agentId) =>
       spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId),
   });
@@ -690,7 +694,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService =
     new SpaceAgentInactivityWatchdogService({
       configRepo: spaceAgentInactivityConfigRepo,
-      claimRepo: new SpaceAgentInactivityClaimRepository(deps.db.getDatabase()),
+      claimRepo: spaceAgentInactivityClaimRepo,
       agentRepo: longHorizonAgentRepo,
       spaceManager: deps.spaceManager,
       scannerToken: `inactivity-scanner:${deps.db.getDatabasePath()}`,
@@ -731,9 +735,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             status === 'processing' ||
             status === 'queued' ||
             status === 'running' ||
-            status === 'rate_limit_cooldown',
+            status === 'rate_limit_cooldown' ||
+            status === 'waiting_for_input',
           pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0,
         };
+      },
+      isNagDeliveryPending: (spaceId, agentId, claimKey) => {
+        const agent = longHorizonAgentRepo.getById(agentId);
+        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const row = deps.db
+          .getDatabase()
+          .prepare(
+            `SELECT send_status FROM sdk_messages
+             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
+          )
+          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
+        const status = row?.send_status ?? null;
+        return status === 'enqueued' || status === 'submitted' || status === 'deferred';
       },
       deliverNag: (args) =>
         spaceRuntimeService.deliverLongHorizonAgentNag({
@@ -741,6 +759,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           agentId: args.agentId,
           message: args.prompt,
           idempotencyKey: args.idempotencyKey,
+          expectedConfigRevision: args.configRevision,
         }),
     });
 

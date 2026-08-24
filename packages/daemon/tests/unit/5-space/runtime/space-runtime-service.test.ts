@@ -1390,6 +1390,36 @@ describe('SpaceRuntimeService', () => {
       expect(result).toBe('terminal_failure');
     });
 
+    test('deliverLongHorizonAgentNag returns pre_admission_failure when the config revision moved on', async () => {
+      const sessionManager = makeSessionManager(null);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          status: 'active',
+          sessionId: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const inactivityConfigRepo = {
+        getByAgent: mock(() => ({ enabled: true, configRevision: 2 })),
+      } as unknown as SpaceRuntimeServiceConfig['inactivityConfigRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo,
+        inactivityConfigRepo,
+      });
+      const result = await svc.deliverLongHorizonAgentNag({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'nag',
+        idempotencyKey: 'k',
+        expectedConfigRevision: 1,
+      });
+      expect(result).toBe('pre_admission_failure');
+    });
+
     test('long-horizon event sessions forward scoped Bash entries so the scope hook installs', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const createdSession = {

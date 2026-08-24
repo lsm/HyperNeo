@@ -111,6 +111,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: overrides.scannerToken ?? 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: overrides.getSessionSnapshot ?? (() => sessionSnapshot),
+      isNagDeliveryPending: () => true,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -151,6 +152,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
           latestConsumedMessageAt: calls <= 1 ? sessionSnapshot.latestConsumedMessageAt : NOW - 10,
         };
       },
+      isNagDeliveryPending: () => true,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -243,6 +245,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => true,
       deliveryTimeoutMs: 50,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
@@ -269,6 +272,29 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     expect(claimRepo.getByAgent(spaceId, 'agent-1')?.state).toBe('accepted');
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
+  });
+
+  it('releases an accepted claim whose delivery is no longer pending and re-nags', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    nextOutcome = 'accepted';
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => false,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
+    expect(outcomes).toHaveLength(2);
   });
 
   it('does not reclaim an accepted delivery that outlives the scanner lease', async () => {
@@ -305,6 +331,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => true,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -340,6 +367,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => true,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;

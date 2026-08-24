@@ -462,6 +462,7 @@ export interface SpaceAgentToolsConfig {
   };
   externalEventStore?: ExternalEventStore;
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
+  inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
 }
 
@@ -5328,6 +5329,9 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             config.myAgentId,
             args.enabled
           );
+          if (args.enabled) {
+            config.inactivityClaimRepo?.clearDegraded(config.spaceId, config.myAgentId);
+          }
           return {
             content: [
               {
