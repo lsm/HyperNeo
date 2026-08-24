@@ -7,7 +7,10 @@ import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/q
 import { classifyExternalEventDirectSteer } from '../../../../src/lib/external-events/event-tiers';
 import { buildDeferredEventDigestEnvelopeText } from '../../../../src/lib/external-events/deferred-event-digest';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
+import {
+  DIRECT_STEER_BUFFER_MAX_ENTRIES,
+  TaskAgentManager,
+} from '../../../../src/lib/space/runtime/task-agent-manager';
 
 const SESSION_ID = 'session-steer';
 const PR_URL = 'https://github.com/lsm/HyperNeo/pull/2828';
@@ -135,6 +138,8 @@ interface Harness {
   metrics: ExternalEventQueueMetrics;
   memoryQueue: Array<{ messageId: string; content: unknown }>;
   setFailJobEnqueue(value: boolean): void;
+  setProcessingStatus(status: string): void;
+  eventPayloads: Map<string, Record<string, unknown>>;
 }
 
 function makeHarness(processingStatusArg = 'processing'): Harness {
@@ -145,6 +150,7 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
   const memoryQueue: Array<{ messageId: string; content: unknown }> = [];
   let processingStatus = processingStatusArg;
   let failJobEnqueue = false;
+  const eventPayloads = new Map<string, Record<string, unknown>>();
 
   const session = {
     session: { id: SESSION_ID },
@@ -215,6 +221,10 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
       listByWorkflowRunIncludingArchived: () => [],
     },
     spaceRuntimeService: { queueHealthMetrics: metrics },
+    externalEventStore: {
+      getById: (eventId: string) =>
+        eventPayloads.has(eventId) ? { event: { payload: eventPayloads.get(eventId) } } : null,
+    },
     directSteerDebounceMs: DEBOUNCE_MS,
     directSteerMaxBurstWaitMs: MAX_BURST_WAIT_MS,
     directSteerCooldownMs: COOLDOWN_MS,
@@ -235,6 +245,10 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     setFailJobEnqueue: (value: boolean) => {
       failJobEnqueue = value;
     },
+    setProcessingStatus: (status: string) => {
+      processingStatus = status;
+    },
+    eventPayloads,
   };
 }
 
@@ -473,6 +487,92 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     const failedRow = harness.rows.find((row) => row.status === 'failed');
     expect(failedRow).toBeDefined();
     expect(rowText(failedRow!.message)).toContain('injected mid-turn');
+  });
+
+  it('skips the steer when the session stops processing before the debounce fires', async () => {
+    const harness = makeHarness();
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED'));
+    harness.setProcessingStatus('waiting_for_input');
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    expect(steerRows(harness.rows)).toHaveLength(0);
+    expect(steerJobs(harness.jobs)).toHaveLength(0);
+    expect(harness.rows[0]?.status).toBe('deferred');
+  });
+
+  it('hydrates sparse rate-limit fold entries from the external-event store before classifying', async () => {
+    const harness = makeHarness();
+    harness.eventPayloads.set('sparse-rc-1', { actor: 'codex[bot]' });
+    harness.eventPayloads.set('sparse-rc-2', { actor: 'codex[bot]' });
+    const essences = [
+      {
+        eventId: 'sparse-rc-1',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+      },
+      {
+        eventId: 'sparse-rc-2',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    expect(rowText(steers[0]!.message)).toContain('codex[bot]');
+    expect(steerJobs(harness.jobs)).toHaveLength(1);
+  });
+
+  it('arms cooldowns for every direct class represented in a steered fold', async () => {
+    const harness = makeHarness();
+    const essences = [
+      {
+        eventId: 'mixed-chk',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+        conclusion: 'failure',
+      },
+      {
+        eventId: 'mixed-conflict',
+        topic: 'github/lsm/hyperneo/pull_request/2828.merge_conflict',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+    await sleep(DEBOUNCE_MS + 60);
+    expect(steerRows(harness.rows)).toHaveLength(1);
+
+    await injectDefer(
+      harness.manager,
+      formatExternalEventEssence(
+        externalEvent('github/lsm/hyperneo/pull_request/2828.merge_conflict', 'later-conflict', {
+          eventType: 'pull_request',
+          action: 'merge_conflict',
+          actor: 'lsm',
+        })
+      )
+    );
+    expect(harness.metrics.getCounters().directSteerSuppressedByCooldown).toBe(1);
+    await sleep(DEBOUNCE_MS + 40);
+    expect(steerRows(harness.rows)).toHaveLength(1);
+  });
+
+  it('bounds the buffer by expanded event count, not row count', async () => {
+    const harness = makeHarness();
+    const bigFold = Array.from({ length: DIRECT_STEER_BUFFER_MAX_ENTRIES }, (_, i) => ({
+      eventId: `cap-${i}`,
+      topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+      conclusion: 'failure',
+    }));
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(bigFold as never));
+    await injectDefer(harness.manager, checkFailedText('cap-overflow', 'One More Check'));
+
+    expect(harness.metrics.getCounters().directSteerSuppressedByBufferCap).toBe(1);
+
+    await sleep(DEBOUNCE_MS + 60);
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    expect(rowText(steers[0]!.message)).toContain(`(${DIRECT_STEER_BUFFER_MAX_ENTRIES} events`);
   });
 
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {

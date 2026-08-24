@@ -266,6 +266,15 @@ function directSteerBufferKey(sessionId: string, eventClass: DirectSteerEventCla
   return `${sessionId}\u0000${eventClass}`;
 }
 
+function directSteerClasses(essences: ExternalEventEssenceEntry[]): DirectSteerEventClass[] {
+  const classes = new Set<DirectSteerEventClass>();
+  for (const essence of essences) {
+    const eventClass = classifyExternalEventDirectSteer(essence);
+    if (eventClass) classes.add(eventClass);
+  }
+  return [...classes];
+}
+
 interface DirectSteerBufferEntry {
   essences: ExternalEventEssenceEntry[];
   messageId: string;
@@ -3617,30 +3626,32 @@ export class TaskAgentManager {
     }
     const entry = parseDeferredExternalEventText(args.messageText);
     if (!entry) return;
-    const essences = deferredExternalEventEntryEvents(entry);
-    const directEssence = essences.find(
-      (essence) => classifyExternalEventDirectSteer(essence) !== null
+    const essences = deferredExternalEventEntryEvents(entry).map((essence) =>
+      this.hydrateDirectSteerEssence(essence)
     );
-    if (!directEssence) return;
-    const eventClass = classifyExternalEventDirectSteer(directEssence);
-    if (!eventClass) return;
-    const key = directSteerBufferKey(args.sessionId, eventClass);
+    const representedClasses = directSteerClasses(essences);
+    if (representedClasses.length === 0) return;
     const now = Date.now();
-    const lastSteeredAt = this.directSteerCooldowns.get(key);
-    if (lastSteeredAt !== undefined && now - lastSteeredAt < this.directSteerCooldownMs) {
+    const budgetedClasses = representedClasses.filter(
+      (eventClass) =>
+        !this.isDirectSteerCoolingDown(directSteerBufferKey(args.sessionId, eventClass), now)
+    );
+    if (budgetedClasses.length === 0) {
       this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByCooldown();
       log.debug(
-        `TaskAgentManager: direct steer for session ${args.sessionId} class ${eventClass} ` +
-          `suppressed by cooldown (last steered ${now - lastSteeredAt}ms ago); event stays deferred`
+        `TaskAgentManager: direct steer for session ${args.sessionId} classes ` +
+          `${representedClasses.join(',')} suppressed by cooldown; event stays deferred`
       );
       return;
     }
+    const key = directSteerBufferKey(args.sessionId, budgetedClasses[0]!);
     const buffer = this.directSteerBuffers.get(key) ?? [];
-    if (buffer.length >= DIRECT_STEER_BUFFER_MAX_ENTRIES) {
+    const bufferedEventCount = buffer.reduce((sum, item) => sum + item.essences.length, 0);
+    if (bufferedEventCount + essences.length > DIRECT_STEER_BUFFER_MAX_ENTRIES) {
       this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByBufferCap();
       log.warn(
-        `TaskAgentManager: direct steer buffer for session ${args.sessionId} class ` +
-          `${eventClass} at capacity (${DIRECT_STEER_BUFFER_MAX_ENTRIES}); event stays deferred`
+        `TaskAgentManager: direct steer buffer for session ${args.sessionId} at its ` +
+          `${DIRECT_STEER_BUFFER_MAX_ENTRIES}-event capacity; event stays deferred`
       );
       return;
     }
@@ -3653,6 +3664,37 @@ export class TaskAgentManager {
     this.directSteerBuffers.set(key, buffer);
     if (!this.directSteerBurstStarts.has(key)) this.directSteerBurstStarts.set(key, now);
     this.armDirectSteerTimer(key);
+  }
+
+  private hydrateDirectSteerEssence(essence: ExternalEventEssenceEntry): ExternalEventEssenceEntry {
+    if (
+      (essence.actor !== undefined &&
+        essence.state !== undefined &&
+        essence.conclusion !== undefined) ||
+      !this.config.externalEventStore
+    ) {
+      return essence;
+    }
+    const record = this.config.externalEventStore.getById(essence.eventId);
+    const payload = record?.event.payload;
+    if (!payload) return essence;
+    return {
+      ...essence,
+      ...(essence.actor === undefined && typeof payload.actor === 'string'
+        ? { actor: payload.actor }
+        : {}),
+      ...(essence.state === undefined && typeof payload.state === 'string'
+        ? { state: payload.state }
+        : {}),
+      ...(essence.conclusion === undefined && typeof payload.conclusion === 'string'
+        ? { conclusion: payload.conclusion }
+        : {}),
+    };
+  }
+
+  private isDirectSteerCoolingDown(key: string, now: number): boolean {
+    const lastSteeredAt = this.directSteerCooldowns.get(key);
+    return lastSteeredAt !== undefined && now - lastSteeredAt < this.directSteerCooldownMs;
   }
 
   private armDirectSteerTimer(key: string): void {
@@ -3683,20 +3725,38 @@ export class TaskAgentManager {
     if (entries.length === 0) return;
     const separator = key.indexOf('\u0000');
     const sessionId = key.slice(0, separator);
-    const eventClass = key.slice(separator + 1) as DirectSteerEventClass;
-    if (!this.isSessionTracked(sessionId)) {
+    const bufferClass = key.slice(separator + 1) as DirectSteerEventClass;
+    await withSessionResetCoordination(sessionId, async () => {
+      await this.deliverDirectSteerUnderCoordination(sessionId, bufferClass, entries);
+    });
+  }
+
+  private async deliverDirectSteerUnderCoordination(
+    sessionId: string,
+    bufferClass: DirectSteerEventClass,
+    entries: DirectSteerBufferEntry[]
+  ): Promise<void> {
+    const session = this.getTrackedSession(sessionId);
+    if (!session) {
       log.debug(
-        `TaskAgentManager: skipping direct steer for ${eventClass} — session ` +
-          `${sessionId} no longer tracked; rows stay deferred`
+        `TaskAgentManager: skipping direct steer — session ${sessionId} no longer tracked; ` +
+          `rows stay deferred`
       );
       return;
     }
-    const lastSteeredAt = this.directSteerCooldowns.get(key);
-    if (lastSteeredAt !== undefined && Date.now() - lastSteeredAt < this.directSteerCooldownMs) {
+    if (session.getProcessingState().status !== 'processing') {
+      log.debug(
+        `TaskAgentManager: skipping direct steer for session ${sessionId} — no longer ` +
+          `processing at flush time; rows stay deferred for turn-end delivery`
+      );
+      return;
+    }
+    const key = directSteerBufferKey(sessionId, bufferClass);
+    if (this.isDirectSteerCoolingDown(key, Date.now())) {
       this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByCooldown();
       log.debug(
-        `TaskAgentManager: direct steer for session ${sessionId} class ${eventClass} dropped ` +
-          `at flush — cooldown armed while the burst was pending; rows stay deferred`
+        `TaskAgentManager: direct steer for session ${sessionId} dropped at flush — cooldown ` +
+          `armed while the burst was pending; rows stay deferred`
       );
       return;
     }
@@ -3708,8 +3768,8 @@ export class TaskAgentManager {
     const steerable = entries.filter((entry) => deferredUuids.has(entry.messageId));
     if (steerable.length === 0) {
       log.debug(
-        `TaskAgentManager: direct steer for session ${sessionId} class ${eventClass} found no ` +
-          `still-deferred rows (turn likely ended first); rows already flushed`
+        `TaskAgentManager: direct steer for session ${sessionId} found no still-deferred ` +
+          `rows (turn likely ended first); rows already flushed`
       );
       return;
     }
@@ -3749,11 +3809,13 @@ export class TaskAgentManager {
     }
     const sourceDbIds = steerable.map((entry) => entry.dbId);
     this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
-    this.armDirectSteerCooldown(key);
-    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected(eventClass);
+    for (const eventClass of new Set(directSteerClasses(steerable.flatMap((e) => e.essences)))) {
+      this.armDirectSteerCooldown(directSteerBufferKey(sessionId, eventClass));
+    }
+    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected(bufferClass);
     log.info(
-      `TaskAgentManager: injected direct steer for session ${sessionId} class ${eventClass} ` +
-        `covering ${eventCount} event(s) across ${steerable.length} row(s)`
+      `TaskAgentManager: injected direct steer for session ${sessionId} covering ` +
+        `${eventCount} event(s) across ${steerable.length} row(s)`
     );
     await this.publishMessageStatusChanged(sessionId, steerDbId, 'enqueued');
     await this.config.internalEventBus
@@ -3763,6 +3825,16 @@ export class TaskAgentManager {
         status: 'consumed',
       })
       .catch(() => {});
+  }
+
+  private getTrackedSession(sessionId: string): AgentSession | null {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    if (indexed) return indexed;
+    for (const [, nodeMap] of this.subSessions) {
+      const session = nodeMap.get(sessionId);
+      if (session) return session;
+    }
+    return null;
   }
 
   private armDirectSteerCooldown(key: string): void {
@@ -3780,14 +3852,6 @@ export class TaskAgentManager {
       map.delete(mapKey);
       excess -= 1;
     }
-  }
-
-  private isSessionTracked(sessionId: string): boolean {
-    if (this.agentSessionIndex.has(sessionId)) return true;
-    for (const [, nodeMap] of this.subSessions) {
-      if (nodeMap.has(sessionId)) return true;
-    }
-    return false;
   }
 
   private clearDirectSteerState(): void {

@@ -612,16 +612,23 @@ path unchanged.
   and `merge_conflict` (`merge_conflict_resolved` stays digest).
 - **Mid-turn only**: buffering requires the session state to be exactly
   `processing` — the one state in which `feedDeliverySteer` admits interleaved
-  content into the live turn. `queued`/`waiting_for_input`/`interrupted`/
+  content into the live turn — and the live state is re-checked at flush time,
+  so a session that leaves `processing` during the debounce window falls back
+  to the plain defer path. `queued`/`waiting_for_input`/`interrupted`/
   rate-limit sessions keep the plain defer path.
 - **Burst coalescing**: events buffer per `(session, event class)` and flush as
   ONE steer built by the digest renderer, so a 12-comment Codex pass becomes a
-  single steer, not twelve. Upstream rate-limit fold rows (the
-  `external_event_digest` envelopes SpaceRuntime emits past its 10/min delivery
-  budget) participate too: a fold containing any direct-class event joins the
-  burst with all of its events. The flush only folds rows that are still
-  `deferred`; if the turn ended first (turn-end flush already consumed them), no
-  steer is emitted and nothing is delivered twice.
+  single steer, not twelve, bounded by cumulative expanded event count (not
+  row count) so a huge envelope cannot smuggle unbounded events past the cap.
+  Upstream rate-limit fold rows (the `external_event_digest` envelopes
+  SpaceRuntime emits past its 10/min delivery budget) participate too: a fold
+  containing any direct-class event joins the burst with all of its events,
+  sparse fold entries are re-hydrated from the external-event store before
+  classification, and cooldowns are armed for every direct class the fold
+  represents. The flush runs under `withSessionResetCoordination` — the same
+  lock the turn-end fold holds — and only folds rows that are still `deferred`;
+  if the turn ended first (turn-end flush already consumed them), no steer is
+  emitted and nothing is delivered twice.
 - **Cooldown / backpressure**: after a steer fires for a class, further
   direct-class events for that (session, class) fall back to the digest tier
   until the cooldown expires (re-checked both at buffer time and at flush time,
