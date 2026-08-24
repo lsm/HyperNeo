@@ -1084,7 +1084,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         inactivityWatchdogTimer = null;
       }
       if (inactivityScan !== null) {
-        await inactivityScan;
+        await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
       }
 
       try {
