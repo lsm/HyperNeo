@@ -138,6 +138,7 @@ vi.mock('../AddProviderModal.tsx', () => ({
     onProviderAdded: () => void;
   }) => (
     <div data-testid="add-provider-modal">
+      <input data-testid="add-modal-input" />
       <button data-testid="add-modal-close" onClick={onClose}>
         Close
       </button>
@@ -337,6 +338,74 @@ describe('ProvidersSettings', () => {
 
     unmount();
     expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an open provider editor mounted during an event refresh', async () => {
+    let resolveRefresh: (value: { providers: ProviderRecord[] }) => void;
+    mockListProviders.mockResolvedValueOnce({ providers: [] }).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Add Provider'));
+    fireEvent.click(screen.getByText('Add Provider'));
+    const input = screen.getByTestId('add-modal-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'draft key' } });
+
+    const eventHandler = mockOnEvent.mock.calls.find(
+      (call) => call[0] === 'providers.changed'
+    )?.[1];
+    await act(async () => {
+      eventHandler();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('add-provider-modal')).toBeTruthy();
+    expect((screen.getByTestId('add-modal-input') as HTMLInputElement).value).toBe('draft key');
+
+    await act(async () => {
+      resolveRefresh!({ providers: [] });
+    });
+    expect(mockListProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses current OAuth state when an event refresh removes its provider', async () => {
+    const provider = createMockProvider('1', 'anthropic-copilot', {
+      displayName: 'Copilot',
+      authType: 'oauth',
+      available: false,
+    });
+    mockListProviders.mockResolvedValueOnce({ providers: [provider] });
+    mockListProviderAuthStatus.mockResolvedValue({
+      providers: [
+        {
+          id: 'anthropic-copilot',
+          displayName: 'Copilot',
+          isAuthenticated: false,
+          method: 'oauth',
+        },
+      ],
+    });
+    mockLoginProvider.mockResolvedValue({ success: true, authUrl: 'https://example.com/oauth' });
+
+    const { container } = render(<ProvidersSettings />);
+    await waitFor(() => expect(container.textContent).toContain('Copilot'));
+    fireEvent.click(container.querySelector('[class*="cursor-pointer"]')!);
+    fireEvent.click(screen.getByText('Login'));
+    await waitFor(() => expect(screen.getByTestId('oauth-modal')).toBeTruthy());
+
+    mockListProviders.mockResolvedValue({ providers: [] });
+    const eventHandler = mockOnEvent.mock.calls
+      .filter((call) => call[0] === 'providers.changed')
+      .at(-1)?.[1];
+    await act(async () => {
+      eventHandler();
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('oauth-modal')).toBeNull());
   });
 
   it('shows keychain unavailable banner without DB fallback copy', async () => {

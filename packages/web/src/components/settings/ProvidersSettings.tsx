@@ -138,10 +138,10 @@ export function ProvidersSettings() {
   const { fetchingModels, fetchedModels, fetchModelsError, fetchedAt, handleFetchModels } =
     useFetchModels(customEditor);
 
-  const loadProviders = async () => {
+  const loadProviders = async (showLoading = true) => {
     const generation = ++loadGenerationRef.current;
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       setLoadError(false);
       setGateTimeout(false);
       await connectionManager.onConnected(CONNECTION_GATE_TIMEOUT_MS);
@@ -217,12 +217,12 @@ export function ProvidersSettings() {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
     const unsub = hub.onEvent('providers.changed', () => {
-      loadProviders();
+      loadProviders(false);
     });
     return () => {
       unsub();
     };
-  }, [connectionState.value]);
+  }, [connectionState.value, oauthFlow, sessionExpired]);
 
   useEffect(() => {
     if (connectionState.value !== 'connected' || !loadError) return;
