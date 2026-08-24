@@ -549,7 +549,9 @@ describe('buildExternalEventDigestMessage', () => {
     const digest = buildExternalEventDigestMessage(partition.digestEvents, {
       droppedEventCount: partition.droppedCount,
     });
-    expect(digest.split('\n')[0]).toBe('External events while you were working (205 events):');
+    expect(digest.split('\n')[0]).toBe(
+      'External events while you were working (205 events, PR #7):'
+    );
     expect(digest).toContain(
       '5 older events were omitted from this summary (over the event bound) and may still need attention.'
     );
@@ -946,42 +948,6 @@ describe('partitionDeferredExternalEventRows', () => {
     expect(partition.digestRows.map((r) => r.dbId)).toEqual(['db-fold']);
     expect(partition.digestEvents).toHaveLength(2);
   });
-});
-
-describe('deferred external event overflow cap', () => {
-  function externalRows(count: number): DeferredDeliveryRow[] {
-    return Array.from({ length: count }, (_, i) =>
-      row(`db-${i}`, `u-${i}`, checkText(`chk-${i}`, at(15) + i * 1000, 'failure'))
-    );
-  }
-
-  it('plans no overflow at or below the cap', () => {
-    expect(
-      planDeferredExternalEventOverflow(externalRows(DEFERRED_EXTERNAL_EVENT_ROW_CAP), 100)
-    ).toBeNull();
-    expect(planDeferredExternalEventOverflow(externalRows(3), 100)).toBeNull();
-  });
-
-  it('excludes envelope rows from overflow planning so crash retries see the same source set', () => {
-    const sources = Array.from({ length: 101 }, (_, i) =>
-      row(`db-${i}`, `u-${i}`, checkText(`chk-${i}`, at(15) + i * 1000, 'failure'))
-    );
-    const envelope = row(
-      'db-envelope',
-      'u-envelope',
-      buildDeferredEventDigestEnvelopeText([
-        { eventId: 'chk-0', topic: 'github/lsm/hyperneo/pull_request/2828.check_failed' },
-        { eventId: 'chk-1', topic: 'github/lsm/hyperneo/pull_request/2828.check_failed' },
-      ])
-    );
-    const first = planDeferredExternalEventOverflow(sources, 100);
-    expect(first?.overflowRows.map((r) => r.dbId)).toEqual(['db-0', 'db-1']);
-
-    const afterCrash = planDeferredExternalEventOverflow([envelope, ...sources.slice(2)], 100);
-    expect(afterCrash).toBeNull();
-    const withSourcesIntact = planDeferredExternalEventOverflow([envelope, ...sources], 100);
-    expect(withSourcesIntact?.overflowRows.map((r) => r.dbId)).toEqual(['db-0', 'db-1']);
-  });
 
   it('stamps receipt time so later unknown-time events outrank older known-time events', () => {
     const older = row(
@@ -1008,6 +974,21 @@ describe('deferred external event overflow cap', () => {
     const digest = buildExternalEventDigestMessage(partition.digestEvents);
     expect(digest).toContain('state: updated');
     expect(digest).toContain('latest eventId: st-new');
+  });
+});
+
+describe('deferred external event overflow cap', () => {
+  function externalRows(count: number): DeferredDeliveryRow[] {
+    return Array.from({ length: count }, (_, i) =>
+      row(`db-${i}`, `u-${i}`, checkText(`chk-${i}`, at(15) + i * 1000, 'failure'))
+    );
+  }
+
+  it('plans no overflow at or below the cap', () => {
+    expect(
+      planDeferredExternalEventOverflow(externalRows(DEFERRED_EXTERNAL_EVENT_ROW_CAP), 100)
+    ).toBeNull();
+    expect(planDeferredExternalEventOverflow(externalRows(3), 100)).toBeNull();
   });
 
   it('plans the oldest rows as overflow above the cap', () => {
@@ -1167,6 +1148,38 @@ describe('foldDeferredExternalEventsAtFlush', () => {
     expect(result.digestRow?.uuid).toBeTruthy();
     expect(ops.savedTexts[0]).toContain('External events while you were working (2 events');
     expect(result.remainder.map((r) => r.dbId)).toEqual(['db-plain']);
+  });
+
+  it('supersedes a stale undelivered digest when a later fold covers more events', async () => {
+    const calls: string[] = [];
+    const superseded: string[][] = [];
+    const staleSweeps: string[] = [];
+    const ops = recordingOps(calls, superseded);
+    ops.supersedeStaleFolds = async (keepUuid) => {
+      staleSweeps.push(keepUuid);
+      if (staleSweeps.length === 1) return;
+      superseded.push(['db-digest-1']);
+    };
+    const externalA = row('db-a', 'u-a', checkText('chk-a', at(16), 'failure'));
+
+    await foldDeferredExternalEventsAtFlush({
+      sessionId: 'session-1',
+      rows: [externalA],
+      ops,
+    });
+    expect(staleSweeps).toHaveLength(1);
+
+    const externalB = row('db-b', 'u-b', checkText('chk-b', at(17), 'failure'));
+    const second = await foldDeferredExternalEventsAtFlush({
+      sessionId: 'session-1',
+      rows: [externalA, externalB],
+      ops,
+    });
+
+    expect(staleSweeps).toHaveLength(2);
+    expect(second.digestRow?.dbId).toBe('db-digest');
+    expect(superseded).toContainEqual(['db-digest-1']);
+    expect(superseded).toContainEqual(['db-a', 'db-b']);
   });
 
   it('reuses the existing digest row when a prior fold crashed before superseding', async () => {

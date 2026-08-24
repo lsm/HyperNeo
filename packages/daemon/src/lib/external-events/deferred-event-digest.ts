@@ -110,6 +110,9 @@ function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
     const raw = record[field];
     if (raw !== null && typeof raw === 'object') entry[field] = raw;
   }
+  if (entry.repo === undefined && entry.prNumber === undefined && entry.prUrl === undefined) {
+    Object.assign(entry, scopeFromTopic(record.topic));
+  }
   return entry as unknown as ExternalEventEssenceEntry;
 }
 
@@ -281,15 +284,17 @@ export function partitionDeferredExternalEventRows(
       continue;
     }
     digestRows.push(row);
-    for (const event of deferredExternalEventEntryEvents(entry)) {
-      if (Number.isNaN(essenceTime(event)) && Number.isFinite(row.timestamp)) {
-        digestEvents.push({ ...event, receivedAt: row.timestamp });
-      } else {
-        digestEvents.push(event);
-      }
+    const stamped = deferredExternalEventEntryEvents(entry).map((event) =>
+      Number.isNaN(essenceTime(event)) && Number.isFinite(row.timestamp)
+        ? { ...event, receivedAt: row.timestamp }
+        : event
+    );
+    for (const event of stamped) {
+      digestEvents.push(event);
     }
     if (entry.kind === 'fold') droppedCount += entry.droppedCount ?? 0;
   }
+  dedupeInPlaceByEventId(digestEvents);
   if (digestEvents.length > DEFERRED_EVENT_ENVELOPE_MAX_EVENTS) {
     const overflow = digestEvents.length - DEFERRED_EVENT_ENVELOPE_MAX_EVENTS;
     digestEvents.splice(0, overflow);
@@ -518,8 +523,10 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       for (const field of POLICY_VALUE_FIELDS) {
         if (latest[field] !== undefined) policyValues[field] = latest[field];
       }
-      const policySnippet = digestSnippet(JSON.stringify(policyValues));
-      if (policySnippet) parts.push(policySnippet);
+      if (Object.keys(policyValues).length > 0) {
+        const policySnippet = digestSnippet(JSON.stringify(policyValues));
+        if (policySnippet) parts.push(policySnippet);
+      }
       const url = latest.externalUrl ?? latest.prUrl;
       if (url) parts.push(url);
       return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
@@ -624,6 +631,7 @@ export function buildSyntheticExternalEventMessage(
 
 export interface DeferredEventDigestRowOps {
   findByUuid(uuid: string): Promise<{ dbId: string } | null>;
+  supersedeStaleFolds?(keepUuid: string): Promise<void>;
   saveRow(message: SDKUserMessage, sendStatus: 'enqueued' | 'deferred'): Promise<string>;
   markSuperseded(dbIds: string[]): Promise<void>;
 }
@@ -637,6 +645,8 @@ function deterministicFoldUuid(sourceDbIds: string[]): string {
     20
   )}-${digest.slice(20, 32)}`;
 }
+
+export const DEFERRED_FOLD_UUID_PREFIX = 'fold-';
 
 async function saveFoldRowIdempotently(
   ops: DeferredEventDigestRowOps,
@@ -673,6 +683,8 @@ export async function foldDeferredExternalEventsAtFlush(args: {
   });
   const message = buildSyntheticExternalEventMessage(args.sessionId, digestText);
   const sourceDbIds = partition.digestRows.map((row) => row.dbId);
+  const keepUuid = deterministicFoldUuid(sourceDbIds);
+  await args.ops.supersedeStaleFolds?.(keepUuid);
   const saved = await saveFoldRowIdempotently(args.ops, sourceDbIds, message, 'enqueued');
   await args.ops.markSuperseded(sourceDbIds);
   const digestRow: DeferredDeliveryRow = {
@@ -697,21 +709,46 @@ export function planDeferredExternalEventOverflow(
   rows: DeferredDeliveryRow[],
   cap: number
 ): DeferredEventOverflowFold | null {
-  const external: Array<{ row: DeferredDeliveryRow; entry: DeferredExternalEventEntry }> = [];
+  const raws: Array<{ row: DeferredDeliveryRow; entry: DeferredExternalEventEntry }> = [];
+  const folds: Array<{ row: DeferredDeliveryRow; entry: DeferredExternalEventEntry }> = [];
   for (const row of rows) {
     const entry = parseDeferredDeliveryRow(row);
-    if (entry && entry.kind === 'event' && isDigestTierEntry(entry)) {
-      external.push({ row, entry });
-    }
+    if (!entry || !isDigestTierEntry(entry)) continue;
+    if (entry.kind === 'fold') folds.push({ row, entry });
+    else raws.push({ row, entry });
   }
-  if (external.length <= cap) return null;
-  const overflowCount = external.length - cap + 1;
-  const overflow = external.slice(0, overflowCount);
+  const total = raws.length + folds.length;
+  if (total <= cap) return null;
+  const take = total - cap + 1;
+  const fromFolds = Math.min(folds.length, take);
+  const overflow = [...folds.slice(0, fromFolds), ...raws.slice(0, take - fromFolds)];
   return {
     overflowRows: overflow.map((item) => item.row),
-    events: overflow.flatMap((item) => deferredExternalEventEntryEvents(item.entry)),
-    droppedCount: 0,
+    events: dedupeEventsByEventId(
+      overflow.flatMap((item) =>
+        deferredExternalEventEntryEvents(item.entry).map((event) =>
+          Number.isNaN(essenceTime(event)) && Number.isFinite(item.row.timestamp)
+            ? { ...event, receivedAt: item.row.timestamp }
+            : event
+        )
+      )
+    ),
+    droppedCount: overflow.reduce(
+      (sum, item) => sum + (item.entry.kind === 'fold' ? (item.entry.droppedCount ?? 0) : 0),
+      0
+    ),
   };
+}
+
+function dedupeEventsByEventId(events: ExternalEventEssenceEntry[]): ExternalEventEssenceEntry[] {
+  const byId = new Map<string, ExternalEventEssenceEntry>();
+  for (const event of events) byId.set(event.eventId, event);
+  return [...byId.values()];
+}
+
+function dedupeInPlaceByEventId(events: ExternalEventEssenceEntry[]): void {
+  const deduped = dedupeEventsByEventId(events);
+  events.splice(0, events.length, ...deduped);
 }
 
 export async function foldDeferredExternalEventOverflow(args: {

@@ -2,7 +2,10 @@ import type { MessageContent, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
-import { foldDeferredExternalEventsAtFlush } from '../external-events/deferred-event-digest';
+import {
+  DEFERRED_FOLD_UUID_PREFIX,
+  foldDeferredExternalEventsAtFlush,
+} from '../external-events/deferred-event-digest';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
 import { ClearConversationCancelledError } from './agent-session';
@@ -124,6 +127,26 @@ export class QueryModeHandler {
             repo.getMessageByStatusAndUuid(sessionId, 'enqueued', uuid) ??
             repo.getMessageByStatusAndUuid(sessionId, 'deferred', uuid)
           );
+        },
+        supersedeStaleFolds: async (keepUuid) => {
+          const { messages } = this.ctx.db.getUserMessagesByStatus(sessionId, 'enqueued');
+          const staleDbIds = messages
+            .filter(
+              (message) =>
+                typeof message.uuid === 'string' &&
+                message.uuid.startsWith(DEFERRED_FOLD_UUID_PREFIX) &&
+                message.uuid !== keepUuid
+            )
+            .map((message) => message.dbId);
+          if (staleDbIds.length === 0) return;
+          this.ctx.db.updateMessageStatus(staleDbIds, 'consumed');
+          await this.ctx.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: staleDbIds,
+              status: 'consumed',
+            })
+            .catch(() => {});
         },
         saveRow: async (message, sendStatus) => {
           const dbId = this.ctx.db.saveUserMessage(sessionId, message, sendStatus);
