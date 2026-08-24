@@ -40,7 +40,7 @@ bun run format
 
 # Tests — never run `bun test` from repository root
 ./scripts/test-daemon.sh                  # all daemon shards
-./scripts/test-daemon.sh 5-space-runtime-a # one shard
+./scripts/test-daemon.sh 5-space-a # one shard
 ./scripts/test-daemon.sh --rerun
 cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/web && bunx vitest run src/some-test.test.ts

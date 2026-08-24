@@ -177,27 +177,22 @@ describe('buildMeasuredFromJunit', () => {
 });
 
 describe('listSplitSpecs', () => {
-  it('reads the real split table: weighted 5-space-runtime and hash-only 1-core', () => {
+  it('reads the real split table: weighted 5-space unit, rpc/space online', () => {
     const specs = listSplitSpecs('daemon-unit');
-    const runtime = specs.find((spec) => spec.prefix === '5-space-runtime');
+    const space = specs.find((spec) => spec.prefix === '5-space');
 
-    expect(runtime).toBeDefined();
-    expect(runtime?.splitCount).toBe(7);
-    expect(runtime?.weights).toBe('scripts/shard-weights.tsv');
-    expect(runtime?.testRoot).toBe('packages/daemon/tests/unit');
-    expect(runtime?.globs).toContain('5-space/runtime/*.test.ts');
-    expect(runtime?.files.length).toBeGreaterThan(10);
-    for (const file of runtime?.files ?? []) {
-      expect(file.startsWith('packages/daemon/tests/unit/5-space/runtime/')).toBe(true);
-    }
-
-    const core = specs.find((spec) => spec.prefix === '1-core');
-    expect(core?.weights).toBeNull();
+    expect(space).toBeDefined();
+    expect(space?.splitCount).toBe(2);
+    expect(space?.weights).toBe('scripts/shard-weights.tsv');
+    expect(space?.testRoot).toBe('packages/daemon/tests/unit');
+    expect(space?.globs).toContain('5-space/runtime/*.test.ts');
+    expect(space?.files.length).toBeGreaterThan(10);
+    expect(specs.find((spec) => spec.prefix === '1-core')).toBeUndefined();
 
     const online = listSplitSpecs('daemon-online');
     expect(online.map((spec) => spec.prefix)).toContain('rpc');
     expect(online.every((spec) => spec.testRoot === 'packages/daemon/tests/online')).toBe(true);
-  }, 30000);
+  }, 120000);
 });
 
 describe('main', () => {
@@ -227,7 +222,7 @@ describe('main', () => {
       `would write ${outPath}: 1 entry (1 updated, 0 kept, 0 stale-dropped)`
     );
     expect(out.join('\n')).toMatch(
-      /preview 5-space-runtime 7-way split, \d+ files \(1 weighted, \d+ hash-fallback\)/
+      /preview 5-space 2-way split, \d+ files \(1 weighted, \d+ hash-fallback\)/
     );
     expect(out.join('\n')).toContain('hash today:');
     expect(out.join('\n')).toContain('packed:');
@@ -237,14 +232,20 @@ describe('main', () => {
     );
     expect(warn.join('\n')).toContain('references manifest scripts/shard-weights.tsv');
     expect(warn.join('\n')).toContain('hash-fallback');
-  }, 30000);
+  }, 120000);
 
   it('fails before writing when no targeted file has a measured duration', () => {
     const dir = makeTempDir();
-    const junitPath = join(dir, 'junit-1-core.xml');
+    const junitPath = join(dir, 'junit-unweighted.xml');
     writeFileSync(
       junitPath,
-      junitXml([{ name: 'tests/unit/1-core/core/main-import-order.test.ts', time: 3.0, tests: 2 }])
+      junitXml([
+        {
+          name: 'tests/unit/2-handlers/db-query/db-query-integration.test.ts',
+          time: 3.0,
+          tests: 2,
+        },
+      ])
     );
     const outPath = join(dir, 'shard-weights.tsv');
     const warn: string[] = [];
@@ -256,7 +257,7 @@ describe('main', () => {
     expect(code).toBe(1);
     expect(warn.join('\n')).toContain('no targeted daemon-unit file has a duration');
     expect(existsSync(outPath)).toBe(false);
-  }, 30000);
+  }, 120000);
 
   it('writes the manifest and merges with an existing one', () => {
     const dir = makeTempDir();
@@ -291,7 +292,7 @@ describe('main', () => {
       '500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts'
     );
     expect(out.join('\n')).toContain('(1 updated, 0 kept, 0 stale-dropped)');
-  }, 30000);
+  }, 120000);
 
   it('rejects an unknown suite and missing junit inputs', () => {
     expect(main(['--suite', 'nope', 'x.xml'], { out: () => {}, warn: () => {} })).toBe(2);

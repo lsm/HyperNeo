@@ -979,29 +979,19 @@ elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.
 	echo "     → remove the shell: override (use the default shell)" >&2
 else
 	# Inspect ONLY the args after `test-daemon.sh` (there is another
-	# ${{ matrix.shard }} earlier, inside the --report ...json name). Allowlist
-	# ONLY the execution-preserving --coverage flag: test-daemon.sh's other flags
-	# (--rerun/--verify/--show-failures) are MODE switches handled before
-	# RUN_SHARDS, so in a clean job --rerun/--verify exit 0 having run ZERO tests.
-	# A bare positional shard is also rejected (last non-option wins as
-	# TARGET_SHARD). After stripping the matrix token and --coverage, any leftover
-	# is a mode switch or extra shard and fails.
+	# ${{ matrix.shard }} earlier, inside the --report ...json name). The runner
+	# must be bare: test-daemon.sh's flags (--rerun/--verify/--show-failures/
+	# --coverage) are MODE switches handled before RUN_SHARDS, so in a clean job
+	# --rerun/--verify exit 0 having run ZERO tests. A bare positional shard is
+	# also rejected (last non-option wins as TARGET_SHARD). After stripping the
+	# matrix token, any leftover is a mode switch or extra shard and fails.
 	_tdargs=$(printf '%s' "$_unit_run" | awk '{ i=index($0,"test-daemon.sh"); print (i>0)? substr($0,i+14) : "" }')
 	_extra=$(printf '%s' "$_tdargs" \
 		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.shard[[:space:]]*\}\}//g' \
-		         -e 's/--coverage//g' \
 		| tr -d "[:space:]'")
-	# REQUIRE one affirmative --coverage: without it the shard produces no
-	# coverage/lcov.info, the lcov-fix step exits success on a missing file, and
-	# the lcov artifact upload skips missing files — so the shard can vanish
-	# from combined coverage. Bare --coverage (space/EOL-terminated)
-	# is the affirmative form; --coverage=false does not satisfy it.
-	if ! printf '%s' "$_unit_run" | grep -qE -- '--coverage([[:space:]]|$)'; then
-		err "test-daemon-shared-unit runner lacks --coverage — no lcov.info is produced, so the shard contributes no coverage"
-		echo "     → keep '--coverage' on the test-daemon.sh invocation" >&2
-	elif [ -n "$_extra" ]; then
-		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} (only --coverage is permitted) — a mode flag (--rerun/--verify/--show-failures) would run zero tests, or a bare shard would override matrix.shard"
-		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }} --coverage' only" >&2
+	if [ -n "$_extra" ]; then
+		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} — a mode flag (--rerun/--verify/--show-failures/--coverage) would run zero tests or only local tooling, or a bare shard would override matrix.shard"
+		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }}' only" >&2
 	fi
 fi
 
@@ -1101,160 +1091,56 @@ reject_effective_config_drift "$WEB_CFG" "packages/web" \
 # hand-rolled pattern can silently miss a leg-dropping (exclude) or
 # leg-adding (sibling axis / include row) form. Fail-closed: any parse failure
 # surfaces as the missing-axis error below. Emits "<kind><TAB><value>" lines.
-_web_matrix_lines=$(WEB_YML="$REPO_ROOT/.github/workflows/main.yml" bun -e '
-	const fs = await import("node:fs");
-	const doc = Bun.YAML.parse(fs.readFileSync(process.env.WEB_YML, "utf8"));
-	const m = doc?.jobs?.["test-web"]?.strategy?.matrix ?? {};
-	const esc = (s) => s.replace(/[\x00-\x1f\x7f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
-	const tag = (v) => (typeof v === "number" || typeof v === "string" ? typeof v : "other") + ":" + esc(String(v));
-	const axis = m.shard;
-	const vals = Array.isArray(axis) ? axis : axis === undefined || axis === null ? [] : Object.keys(axis);
-	for (const v of vals) console.log("axis\t" + tag(v));
-	for (const row of m.include ?? []) {
-		if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
-		if ("shard" in row) console.log("include\t" + tag(row.shard));
-		for (const k of Object.keys(row)) if (k !== "shard") console.log("include-key\t" + esc(k));
-	}
-	const excl = m.exclude ?? [];
-	for (const row of Array.isArray(excl) ? excl : [excl]) {
-		if (row !== null && typeof row === "object" && !Array.isArray(row)) {
-			console.log("exclude\t" + ("shard" in row ? tag(row.shard) : "*"));
-		} else if (row !== undefined && row !== null) {
-			console.log("exclude\t" + tag(row));
-		}
-	}
-	for (const k of Object.keys(m)) if (k !== "shard" && k !== "include" && k !== "exclude") console.log("sibling\t" + esc(k));
-' 2>/dev/null) || _web_matrix_lines=""
-# Axis values are tagged with their YAML scalar type so the include check can
-# compare typed values (GitHub keeps number/string distinct; a string include
-# value does not merge into a numeric axis and adds a duplicate leg), and any
-# control character in a scalar is escaped so a value can never inject extra
-# lines into this line-based protocol. The numeric checks below run on the
-# untagged value.
-web_matrix_tagged=$(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "axis" { print $2 }')
-web_matrix=$(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://')
-web_shard_n=$(printf '%s\n' "$web_matrix" | grep -c .)
-if [ "$web_shard_n" -eq 0 ]; then
-	err "test-web has no 'shard: [ ... ]' matrix axis — the web suite is modeled here as a vitest --shard matrix, so a missing axis means the runner's --shard forwarding no longer matches a scheduled leg set"
-	echo "     → restore 'shard: [1, 2]' under test-web's strategy.matrix (and the runner's --shard forwarding), or revert this validator to the single-job model" >&2
-fi
-while IFS= read -r _bad; do
-	[ -n "$_bad" ] || _bad="(empty)"
-	err "test-web shard axis value '$_bad' is not a positive integer — vitest --shard needs numeric <index>/<total> legs, and an empty value still creates a GitHub leg that fails"
-	echo "     → use plain integers 1..N in the shard axis" >&2
-done < <(printf '%s\n' "$web_matrix_tagged" | sed 's/^[a-z]*://' | grep -vE '^[0-9]+$' | sort -u)
-if [ "$web_shard_n" -ge 1 ]; then
-	for _i in $(seq 1 "$web_shard_n"); do
-		_count=$(printf '%s\n' "$web_matrix" | grep -xF "$_i" | wc -l | tr -d ' ')
-		if [ "$_count" -ne 1 ]; then
-			err "test-web shard axis must list every value 1..$web_shard_n exactly once — value '$_i' appears $_count time(s); a missing value leaves vitest's shard-$_i files unrun while this guard reports them covered, and a duplicate runs its slice twice"
-			echo "     → list each of 1..$web_shard_n exactly once in the shard axis" >&2
-		fi
-	done
-fi
-while IFS= read -r _wiv; do
-	[ -n "$_wiv" ] || continue
-	if ! printf '%s\n' "$web_matrix_tagged" | grep -qxF "$_wiv"; then
-		err "test-web matrix include row adds shard value '$_wiv' (tagged with its YAML type) that matches no axis value — GitHub schedules it as an extra or out-of-range combination (duplicate flag upload, or a vitest --shard beyond the denominator) while this guard reports the axis consistent"
-		echo "     → keep include values identical to an axis value (same YAML type), or extend the axis and the runner denominator together" >&2
-	fi
-done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include" { print $2 }')
-while IFS= read -r _wik; do
-	[ -n "$_wik" ] || continue
-	err "test-web matrix include row carries a non-shard key '$_wik' — GitHub applies it as combination config this validator does not model"
-	echo "     → include rows may only override shard; anything else needs validator support here first" >&2
-done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "include-key" && !seen[$2]++ { print $2 }')
-while IFS= read -r _we; do
-	[ -n "$_we" ] || continue
-	err "test-web combination(s) matching '$_we' are removed by matrix.exclude — GitHub drops those legs ('*' matches EVERY combination, emptying the matrix), so their files never run while this guard reports them covered"
-	echo "     → remove the exclude entry, or drop the shard from the axis AND shrink the runner's --shard denominator" >&2
-done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "exclude" { print $2 }')
-while IFS= read -r _ax; do
-	[ -n "$_ax" ] || continue
-	err "test-web matrix has an extra axis '$_ax' — GitHub takes the Cartesian product, so every web shard runs once per value (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
-	echo "     → remove the '$_ax' axis, or model its combinations in this validator" >&2
-done < <(printf '%s\n' "$_web_matrix_lines" | awk -F'\t' '$1 == "sibling" { print $2 }')
-
-# The web coverage assumes the test-web CI job runs `vitest run` (no positional
-# target) in an ENABLED step, so the config include/exclude — plus the matrix
-# --shard split — fully determine execution. enabled_run_cmd folds the runner
-# command (a `>-` scalar) and skips disabled/commented steps; we then require
-# `vitest run` to be followed by a flag (or the closing quote), not a positional
-# path — a target on a folded continuation line would otherwise evade an
-# end-of-physical-line check.
+# test-web is a single unsharded leg (task #1399). There is no
+# strategy.matrix; require exactly one enabled runner that executes
+# `cd packages/web && bunx vitest run` with no --shard flag and no
+# positional/selection flags.
 _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')
-# Normalize the matrix expression to a placeholder so the --shard flag can be
-# compared as ONE whitespace-delimited token (the expression itself contains
-# spaces); exact-token equality then also rejects a stale LONGER denominator
-# (e.g. --shard=${{ matrix.shard }}/20 with a 2-entry axis), which a substring
-# match would accept. The token must also START a command-line word — the same
-# text embedded inside another flag value (e.g. a --coverage.* argument) is not
-# a real --shard option and must not satisfy the check.
-_web_shard_tok=$(printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' \
-	| sed -E 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]/MSHARD/g' \
-	| grep -oE "(^|[[:space:]])--shard=[^[:space:]']+" | sed 's/^[[:space:]]*//' || true)
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
-	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate lcov artifact uploads) while this guard reports each file covered once"
-	echo "     → keep exactly one enabled web runner step" >&2
+	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step -- each runs the web suite (duplicate runs) while this guard reports each file covered once"
+	echo "     -> keep exactly one enabled web runner step" >&2
 fi
 if [ -z "$_web_cmd" ]; then
-	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
-	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
+	err "test-web runner is missing, commented, or disabled (if: false|never) -- web test assumption broken"
+	echo "     -> keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
 elif ! marker_executed "$_web_cmd" 'cd packages/web && bunx vitest run'; then
-	err "test-web runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
-	echo "     → invoke 'bunx vitest run' as a command, not as an argument to echo/another command" >&2
+	err "test-web runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) -- zero tests would run while this guard reports them covered"
+	echo "     -> invoke 'bunx vitest run' as a command, not as an argument to echo/another command" >&2
 elif runner_post_sep_starts_with "$_web_cmd" 'bash -lc'; then
-	err "test-web runner's command after the flaky-runner separator is not 'bash -lc' — a wrapper over the marker (test -n, echo, [) exits 0 while running ZERO web tests, and a data-command blacklist cannot enumerate every wrapper, while this guard reports them covered"
-	echo "     → keep \"bash -lc 'cd packages/web && bunx vitest run ...'\" as the token after ' -- '" >&2
+	err "test-web runner's command after the flaky-runner separator is not 'bash -lc' -- a wrapper over the marker (test -n, echo, [) exits 0 while running ZERO web tests, and a data-command blacklist cannot enumerate every wrapper, while this guard reports them covered"
+	echo "     -> keep \"bash -lc 'cd packages/web && bunx vitest run ...'\" as the token after ' -- '" >&2
 elif runner_is_data_cmd "$_web_cmd"; then
-	err "test-web runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
-	echo "     → invoke 'bunx vitest run' as a command, not via echo" >&2
+	err "test-web runner's first command token is a data command (echo/printf/cat) -- the marker is an argument, not executed"
+	echo "     -> invoke 'bunx vitest run' as a command, not via echo" >&2
 elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; then
-	err "test-web runner places a dead prefix ('||'/'&&'/exit/exec) before the vitest invocation (e.g. bash -lc 'false && cd packages/web && bunx vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
-	echo "     → remove the '||' prefix / dead branch before 'bunx vitest run'" >&2
+	err "test-web runner places a dead prefix ('||'/'&&'/exit/exec) before the vitest invocation (e.g. bash -lc 'false && cd packages/web && bunx vitest run' or 'true || ...') -- Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
+	echo "     -> remove the '||' prefix / dead branch before 'bunx vitest run'" >&2
 elif runner_has_noexec_interp "$_web_cmd" 'cd packages/web && bunx vitest run'; then
-	err "test-web runner invokes a no-exec interpreter (e.g. bash -n) before the vitest invocation — it would parse without executing and exit 0 having run ZERO web tests while this guard reports them covered"
-	echo "     → drop the -n / no-exec interpreter; run vitest directly" >&2
+	err "test-web runner invokes a no-exec interpreter (e.g. bash -n) before the vitest invocation -- it would parse without executing and exit 0 having run ZERO web tests while this guard reports them covered"
+	echo "     -> drop the -n / no-exec interpreter; run vitest directly" >&2
 elif runner_has_comment_before_marker "$_web_cmd" 'cd packages/web && bunx vitest run'; then
-	err "test-web runner has a '#' comment before the vitest invocation (e.g. bash -lc 'true # cd packages/web && bunx vitest run') — the comment blanks out vitest in CI, so the step runs ZERO web tests while this guard reports them covered"
-	echo "     → remove the '#' / commented prefix before 'bunx vitest run'" >&2
+	err "test-web runner has a '#' comment before the vitest invocation (e.g. bash -lc 'true # cd packages/web && bunx vitest run') -- the comment blanks out vitest in CI, so the step runs ZERO web tests while this guard reports them covered"
+	echo "     -> remove the '#' / commented prefix before 'bunx vitest run'" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
-	err "test-web runner step (or its job) has continue-on-error: true — a FAILED web run is marked successful, so coverage stays green while web tests are broken"
-	echo "     → remove continue-on-error from the test-web runner step/job" >&2
+	err "test-web runner step (or its job) has continue-on-error: true -- a FAILED web run is marked successful, so CI stays green while web tests are broken"
+	echo "     -> remove continue-on-error from the test-web runner step/job" >&2
 elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
-	err "test-web runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO web tests while this guard reports them covered"
-	echo "     → remove the shell: override (use the default shell)" >&2
-elif [ -z "$_web_shard_tok" ] ||
-     [ "$(printf '%s\n' "$_web_shard_tok" | wc -l | tr -d ' ')" -ne 1 ] ||
-     [ "$_web_shard_tok" != "--shard=MSHARD/$web_shard_n" ]; then
-	err "test-web runner does not pass exactly one '--shard=\${{ matrix.shard }}/$web_shard_n' — a fixed --shard, a stale denominator, or a missing/duplicated flag makes every leg run the same slice (or a narrower/unsharded set) while this guard reports all files covered"
-	echo "     → keep '--shard=\${{ matrix.shard }}/$web_shard_n' as the only --shard flag after 'bunx vitest run'" >&2
-elif [ -n "$(printf '%s' "$_web_cmd" \
-		| sed 's/.*bunx vitest run//' \
-		| sed -E -e 's/[$][{][{][[:space:]]*matrix[.]shard[[:space:]]*[}][}]//g' \
-		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
-		         -e 's/--reporter=[^[:space:]]+//g' \
-		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--shard=[^[:space:]]+//g' \
-		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--coverage(=[[:space:]]*true)?//g' \
-		         -e 's/--color//g' -e 's/--no-color//g' \
-		| tr -d "[:space:]'\"")" ]; then
-	# Allowlist ONLY coverage-neutral flags (--reporter, --coverage*, --color)
-	# plus the matrix-forwarded --shard (validated by the dedicated branch
-	# above, so blanket-stripping every --shard token here cannot hide a second,
-	# overriding one); do NOT blanket-strip every --flag. Selection-changing
-	# flags like --changed, --testNamePattern, or --dir narrow which files run
-	# while this guard reports all covered, so anything left after the allowlist
-	# (a positional OR an unknown flag) fails.
-	err "test-web runner passes a positional filter or non-allowlisted flag to 'vitest run' — web coverage assumption broken (e.g. --changed/--testNamePattern would narrow discovery while this guard reports all files covered)"
-	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color/--shard flags, no positional or selection-changing flag)" >&2
-elif [ "$(printf '%s' "$_web_cmd" | grep -oF 'bunx vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
-	err "test-web runner has multiple 'bunx vitest run' invocations — the first could exit 0 (e.g. --testNamePattern __never__), so the fallback via || never executes"
-	echo "     → use exactly one 'bunx vitest run' invocation" >&2
-	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color/--shard flags, no positional or selection-changing flag)" >&2
+	err "test-web runner step (or its job) sets a non-default shell -- a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO web tests while this guard reports them covered"
+	echo "     -> remove the shell: override (use the default shell)" >&2
+else
+	# After `bunx vitest run` only neutral flags are allowed (--reporter,
+	# --outputFile.*, --color). --shard and --coverage are gone (single
+	# unsharded leg, no CI coverage), and any positional or selection flag
+	# would narrow discovery while this guard reports all files covered.
+	_wextra=$(printf '%s' "$_web_cmd" 		| sed 's/.*bunx vitest run//' 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' 		         -e 's/--reporter=[^[:space:]]+//g' 		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' 		         -e 's/--color//g' -e 's/--no-color//g' 		| tr -d "[:space:]'" )
+	if [ "$(printf '%s' "$_web_cmd" | grep -oF 'bunx vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
+		err "test-web runner has multiple 'bunx vitest run' invocations -- the first could exit 0 (e.g. --testNamePattern __never__), so the fallback via || never executes"
+		echo "     -> use exactly one 'bunx vitest run' invocation" >&2
+	elif [ -n "$_wextra" ]; then
+		err "test-web runner passes a positional filter or non-allowlisted flag to 'vitest run' -- e.g. --changed/--testNamePattern/--shard/--coverage would narrow discovery while this guard reports all files covered"
+		echo "     -> keep 'vitest run' bare (only --reporter/--outputFile.* flags, no positional or selection-changing flag)" >&2
+	fi
 fi
-
 # Web test files outside the src/** include are not run by web CI. Each must be
 # under src/ or listed in WEB_EXEMPT (with a reason), or it is flagged — none is
 # silently ignored.
@@ -1363,21 +1249,29 @@ _check_job_gate() {
 	# A needs: chains this job to another job's result. If that dependency is
 	# skipped on ordinary PRs (e.g. a `discover`-style job), GitHub skips this job
 	# too (its default success() requirement is unmet), so its tests never run
-	# while this guard reports them covered. The guarded jobs have no needs: today;
-	# reject any (validate the explicit if: only, not the whole chain, so ban it).
-	if awk -v j="$job" '
+	# while this guard reports them covered. The guarded jobs depend ONLY on the
+	# `changes` path-filter job, whose skip semantics the pinned if: predicates
+	# above handle explicitly (a skipped filter means "run everything" — the
+	# event-name clause short-circuits the outputs read; a FAILED filter fails
+	# all-tests-pass) — any other dependency is rejected.
+	local _needs_raw
+	_needs_raw=$(awk -v j="$job" '
 		$0 ~ "^  " j ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0; next }
-		injob && /^[[:space:]]{4}needs:/ { found=1; exit }
-		END { exit !found }
-	' "$file"; then
-		err "$job has a needs: dependency — a skipped dependency (e.g. a job gated off on ordinary PRs) skips this job too, so its tests never run while this guard reports them covered"
-		echo "     → remove needs: from $job (the guarded test jobs must run unconditionally)" >&2
+		injob && /^[[:space:]]{4}needs:/ { print; exit }
+	' "$file")
+	if [ -n "$_needs_raw" ]; then
+		local _needs_val
+		_needs_val=$(printf '%s' "$_needs_raw" | sed -E 's/^[[:space:]]*needs:[[:space:]]*//; s/[[:space:]]*$//')
+		if [ "$_needs_val" != "[changes]" ]; then
+			err "$job has a needs: dependency other than [changes] — a skipped dependency (e.g. a job gated off on ordinary PRs) skips this job too, so its tests never run while this guard reports them covered"
+			echo "     → remove needs: from $job, or keep exactly 'needs: [changes]'" >&2
+		fi
 	fi
 }
-_check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
-_check_job_gate test-web "$MAIN_WORKFLOW" "(github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'"
-_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate test-web "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'"
 _check_job_gate daemon-real-api "$REAL_API_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
 # Reject module: scalars with invalid characters (a typo like `comp_onents` is a
 # distinct module to GitHub — splits a combination while this guard cannot match).
@@ -1441,50 +1335,28 @@ elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'vitest.onlin
 	err "main.yml online runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO online tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
 else
-	# After `vitest run`, only the resolver-produced $paths (the one selector)
-	# and coverage-neutral flags (--config, --coverage*, --reporter,
-	# --outputFile.*, --color) may appear. A selection flag like
-	# --exclude=<glob> or --testNamePattern would omit files while the ownership
-	# walk reports them covered. (The config file itself is guarded separately,
-	# so --config is safe.)
-	#
-	# The resolver assignment (`paths=$(cd ../.. && scripts/test-online.sh
-	# <module>)`) is allowlisted with a bracket expression so no '/' delimiter
-	# collides; `[^)]*` bounds it to ONE substitution — a greedy `.*` would span
-	# first-`$(cd`-to-last-`)` and blank a `--testNamePattern` sandwiched
-	# before a trailing second substitution (the resolver body contains no `)`).
-	_oextra=$(printf '%s' "$_online_main" \
-		| sed 's/.*vitest run//' \
-		| sed -E -e 's/paths=[$][(]cd[[:space:]][^)]*[)]//g' \
-		         -e 's/[$][{][{][[:space:]]*matrix[.]module[[:space:]]*[}][}]//g' \
-		         -e 's/[$]paths//g' \
-		         -e 's/--config vitest[.]online[.]config[.]ts//g' \
-		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
-		         -e 's/--reporter=[^[:space:]]+//g' \
-		         -e 's/--coverage[.][[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--outputFile[.][[:alnum:]_-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--coverage(=[[:space:]]*true)?//g' \
-		         -e 's/--color//g' -e 's/--no-color//g' \
-		| tr -d "[:space:]")
-	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
-	# and the lcov artifact upload skips missing files, so the shard disappears
-	# from the merged coverage results.
-	if printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
-		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, so the shard contributes no coverage"
-		echo "     → remove coverage.enabled=false" >&2
-	elif ! printf '%s' "$_online_main" | grep -qE -- '--coverage([[:space:]]|$)'; then
-		err "main.yml online runner lacks a bare --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI (the --coverage.* sub-options alone do not enable it)"
-		echo "     → keep '--coverage' on the vitest invocation" >&2
-	elif [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
-		err "main.yml online runner has multiple 'vitest run' invocations — the first could exit 0 (e.g. --help), so the fallback never executes"
-		echo "     → use exactly one 'vitest run' invocation" >&2
-	elif ! printf '%s' "$_online_main" | sed 's/.*vitest run//' | grep -qF '$paths'; then
-		err "main.yml online runner has the module resolution only BEFORE 'vitest run' (e.g. resolved to a variable that is then discarded) — vitest would receive no positional and run the entire online suite unfiltered while this guard reports each module covered"
-		echo "     → pass the resolved paths as the positional AFTER 'vitest run' (\$paths)" >&2
-	elif [ -n "$_oextra" ]; then
-		err "main.yml online runner has a selection flag or extra arg after 'vitest run' — e.g. --exclude=<glob>/--testNamePattern would omit files while the ownership walk reports them covered"
-		echo "     → keep only the resolved \$paths plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
-	fi
+# After `vitest run`, only the resolver-produced $paths (the one selector)
+# and neutral flags (--config, --reporter, --outputFile.*, --color) may
+# appear. A selection flag like --exclude=<glob> or --testNamePattern would
+# omit files while the ownership walk reports them covered. (The config
+# file itself is guarded separately, so --config is safe.)
+#
+# The resolver assignment (`paths=$(cd ../.. && scripts/test-online.sh
+# <module>)`) is allowlisted with a bracket expression so no '/' delimiter
+# collides; `[^)]*` bounds it to ONE substitution -- a greedy `.*` would span
+# first-`$(cd`-to-last-`)` and blank a `--testNamePattern` sandwiched
+# before a trailing second substitution (the resolver body contains no `)`).
+_oextra=$(printf '%s' "$_online_main" 	| sed 's/.*vitest run//' 	| sed -E -e 's/paths=[$][(]cd[[:space:]][^)]*[)]//g' 	         -e 's/[$][{][{][[:space:]]*matrix[.]module[[:space:]]*[}][}]//g' 	         -e 's/[$]paths//g' 	         -e 's/--config vitest[.]online[.]config[.]ts//g' 	         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' 	         -e 's/--reporter=[^[:space:]]+//g' 	         -e 's/--outputFile[.][[:alnum:]_-]+(=[^[:space:]]+)?//g' 	         -e 's/--color//g' -e 's/--no-color//g' 	| tr -d "[:space:]")
+if [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
+	err "main.yml online runner has multiple 'vitest run' invocations -- the first could exit 0 (e.g. --help), so the fallback never executes"
+	echo "     -> use exactly one 'vitest run' invocation" >&2
+elif ! printf '%s' "$_online_main" | sed 's/.*vitest run//' | grep -qF '$paths'; then
+	err "main.yml online runner has the module resolution only BEFORE 'vitest run' (e.g. resolved to a variable that is then discarded) -- vitest would receive no positional and run the entire online suite unfiltered while this guard reports each module covered"
+	echo "     -> pass the resolved paths as the positional AFTER 'vitest run' ($paths)" >&2
+elif [ -n "$_oextra" ]; then
+	err "main.yml online runner has a selection flag or extra arg after 'vitest run' -- e.g. --exclude=<glob>/--testNamePattern would omit files while the ownership walk reports them covered"
+	echo "     -> keep only the resolved $paths plus --config/--reporter/--outputFile.* flags" >&2
+fi
 fi
 _online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')" -gt 1 ]; then
@@ -1557,6 +1429,8 @@ _axis_modules=$(awk '
 	injob && /^  [a-z]/ { inaxis=0; injob=0; next }
 	injob && /^[[:space:]]*module:[[:space:]]*$/ { inaxis=1; next }
 	injob && /^[[:space:]]*include:/ { inaxis=0 }
+	# Dedent or a sibling key (steps:, needs:, etc.) leaves the module axis.
+	inaxis && !/^[[:space:]]*#/ && !/^[[:space:]]+- / && /^[[:space:]]{0,8}[^[:space:]]/ { inaxis=0 }
 	# Accept an optional YAML quote around the axis value; strip non-token chars
 	# so a quoted entry with no include record is still seen by the orphan check
 	# rather than silently ignored.
