@@ -2477,11 +2477,12 @@ selected_ids AS (
 ),
 -- Visible window: the newest N selected rows, oldest-first for rendering, with
 -- rows whose UI state must survive regardless of age pinned OUTSIDE the limit
--- (#2900 review): the newest row of every session (a quiet agent in a busy
--- multi-agent task must not vanish from the thread), unresolved hyperneo_action
--- cards (the task pane's resolution controls), and user deliveries still in
--- flight (queued/processing/retrying badges, which sdk_rows deliberately admits
--- beyond the turn cutoff).
+-- (#2900 review): the newest row of every still-working session (a quiet agent
+-- mid-turn in a busy multi-agent task must not vanish from the thread; finished
+-- sessions end on a terminal result, so they stay windowed and pinning stays
+-- bounded), unresolved hyperneo_action cards (the task pane's resolution
+-- controls), and user deliveries still in flight (queued/processing/retrying
+-- badges, which sdk_rows deliberately admits beyond the turn cutoff).
 ranked_rows AS (
   SELECT
     j.id AS id,
@@ -2500,6 +2501,7 @@ ranked_rows AS (
     j.turnIndex AS turnIndex,
     j.parentToolUseId AS parentToolUseId,
     j.insOrder AS insOrder,
+    j.isTerminal AS isTerminalRow,
     ROW_NUMBER() OVER (ORDER BY j.createdAt DESC, j.insOrder DESC) AS overallRank,
     ROW_NUMBER() OVER (
       PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
@@ -2516,6 +2518,14 @@ ranked_rows AS (
     ) AS pinned
   FROM joined j
   JOIN selected_ids s ON s.id = j.id
+),
+active_session_tails AS (
+  SELECT id
+  FROM ranked_rows
+  WHERE sessionRank = 1
+    AND sessionId IS NOT NULL
+    AND kind != 'github'
+    AND COALESCE(isTerminalRow, 0) = 0
 )
 SELECT
   id,
@@ -2536,8 +2546,8 @@ SELECT
   insOrder
 FROM ranked_rows
 WHERE overallRank <= ?
-  OR sessionRank = 1
   OR pinned
+  OR id IN (SELECT id FROM active_session_tails)
 ORDER BY createdAt ASC, insOrder ASC
 `.trim();
 
