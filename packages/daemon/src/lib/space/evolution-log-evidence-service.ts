@@ -4,6 +4,7 @@ import type {
   StructuredLogEvent,
   StructuredLogLevel,
 } from '@hyperneo/shared';
+import { isSqliteBusyError } from '../../storage/busy-retry';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { SpaceRepository } from '../../storage/repositories/space-repository';
 
@@ -30,79 +31,128 @@ type LogEvidenceRepository = EvolutionRepository & {
   findLatestEvidenceBySource?: (scopeId: string, sourceId: string) => EvidenceRef | null;
 };
 
-interface BufferedEvent {
+interface DrainItem {
   event: StructuredLogEvent;
-  subscription: LogEvidenceSubscription;
-  fingerprint: string;
+  subscriptions: LogEvidenceSubscription[];
+  offset: number;
 }
 
 const DEFAULT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_SUBSCRIPTION_REFRESH_MS = 30 * 1000;
 const DEFAULT_MAX_BUFFERED_EVENTS = 500;
 const DEFAULT_FLUSH_DELAY_MS = 1000;
+const BUSY_RETRY_BASE_MS = 1000;
+const MAX_BUSY_RETRY_MS = 30 * 1000;
 const MAX_SAMPLES = 5;
 
 export class EvolutionLogEvidenceService {
-  private buffer: BufferedEvent[] = [];
+  private buffer: StructuredLogEvent[] = [];
   private cachedDefaultSubscriptions: LogEvidenceSubscription[] = [];
   private nextSubscriptionRefreshAt = 0;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private drainPromise: Promise<void> | null = null;
+  private drainItem: DrainItem | null = null;
+  private retryDelayMs: number | null = null;
+  private busyRetryCount = 0;
 
   constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
   capture(event: StructuredLogEvent): void {
-    let captured = false;
-    for (const subscription of this.getSubscriptions()) {
-      if (!matchesSubscription(subscription, event)) continue;
-      this.buffer.push({
-        event,
-        subscription,
-        fingerprint: fingerprintLogEvent(event),
-      });
-      captured = true;
-    }
-    if (captured) this.scheduleDrain();
+    this.buffer.push(event);
+    this.scheduleDrain();
     const max = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
     if (this.buffer.length > max) this.buffer.splice(0, this.buffer.length - max);
   }
 
   scheduleDrain(): void {
     if (this.drainTimer !== null || this.drainPromise !== null) return;
+    const delay = this.retryDelayMs ?? this.deps.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS;
+    this.retryDelayMs = null;
     const timer = setTimeout(() => {
       this.drainTimer = null;
       void this.flushAsync();
-    }, this.deps.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS);
+    }, delay);
     timer.unref?.();
     this.drainTimer = timer;
   }
 
   flushAsync(): Promise<void> {
     this.cancelScheduledDrain();
-    this.drainPromise ??= this.drainBuffer().finally(() => {
-      this.drainPromise = null;
-    });
+    this.drainPromise ??= this.drainBuffer()
+      .catch(() => {})
+      .finally(() => {
+        this.drainPromise = null;
+        if (this.buffer.length > 0 || this.drainItem !== null) this.scheduleDrain();
+      });
     return this.drainPromise;
   }
 
   private async drainBuffer(): Promise<void> {
-    while (this.buffer.length > 0) {
-      const item = this.buffer.shift();
-      if (!item) break;
-      try {
-        this.writeEvidence(item);
-      } catch {}
+    while (true) {
+      if (this.drainItem === null) {
+        const event = this.buffer.shift();
+        if (event === undefined) break;
+        let subscriptions: LogEvidenceSubscription[];
+        try {
+          subscriptions = this.getSubscriptions().filter((candidate) =>
+            matchesSubscription(candidate, event)
+          );
+        } catch {
+          await yieldToEventLoop();
+          continue;
+        }
+        if (subscriptions.length === 0) {
+          await yieldToEventLoop();
+          continue;
+        }
+        this.drainItem = { event, subscriptions, offset: 0 };
+      }
+      const item = this.drainItem;
+      while (item.offset < item.subscriptions.length) {
+        try {
+          await this.writeEvidenceInterleaved(item.event, item.subscriptions[item.offset]);
+        } catch (error) {
+          if (!isSqliteBusyError(error)) {
+            item.offset += 1;
+            continue;
+          }
+          this.busyRetryCount += 1;
+          this.retryDelayMs = Math.min(
+            BUSY_RETRY_BASE_MS * 2 ** (this.busyRetryCount - 1),
+            MAX_BUSY_RETRY_MS
+          );
+          return;
+        }
+        item.offset += 1;
+        this.busyRetryCount = 0;
+        await yieldToEventLoop();
+      }
+      this.drainItem = null;
       await yieldToEventLoop();
     }
   }
 
   flush(): void {
     this.cancelScheduledDrain();
+    const interrupted = this.drainItem;
+    if (interrupted !== null) {
+      this.drainItem = null;
+      for (const subscription of interrupted.subscriptions.slice(interrupted.offset)) {
+        try {
+          this.writeEvidence(interrupted.event, subscription);
+        } catch {}
+      }
+    }
     const batch = this.buffer.splice(0);
-    for (const item of batch) {
-      try {
-        this.writeEvidence(item);
-      } catch {}
+    if (batch.length === 0) return;
+    const subscriptions = this.getSubscriptions();
+    for (const event of batch) {
+      for (const subscription of subscriptions) {
+        if (!matchesSubscription(subscription, event)) continue;
+        try {
+          this.writeEvidence(event, subscription);
+        } catch {}
+      }
     }
   }
 
@@ -112,25 +162,51 @@ export class EvolutionLogEvidenceService {
     this.drainTimer = null;
   }
 
-  private writeEvidence(item: BufferedEvent): void {
-    const scope = this.deps.evolutionRepo.getScope(item.subscription.scopeId);
+  private writeEvidence(event: StructuredLogEvent, subscription: LogEvidenceSubscription): void {
+    const fingerprint = fingerprintLogEvent(event);
+    const scope = this.deps.evolutionRepo.getScope(subscription.scopeId);
     if (!scope) return;
-    const now = item.event.timestamp;
-    const kind = selectEvidenceKind(item.event);
-    const sourceId = `log:${item.fingerprint}`;
     const existing = this.findExistingEvidence(
-      item.subscription.scopeId,
-      sourceId,
-      item.fingerprint
+      subscription.scopeId,
+      `log:${fingerprint}`,
+      fingerprint
     );
-    const summary = summarizeLogEvent(item.event);
+    this.writeMatchedEvidence(event, subscription.scopeId, fingerprint, existing);
+  }
+
+  private async writeEvidenceInterleaved(
+    event: StructuredLogEvent,
+    subscription: LogEvidenceSubscription
+  ): Promise<void> {
+    const fingerprint = fingerprintLogEvent(event);
+    const scope = this.deps.evolutionRepo.getScope(subscription.scopeId);
+    await yieldToEventLoop();
+    if (!scope) return;
+    const existing = this.findExistingEvidence(
+      subscription.scopeId,
+      `log:${fingerprint}`,
+      fingerprint
+    );
+    await yieldToEventLoop();
+    this.writeMatchedEvidence(event, subscription.scopeId, fingerprint, existing);
+  }
+
+  private writeMatchedEvidence(
+    event: StructuredLogEvent,
+    scopeId: string,
+    fingerprint: string,
+    existing: EvidenceRef | undefined
+  ): void {
+    const now = event.timestamp;
+    const kind = selectEvidenceKind(event);
+    const summary = summarizeLogEvent(event);
     if (existing) {
       const firstSeenAt = numberOr(existing.metadata.firstSeenAt, now);
       const lastSeenAt = numberOr(existing.metadata.lastSeenAt, firstSeenAt);
       if (now - lastSeenAt <= (this.deps.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS)) {
         this.deps.evolutionRepo.updateEvidence(existing.id, {
           summary,
-          metadata: buildMetadata(item.event, item.fingerprint, {
+          metadata: buildMetadata(event, fingerprint, {
             count: numberOr(existing.metadata.count, 1) + 1,
             firstSeenAt,
             previousSamples: Array.isArray(existing.metadata.samples)
@@ -142,11 +218,11 @@ export class EvolutionLogEvidenceService {
       }
     }
     this.deps.evolutionRepo.createEvidence({
-      scopeId: item.subscription.scopeId,
+      scopeId,
       kind,
-      sourceId,
+      sourceId: `log:${fingerprint}`,
       summary,
-      metadata: buildMetadata(item.event, item.fingerprint, {
+      metadata: buildMetadata(event, fingerprint, {
         count: 1,
         firstSeenAt: now,
         previousSamples: [],

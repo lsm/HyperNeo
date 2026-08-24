@@ -411,6 +411,10 @@ describe('EvolutionLogEvidenceService', () => {
     };
     const repo = Object.create(evolutionRepo) as EvolutionRepository;
     repo.getScope = (id: string) => contend(() => evolutionRepo.getScope(id));
+    repo.listScopes = (params: Parameters<EvolutionRepository['listScopes']>[0]) =>
+      contend(() => evolutionRepo.listScopes(params));
+    repo.createScope = (params: Parameters<EvolutionRepository['createScope']>[0]) =>
+      contend(() => evolutionRepo.createScope(params));
     repo.findLatestEvidenceBySource = (scopeId: string, sourceId: string) =>
       contend(() => evolutionRepo.findLatestEvidenceBySource(scopeId, sourceId));
     repo.updateEvidence = (
@@ -419,26 +423,36 @@ describe('EvolutionLogEvidenceService', () => {
     ) => contend(() => evolutionRepo.updateEvidence(id, params));
     repo.createEvidence = (params: CreateEvidenceRefParams) =>
       contend(() => evolutionRepo.createEvidence(params));
+    const underlyingSpaceRepo = new SpaceRepository(db as never);
+    const contendedSpaceRepo = Object.create(underlyingSpaceRepo) as SpaceRepository;
+    contendedSpaceRepo.listSpaces = (includeArchived?: boolean) =>
+      contend(() => underlyingSpaceRepo.listSpaces(includeArchived));
     const service = new EvolutionLogEvidenceService({
       evolutionRepo: repo,
-      subscriptions: [{ scopeId, levels: ['warn'] }],
+      spaceRepo: contendedSpaceRepo,
       flushDelayMs: 60_000,
     });
+    const productScopeFor = () =>
+      evolutionRepo
+        .listScopes({ spaceId })
+        .find((scope) => scope.policy.logEvidenceProductScope === true);
 
     const startedAt = Date.now();
     for (let i = 0; i < 12; i++) {
       service.capture(createEvent({ level: 'warn', message: `contended warning ${i}` }));
     }
+    const inlineRepoCalls = blockedCalls;
     const emissionMs = Date.now() - startedAt;
 
-    expect(blockedCalls).toBe(0);
+    expect(inlineRepoCalls).toBe(0);
     expect(emissionMs).toBeLessThan(250);
-    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(0);
+    expect(productScopeFor()).toBeUndefined();
 
     await service.flushAsync();
 
-    expect(blockedCalls).toBeGreaterThan(0);
-    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(12);
+    expect(blockedCalls).toBeGreaterThan(inlineRepoCalls);
+    expect(productScopeFor()).toBeTruthy();
+    expect(evolutionRepo.listEvidence(productScopeFor()!.id)).toHaveLength(12);
   });
 
   it('drains captured evidence on the deferred timer without an explicit flush', async () => {
