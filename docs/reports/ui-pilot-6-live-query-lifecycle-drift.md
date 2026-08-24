@@ -153,7 +153,8 @@ half from STM/PRJ/MIL.
 
 Extract the dispatch/`executeEffects`/timer scaffolding (≈30–40 lines per hook,
 structurally identical) into one executor; per-hook config becomes declarative
-(query name/params, emission mapping, row store, retry ladder on/off).
+(query name/params, emission mapping, row store, retry ladder on/off, request
+ timeout/invocation strategy).
 - **Value:** rows 9 and 11 become config; row 4's rejected-subscribe retry
   policy becomes the executor's `retryLadder` config (GRP keeps three attempts,
   STM/PRJ/MIL keep one); the drift table shrinks to rows 5–8 (policy) + 12–13
@@ -162,9 +163,15 @@ structurally identical) into one executor; per-hook config becomes declarative
   already sanctions at ≥3 uses (4 exist).
 - **Risk:** medium mechanical risk concentrated in emission mapping — STM
   surfaces `error` and runs the active-turn side channel, GRP feeds a pagination
-  reducer; the four pin files must pass byte-for-byte unchanged except where U1/U2
-  already moved them. Landing U3 before U1/U2 freezes current drift as config;
-  landing it after shrinks what U1/U2 touch. Either order works; after is smaller.
+  reducer. Request timeout/invocation also differs: STM/PRJ/MIL call
+  `getHub().request` (MessageHub 10s default), GRP calls the `useMessageHub`
+  `request` wrapper (30s default). Choosing either globally would change when the
+  first three settle on a hung subscribe or when GRP's ladder attempts begin, so
+  the timeout/invocation strategy must be declarative and pinned before claiming
+  the executors are interchangeable. The four pin files must pass byte-for-byte
+  unchanged except where U1/U2 already moved them. Landing U3 before U1/U2 freezes
+  current drift as config; landing it after shrinks what U1/U2 touch. Either order
+  works; after is smaller.
 
 ### U4. Adopt the machine in `app-mcp-store` (+ `space-mcp-store`, `skills-store`)
 
