@@ -62,7 +62,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # each fits one leg whole (features ~113s, rewind ~137s) — and the small
 # directories are duration-merged into combined modules (convo-agent ~137s,
 # sdk-misc ~99s, lifecycle-git-websocket ~109s) so the mocked-online matrix is
-# 11 legs instead of 24. Weights pack by measured duration, so a bucket
+# 10 legs instead of 24. Weights pack by measured duration, so a bucket
 # holding one heavy file (e.g. space's task-agent-lifecycle at 73s CI) is a
 # file-granularity floor, not a packing failure — splitting that FILE is the
 # only fix. Re-check with the next CI balance report + manifest regen.

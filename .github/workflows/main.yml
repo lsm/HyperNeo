@@ -1,7 +1,7 @@
 # CI - Build, test, and quality checks
 #
 # Free-tier shape (task #1399): one PR run occupies at most 20 parallel jobs
-# (1 check + 1 path-filter + 7 unit legs + 11 online legs + 1 web leg — the
+# (1 check + 1 path-filter + 7 unit legs + 10 online legs + 1 web leg — the
 # balance report runs after the tests, inside the same budget) so a solo run
 # never queues behind the repo's 20 shared concurrent runners. Coverage
 # instrumentation is REMOVED from CI entirely (owner directive 2026-08-23):
@@ -229,7 +229,7 @@ jobs:
   # DAEMON ONLINE TESTS (Mocked credentials only)
   # Run on: PR to dev (daemon paths), push to dev, workflow_dispatch
   # Real-key shards are manual-only in real-api-tests.yml.
-  # 11 legs (task #1399): rpc is split 3-way and space 2-way
+  # 10 legs (task #1399): rpc is split 3-way and space 2-way
   # (duration-weighted) by scripts/test-online.sh; every other directory is a
   # single merged module (convo-agent, features, lifecycle-git-websocket,
   # rewind, sdk-misc). All modules run mocked through the Dev Proxy.
