@@ -3497,6 +3497,623 @@ describe('QueryRunner', () => {
       });
     });
   });
+
+  describe('lifecycle × recoveryState/superseded cross rows (B1e)', () => {
+    const ENV_KEYS = [
+      'ANTHROPIC_API_KEY',
+      'HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS',
+      'HYPERNEO_PROVIDER_MAX_RETRIES',
+      'OPENROUTER_API_KEY',
+    ] as const;
+    let savedEnv: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      process.env.OPENROUTER_API_KEY = 'sk-or-v1-test';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      for (const key of ENV_KEYS) {
+        if (savedEnv[key] === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = savedEnv[key];
+        }
+      }
+    });
+
+    const STARTUP_TIMEOUT_MSG = 'SDK startup timeout - query aborted';
+    const NO_MESSAGE_FOUND_MSG = 'No message found with message.uuid of: u-1';
+    const TRANSIENT_MSG = 'TypeError: fetch failed';
+    const PROVIDER_5XX_MSG = '503 Service Unavailable';
+    const ABORT_MSG = 'the query was aborted';
+    const TERMINAL_AUTH_MSG = 'invalid_api_key';
+    const LIMIT_429_MSG = '429 please upgrade your plan';
+
+    type RunnerPrivate = {
+      _lastConsumedUserMessage: { uuid: string; content: unknown } | null;
+      _consumedUserMessages: Map<number, Array<{ uuid: string; content: unknown }>>;
+      runQuery: (
+        queryGeneration: number,
+        retryAttempt: number,
+        recoveryState: { rateLimitCooldownScheduled: boolean }
+      ) => Promise<void>;
+    };
+
+    interface RouteExpectation {
+      build: number;
+      handle?: [number, ErrorCategory?];
+      terminalIdle?: number;
+      idle?: number;
+      clear?: number;
+      enqueue?: number;
+      notice?: number;
+      stop?: number;
+      terminate?: number;
+      consume?: number;
+    }
+
+    function routeAllZero(overrides: Partial<RouteExpectation> = {}): RouteExpectation {
+      return {
+        build: 1,
+        handle: [0],
+        terminalIdle: 0,
+        idle: 0,
+        clear: 0,
+        enqueue: 0,
+        notice: 0,
+        stop: 0,
+        terminate: 0,
+        consume: 0,
+        ...overrides,
+      };
+    }
+
+    function routeTerminal(
+      category: ErrorCategory,
+      overrides: Partial<RouteExpectation> = {}
+    ): RouteExpectation {
+      return routeAllZero({
+        handle: [1, category],
+        terminalIdle: 1,
+        idle: 2,
+        clear: 1,
+        stop: 1,
+        ...overrides,
+      });
+    }
+
+    function routeRetriedOnce(
+      category: ErrorCategory,
+      overrides: Partial<RouteExpectation> = {}
+    ): RouteExpectation {
+      return routeAllZero({
+        build: 2,
+        handle: [1, category],
+        terminalIdle: 1,
+        enqueue: 1,
+        terminate: 1,
+        notice: 1,
+        clear: 1,
+        idle: 4,
+        stop: 2,
+        ...overrides,
+      });
+    }
+
+    function expectRoute(expected: RouteExpectation, consumeSpy?: ReturnType<typeof mock>) {
+      expect(buildSpy).toHaveBeenCalledTimes(expected.build);
+      if (expected.handle !== undefined) {
+        expect(handleErrorSpy).toHaveBeenCalledTimes(expected.handle[0]);
+        if (expected.handle[0] > 0 && expected.handle[1] !== undefined) {
+          expect(handleErrorSpy.mock.calls[0][2]).toBe(expected.handle[1]);
+        }
+      }
+      const counts: Array<[ReturnType<typeof mock> | undefined, number | undefined]> = [
+        [beginTerminalIdleSpy, expected.terminalIdle],
+        [setIdleSpy, expected.idle],
+        [clearSpy, expected.clear],
+        [enqueueWithIdSpy, expected.enqueue],
+        [saveSDKMessageSpy, expected.notice],
+        [stopSpy, expected.stop],
+        [terminateTrackedAgentProcessesSpy, expected.terminate],
+        [consumeSpy, expected.consume],
+      ];
+      for (const [spy, count] of counts) {
+        if (spy !== undefined && count !== undefined) {
+          expect(spy).toHaveBeenCalledTimes(count);
+        }
+      }
+    }
+
+    interface LifecycleRowOptions {
+      message: string;
+      errorName?: string;
+      status?: string;
+      abortedController?: boolean;
+      cleaningUp?: boolean;
+      superseded?: boolean;
+      consumed?: boolean;
+      onRateLimit?: (msg: string) => boolean;
+      isLimitRecoveryPending?: boolean;
+      attempt?: number;
+      recoveryState?: { rateLimitCooldownScheduled: boolean };
+      rejectsWith?: string;
+    }
+
+    async function runLifecycleRow(options: LifecycleRowOptions) {
+      delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
+
+      const error = new Error(options.message);
+      if (options.errorName) error.name = options.errorName;
+      buildSpy.mockRejectedValue(error);
+      if (options.status !== undefined) {
+        getStateSpy.mockReturnValue({ status: options.status });
+      }
+
+      const abortController = new AbortController();
+      if (options.abortedController) abortController.abort();
+      const onRateLimitExhausted = options.onRateLimit
+        ? mock(async (msg: string) => options.onRateLimit!(msg))
+        : undefined;
+      const consumeSpy = mock(() => 'consumed-resume-uuid');
+
+      const ctx = createContext({
+        queryAbortController: options.abortedController ? abortController : null,
+        isCleaningUp: () => !!options.cleaningUp,
+        onRateLimitExhausted,
+        consumePendingResumeSessionAt: consumeSpy,
+        isLimitRecoveryPending: options.isLimitRecoveryPending ? () => true : undefined,
+        ...(options.superseded ? { getQueryGeneration: () => 2 } : {}),
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+
+      if (options.consumed) {
+        runnerPrivate._lastConsumedUserMessage = {
+          uuid: 'consumed-uuid',
+          content: [{ type: 'text' as const, text: 'C' }],
+        };
+        runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+      }
+
+      if (options.attempt !== undefined) {
+        ctx.incrementQueryGeneration();
+        isRunningSpy.mockReturnValue(true);
+        const attemptPromise = runnerPrivate.runQuery(
+          1,
+          options.attempt,
+          options.recoveryState ?? { rateLimitCooldownScheduled: false }
+        );
+        if (options.rejectsWith !== undefined) {
+          await expect(attemptPromise).rejects.toThrow(options.rejectsWith);
+        } else {
+          await attemptPromise;
+        }
+      } else if (options.rejectsWith !== undefined) {
+        runner.start();
+        await expect(ctx.queryPromise).rejects.toThrow(options.rejectsWith);
+      } else {
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+      }
+      return { ctx, runnerPrivate, consumeSpy };
+    }
+
+    describe('arm-gate lifecycle matrix (status × abort controller × cleaning-up × superseded)', () => {
+      const matrixRows: Array<{
+        name: string;
+        options: LifecycleRowOptions;
+        expect: RouteExpectation;
+      }> = [
+        {
+          name: 'startup × idle baseline retries once, TIMEOUT surfaces on the retry attempt',
+          options: { message: STARTUP_TIMEOUT_MSG, consumed: true },
+          expect: routeRetriedOnce(ErrorCategory.TIMEOUT),
+        },
+        {
+          name: 'startup × interrupted processing declines the arm and routes terminal TIMEOUT',
+          options: { message: STARTUP_TIMEOUT_MSG, consumed: true, status: 'interrupted' },
+          expect: routeTerminal(ErrorCategory.TIMEOUT),
+        },
+        {
+          name: 'startup × aborted controller does not block the retry arm',
+          options: { message: STARTUP_TIMEOUT_MSG, consumed: true, abortedController: true },
+          expect: routeRetriedOnce(ErrorCategory.TIMEOUT),
+        },
+        {
+          name: 'startup × cleaning-up returns before the arm, tears down but never idles',
+          options: { message: STARTUP_TIMEOUT_MSG, consumed: true, cleaningUp: true },
+          expect: routeAllZero({ stop: 1 }),
+        },
+        {
+          name: 'transient × idle baseline retries once, CONNECTION surfaces on the retry attempt',
+          options: { message: TRANSIENT_MSG, consumed: true },
+          expect: routeRetriedOnce(ErrorCategory.CONNECTION, { terminate: 0 }),
+        },
+        {
+          name: 'transient × interrupted processing blocks the otherwise identical retry',
+          options: { message: TRANSIENT_MSG, consumed: true, status: 'interrupted' },
+          expect: routeTerminal(ErrorCategory.CONNECTION),
+        },
+        {
+          name: 'transient × aborted controller blocks the otherwise identical retry',
+          options: { message: TRANSIENT_MSG, consumed: true, abortedController: true },
+          expect: routeTerminal(ErrorCategory.CONNECTION),
+        },
+        {
+          name: 'transient × AbortError name dominates the transient text and routes aborted_noop',
+          options: { message: TRANSIENT_MSG, consumed: true, errorName: 'AbortError' },
+          expect: routeAllZero({ idle: 1, clear: 1, stop: 1 }),
+        },
+        {
+          name: 'transient × cleaning-up returns before the arm, tears down but never idles',
+          options: { message: TRANSIENT_MSG, consumed: true, cleaningUp: true },
+          expect: routeAllZero({ stop: 1 }),
+        },
+        {
+          name: 'message-not-found × idle baseline retries once, SYSTEM surfaces on the retry',
+          options: { message: NO_MESSAGE_FOUND_MSG },
+          expect: routeRetriedOnce(ErrorCategory.SYSTEM, { notice: 0, enqueue: 0, consume: 1 }),
+        },
+        {
+          name: 'message-not-found × interrupted processing still retries (no status gate)',
+          options: { message: NO_MESSAGE_FOUND_MSG, status: 'interrupted' },
+          expect: routeRetriedOnce(ErrorCategory.SYSTEM, { notice: 0, enqueue: 0, consume: 1 }),
+        },
+        {
+          name: 'message-not-found × aborted controller still retries (no interrupt gate)',
+          options: { message: NO_MESSAGE_FOUND_MSG, abortedController: true },
+          expect: routeRetriedOnce(ErrorCategory.SYSTEM, { notice: 0, enqueue: 0, consume: 1 }),
+        },
+        {
+          name: 'message-not-found × cleaning-up skips the resume pointer and never idles',
+          options: { message: NO_MESSAGE_FOUND_MSG, cleaningUp: true },
+          expect: routeAllZero({ stop: 1 }),
+        },
+        {
+          name: 'provider × idle baseline retries to the cap then surfaces SYSTEM',
+          options: { message: PROVIDER_5XX_MSG, consumed: true },
+          expect: routeAllZero({
+            build: 4,
+            enqueue: 1,
+            notice: 3,
+            handle: [1, ErrorCategory.SYSTEM],
+            terminalIdle: 1,
+            clear: 1,
+            idle: 5,
+            stop: 4,
+          }),
+        },
+        {
+          name: 'provider × interrupted processing blocks the arm and routes terminal SYSTEM',
+          options: { message: PROVIDER_5XX_MSG, consumed: true, status: 'interrupted' },
+          expect: routeTerminal(ErrorCategory.SYSTEM),
+        },
+        {
+          name: 'provider × aborted controller blocks the otherwise identical retry',
+          options: { message: PROVIDER_5XX_MSG, consumed: true, abortedController: true },
+          expect: routeTerminal(ErrorCategory.SYSTEM),
+        },
+        {
+          name: 'provider × cleaning-up returns before the arm, tears down but never idles',
+          options: { message: PROVIDER_5XX_MSG, consumed: true, cleaningUp: true },
+          expect: routeAllZero({ stop: 1 }),
+        },
+        {
+          name: 'provider × superseded returns before the arm and skips the finalizer teardown',
+          options: { message: PROVIDER_5XX_MSG, consumed: true, superseded: true },
+          expect: routeAllZero(),
+        },
+        {
+          name: 'aborted_noop × idle baseline clears the queue and only the finalizer idles',
+          options: { message: ABORT_MSG, errorName: 'AbortError' },
+          expect: routeAllZero({ idle: 1, clear: 1, stop: 1 }),
+        },
+        {
+          name: 'aborted_noop × cleaning-up suppresses even the queue clear',
+          options: { message: ABORT_MSG, errorName: 'AbortError', cleaningUp: true },
+          expect: routeAllZero({ stop: 1 }),
+        },
+        {
+          name: 'terminal × idle baseline routes AUTHENTICATION with catch and finalizer idles',
+          options: { message: TERMINAL_AUTH_MSG },
+          expect: routeTerminal(ErrorCategory.AUTHENTICATION),
+        },
+        {
+          name: 'terminal × superseded suppresses the whole terminal route',
+          options: { message: TERMINAL_AUTH_MSG, superseded: true },
+          expect: routeAllZero(),
+        },
+      ];
+
+      for (const row of matrixRows) {
+        it(row.name, async () => {
+          const { consumeSpy } = await runLifecycleRow(row.options);
+          expectRoute(row.expect, consumeSpy);
+        });
+      }
+    });
+
+    describe('provider backoff revalidation block', () => {
+      interface BackoffTools {
+        supersede: () => void;
+        abortSignal: () => void;
+        setCleaningUp: () => void;
+        stopQueue: () => void;
+        interruptProcessing: () => void;
+      }
+
+      const BACKOFF_DELAY_MS = 200;
+
+      async function runBackoffRow(flip?: (tools: BackoffTools) => void) {
+        delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = flip ? String(BACKOFF_DELAY_MS) : '0';
+        buildSpy.mockRejectedValue(new Error(PROVIDER_5XX_MSG));
+
+        let cleaningUp = false;
+        const controller = new AbortController();
+        const ctx = createContext({
+          queryAbortController: controller,
+          isCleaningUp: () => cleaningUp,
+        });
+        runner = new QueryRunner(ctx);
+        const runnerPrivate = runner as unknown as RunnerPrivate;
+        runnerPrivate._lastConsumedUserMessage = {
+          uuid: 'retry-uuid',
+          content: [{ type: 'text' as const, text: 'P' }],
+        };
+        runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+        ctx.incrementQueryGeneration();
+        isRunningSpy.mockReturnValue(true);
+
+        if (!flip) {
+          await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+          return runnerPrivate;
+        }
+
+        const tools: BackoffTools = {
+          supersede: () => ctx.incrementQueryGeneration(),
+          abortSignal: () => controller.abort(),
+          setCleaningUp: () => {
+            cleaningUp = true;
+          },
+          stopQueue: () => isRunningSpy.mockReturnValue(false),
+          interruptProcessing: () => getStateSpy.mockReturnValue({ status: 'interrupted' }),
+        };
+        const originalSetTimeout = globalThis.setTimeout;
+        let flipArmed = true;
+        const intercepting = ((
+          handler: (...timerArgs: unknown[]) => void,
+          timeout?: number,
+          ...rest: unknown[]
+        ) =>
+          originalSetTimeout(
+            (...timerArgs: unknown[]) => {
+              if (flipArmed && timeout === BACKOFF_DELAY_MS) {
+                flipArmed = false;
+                flip(tools);
+              }
+              handler(...timerArgs);
+            },
+            timeout,
+            ...rest
+          )) as unknown as typeof globalThis.setTimeout;
+        globalThis.setTimeout = intercepting;
+        try {
+          await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+        } finally {
+          globalThis.setTimeout = originalSetTimeout;
+        }
+        return runnerPrivate;
+      }
+
+      const backoffRows: Array<{
+        name: string;
+        flip?: (tools: BackoffTools) => void;
+        expect: RouteExpectation;
+      }> = [
+        {
+          name: 'no lifecycle flip during the backoff → the retry runs to the cap',
+          expect: routeAllZero({
+            build: 4,
+            enqueue: 1,
+            notice: 3,
+            handle: [1, ErrorCategory.SYSTEM],
+            terminalIdle: 1,
+            clear: 1,
+            idle: 5,
+            stop: 4,
+          }),
+        },
+        {
+          name: 'cleaning-up flips during the backoff → retry cancelled, no re-enqueue, no idle',
+          flip: (t) => t.setCleaningUp(),
+          expect: routeAllZero({ notice: 1, stop: 1 }),
+        },
+        {
+          name: 'queue stopped during the backoff → retry cancelled but the finalizer still idles',
+          flip: (t) => t.stopQueue(),
+          expect: routeAllZero({ notice: 1, idle: 1, stop: 1 }),
+        },
+        {
+          name: 'run superseded during the backoff → retry cancelled and the finalizer skips teardown',
+          flip: (t) => t.supersede(),
+          expect: routeAllZero({ notice: 1 }),
+        },
+        {
+          name: 'processing interrupted during the backoff → retry cancelled, finalizer still idles',
+          flip: (t) => t.interruptProcessing(),
+          expect: routeAllZero({ notice: 1, idle: 1, stop: 1 }),
+        },
+        {
+          name: 'abort controller fires during the backoff → retry cancelled, finalizer still idles',
+          flip: (t) => t.abortSignal(),
+          expect: routeAllZero({ notice: 1, idle: 1, stop: 1 }),
+        },
+      ];
+
+      for (const row of backoffRows) {
+        it(row.name, async () => {
+          const runnerPrivate = await runBackoffRow(row.flip);
+          expectRoute(row.expect);
+          expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
+          expect(runnerPrivate._consumedUserMessages.has(1)).toBe(false);
+        });
+      }
+    });
+
+    describe('recoveryState and scheduled-cooldown routing', () => {
+      const recoveryRows: Array<{
+        name: string;
+        options: LifecycleRowOptions;
+        expect: RouteExpectation;
+      }> = [
+        {
+          name: 'limit error with the cooldown handoff accepted → no terminal handling, no idle anywhere',
+          options: { message: LIMIT_429_MSG, onRateLimit: () => true },
+          expect: routeAllZero({ clear: 1, stop: 1 }),
+        },
+        {
+          name: 'otherwise identical limit error with the handoff declined → full RATE_LIMIT terminal',
+          options: { message: LIMIT_429_MSG, onRateLimit: () => false },
+          expect: routeTerminal(ErrorCategory.RATE_LIMIT),
+        },
+        {
+          name: 'rejecting cooldown handoff → no terminal handling, finalizer still idles, query rejects',
+          options: {
+            message: LIMIT_429_MSG,
+            rejectsWith: 'watchdog handoff failed',
+            onRateLimit: () => {
+              throw new Error('watchdog handoff failed');
+            },
+          },
+          expect: routeAllZero({ idle: 1, clear: 1, stop: 1 }),
+        },
+        {
+          name: 'incoming cooldown flag is recomputed per error, not sticky across attempts',
+          options: {
+            message: TERMINAL_AUTH_MSG,
+            attempt: 0,
+            recoveryState: { rateLimitCooldownScheduled: true },
+          },
+          expect: routeTerminal(ErrorCategory.AUTHENTICATION),
+        },
+        {
+          name: 'pending limit recovery skips only the finalizer idle, not the terminal route',
+          options: { message: TERMINAL_AUTH_MSG, isLimitRecoveryPending: true },
+          expect: routeTerminal(ErrorCategory.AUTHENTICATION, { idle: 1 }),
+        },
+        {
+          name: 'rate_limit_cooldown processing status skips only the finalizer idle',
+          options: { message: TERMINAL_AUTH_MSG, status: 'rate_limit_cooldown' },
+          expect: routeTerminal(ErrorCategory.AUTHENTICATION, { idle: 1 }),
+        },
+        {
+          name: 'incoming cooldown flag suppresses the finalizer idle on the aborted_noop route too',
+          options: {
+            message: ABORT_MSG,
+            errorName: 'AbortError',
+            attempt: 0,
+            recoveryState: { rateLimitCooldownScheduled: true },
+          },
+          expect: routeAllZero({ clear: 1, stop: 1 }),
+        },
+      ];
+
+      for (const row of recoveryRows) {
+        it(row.name, async () => {
+          await runLifecycleRow(row.options);
+          expectRoute(row.expect);
+        });
+      }
+    });
+
+    describe('superseded mid-arm checkpoint and finalizer teardown', () => {
+      it('startup arm abandons the retry when a replacement takes the generation across the setIdle await', async () => {
+        buildSpy.mockRejectedValue(new Error(STARTUP_TIMEOUT_MSG));
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        const runnerPrivate = runner as unknown as RunnerPrivate;
+        runnerPrivate._consumedUserMessages.set(1, [
+          { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+        ]);
+        let markIdle!: () => void;
+        const idleEntered = new Promise<void>((resolve) => {
+          markIdle = resolve;
+        });
+        let releaseIdle!: () => void;
+        const idleGate = new Promise<void>((resolve) => {
+          releaseIdle = resolve;
+        });
+        setIdleSpy.mockImplementation(() => {
+          markIdle();
+          return idleGate;
+        });
+        runner.start();
+        await idleEntered;
+        ctx.incrementQueryGeneration();
+        releaseIdle();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute({
+          build: 1,
+          enqueue: 0,
+          terminate: 0,
+          notice: 0,
+          handle: [0],
+          idle: 1,
+          clear: 0,
+          stop: 0,
+        });
+        expect(runnerPrivate._consumedUserMessages.has(1)).toBe(false);
+      });
+
+      it('live aborted_noop finalizer stops the queue, closes the query object, consumes the controller', async () => {
+        const abortError = new Error(ABORT_MSG);
+        abortError.name = 'AbortError';
+        buildSpy.mockRejectedValue(abortError);
+        const controller = new AbortController();
+        const closeSpy = mock(() => {});
+        const ctx = createContext({
+          queryAbortController: controller,
+          queryObject: { close: closeSpy } as unknown as QueryRunnerContext['queryObject'],
+        });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expectRoute({ build: 1, handle: [0], idle: 1, clear: 1, stop: 1 });
+        expect(ctx.queryAbortController).toBeNull();
+        expect(controller.signal.aborted).toBe(true);
+      });
+
+      it('superseded finalizer skips the teardown entirely and leaves the controller untouched', async () => {
+        const abortError = new Error(ABORT_MSG);
+        abortError.name = 'AbortError';
+        buildSpy.mockRejectedValue(abortError);
+        const controller = new AbortController();
+        const closeSpy = mock(() => {});
+        const ctx = createContext({
+          queryAbortController: controller,
+          queryObject: { close: closeSpy } as unknown as QueryRunnerContext['queryObject'],
+          getQueryGeneration: () => 2,
+        });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(closeSpy).not.toHaveBeenCalled();
+        expectRoute({ build: 1, handle: [0], idle: 0, clear: 0, stop: 0 });
+        expect(ctx.queryAbortController).toBe(controller);
+        expect(controller.signal.aborted).toBe(false);
+      });
+    });
+  });
 });
 
 describe('QueryRunner error categorization', () => {
