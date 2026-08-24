@@ -12,7 +12,6 @@ import {
   clearModelsCache,
   getModelsCache,
   hasRefreshBeenAttemptedFor,
-  initializeModels,
   markRefreshAttemptedFor,
   setModelsCache,
 } from '../../../../src/lib/model-service';
@@ -1053,15 +1052,16 @@ describe('Provider RPC handlers', () => {
           getModels: async () => refreshed,
         });
       const handlers = setup();
+      const { refreshModels } = await import('../../../../src/lib/model-service');
 
-      const initPromise = initializeModels();
+      const loadPromise = refreshModels();
       await new Promise((resolve) => setTimeout(resolve, 50));
       const result = (await handlers.get('providers.refreshDiscovery')!(
         { id: created.id },
         {}
       )) as { success: boolean };
       expect(result.success).toBe(true);
-      await initPromise;
+      await loadPromise;
 
       const models = getModelsCache().get('global') ?? [];
       const ids = models.map((model) => model.id).sort();
@@ -1071,7 +1071,6 @@ describe('Provider RPC handlers', () => {
       const replaced = [makeDiscoveredModel('replaced-b')];
       listRemoteModelsMock.mockImplementation(async () => replaced);
       getModelsMock.mockImplementation(async () => replaced);
-      const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
       const afterIds = (getModelsCache().get('global') ?? []).map((model) => model.id);
@@ -1086,10 +1085,11 @@ describe('Provider RPC handlers', () => {
         authType: 'none',
       });
       const refreshed = [makeDiscoveredModel('refreshed-a')];
-      registerRemoteProvider({
-        listRemoteModels: async () => refreshed,
-        getModels: async () => refreshed,
-      });
+      const { listRemoteModels: listRemoteModelsMock, getModels: getModelsMock } =
+        registerRemoteProvider({
+          listRemoteModels: async () => refreshed,
+          getModels: async () => refreshed,
+        });
       getProviderRegistry().register({
         id: 'later-provider',
         isAvailable: async () => true,
@@ -1106,7 +1106,10 @@ describe('Provider RPC handlers', () => {
       expect(result.success).toBe(true);
       expect(getModelsCache().has('global')).toBe(false);
 
-      await initializeModels();
+      listRemoteModelsMock.mockImplementation(async () => []);
+      getModelsMock.mockImplementation(async () => []);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
 
       const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
       expect(ids).toContain('refreshed-a');

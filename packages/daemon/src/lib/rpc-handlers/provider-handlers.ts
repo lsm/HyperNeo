@@ -494,6 +494,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
+      const persistedConfig = {
+        baseUrl: savedConfig.baseUrl,
+        configJson: providerRepo.getProvider(request.id)?.configJson,
+      };
       const applied = applyDiscoveredProviderModels(record.providerId, models);
       if (applied) {
         releaseAppliedProviderSlice(record.providerId);
@@ -504,7 +508,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           const supersededDuringWait =
             getModelsCacheClearSequence() !== clearsAtStart ||
             JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
-            !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig);
+            !isUnchangedSavedConfig(providerRepo.getProvider(request.id), persistedConfig);
           if (supersededDuringWait) {
             providerRepo.updateProvider(request.id, { configJson: record.configJson });
             return { success: false, reason: 'superseded' };
