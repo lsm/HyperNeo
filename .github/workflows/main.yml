@@ -1,7 +1,7 @@
 # CI - Build, test, and quality checks
 #
 # Free-tier shape (task #1399): one PR run occupies at most 20 parallel jobs
-# (1 check + 1 path-filter + 7 unit legs + 10 online legs + 1 web leg — the
+# (1 check + 1 path-filter + 6 unit legs + 11 online legs + 1 web leg — the
 # balance report runs after the tests, inside the same budget) so a solo run
 # never queues behind the repo's 20 shared concurrent runners. Coverage
 # instrumentation is REMOVED from CI entirely (owner directive 2026-08-23):
@@ -15,7 +15,7 @@
 #
 # | Trigger                               | Tests Run                                       |
 # |---------------------------------------|-------------------------------------------------|
-# | PR to dev (mixed code changes)        | check + 7 unit shards + 11 online shards + web  |
+# | PR to dev (mixed code changes)        | check + 6 unit shards + 11 online shards + web  |
 # | PR to dev (daemon-only, per changes)  | check + unit + online (web skipped)             |
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
 # | PR to dev (docs-only, per changes)    | check only                                      |
@@ -69,7 +69,7 @@ jobs:
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
@@ -97,16 +97,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -229,10 +219,11 @@ jobs:
   # DAEMON ONLINE TESTS (Mocked credentials only)
   # Run on: PR to dev (daemon paths), push to dev, workflow_dispatch
   # Real-key shards are manual-only in real-api-tests.yml.
-  # 10 legs (task #1399): rpc is split 3-way and space 2-way
-  # (duration-weighted) by scripts/test-online.sh; every other directory is a
-  # single merged module (convo-agent, features, lifecycle-git-websocket,
-  # rewind, sdk-misc). All modules run mocked through the Dev Proxy.
+  # 11 legs (task #1399 rebalance): rpc is split 4-way and space 2-way
+  # (duration-weighted) by scripts/test-online.sh; every other directory is
+  # duration-merged into combined modules (agent-sdk, convo-lifecycle,
+  # features-misc, git-websocket, rewind). All modules run mocked through the
+  # Dev Proxy.
   # ============================================
 
   test-daemon-online:
@@ -246,21 +237,22 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - convo-agent
-          - features
-          - lifecycle-git-websocket
+          - agent-sdk
+          - convo-lifecycle
+          - features-misc
           # Codex bridge tests disabled — requires OPENAI_API_KEY (real API, not mocked)
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
           # GLM online tests disabled due to flakiness
           # - glm
+          - git-websocket
           - rewind
-          # rpc/ is split 3-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-c).
+          # rpc/ is split 4-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-d).
           - rpc-a
           - rpc-b
           - rpc-c
-          - sdk-misc
+          - rpc-d
           # space/ is split 2-way (duration-weighted) by scripts/test-online.sh (space-a…space-b).
           - space-a
           - space-b
@@ -288,16 +280,6 @@ jobs:
       - name: Setup Dev Proxy
         if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -350,11 +332,12 @@ jobs:
   # ============================================
   # DAEMON + SHARED UNIT TESTS
   # Run on: PR to dev (daemon paths), push to dev
-  # 7 legs (task #1399): shared · 1-core-a/b (duration-weighted 2-way) ·
-  # handlers-migrations · storage-migrations · 5-space-a/b (duration-weighted
-  # 2-way over the whole 5-space tree). Shard definitions live in
-  # scripts/test-daemon.sh (source of truth); validate-test-matrix.sh guards
-  # that every unit test file is owned by exactly one shard.
+  # 6 legs (task #1399 rebalance): shared · 1-core (whole tree + migration
+  # bucket 0) · handlers-migrations · storage-migrations · 5-space-a/b
+  # (duration-weighted 2-way over the whole 5-space tree; the 117s migration
+  # chain is dealt 3-way across the three directory legs). Shard definitions
+  # live in scripts/test-daemon.sh (source of truth); validate-test-matrix.sh
+  # guards that every unit test file is owned by exactly one shard.
   # ============================================
 
   test-daemon-shared-unit:
@@ -366,7 +349,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 1-core-a, 1-core-b, handlers-migrations, storage-migrations, 5-space-a, 5-space-b]
+        shard: [shared, 1-core, handlers-migrations, storage-migrations, 5-space-a, 5-space-b]
 
     steps:
       - uses: actions/checkout@v6
@@ -380,16 +363,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -440,16 +413,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -560,16 +523,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -694,16 +647,6 @@ jobs:
           sudo find /etc/apt/sources.list.d/ \( -name "*microsoft*" -o -name "*azure*" \) -delete 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: |

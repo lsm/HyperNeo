@@ -177,7 +177,7 @@ describe('buildMeasuredFromJunit', () => {
 });
 
 describe('listSplitSpecs', () => {
-  it('reads the real split table: weighted 5-space and 1-core', () => {
+  it('reads the real split table: weighted 5-space unit, rpc/space online', () => {
     const specs = listSplitSpecs('daemon-unit');
     const space = specs.find((spec) => spec.prefix === '5-space');
 
@@ -187,11 +187,7 @@ describe('listSplitSpecs', () => {
     expect(space?.testRoot).toBe('packages/daemon/tests/unit');
     expect(space?.globs).toContain('5-space/runtime/*.test.ts');
     expect(space?.files.length).toBeGreaterThan(10);
-
-    const core = specs.find((spec) => spec.prefix === '1-core');
-    expect(core).toBeDefined();
-    expect(core?.splitCount).toBe(2);
-    expect(core?.weights).toBe('scripts/shard-weights.tsv');
+    expect(specs.find((spec) => spec.prefix === '1-core')).toBeUndefined();
 
     const online = listSplitSpecs('daemon-online');
     expect(online.map((spec) => spec.prefix)).toContain('rpc');
@@ -295,7 +291,7 @@ describe('main', () => {
     expect(manifest).toContain(
       '500\tpackages/daemon/tests/unit/1-core/core/main-import-order.test.ts'
     );
-    expect(out.join('\n')).toContain('(1 updated, 1 kept, 0 stale-dropped)');
+    expect(out.join('\n')).toContain('(1 updated, 0 kept, 0 stale-dropped)');
   }, 120000);
 
   it('rejects an unknown suite and missing junit inputs', () => {

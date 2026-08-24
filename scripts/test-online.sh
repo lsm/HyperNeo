@@ -53,32 +53,31 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 #
 # Split sizing (duration-weighted since task #1183 — every split opts into
 # scripts/shard-weights.tsv, regenerated from CI junit via
-# scripts/generate-shard-weights.ts --suite daemon-online; measured CI junit
-# times from the task #1399 baseline run; each job adds ~35s fixed setup, so
-# splits keep every leg under ~2min of test time):
-#   rpc     19 files  ~430s → 3-way (packed ~143s per bucket)
-#   space    5 files  ~172s → 2-way (packed ~86s per bucket)
-# Free-tier squeeze (task #1399): features and rewind are no longer splits —
-# each fits one leg whole (features ~113s, rewind ~137s) — and the small
-# directories are duration-merged into combined modules (convo-agent ~137s,
-# sdk-misc ~99s, lifecycle-git-websocket ~109s) so the mocked-online matrix is
-# 10 legs instead of 24. Weights pack by measured duration, so a bucket
-# holding one heavy file (e.g. space's task-agent-lifecycle at 73s CI) is a
-# file-granularity floor, not a packing failure — splitting that FILE is the
-# only fix. Re-check with the next CI balance report + manifest regen.
+# scripts/generate-shard-weights.ts --suite daemon-online; measured junit
+# times from the 2026-08-24 task #1399 rebalance run; each job adds ~35s
+# fixed setup, so splits keep every leg under ~2min of test time):
+#   rpc     19 files  ~450s → 4-way (packed ~112s per bucket)
+#   space    4 files  ~168s → 2-way (packed ~84s per bucket)
+# The small directories are duration-merged into combined modules (measured
+# test time): rewind 125s, convo-lifecycle 118s, features-misc 111s,
+# agent-sdk 103s, git-websocket 63s — 11 legs total. Weights pack by measured
+# duration, so a bucket holding one heavy file (e.g. rpc's
+# rpc-config-handlers at 90s CI) is a file-granularity floor, not a packing
+# failure — splitting that FILE is the only fix. Re-check with the next CI
+# balance report + manifest regen.
 ONLINE_HASH_SPLIT_SPECS=(
 	"space|2|space/*.test.ts|scripts/shard-weights.tsv"
-	"rpc|3|rpc/*.test.ts|scripts/shard-weights.tsv"
+	"rpc|4|rpc/*.test.ts|scripts/shard-weights.tsv"
 )
 
 ONLINE_MODULES=(
 	# Split modules (resolved via ONLINE_HASH_SPLIT_SPECS — do not list
-	# here): rpc-a…rpc-c, space-a…space-b.
-	"convo-agent|agent/*.test.ts;convo/*.test.ts"
-	"features|features/*.test.ts"
-	"lifecycle-git-websocket|git/*.test.ts;lifecycle/*.test.ts;websocket/*.test.ts"
+	# here): rpc-a…rpc-d, space-a…space-b.
+	"agent-sdk|agent/*.test.ts;sdk/*.test.ts"
+	"convo-lifecycle|convo/*.test.ts;lifecycle/*.test.ts"
+	"features-misc|components/*.test.ts;coordinator/*.test.ts;features/*.test.ts;mcp/*.test.ts"
+	"git-websocket|git/*.test.ts;websocket/*.test.ts"
 	"rewind|rewind/*.test.ts"
-	"sdk-misc|components/*.test.ts;coordinator/*.test.ts;mcp/*.test.ts;sdk/*.test.ts"
 )
 
 # Online test directories intentionally NOT run by the mocked-online matrix.
