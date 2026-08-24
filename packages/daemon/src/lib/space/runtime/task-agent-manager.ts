@@ -3692,10 +3692,13 @@ export class TaskAgentManager {
       );
       return;
     }
+    const settledRow = this.config.db
+      .getSDKMessageRepo()
+      .getMessageByStatusAndUuid(args.sessionId, 'deferred', bufferMessageId);
     buffer.push({
       essences: bufferEssences,
       messageId: bufferMessageId,
-      dbId: bufferDbId,
+      dbId: settledRow?.dbId ?? bufferDbId,
       receivedAt: now,
     });
     this.directSteerBuffers.set(key, buffer);

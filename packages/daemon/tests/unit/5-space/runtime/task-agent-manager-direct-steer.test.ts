@@ -123,6 +123,22 @@ function digestTierPrStateText(eventId: string): string {
   );
 }
 
+function deferredRowFixture(dbId: string, uuid: string): StoredRow {
+  return {
+    dbId,
+    status: 'deferred',
+    message: {
+      type: 'user',
+      uuid,
+      session_id: SESSION_ID,
+      parent_tool_use_id: null,
+      isSynthetic: true,
+      inputKind: 'system',
+      message: { role: 'user', content: [{ type: 'text', text: 'preexisting deferred row' }] },
+    } as unknown as SDKUserMessage,
+  };
+}
+
 function rowText(message: SDKUserMessage): string {
   const content = message.message?.content;
   if (!Array.isArray(content)) return '';
@@ -186,7 +202,16 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
       }),
       getUserMessageIdsByStatus: mock(() => []),
       getSDKMessageRepo: () => ({
-        getDeliveryContent: () => null,
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          rows.some((row) => row.message.uuid === uuid)
+            ? { content: 'x', sendStatus: 'deferred' }
+            : null,
+        getMessageByStatusAndUuid: (_sessionId: string, status: string, uuid: string) => {
+          const row = rows.find(
+            (candidate) => candidate.message.uuid === uuid && candidate.status === status
+          );
+          return row ? { dbId: row.dbId } : null;
+        },
         reopenDeliveryByUuid: () => null,
         markDeliveryDeferredByUuid: (_sessionId: string, uuid: string) =>
           rows.find((row) => row.message.uuid === uuid)?.dbId ?? null,
@@ -196,7 +221,6 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
           row.status = 'failed';
           return row.dbId;
         },
-        getMessageByStatusAndUuid: () => null,
       }),
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () => new Set<string>(),
@@ -668,6 +692,31 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     const steers = steerRows(harness.rows);
     expect(steers).toHaveLength(1);
     expect(rowText(steers[0]!.message)).toContain(`(${DIRECT_STEER_BUFFER_MAX_ENTRIES} events`);
+  });
+
+  it('claims the real row id when the defer path returns the message uuid', async () => {
+    const harness = makeHarness();
+    const preexisting = deferredRowFixture('db-preexisting', 'uuid-preexisting');
+    harness.rows.push(preexisting);
+
+    await harness.manager.injectSubSessionMessage(
+      SESSION_ID,
+      reviewVerdictText('CHANGES_REQUESTED', 'reopen-evt'),
+      true,
+      undefined,
+      'defer',
+      'system',
+      'uuid-preexisting'
+    );
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    expect(steerRows(harness.rows)).toHaveLength(1);
+    expect(harness.statusUpdates).toContainEqual({
+      dbIds: ['db-preexisting'],
+      status: 'consumed',
+    });
+    expect(preexisting.status).toBe('consumed');
   });
 
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
