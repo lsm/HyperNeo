@@ -543,7 +543,11 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
   }
 }
 
-function digestHeader(events: ExternalEventEssenceEntry[], droppedEventCount: number): string {
+function digestHeader(
+  events: ExternalEventEssenceEntry[],
+  droppedEventCount: number,
+  title?: string
+): string {
   const prNumbers = [
     ...new Set(
       events.map((entry) => entry.prNumber).filter((n): n is number => typeof n === 'number')
@@ -558,12 +562,12 @@ function digestHeader(events: ExternalEventEssenceEntry[], droppedEventCount: nu
   else if (repos.length === 1) scope = `, ${repos[0]}`;
   const total = events.length + droppedEventCount;
   const eventWord = total === 1 ? 'event' : 'events';
-  return `External events while you were working (${total} ${eventWord}${scope}):`;
+  return `${title ?? 'External events while you were working'} (${total} ${eventWord}${scope}):`;
 }
 
 export function buildExternalEventDigestMessage(
   events: ExternalEventEssenceEntry[],
-  options?: { droppedEventCount?: number }
+  options?: { droppedEventCount?: number; title?: string }
 ): string {
   if (events.length === 0) return '';
   const droppedEventCount = options?.droppedEventCount ?? 0;
@@ -604,7 +608,7 @@ export function buildExternalEventDigestMessage(
           `${droppedEventCount} older events were omitted from this summary (over the event bound) and may still need attention.`,
         ]
       : [];
-  return [digestHeader(ordered, droppedEventCount), ...lines, ...footer].join('\n');
+  return [digestHeader(ordered, droppedEventCount, options?.title), ...lines, ...footer].join('\n');
 }
 
 export function buildDeferredEventDigestEnvelopeText(

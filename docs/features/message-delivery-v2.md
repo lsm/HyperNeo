@@ -593,3 +593,44 @@ after the lock closes, so the widened delivery feeds drop the queued/retrying
 badge immediately instead of staying stuck until an unrelated write or reconnect.
 `message_delivery` jobs' payloads carry `sessionId`, which the processor derives
 into the change scope.
+
+## 18. Direct-inject tier for external events (mid-turn steering)
+
+Tiered external-event delivery (task #1398) adds a `direct` tier on top of the
+turn-end digest fold: while a workflow sub-session is BUSY (processing / queued /
+waiting_for_input / interrupted), high-value GitHub events are steered into the
+live turn as an interleaved user message via the existing `message_delivery`
+steer role, instead of waiting for turn end. Everything else keeps the digest
+path unchanged.
+
+- **Direct classes** (`classifyExternalEventDirectSteer` in
+  `external-events/event-tiers.ts`): review verdicts
+  (`review_submitted` with state APPROVED/CHANGES_REQUESTED, bot or human),
+  review-BOT inline review comments (`review_comment_polled` from a `[bot]`
+  actor; human review comments and human `comment_polled` stay digest), genuine
+  CI failures (`check_failed`; `check_cancelled`/`check_skipped` stay digest),
+  and `merge_conflict` (`merge_conflict_resolved` stays digest).
+- **Burst coalescing**: events buffer per `(session, event class)` and flush as
+  ONE steer built by the digest renderer, so a 12-comment Codex pass becomes a
+  single steer, not twelve. The flush only folds rows that are still `deferred`;
+  if the turn ended first (turn-end flush already consumed them), no steer is
+  emitted and nothing is delivered twice.
+- **Cooldown / backpressure**: after a steer fires for a class, further
+  direct-class events for that (session, class) fall back to the digest tier
+  until the cooldown expires; overflow therefore still surfaces at turn end.
+- **Tunables** (module constants in `task-agent-manager.ts`, overridable via
+  `TaskAgentManagerConfig` for tests):
+  `DIRECT_STEER_DEBOUNCE_MS = 20_000` (trailing-edge burst window),
+  `DIRECT_STEER_MAX_BURST_WAIT_MS = 60_000` (hard cap so a drip cannot starve
+  the steer forever),
+  `DIRECT_STEER_COOLDOWN_MS = 600_000` (per session+class rate cap),
+  `DIRECT_STEER_BUFFER_MAX_ENTRIES = 200`, and
+  `DIRECT_STEER_COOLDOWN_MAP_CAP = 1_000` (bounded cooldown bookkeeping).
+- **Observability**: every injected steer and every cooldown suppression is
+  logged and counted in the external-event queue-health snapshot
+  (`directSteerInjected`, `directSteerInjectedByClass`,
+  `directSteerSuppressedByCooldown`).
+- **Failure safety**: the steer row is persisted `enqueued` and its source rows
+  are only marked `consumed` after the steer delivery job is successfully
+  enqueued; on enqueue failure the steer row flips back to `deferred` so the
+  information still reaches the agent at turn end.

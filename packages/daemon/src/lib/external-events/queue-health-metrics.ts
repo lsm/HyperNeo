@@ -26,6 +26,9 @@ export interface QueueHealthCounters {
   staleSessionSkips: number;
   pausedSpaceSkips: number;
   cooldownSkips: number;
+  directSteerInjected: number;
+  directSteerSuppressedByCooldown: number;
+  directSteerInjectedByClass: Record<string, number>;
 }
 
 export interface QueueHealthGauges {
@@ -148,6 +151,9 @@ export class ExternalEventQueueMetrics {
   private staleSessionSkips = 0;
   private pausedSpaceSkips = 0;
   private cooldownSkips = 0;
+  private directSteerInjected = 0;
+  private directSteerSuppressedByCooldown = 0;
+  private readonly directSteerInjectedByClass = new Map<string, number>();
 
   constructor(now: number = Date.now()) {
     this.since = now;
@@ -181,6 +187,18 @@ export class ExternalEventQueueMetrics {
 
   recordCooldownSkip(): void {
     this.cooldownSkips += 1;
+  }
+
+  recordDirectSteerInjected(eventClass: string): void {
+    this.directSteerInjected += 1;
+    this.directSteerInjectedByClass.set(
+      eventClass,
+      (this.directSteerInjectedByClass.get(eventClass) ?? 0) + 1
+    );
+  }
+
+  recordDirectSteerSuppressedByCooldown(): void {
+    this.directSteerSuppressedByCooldown += 1;
   }
 
   recordDeliveryTerminal(event: DeliveryTerminalEvent): void {
@@ -221,6 +239,9 @@ export class ExternalEventQueueMetrics {
       staleSessionSkips: this.staleSessionSkips,
       pausedSpaceSkips: this.pausedSpaceSkips,
       cooldownSkips: this.cooldownSkips,
+      directSteerInjected: this.directSteerInjected,
+      directSteerSuppressedByCooldown: this.directSteerSuppressedByCooldown,
+      directSteerInjectedByClass: recordToObject(this.directSteerInjectedByClass),
     };
   }
 
