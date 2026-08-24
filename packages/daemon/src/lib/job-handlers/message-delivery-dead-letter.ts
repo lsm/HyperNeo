@@ -5,6 +5,7 @@ export interface MessageDeliveryDeadLetterSettlement {
   publishStatusChanged(sessionId: string, messageIds: string[]): Promise<unknown>;
   publishSessionError(sessionId: string, error: string): Promise<unknown>;
   settleSkippedDelivery(messageUuid: string): Promise<unknown>;
+  resetStuckProcessingState?(sessionId: string, messageUuid: string): Promise<unknown> | void;
 }
 
 export const DEAD_LETTER_SESSION_ERROR =
@@ -26,6 +27,11 @@ export async function settleMessageDeliveryDeadLetter(
   if (payload.origin === 'space_inject' && payload.role === 'turn') {
     try {
       await settlement.publishSessionError(payload.sessionId, DEAD_LETTER_SESSION_ERROR);
+    } catch {}
+  }
+  if (settlement.resetStuckProcessingState) {
+    try {
+      await settlement.resetStuckProcessingState(payload.sessionId, payload.messageUuid);
     } catch {}
   }
   await settlement.settleSkippedDelivery(payload.messageUuid);

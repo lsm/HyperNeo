@@ -1,4 +1,4 @@
-import type { ProviderFailureErrorKind } from '@hyperneo/shared/provider';
+import type { ProviderAuthStatusInfo, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
 
 export interface ProviderFailureRecord {
   readonly providerId: string;
@@ -18,6 +18,8 @@ export type ProviderFailureChangeListener = (change: ProviderFailureChange) => v
 
 const CREDENTIAL_MESSAGE_PATTERNS: readonly RegExp[] = [
   /\(http 40[13]\)/i,
+  /authentication_error/i,
+  /invalid[ _-]api[ _-]?key/i,
   /invalid acp command/i,
   /acp_command not set/i,
   /acp agent process error:.*\b(?:enoent|eacces|enotdir|eisdir)\b/i,
@@ -112,6 +114,24 @@ export function subscribeProviderFailureChanges(
 
 export function clearProviderFailureRecords(): void {
   providerFailures.clear();
+}
+
+/** @public */
+export function applyRecordedFailureToAuthStatus(
+  providerId: string,
+  status: ProviderAuthStatusInfo
+): ProviderAuthStatusInfo {
+  const failure = providerFailures.get(providerId);
+  if (!failure) {
+    return status;
+  }
+  if (failure.errorKind === 'credential') {
+    return { ...status, isAuthenticated: false, error: failure.message, errorKind: 'credential' };
+  }
+  if (!status.isAuthenticated) {
+    return status;
+  }
+  return { ...status, error: failure.message, errorKind: 'transient' };
 }
 
 /** @public */

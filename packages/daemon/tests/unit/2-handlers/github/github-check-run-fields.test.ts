@@ -5,7 +5,7 @@ import {
   checkRunIdFrom,
   checkRunNameFrom,
   checkRunOccurredAt,
-  isNonFailureConclusion,
+  checkRunTopicAction,
 } from '../../../../src/lib/external-events/github/github-check-run-fields';
 
 describe('checkRunIdFrom', () => {
@@ -101,19 +101,24 @@ describe('checkRunNameFrom', () => {
   });
 });
 
-describe('isNonFailureConclusion', () => {
-  it('treats success, skipped, and neutral as non-failures', () => {
-    expect(isNonFailureConclusion('success')).toBe(true);
-    expect(isNonFailureConclusion('skipped')).toBe(true);
-    expect(isNonFailureConclusion('neutral')).toBe(true);
+describe('checkRunTopicAction', () => {
+  it('treats success, neutral, and empty conclusions as non-events', () => {
+    expect(checkRunTopicAction('success')).toBeNull();
+    expect(checkRunTopicAction('neutral')).toBeNull();
+    expect(checkRunTopicAction('')).toBeNull();
+  });
+
+  it('maps cancelled and skipped conclusions onto their own topic actions', () => {
+    expect(checkRunTopicAction('cancelled')).toBe('cancelled');
+    expect(checkRunTopicAction('skipped')).toBe('skipped');
   });
 
   it('treats failure conclusions as failures', () => {
-    expect(isNonFailureConclusion('failure')).toBe(false);
-    expect(isNonFailureConclusion('cancelled')).toBe(false);
-    expect(isNonFailureConclusion('timed_out')).toBe(false);
-    expect(isNonFailureConclusion('action_required')).toBe(false);
-    expect(isNonFailureConclusion('')).toBe(false);
+    expect(checkRunTopicAction('failure')).toBe('failed');
+    expect(checkRunTopicAction('timed_out')).toBe('failed');
+    expect(checkRunTopicAction('action_required')).toBe('failed');
+    expect(checkRunTopicAction('startup_failure')).toBe('failed');
+    expect(checkRunTopicAction('stale')).toBe('failed');
   });
 });
 

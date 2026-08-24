@@ -141,8 +141,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const token = this.storedCredentialToken ?? this.tokenCache?.token;
     if (token) return { type: 'oauth', accessToken: token };
 
-    const fileToken = await this.loadStoredGitHubToken();
-    if (fileToken) return { type: 'oauth', accessToken: fileToken };
+    try {
+      const fileToken = await this.loadStoredGitHubToken();
+      if (fileToken) return { type: 'oauth', accessToken: fileToken };
+    } catch {}
 
     return null;
   }
@@ -261,7 +263,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token = await this.resolveGitHubToken();
+      const token = await this.resolveGitHubToken(true);
       if (!token) {
         return {
           isAuthenticated: false,
@@ -281,6 +283,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return {
         isAuthenticated: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+        errorKind: 'transient',
       };
     }
   }
@@ -412,22 +415,38 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     return this.serverCache.url;
   }
 
-  private async resolveGitHubToken(): Promise<string | undefined> {
+  private async resolveGitHubToken(
+    propagateStoredCredentialError = false
+  ): Promise<string | undefined> {
     if (this.storedCredentialToken) {
       return this.storedCredentialToken;
     }
 
-    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
+    if (
+      this.tokenCache &&
+      Date.now() < this.tokenCache.expiresAt &&
+      (!propagateStoredCredentialError || this.tokenCache.token)
+    ) {
       return this.tokenCache.token;
     }
 
-    const { token, source } = await this.discoverGitHubToken();
+    const { token, source } = await this.discoverGitHubToken(propagateStoredCredentialError);
     this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS, source };
     return token;
   }
 
-  private async discoverGitHubToken(): Promise<{ token: string | undefined; source: TokenSource }> {
-    const stored = await this.loadStoredGitHubToken();
+  private async discoverGitHubToken(
+    propagateStoredCredentialError = false
+  ): Promise<{ token: string | undefined; source: TokenSource }> {
+    let stored: string | undefined;
+    let storedCredentialError: unknown;
+    let storedCredentialLookupFailed = false;
+    try {
+      stored = await this.loadStoredGitHubToken();
+    } catch (error) {
+      storedCredentialError = error;
+      storedCredentialLookupFailed = true;
+    }
     if (stored) return { token: stored, source: 'auth-file' };
 
     if (this.env.COPILOT_GITHUB_TOKEN) {
@@ -439,18 +458,32 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const ghCliToken = await this.tryGhCliToken();
     if (ghCliToken) return { token: ghCliToken, source: 'gh-cli' };
 
-    return { token: await this.tryGhHostsToken(), source: 'hosts' };
+    const hostsToken = await this.tryGhHostsToken();
+    if (hostsToken) return { token: hostsToken, source: 'hosts' };
+
+    if (propagateStoredCredentialError && storedCredentialLookupFailed) {
+      throw storedCredentialError;
+    }
+
+    return { token: undefined, source: 'hosts' };
   }
 
   private async loadStoredGitHubToken(): Promise<string | undefined> {
+    let content: string;
     try {
-      const content = await fs.readFile(this.authPath, 'utf-8');
-      const data = JSON.parse(content) as Record<string, unknown>;
-      const creds = data['github-copilot'] as StoredCopilotCredentials | undefined;
-      if (creds?.refresh && typeof creds.refresh === 'string') {
-        return creds.refresh;
+      content = await fs.readFile(this.authPath, 'utf-8');
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        return undefined;
       }
-    } catch {}
+      throw error;
+    }
+
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const creds = data['github-copilot'] as StoredCopilotCredentials | undefined;
+    if (creds?.refresh && typeof creds.refresh === 'string') {
+      return creds.refresh;
+    }
     return undefined;
   }
 

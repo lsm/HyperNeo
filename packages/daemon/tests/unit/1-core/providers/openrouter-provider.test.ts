@@ -118,6 +118,54 @@ describe('OpenRouterProvider', () => {
     expect(models[1].family).toBe('gpt');
   });
 
+  it('bypasses the OpenRouter model cache for forced remote discovery', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    process.env.OPENROUTER_ALLOWED_MODELS = 'openrouter/auto, xai/grok-4.3';
+    let callCount = 0;
+    const fetchMock = mock(async () => {
+      callCount++;
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'openrouter/auto', name: `OpenRouter Auto ${callCount}` },
+            { id: 'xai/grok-4.3', name: `Grok ${callCount}` },
+            { id: 'anthropic/claude-sonnet-4.6', name: 'Filtered' },
+          ],
+        }),
+        { status: 200 }
+      );
+    });
+    const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+    await provider.getModels();
+    const cachedModels = await provider.listRemoteModels();
+    const forcedModels = await provider.listRemoteModels({ force: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(cachedModels.map((model) => model.name)).toEqual(['OpenRouter Auto 1', 'Grok 1']);
+    expect(forcedModels.map((model) => model.name)).toEqual(['OpenRouter Auto 2', 'Grok 2']);
+    expect(await provider.getModels()).toBe(forcedModels);
+  });
+
+  it('propagates OpenRouter remote discovery failures instead of returning fallback models', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    let fail = false;
+    const fetchMock = mock(async () => {
+      if (fail) return new Response('Bad gateway', { status: 502 });
+      return new Response(JSON.stringify({ data: [{ id: 'anthropic/claude-sonnet-4.6' }] }), {
+        status: 200,
+      });
+    });
+    const provider = new OpenRouterProvider(process.env, fetchMock as unknown as typeof fetch);
+
+    await provider.getModels();
+    fail = true;
+
+    await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+      'OpenRouter model listing returned HTTP 502'
+    );
+  });
+
   it('returns all API models without capping when using models/user endpoint', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-or-test';
     const data = [

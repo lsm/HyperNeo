@@ -597,6 +597,7 @@ export function setupSessionHandlers(
 
     return {
       currentModel: currentModelId,
+      currentProvider: sessionProvider,
       modelInfo,
     };
   });

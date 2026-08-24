@@ -22,6 +22,7 @@ import {
   codexBackendContextWindow,
 } from './codex-models.js';
 import { Logger } from '../logger.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -392,30 +393,48 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-    const hyperneoCreds = await this.loadCredentials();
-    if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
-      return {
-        isAuthenticated: false,
-        error: hyperneoCreds
-          ? 'API key credentials are not supported via the UI. Click Login to authenticate with OpenAI OAuth.'
-          : 'Not logged in. Click Login to authenticate with OpenAI.',
-      };
-    }
+    return applyRecordedFailureToAuthStatus(this.id, await this.resolveCredentialAuthStatus());
+  }
 
-    if (hyperneoCreds.expires) {
-      const bufferMs = 5 * 60 * 1000;
-      if (Date.now() >= hyperneoCreds.expires - bufferMs) {
+  private async resolveCredentialAuthStatus(): Promise<ProviderAuthStatusInfo> {
+    try {
+      const hyperneoCreds = await this.loadCredentialsRaw();
+      if (!hyperneoCreds || hyperneoCreds.type !== 'oauth') {
         return {
-          isAuthenticated: true,
-          method: 'oauth',
-          expiresAt: hyperneoCreds.expires,
-          needsRefresh: true,
+          isAuthenticated: false,
+          error: hyperneoCreds
+            ? 'API key credentials are not supported via the UI. Click Login to authenticate with OpenAI OAuth.'
+            : 'Not logged in. Click Login to authenticate with OpenAI.',
         };
       }
-      return { isAuthenticated: true, method: 'oauth', expiresAt: hyperneoCreds.expires };
-    }
 
-    return { isAuthenticated: true, method: 'oauth' };
+      if (hyperneoCreds.expires) {
+        const bufferMs = 5 * 60 * 1000;
+        if (Date.now() >= hyperneoCreds.expires - bufferMs) {
+          return {
+            isAuthenticated: true,
+            method: 'oauth',
+            expiresAt: hyperneoCreds.expires,
+            needsRefresh: true,
+          };
+        }
+        return { isAuthenticated: true, method: 'oauth', expiresAt: hyperneoCreds.expires };
+      }
+
+      return { isAuthenticated: true, method: 'oauth' };
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        return {
+          isAuthenticated: false,
+          error: 'Not logged in. Click Login to authenticate with OpenAI.',
+        };
+      }
+      return {
+        isAuthenticated: false,
+        error: error instanceof Error ? error.message : 'Credential lookup failed',
+        errorKind: 'transient',
+      };
+    }
   }
 
   private async verifyCredentials(auth: OpenAIResponsesBridgeAuth): Promise<void> {
@@ -822,17 +841,22 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     } catch {}
   }
 
-  private async loadCredentials(): Promise<StoredCredentials | null> {
+  private async loadCredentialsRaw(): Promise<StoredCredentials | null> {
     if (this.cachedCredentials) return this.cachedCredentials;
 
+    const content = await fs.readFile(this.authPath, 'utf-8');
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const creds = data['openai'] as StoredCredentials | undefined;
+    if (creds?.access) {
+      this.cachedCredentials = creds;
+      return creds;
+    }
+    return null;
+  }
+
+  private async loadCredentials(): Promise<StoredCredentials | null> {
     try {
-      const content = await fs.readFile(this.authPath, 'utf-8');
-      const data = JSON.parse(content) as Record<string, unknown>;
-      const creds = data['openai'] as StoredCredentials | undefined;
-      if (creds?.access) {
-        this.cachedCredentials = creds;
-        return creds;
-      }
+      return await this.loadCredentialsRaw();
     } catch {}
     return null;
   }

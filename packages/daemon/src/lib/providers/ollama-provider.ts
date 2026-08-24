@@ -1,4 +1,5 @@
 import type {
+  ListRemoteModelsOptions,
   ModelTier,
   Provider,
   ProviderAuthStatusInfo,
@@ -37,6 +38,8 @@ interface OllamaProviderOptions {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }
+
+class OllamaModelAuthError extends Error {}
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/$/, '');
@@ -146,26 +149,23 @@ export class OllamaProvider implements Provider {
     if (this.kind === 'cloud' && !this.getApiKey()) return [];
     if (this.modelCache && Date.now() - this.modelCacheAt < 5 * 60_000) return this.modelCache;
     try {
-      const response = await this.fetchImpl(`${this.getBaseUrl()}/api/tags`, {
-        headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
-      });
-      if (response.status === 401 || response.status === 403) {
-        const keyName = this.kind === 'cloud' ? 'OLLAMA_CLOUD_API_KEY' : 'OLLAMA_API_KEY';
-        this.lastAuthError = `Ollama API key was rejected. Check ${keyName}.`;
-        return [];
-      }
-      if (!response.ok) return this.fallbackModels();
-      const body = (await response.json()) as OllamaTagsResponse;
-      const models = (body.models ?? [])
-        .map((model) => this.toModelInfo(model))
-        .filter((model): model is ModelInfo => model !== null);
-      this.modelCache = models.length > 0 ? models : this.fallbackModels();
-      this.modelCacheAt = Date.now();
-      this.lastAuthError = undefined;
-      return this.modelCache;
-    } catch {
-      return this.fallbackModels();
+      return await this.fetchModels();
+    } catch (error) {
+      return error instanceof OllamaModelAuthError ? [] : this.fallbackModels();
     }
+  }
+
+  async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
+    if (this.kind === 'cloud' && !this.getApiKey()) return [];
+    if (
+      !options?.force &&
+      options?.baseUrl === undefined &&
+      this.modelCache &&
+      Date.now() - this.modelCacheAt < 5 * 60_000
+    ) {
+      return this.modelCache;
+    }
+    return this.fetchModels(options?.baseUrl, options?.baseUrl === undefined);
   }
 
   ownsModel(modelId: string): boolean {
@@ -249,6 +249,32 @@ export class OllamaProvider implements Provider {
   async shutdown(): Promise<void> {
     for (const bridge of this.bridgeServers.values()) bridge.stop();
     this.bridgeServers.clear();
+  }
+
+  private async fetchModels(baseUrl = this.getBaseUrl(), updateCache = true): Promise<ModelInfo[]> {
+    const response = await this.fetchImpl(`${normalizeBaseUrl(baseUrl)}/api/tags`, {
+      headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
+    });
+    if (response.status === 401 || response.status === 403) {
+      const keyName = this.kind === 'cloud' ? 'OLLAMA_CLOUD_API_KEY' : 'OLLAMA_API_KEY';
+      const authError = `Ollama API key was rejected. Check ${keyName}.`;
+      if (updateCache) this.lastAuthError = authError;
+      throw new OllamaModelAuthError(authError);
+    }
+    if (!response.ok) {
+      throw new Error(`Ollama model listing returned HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as OllamaTagsResponse;
+    const models = (body.models ?? [])
+      .map((model) => this.toModelInfo(model))
+      .filter((model): model is ModelInfo => model !== null);
+    const result = models.length > 0 ? models : this.fallbackModels();
+    if (updateCache) {
+      this.modelCache = result;
+      this.modelCacheAt = Date.now();
+      this.lastAuthError = undefined;
+    }
+    return result;
   }
 
   private getOrCreateBridge(baseUrl: string, apiKey?: string): OllamaBridgeServer {

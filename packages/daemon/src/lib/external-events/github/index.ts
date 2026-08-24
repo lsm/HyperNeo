@@ -9,6 +9,8 @@ export {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
+  normalizeGitHubMergeConflict,
+  normalizeGitHubReview,
   mapEventType,
   repoFromPayload,
   toExternalEvent,

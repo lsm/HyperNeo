@@ -18,6 +18,7 @@ import { Database as BunDatabase } from './sqlite-compat';
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
 const MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES = 3;
+const MESSAGE_SEARCH_MERGE_INTERVAL_MS = 30_000;
 
 export class DatabaseCore {
   private db: BunDatabase;
@@ -28,6 +29,8 @@ export class DatabaseCore {
   private messageSearchMergeClosed = false;
   private messageSearchMergeCancel: (() => void) | null = null;
   private messageSearchMergeWorkerFailures = 0;
+  private messageSearchMergeStarted = false;
+  private messageSearchMergeIntervalMs = MESSAGE_SEARCH_MERGE_INTERVAL_MS;
 
   constructor(private dbPath: string) {
     this.db = null as unknown as BunDatabase;
@@ -59,16 +62,16 @@ export class DatabaseCore {
     createTables(this.db);
 
     configureMessageSearchFts(this.db);
-    this.startMessageSearchMergeTimer();
   }
 
-  private startMessageSearchMergeTimer(): void {
-    if (this.messageSearchMergeTimer || this.messageSearchMergeInFlight) return;
+  startMessageSearchMerges(): void {
+    if (this.messageSearchMergeStarted || this.messageSearchMergeClosed) return;
+    this.messageSearchMergeStarted = true;
     this.scheduleMessageSearchMerge();
   }
 
   private scheduleMessageSearchMerge(): void {
-    if (this.messageSearchMergeClosed) return;
+    if (this.messageSearchMergeClosed || this.messageSearchMergeInFlight) return;
     this.messageSearchMergeTimer = setTimeout(() => {
       this.messageSearchMergeTimer = null;
       this.messageSearchMergeInFlight = true;
@@ -90,7 +93,7 @@ export class DatabaseCore {
         }
         this.scheduleMessageSearchMerge();
       });
-    }, 30_000);
+    }, this.messageSearchMergeIntervalMs);
   }
 
   getDb(): BunDatabase {

@@ -796,6 +796,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     startupPhase('HTTP/WS server bound — createDaemonApp init complete');
+    const openMessageSearchMergeGate = (): void => db.startMessageSearchMerges();
+    void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });
@@ -844,7 +846,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
           if (!sdkRepo) return;
-          const session = sessionManager?.getSession(payload.sessionId);
+          const session =
+            taskAgentManager?.getSubSession(payload.sessionId) ??
+            sessionManager?.getSession(payload.sessionId);
           void settleMessageDeliveryDeadLetter(payload, {
             markDeliveryFailedByUuid: (sid, uuid) =>
               sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
@@ -858,6 +862,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               internalEventBus.publish('session.error', { sessionId: sid, error }),
             settleSkippedDelivery: (uuid) =>
               session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
+            resetStuckProcessingState: (sid, uuid) =>
+              session?.clearStuckProcessingState(uuid) ?? Promise.resolve(),
           }).catch(() => {});
         },
       }

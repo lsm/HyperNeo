@@ -9,6 +9,7 @@ import {
   clearModelsCache,
   getModelsCache,
   setModelsCache,
+  updateProviderModelsInCache,
   getSupportedModelsFromQuery,
   initializeModels,
   getSessionModelInfo,
@@ -142,7 +143,8 @@ describe('Model Service', () => {
 
     function registerGlmProvider(
       getModels: () => Promise<ModelInfo[]>,
-      isAvailable: () => Promise<boolean> = async () => true
+      isAvailable: () => Promise<boolean> = async () => true,
+      hasCuratedModelList: () => boolean = () => false
     ): { getModels: ReturnType<typeof mock> } {
       const getModelsMock = mock(getModels);
       getProviderRegistry().register({
@@ -150,6 +152,7 @@ describe('Model Service', () => {
         displayName: 'GLM',
         isAvailable,
         getModels: getModelsMock,
+        hasCuratedModelList,
         ownsModel: () => true,
         getModelForTier: () => undefined,
         buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
@@ -390,15 +393,20 @@ describe('Model Service', () => {
       }
     });
 
-    it('treats an empty catalog response as recovery and installs the fallback slice', async () => {
+    it('treats an uncurated empty catalog as transient but a curated empty list as recovery', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
         let empty = false;
-        const { getModels } = registerGlmProvider(async () => {
-          if (!empty) throw new Error('Endpoint returned HTTP 503');
-          return [];
-        });
+        let curated = false;
+        const { getModels } = registerGlmProvider(
+          async () => {
+            if (!empty) throw new Error('Endpoint returned HTTP 503');
+            return [];
+          },
+          async () => true,
+          () => curated
+        );
 
         await refreshModels();
         expect(getProviderFailure('glm')?.errorKind).toBe('transient');
@@ -408,14 +416,18 @@ describe('Model Service', () => {
         await flushMicrotasks();
 
         expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('glm')?.message).toBe('Provider returned no models');
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        curated = true;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
         expect(getProviderFailure('glm')).toBeUndefined();
         expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
-        expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(true);
-        expect(
-          getAvailableModels('global')
-            .filter((m) => m.provider === 'glm')
-            .map((m) => m.id)
-        ).toEqual(GlmProvider.MODELS.map((m) => m.id));
+        expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
       } finally {
         jest.useRealTimers();
       }
@@ -936,14 +948,15 @@ describe('Model Service', () => {
       }
     });
 
-    it('keeps credential failures dormant when an empty foreground load succeeds', async () => {
+    it('reclassifies a credential failure as transient when the catalog answers empty without curation', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
       try {
-        let mode: 'reject' | 'empty' = 'reject';
+        let mode: 'reject' | 'empty' | 'ok' = 'reject';
         const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
           if (mode === 'reject') throw new Error('Request failed (http 401)');
-          return [];
+          if (mode === 'empty') return [];
+          return [glmModel('glm-5-back')];
         });
 
         await refreshModels();
@@ -952,13 +965,16 @@ describe('Model Service', () => {
         mode = 'empty';
         await refreshModels();
         expect(getModels).toHaveBeenCalledTimes(2);
-        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('glm')?.message).toBe('Provider returned no models');
 
-        jest.advanceTimersByTime(180_001);
+        mode = 'ok';
+        jest.advanceTimersByTime(60_001);
         await flushMicrotasks();
 
-        expect(getModels).toHaveBeenCalledTimes(2);
-        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-back')).toBe(true);
       } finally {
         jest.useRealTimers();
       }
@@ -1227,6 +1243,291 @@ describe('Model Service', () => {
 
       const cache = getModelsCache();
       expect(cache.size).toBe(0);
+    });
+  });
+
+  describe('updateProviderModelsInCache', () => {
+    const acpModels: ModelInfo[] = [
+      {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ];
+
+    function seedCache(entries: Record<string, ModelInfo[]>, timestamp?: number) {
+      setModelsCache(new Map(Object.entries(entries)), timestamp);
+    }
+
+    it('replaces the provider slice while preserving other providers', () => {
+      seedCache({
+        global: [...mockModels, { ...acpModels[0], id: 'stale-acp-model', contextWindow: 1000 }],
+      });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+    });
+
+    it('appends the provider models when the cached entry has no slice for the provider', () => {
+      seedCache({ global: mockModels });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('removes the provider slice when the replacement list is empty', () => {
+      seedCache({ global: [...mockModels, ...acpModels] });
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('does not create a missing cache entry', () => {
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(false);
+      expect(getModelsCache().size).toBe(0);
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('retains a provider slice stashed while the cache is missing and merges it into the next refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+    });
+
+    it('replaces the rebuilt provider slice with a retained one on the next refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [{ ...acpModels[0], id: 'acp-default' }],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+    });
+
+    it('drops retained provider slices when the cache is cleared', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+      clearModelsCache();
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('keeps a retained provider slice across repeated rebuilds until superseded', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const providerModel: ModelInfo = { ...acpModels[0], id: 'acp-from-provider' };
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [providerModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+
+      const supersedingModels: ModelInfo[] = [{ ...acpModels[0], id: 'newer-acp-model' }];
+      expect(updateProviderModelsInCache('acp', supersedingModels)).toBe(true);
+
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(supersedingModels);
+    });
+
+    it('skips the post-refresh re-apply when the cache is cleared mid-refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'slow-reapply-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [{ ...acpModels[0], id: 'acp-default', provider: 'slow-reapply-provider' }];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+      clearModelsCache();
+
+      await refreshPromise;
+
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('leaves other cache keys untouched', () => {
+      seedCache(
+        {
+          global: [...mockModels, ...acpModels],
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getAvailableModels('session-123')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('supports an explicit cache key', () => {
+      seedCache(
+        {
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', [], 'session-123');
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('session-123')).toEqual(mockModels);
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('re-applies the provider slice after an in-flight refresh rebuilds the entry', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'slow-splice-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [
+            'slow-splice-model-1',
+            'slow-splice-model-2',
+            'slow-splice-model-3',
+            'slow-splice-model-4',
+          ].map((id) => ({
+            id,
+            name: 'Slow Splice Model',
+            family: 'test',
+            provider: 'slow-splice-provider',
+            contextWindow: 100000,
+            description: 'Slow splice model',
+            releaseDate: '2026-01-01',
+            available: true,
+          }));
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      await refreshPromise;
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
+    });
+
+    it('keeps a stale entry stale so the next read re-triggers a background refresh', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'fresh-model',
+          name: 'Fresh Model',
+          family: 'test',
+          provider: 'fresh-provider',
+          contextWindow: 100000,
+          description: 'Fresh model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'fresh-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels }, Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      getAvailableModels('global');
+
+      const deadline = Date.now() + 3_000;
+      let loadTriggered = false;
+      while (Date.now() < deadline) {
+        if (getModels.mock.calls.length > 0) {
+          loadTriggered = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      const registryState = getProviderRegistry()
+        .getAll()
+        .map((provider) => provider.id)
+        .join(',');
+      expect(
+        loadTriggered,
+        `stale entry should trigger a provider load on read; registry=[${registryState}]`
+      ).toBe(true);
     });
   });
 
@@ -2650,6 +2951,37 @@ describe('Model Service', () => {
       await refreshProviderModels();
 
       expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('accepts an explicitly curated empty provider catalog', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { AcpProvider } = await import('../../../../src/lib/providers/acp-provider');
+      const provider = new AcpProvider({ HYPERNEO_ACP_COMMAND: 'claude --acp' }, async () => {});
+      provider.setCuratedModels([]);
+      getProviderRegistry().register(provider);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('acp')).toBeUndefined();
+      expect(getAvailableModels('global').some((model) => model.provider === 'acp')).toBe(false);
+    });
+
+    it('propagates a recorded probe rejection into the provider auth status', async () => {
+      const fetchImpl = mock(
+        async () => new Response('unauthorized', { status: 401 })
+      ) as unknown as typeof fetch;
+      const glm = new GlmProvider({ GLM_API_KEY: 'invalid-key' }, fetchImpl);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().register(glm);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const status = await glm.getAuthStatus();
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('Z.ai API key rejected (HTTP 401)');
     });
 
     it('notifies failure-change listeners once per transition during refreshes', async () => {

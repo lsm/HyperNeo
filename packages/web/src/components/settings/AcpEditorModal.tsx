@@ -16,6 +16,7 @@ interface AcpEditorModalProps {
   command: string;
   models?: AcpConfiguredModel[];
   envBacked?: boolean;
+  configJson?: string;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -28,12 +29,27 @@ function acpCommandsEquivalent(left: string, right: string): boolean {
   }
 }
 
+function readSiblingConfig(configJson: string | undefined): Record<string, unknown> {
+  if (!configJson) return {};
+  try {
+    const parsed: unknown = JSON.parse(configJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const siblings = { ...(parsed as Record<string, unknown>) };
+    delete siblings.command;
+    delete siblings.models;
+    return siblings;
+  } catch {
+    return {};
+  }
+}
+
 export function AcpEditorModal({
   providerId,
   providerName,
   command: initialCommand,
   models: initialModels,
   envBacked = false,
+  configJson,
   onClose,
   onSaved,
 }: AcpEditorModalProps) {
@@ -58,6 +74,8 @@ export function AcpEditorModal({
         acpCommandsEquivalent(fetchedCommand, currentCommand)
       ? models
       : [];
+  const persistEmptySelection =
+    persistedModels !== undefined && persistedModels.length === 0 && !commandChanged;
 
   const existingModelIds = new Set((persistedModels ?? []).map((m) => m.id));
   const selectableFetched = fetchedModels?.filter((m) => !existingModelIds.has(m.id)) ?? [];
@@ -112,8 +130,9 @@ export function AcpEditorModal({
     try {
       await updateProvider(providerId, {
         configJson: JSON.stringify({
+          ...readSiblingConfig(configJson),
           ...(trimmedCommand ? { command: trimmedCommand } : {}),
-          models: persistedModels,
+          ...(persistedModels?.length || persistEmptySelection ? { models: persistedModels } : {}),
         }),
       });
       toast.success(`${providerName} updated`);
@@ -208,7 +227,9 @@ export function AcpEditorModal({
 
           {!persistedModels?.length ? (
             <p class="text-xs text-gray-500 italic">
-              No models selected — fetch and add models, or leave empty to use ACP Default.
+              {persistEmptySelection
+                ? 'No models selected — saving will hide all models for this command.'
+                : 'No models selected — fetch and add models, or leave empty to use ACP Default.'}
             </p>
           ) : (
             <div class="space-y-1.5">

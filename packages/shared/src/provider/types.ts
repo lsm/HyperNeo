@@ -62,6 +62,11 @@ export interface ProviderOAuthFlowData {
   message: string;
 }
 
+export interface CuratedModel {
+  id: string;
+  name?: string;
+}
+
 export interface ListRemoteModelsOptions {
   force?: boolean;
   command?: string;
@@ -80,6 +85,8 @@ export interface Provider {
   getModels(): Promise<ModelInfo[]>;
 
   getCachedModels?(): ModelInfo[] | null;
+
+  hasCuratedModelList?(): boolean;
 
   listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
 
@@ -117,6 +124,8 @@ export interface Provider {
   shutdown?(): Promise<void>;
 
   clearModelCache?(): void;
+
+  setCuratedModels?(models: CuratedModel[] | undefined): void;
 
   getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
 }

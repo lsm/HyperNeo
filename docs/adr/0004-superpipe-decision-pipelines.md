@@ -65,6 +65,25 @@ inside the transaction, not after commit). See "Pilot 11" below for
 the coupled TS/SQL badge predicate, the per-variant admission placement
 divergence, and the closing sweep.
 
+Validated further by pilot 8 / chain I (2026-08-23): the pending-queue
+drain — admission gates and envelope transforms as pure cores, the drain
+admission as a `decisionRun`, two flush sites as its gather → decide →
+interpret consumers — and the injection shell around the Pilot 4 inject
+decision, which stays single-sourced in `decideInjectDelivery` while its
+delivery-row steps and v1/v2 branch moved to a steps module. See
+"Pilot 8" below for the boundary caveats, the envelope-detector
+retirement, and the remaining mini-pilot shelf for
+`task-agent-manager.ts`.
+
+Validated further by pilot 12 (2026-08-23, first web-side pilot — the UI
+chain's own "pilot 6", renumbered here to keep the ADR sequence unambiguous):
+the four hand-rolled LiveQuery subscription hook lifecycles pinned then
+migrated onto one pure machine, `live-query-lifecycle.ts` — composition stayed
+a plain function under the earn-the-layer rule, so the pilot validates the
+reduceRun shape (reducer + effects-executing facade) without yet promoting the
+combinator; see "Pilot 12" below for the rule-of-three count and the recorded
+config drift.
+
 Revised 2026-08-20 after owner review: scope widened from decision cores to pure
 pipelines generally — decisions, multi-step transforms (rendering/projection), and
 staged async flows (decide → effect → re-snapshot). The boundaries in
@@ -1666,6 +1685,275 @@ Pilot 11 PRs: #2736, #2767, #2794, #2815, plus this closing sweep. Numbering
 ledger for the survey's chains: pilot 7 is chain P; 8 stays reserved for chain I
 per pilot 7's note; 9 is chain C per its in-flight closing sweep; 10 is chain A
 (#2819); 11 is chain B.
+
+## Pilot 8 — chain I: pending-queue drain + injection shell (2026-08-23)
+
+Chain I is the chain Pilot 7's close unblocked: the durable pending-message
+queue's drain paths and the injection shell that delivers into sub-sessions —
+the code that shares `injectMessageIntoSession` call sites with the spawn seam.
+Six PRs: I1 the characterization pins (#2799 — 1,143 lines pinning drain
+admission, envelope formatting, per-row outcomes, the space-agent flush, the
+terminal guard, and pending-drain-through-the-v2-shell, plus 82
+reset-context-per-turn pins), I2 the drain/envelope cores (#2809), I3 the
+injection-shell delivery steps (#2817), I4 the drain admission composed as a
+`decisionRun` (#2829), I5 the space-agent flush as the pipeline's second
+consumer (#2840), and this closing sweep.
+
+Extracted:
+
+- `pending-drain-gates.ts` — `derivePendingQueueTargetNames` (the bare +
+  node-prefixed target-name pair) and `selectDrainablePendingRows`
+  (targetKind filter, executionless-safety filter, id dedup, createdAt
+  ordering).
+- `pending-envelope.ts` — `pendingSourceLevel`, `hasAgentMessageEnvelope`,
+  `isHumanPendingSource`, and the two row formatters
+  (`formatPendingRowForNodeAgent`, `formatPendingRowForSpaceAgent`) that pass
+  through already-enveloped bodies or re-envelope bare ones.
+- `injection-delivery-steps.ts` — the recurring delivery-row transitions
+  (`reopenFailedDeliveryRow`, `flipDeliveryRowToDeferred`,
+  `failDeliveryRowInBackground`, `settleDeliveryRowStatus`) plus
+  `deliverInjectedMessage` (the v1/v2 delivery branch).
+- `pending-drain-decision-pipeline.ts` — the `decisionRun` composition
+  (empty-listings short-circuit → drainable-rows admission → terminal skip),
+  exposed as `decidePendingDrainAdmission`.
+
+**The injection shell composes on the Pilot 4 core — no second decision core.**
+The chain's standing constraint was that the inject decision stays
+single-sourced in `decideInjectDelivery`. What I3 extracted from
+`injectMessageIntoSession` is everything *around* that call: the row-status
+transitions its interpreter performs per decision arm, and the terminal v1/v2
+delivery cascade. The shell is now gather → `decideInjectDelivery` →
+interpret, with the interpreter's shared effects in the steps module and the
+decision inputs (parent-task rate/usage status, slot reset, active delivery
+job, unconsumed work) still gathered shell-side. The two flush sites —
+`flushPendingMessagesForTarget` (node agents) and, since I5,
+`flushPendingMessagesForSpaceAgent` — are the drain pipeline's two gather →
+decide → interpret consumers; the per-row delivery loop stays shell-owned at
+both (the ADR Q3 never-the-loop rule), as do the injection lock and the double
+terminal guard in `injectSubSessionMessageWithOrigin` (checked before and
+after lock acquisition).
+
+Boundary caveats, recorded for the same reason as pilot 3's:
+
+1. **Maintenance effects run ahead of the core.** Both flush sites call
+   `enforceRetention` and `expireStale` before the admission decision —
+   mutate, then gather listings, then decide. A skip decision is therefore
+   not a no-op: expired rows are already gone. The ordering is maintain →
+   gather → decide → interpret here, recorded rather than normalized
+   (retention belongs to the queue, not to the drain decision).
+2. **The dual-name gather carries a defensive dedup and a tiebreak seam.**
+   The two target names are disjoint selectors (`target_agent_name = ?`), so
+   the core's `seenIds` dedup can never fire in production — dead defensive
+   symmetry, pilot 3's rebind-guard precedent. Ordering is split across two
+   syntaxes: each SQL listing orders `created_at ASC, rowid ASC`, and the core
+   re-sorts the merged set by `createdAt` only, so a same-millisecond tie
+   between rows from the two listings resolves by listing order (bare name
+   first), not rowid.
+3. **The space-agent site pins its admission inputs.** I5 hardcodes
+   `executionPresent: true`: the injector-presence check ahead of the core is
+   the real gate, and the pre-pipeline behavior admitted every `space_agent`
+   row regardless of `workflowNodeId`, so the executionless-safety filter
+   must not apply (pinned: node-scoped space_agent rows still drain). Pilot
+   3's defused-gate phenomenon — the gate list is not the complete drain
+   policy.
+4. **The injection interpreter re-derives a gated input with no await
+   between.** `hasActiveDeliveryJob` feeds the core (it gates the
+   `delivery_job_active` refusal) and is re-checked at the
+   `clear_before_deliver` branch — with nothing awaited on that path between
+   decision and re-check, so the second read can only diverge through
+   synchronous mutation. A pre-existing double-check carried verbatim (pilot
+   5's re-derived-predicate caveat in its weakest form); recorded rather than
+   removed.
+5. **The typed skip reasons collapse at both shells.** The pipeline
+   distinguishes `no_pending_rows` from `no_drainable_rows`; both production
+   consumers map any skip to the same early return, so the distinction is
+   carried by the decision value and pinned by the suite only — the
+   shadowed-arms phenomenon in its mildest form.
+6. **The v1/v2 branch rides an env boolean through the step.**
+   `deliverInjectedMessage` takes `deliveryV2Enabled` as an input and keeps
+   the V1 memory-queue path inside the extracted step — pilot 4's deliberate
+   non-goal (the V1 env-gated legacy path untouched) carried into the module.
+
+**The envelope detector is retired from production paths.** Pre-I2,
+`hasAgentMessageEnvelopeForTest` was the envelope detector *misnamed as
+test-only* and exported from `task-agent-manager.ts` — while both production
+flush paths called it directly. I2 folded it into `pending-envelope.ts` as the
+production-named `hasAgentMessageEnvelope`, consumed only through the two row
+formatters; the `ForTest` export and its dedicated describe block are gone,
+and no reference to the old name remains anywhere (verified in this sweep).
+Recorded with it, I3's one review-driven behavior fix: the original step
+voided the async fail step from the `onEnqueueFailure`/`terminalizeOnTimeout`
+callbacks, turning a synchronous `markDeliveryFailedByUuid` throw into a
+detached rejection the fatal process logger treats as exit-worthy;
+`failDeliveryRowInBackground` keeps the mark synchronous (throws propagate
+through `awaitDeliveryConsumption` as before) and leaves only the status
+publish fire-and-forget with its own swallow.
+
+**The closing sweep found no dead inline copies.** Each conversion PR deleted
+its inline copy as it landed — the envelope-format ternaries (I2), the
+delivery-row transitions and the v1/v2 cascade (I3), the bare
+`selectDrainablePendingRows` call (I4), and the space-agent inline
+targetKind filter + empty check (I5). knip (files/dependencies/exports),
+oxlint, and `tsc --noEmit` are clean, verified in this sweep. Live
+near-duplicates deliberately kept: the defer arm's direct
+`markDeliveryDeferredByUuid` — the mark-without-publish variant, since
+`settleDeliveryRowStatus` publishes 'deferred' immediately after and routing
+through `flipDeliveryRowToDeferred` would double-publish — and, one file over,
+`repairQueuedWorkflowNodeHandoffs`'s own inline `targetKind === 'node_agent'`
+filter, which belongs to Pilot 3's recorded phase-1 mini-pilot, not this
+chain. Every core export is production-consumed or pinned by the suites
+(Decision item 6); the three pipeline gates are production-internal wiring
+composed into the run and directly test-consumed by the identity pins —
+pilot 9's caveat-2 shape.
+
+**Costs:** production +330 lines of new modules (38 + 84 + 159 + 49) against
+`task-agent-manager.ts` +103/−188 (net −85); tests +2,064/−41 across I1–I5 —
+I1's pin suites (1,143 + 82) and the four module suites
+(149 + 228 + 330 + 203), plus I5's space-agent admission pin. As in the
+earlier pilots, the value is testability: the drain admission and envelope
+tables now run against pure functions with no runtime fixture.
+
+Pilot 8 PRs: #2799, #2809, #2817, #2829, #2840, plus this closing sweep.
+
+**Remaining mini-pilot shelf for `task-agent-manager.ts`**, recorded as
+future candidates (each pinned by a decision-table test before extraction,
+per the pilot-3 non-goal discipline):
+
+- **The MCP-factory task-tool handlers onto the Pilot 5 routing cores.** The
+  bound node-agent MCP callbacks (`onCreateStandaloneTask`, `onPublishTask`,
+  `onArchiveTask`, exposed through `node-agent-tools.ts`'s task handlers)
+  still re-implement gates inline: `onArchiveTask` repeats the
+  archive-active-run gate with its own message variant, and `onPublishTask`
+  enforces no draft-only gate at all — it calls a bare `publishTask`
+  (`setTaskStatus(taskId, 'open')`), so the node-agent publish path can
+  publish a non-draft task that both the MCP tool (`routePublishTask`) and
+  the RPC handler reject. Pilot 5's sweep recorded this surface as
+  never-converted; folding it onto `task-transition-routing.ts` is the
+  candidate.
+- **The `rehydrateSubSession` failure-cleanup asymmetry.** The catch around
+  `startStreamingQuery`/`replayPendingMessagesAfterRuntimeProvisioning`
+  unwinds the registration set (bookkeeping, index, conditional
+  session-manager unregister), but the guarded window covers only that final
+  stage: a throw between registration and the try — the tool-continuation
+  listing or transcript sanitization — leaves the session fully registered
+  with no unwind. The inverse set and the registration set are not aligned;
+  pin first, then narrow the window or move registration inside it.
+- **The rehydrate admission gates.** `performSubSessionRehydrate`'s
+  early-return ladder (already-indexed → no execution → no parent task →
+  parent cancelled/archived/stopped → space missing → run cancelled →
+  restore-null) is a decision table living in control flow; the
+  `rehydrateSubSession` wrapper's dedup + restore-lock is shell, but the
+  ladder is extraction material once pinned.
+
+## Pilot 12 — web live-query subscription lifecycle (2026-08-23)
+
+Pilot 12 (the UI-side pilot 6) carried the pattern out of the daemon into
+`packages/web`: the four hand-rolled LiveQuery subscription lifecycles —
+`useSpaceTaskMessages`, `useActorMessageProjections`, `useTaskMilestones`,
+`useGroupMessages` — each a drifted copy of the same
+subscribe/snapshot/delta/error/reconnect machinery, were characterized with pin
+files written green against the pre-migration hooks, then migrated one PR at a
+time onto a single pure machine, `packages/web/src/lib/live-query-lifecycle.ts`
+(224 lines): five statuses (`subscribing`/`awaiting-snapshot`/`live`/
+`error-retry`/`disposed`), six events, and a pure
+`(state, event) → { state, effects[] }` transition that only declares effects
+(`re-snapshot`, `retry-with-backoff`, `emit-to-store`, `schedule-cleanup`),
+never executes them. Events whose `generation` does not match the current
+machine state are dropped structurally (this guards the dispatch origin,
+promise completion, and retry timers that captured their generation; incoming
+LiveQuery snapshot/delta payloads have no embedded generation, so the listeners
+stamp them with `lifecycle.generation` at receipt time and that stamped value
+is what the guard tests). Snapshot-retry delay/budget/enabled are config so
+that drifted copies adopt the
+machine without forks (`snapshotRetryEnabled: false` arrived as an optional
+flag for exactly that). The hooks keep the shell role — subscription handles,
+timers, row stores, and effect execution; the sandwich is the same, the
+"class" is a Preact effect.
+
+**Composition status: plain function, no superpipe.** The machine is a single
+switch decider with no staged effects, so a pipeline layer would not earn its
+place (Decision item on blessed idioms; the call was made in PR 3 of the chain
+and held). Consequence, reconciled by the closing sweep: the web `superpipe`
+dependency added for the pilot "functional cores" is unused and was removed
+(only daemon modules import it, and daemon declares its own) — re-add it when a
+superpipe-based combinator actually lands in web. The pilot therefore validates
+the *shape* `reduceRun` is meant to own — a per-event reducer plus a
+facade/executor that interprets its effects — without promoting the combinator.
+
+**Rule-of-three count for `reduceRun`.** The executor half of the shape
+(dispatch → transition → interpret effects, plus timer cleanup) is hand-rolled
+four times today, once per facade, ~30–40 structurally identical lines each:
+4 real uses, at the promotion threshold. The next consumer is already scouted,
+not speculative: the pilot-12 closing report's store assessment finds
+`app-mcp-store`, `space-mcp-store`, and `skills-store` fit the machine
+(single fixed subscription, snapshot/delta listeners, reconnect resubscribe;
+needs `snapshotRetryEnabled: false`, an async bridge for awaited-and-throwing
+subscribes, a fresh machine per actual subscription lifecycle since
+`disposed` is terminal — `skills-store`'s ref-counted `subscribe()` must key
+machine creation to the 0→1 transition, not to each acquisition — and a
+delta-gating adapter or explicit behavior-change decision, since these stores
+apply matching deltas unconditionally while the machine emits them only from
+`live`), with
+`space-store` (four near-identical blocks, highest payoff) and
+`global-store` (dynamic params) behind small decisions. What blocks promotion
+is not the count but drift: the four executors differ in config and policy —
+snapshot watchdog on/off, subscribe-rejection retry ladder, error surfacing,
+reconnect mechanism — consolidated in the closing report's drift table with
+proposed (not applied) unification PRs. Unify first and the combinator falls
+out with structural differences; promote now and the drift calcifies inside it.
+
+**Costs:** production +385 web lines — the machine (+224) against four facades
+914 → 1,075 (+161 of interpretation wiring; no hook shrank, and none was
+expected: the pilots deduplicate *decisions*, and the per-hook row stores,
+sorters, and side channels remain hook-owned by design). Tests +2,118: the
+machine contract suite (496 lines, including a full status×event
+transition-table pin) plus four `.lifecycle.test.ts` characterization files
+(584 + 352 + 272 + 414). Pins-first discipline held: every pre-existing suite
+passed unchanged except one pinned expectation that moved 12 → 14 subscribe
+calls — the old inline code let a superseded generation's subscribe resolution
+consume retry budget where the machine's generation guard drops it, restoring
+the full budget on reconnect.
+
+**The closing sweep found the migrations clean.** Diffed against their
+pre-migration bodies, the hooks retain no retired inline lifecycle remnants —
+STM's watchdog consts, GRP's old `subscribeWithRetry`/`MAX_RETRIES` closure,
+and the inline generation counters are all gone; GRP's subscribe-rejection
+ladder survives by design as an executor concern (the machine has no
+request-failure event) and is U3's extraction target in the closing report; knip
+(files/dependencies/exports), oxlint, and `tsc --noEmit` are clean on web. The
+one find was the unused `superpipe` dependency above. Recorded, not removed:
+the `'full'` query variant of `useSpaceTaskMessages` has no production caller
+in web (daemon still registers the named query); `LiveQueryEmission`/
+`LiveQueryLifecycleTransition` are exported contract types with no external
+importer. Full drift table, store-variant assessment, and unification
+proposals U1–U6 (watchdog everywhere, one reconnect mechanism, shared
+executor, store adoptions, milestones error listener, `'full'` retirement —
+each with risk): `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`,
+owner decides.
+
+**Follow-on candidates this unblocks.**
+
+- **`requestRun` is already at threshold on the same evidence.** The
+  version-guarded fetch idiom (`requestVersion` ref, guard every apply) recurs
+  in ≥6 web production sites: `SpaceForge.tsx` alone hosts five guarded fetch
+  closures (~27 guard checks), plus `ScopeDetailPanel`, `GitHubHealthPanel`
+  (refresh generation), `SpaceTaskPane`, and `space-store`. A stale response
+  structurally cannot apply is a sibling discipline: the lifecycle machine guards
+  its own dispatch generation and captured timers; `requestRun` would guard the
+  apply stage against a stale fetch return — the combinator would give it to
+  fetches.
+- **The `components/space` bucket is the next web surface.** 32.4k non-test
+  source lines across 85 files at pilot close, unchanged from pilot start
+  (32.2k) — 21.5k at the top level, `visual-editor/` 7.3k, `thread/` 3.4k; the
+  ~27k plan figure undercounts it. Its subscriptions ride the six stores
+  assessed above; its panels hold the `requestRun` sites. The Phase 5 line
+  ("web functional cores — P1: `useTurnBlocks`, message projections,
+  model-switcher projections") should be executed in the machine+facade shape
+  this pilot established.
+
+UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
+#2788, plus this closing PR (drift report + dead-code sweep + this note).
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1709,6 +1997,20 @@ per pilot 7's note; 9 is chain C per its in-flight closing sweep; 10 is chain A
   variant-parameterized divergences, the badge predicate's coupled TS/SQL
   pair, and the worker/recovery-script contract. Chain C from the same
   survey lands its own note.
+- **Done (chain I / pilot 8):** the pending-queue drain (admission gates,
+  envelope transforms, the `decisionRun` composition) with both flush sites
+  as gather → decide → interpret consumers, and the injection-shell delivery
+  steps around the Pilot 4 inject core, which stays single-sourced in
+  `decideInjectDelivery` — see "Pilot 8" above for the boundary caveats, the
+  envelope-detector retirement, and the mini-pilot shelf (the MCP-factory
+  task-tool handlers onto the Pilot 5 routing cores, the
+  `rehydrateSubSession` failure-cleanup asymmetry, the rehydrate admission
+  gates).
+- **Done (pilot 12, web):** the four LiveQuery hook lifecycles onto the pure
+  `live-query-lifecycle` machine, plain-function composition (no superpipe —
+  earn-the-layer held); the `reduceRun` executor shape is at 4 real uses with
+  three store consumers scouted — see "Pilot 12" above and the closing drift
+  report for the unification path.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1761,8 +2063,10 @@ per pilot 7's note; 9 is chain C per its in-flight closing sweep; 10 is chain A
   structurally cannot apply — SpaceForge/ScopeDetail fetches, GitHubHealthPanel
   refresh, every version-guarded panel fetch); `transactionalRun` (P7/Phase 4 —
   effects run only after commit); `reduceRun` (P6/Phase 3 — per-event reducer
-  bodies; the web subscription-lifecycle machines decompose into this shape plus
-  a facade). See "Library surface vs. blessed idioms" for the promotion rule.
+  bodies; the web subscription-lifecycle machine plus its four facades, extracted
+  by pilot 12, decompose into this shape, and the executor half already recurs
+  4× — promotion rides the store adoptions). See "Library surface vs. blessed
+  idioms" for the promotion rule.
 - **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
 
 ## References
@@ -1833,5 +2137,20 @@ per pilot 7's note; 9 is chain C per its in-flight closing sweep; 10 is chain A
   survey and chain plan in
   `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 11 PRs:
   #2736, #2767, #2794, #2815, plus this closing sweep.
+- Pilot 8 (chain I) files:
+  `packages/daemon/src/lib/space/runtime/{pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.ts`;
+  interpreters in `task-agent-manager.ts` (`injectMessageIntoSession`,
+  `flushPendingMessagesForTarget`, `flushPendingMessagesForSpaceAgent`); pins
+  in
+  `packages/daemon/tests/unit/5-space/runtime/{task-agent-manager-pending-drain,reset-context-per-turn,pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.test.ts`.
+  Pilot 8 PRs: #2799, #2809, #2817, #2829, #2840, plus this closing sweep.
+- Pilot 12 (UI pilot 6) files: `packages/web/src/lib/live-query-lifecycle.ts`
+  (machine, with its contract suite alongside); facades in
+  `packages/web/src/hooks/{useSpaceTaskMessages,useActorMessageProjections,
+  useTaskMilestones,useGroupMessages}.ts`, pins in
+  `hooks/__tests__/*.lifecycle.test.ts`. Closing drift report (config-drift
+  table, store-variant assessment, unification proposals U1–U6):
+  `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`. UI pilot 6 PRs:
+  #2714, #2716, #2718, #2724, #2756, #2788, plus the closing PR.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

@@ -18,6 +18,10 @@ import {
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry';
 import { registerBuiltInProvider } from '../providers/factory.js';
+import {
+  applyRecordedFailureToAuthStatus,
+  classifyProviderFailure,
+} from '../providers/provider-failure-store.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 const log = new Logger('auth-handlers');
@@ -81,6 +85,7 @@ export function setupAuthHandlers(
               needsRefresh: status.needsRefresh,
               user: status.user,
               error: status.error,
+              errorKind: status.errorKind,
             };
           } else {
             const available = await provider.isAvailable();
@@ -92,15 +97,20 @@ export function setupAuthHandlers(
           }
         } catch (error) {
           log.error(`Failed to get auth status for ${provider.id}:`, error);
+          const failure = classifyProviderFailure(error);
           authStatus = {
             id: provider.id,
             displayName: provider.displayName,
             isAuthenticated: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
+            error: failure.message,
+            errorKind: failure.errorKind,
           };
         }
 
-        return authStatus;
+        return {
+          ...authStatus,
+          ...applyRecordedFailureToAuthStatus(provider.id, authStatus),
+        };
       })
     );
 

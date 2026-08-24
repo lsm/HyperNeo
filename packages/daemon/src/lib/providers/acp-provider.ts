@@ -5,10 +5,12 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
   ModelTier,
+  CuratedModel,
 } from '@hyperneo/shared/provider';
 import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command';
 import { AcpClient } from '../acp/acp-client';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -16,10 +18,7 @@ const ACP_PROBE_TIMEOUT_MS = 10_000;
 
 export type AcpCommandProbe = (command: string, timeoutMs?: number) => Promise<void>;
 
-export interface AcpConfiguredModel {
-  id: string;
-  name?: string;
-}
+export type AcpConfiguredModel = CuratedModel;
 
 export const defaultAcpCommandProbe: AcpCommandProbe = async (
   commandLine: string,
@@ -142,7 +141,7 @@ export class AcpProvider implements Provider {
     }
   }
 
-  setAcpModels(models: AcpConfiguredModel[] | undefined): void {
+  setCuratedModels(models: AcpConfiguredModel[] | undefined): void {
     this.curatedModels = models;
     this.rebuildModelsFromCurated();
   }
@@ -150,24 +149,18 @@ export class AcpProvider implements Provider {
   private rebuildModelsFromCurated(): void {
     const commandIdentity = this.tryGetCommandIdentity();
     if (commandIdentity && this.curatedModels !== undefined) {
-      this.cachedModels =
-        this.curatedModels.length > 0
-          ? this.curatedModels.map((model) => ({
-              id: model.id,
-              name: model.name ?? model.id,
-              alias: model.id,
-              family: 'acp',
-              provider: 'acp',
-              contextWindow: this.getContextWindow(),
-              description: `ACP model ${model.name ?? model.id}`,
-              releaseDate: '2026-01-01',
-              available: true,
-              preferContextWindowMetadata: false,
-            }))
-          : AcpProvider.MODELS.map((model) => ({
-              ...model,
-              contextWindow: this.getContextWindow(),
-            }));
+      this.cachedModels = this.curatedModels.map((model) => ({
+        id: model.id,
+        name: model.name ?? model.id,
+        alias: model.id,
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: this.getContextWindow(),
+        description: `ACP model ${model.name ?? model.id}`,
+        releaseDate: '2026-01-01',
+        available: true,
+        preferContextWindowMetadata: false,
+      }));
       this.cachedModelsCommandIdentity = commandIdentity;
     } else {
       this.cachedModels = null;
@@ -181,11 +174,11 @@ export class AcpProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const command = this.getAcpCommand();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!command,
       method: 'api_key',
       error: command ? undefined : 'Set HYPERNEO_ACP_COMMAND to enable ACP agents.',
-    };
+    });
   }
 
   async verifyCommandAvailable(options: { force?: boolean } = {}): Promise<void> {
@@ -241,6 +234,10 @@ export class AcpProvider implements Provider {
       ...model,
       contextWindow,
     }));
+  }
+
+  hasCuratedModelList(): boolean {
+    return this.curatedModels !== undefined;
   }
 
   setConfigOptions(configOptions: AcpConfigOption[]): void {

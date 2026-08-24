@@ -831,8 +831,7 @@ function createSpaceAgentInboxTables(db: BunDatabase): void {
 			delivered_session_id TEXT,
 			expires_at INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (target_agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
   db.exec(
@@ -949,8 +948,6 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, send_status, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
       ON sdk_messages(task_id, timestamp)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
-      ON sdk_messages(task_id, session_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
       ON sdk_messages(task_id, conversation_turn_index)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
@@ -1009,6 +1006,14 @@ function createIndexes(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
       ON space_goal_outcome_notifications(task_id, terminal_generation)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_pending_created
+      ON space_goal_outcome_notifications(status, created_at)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_space_pending
+      ON space_goal_outcome_notifications(space_id, status, created_at)`
   );
 
   db.exec(

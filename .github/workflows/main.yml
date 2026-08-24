@@ -1,13 +1,27 @@
 # CI - Build, test, and quality checks
 #
-# Test execution is flattened based on trigger:
+# Free-tier shape (task #1399): one PR run occupies at most 20 parallel jobs
+# (1 check + 1 path-filter + 6 unit legs + 11 online legs + 1 web leg — the
+# balance report runs after the tests, inside the same budget) so a solo run
+# never queues behind the repo's 20 shared concurrent runners. Coverage
+# instrumentation is REMOVED from CI entirely (owner directive 2026-08-23):
+# no per-job --coverage, no lcov artifacts, no coverage gate, baseline, or
+# badge. Test jobs still upload junit XML (balance report + shard weights).
+# Local coverage runs remain available via `./scripts/test-daemon.sh
+# --coverage` — that flag is local-only and appears nowhere in CI.
 #
-# | Trigger                              | Tests Run                                                    | Rationale                               |
-# |--------------------------------------|--------------------------------------------------------------|-----------------------------------------|
-# | PR to dev                            | check + unit + mocked online + web                           | Fast feedback without real secrets      |
-# | Push to dev                          | check + unit + mocked online + web                           | Merge safety without real secrets       |
-# | workflow_dispatch (default)          | mocked CI + no-LLM E2E                                       | Manual mocked run on any branch         |
-# | workflow_dispatch (run_e2e_only=true) | discover + build + no-LLM E2E only                          | Selective no-LLM E2E on any branch      |
+# Test execution by trigger (path filters come from the `changes` job; unknown
+# events default to running everything):
+#
+# | Trigger                               | Tests Run                                       |
+# |---------------------------------------|-------------------------------------------------|
+# | PR to dev (mixed code changes)        | check + 6 unit shards + 11 online shards + web  |
+# | PR to dev (daemon-only, per changes)  | check + unit + online (web skipped)             |
+# | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
+# | PR to dev (docs-only, per changes)    | check only                                      |
+# | Push to dev                           | check + unit + online + web (no path filter)    |
+# | workflow_dispatch (default)           | mocked CI + no-LLM E2E                          |
+# | workflow_dispatch (run_e2e_only=true) | discover + build + no-LLM E2E only              |
 #
 # NOTE: E2E tests are NOT run on any automatic trigger (push / PR). No-LLM E2E
 # remains manual-only here via workflow_dispatch on any branch. Real-API daemon
@@ -22,14 +36,6 @@
 # installs them for its real-session shards too.
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Test coverage (unit, online, web): each test job's repo-root-normalized
-# lcov.info is uploaded as an lcov-* workflow artifact (retention 7d). The
-# coverage-gate job merges those artifacts locally (union of line hits across
-# suites), enforces thresholds against the baseline kept on the
-# coverage-baseline ref, and emits coverage-badge.json (shields endpoint
-# format). On push to dev, coverage-badge-update force-pushes that badge to
-# the orphan `badges` branch, which the README renders through
-# img.shields.io/endpoint — no external coverage service anywhere.
 
 name: CI
 
@@ -63,7 +69,7 @@ jobs:
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
@@ -92,16 +98,6 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -115,9 +111,6 @@ jobs:
 
       - name: Test strip-comments argument handling
         run: bun run test:strip-comments
-
-      - name: Test coverage gate script
-        run: bun run test:coverage-gate
 
       - name: Test CI balance report parser
         run: bun run test:ci-balance-report
@@ -153,118 +146,126 @@ jobs:
           fi
 
   # ============================================
+  # PATH FILTERS
+  # PR-only. Tree-diffs the PR merge commit against the dev tip and emits two
+  # booleans so daemon-only PRs skip web tests, web-only PRs skip daemon
+  # unit+online, and docs-only PRs run check alone. Everything outside
+  # packages/web (resp. the daemon-side packages) counts as daemon (resp.
+  # web) work, so unknown/infra paths (scripts/, .github/, lockfiles) run
+  # BOTH suites — the safe default. Push/workflow_dispatch events skip this
+  # job and the test jobs treat a skipped filter as "run everything".
+  # ============================================
+
+  changes:
+    name: Path Filter
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    if: github.event_name == 'pull_request'
+    outputs:
+      daemon: ${{ steps.filter.outputs.daemon }}
+      web: ${{ steps.filter.outputs.web }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Compute daemon/web path filters
+        id: filter
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          # checkout@v6 on pull_request yields the merge commit, so a plain
+          # two-dot tree-diff against the dev tip is exactly the PR's changed
+          # file set (depth-1 fetches have no merge base for a three-dot
+          # diff). --no-renames lists a rename as BOTH its old and new path
+          # (delete + add), so a file moved across the daemon/web boundary
+          # classifies both sides instead of only the destination. An
+          # empty/unreadable diff falls back to running everything.
+          files=$(git diff --name-only --no-renames origin/dev HEAD || true)
+          if [ -z "$files" ]; then
+            echo "Empty diff against dev — defaulting to run everything."
+            echo "daemon=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          daemon=false
+          web=false
+          while IFS= read -r f; do
+            # Inert docs: docs/ trees and TOP-LEVEL *.md only. Bash case globs
+            # match across '/', so a bare *.md would also swallow nested
+            # functional assets (e.g. packages/skills/*/SKILL.md feeds the
+            # bundled skill registry); those must fall through to the package
+            # rules below.
+            doc=false
+            case "$f" in
+              docs/*) doc=true ;;
+              *.md) case "$f" in */*) ;; *) doc=true ;; esac ;;
+            esac
+            if [ "$doc" = true ]; then continue; fi
+            # daemon unless the file is web-only
+            case "$f" in
+              packages/web/*) ;;
+              *) daemon=true ;;
+            esac
+            # web unless the file is daemon-side-only (packages/ui and root
+            # tooling count as web-relevant — they feed the web build)
+            case "$f" in
+              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/e2e/*) ;;
+              *) web=true ;;
+            esac
+          done <<< "$files"
+          echo "daemon=$daemon" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+
+  # ============================================
   # DAEMON ONLINE TESTS (Mocked credentials only)
-  # Run on: PR to dev, push to dev, workflow_dispatch
+  # Run on: PR to dev (daemon paths), push to dev, workflow_dispatch
   # Real-key shards are manual-only in real-api-tests.yml.
+  # 11 legs (task #1399 rebalance): rpc is split 4-way and space 2-way
+  # (duration-weighted) by scripts/test-online.sh; every other directory is
+  # duration-merged into combined modules (agent-sdk, convo-lifecycle,
+  # features-misc, git-websocket, rewind). All modules run mocked through the
+  # Dev Proxy.
   # ============================================
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'
-    timeout-minutes: ${{ matrix.timeout || 15 }}
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
       matrix:
         module:
           - agent-sdk
-          - components
-          - convo
-          - coordinator
-          # features/ is split 3-way (duration-weighted) by scripts/test-online.sh (features-a/b/c).
-          - features-a
-          - features-b
-          - features-c
-          - git
-          - lifecycle
-          - mcp
+          - convo-lifecycle
+          - features-misc
           # Codex bridge tests disabled — requires OPENAI_API_KEY (real API, not mocked)
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
-          # rewind/ is split 2-way (duration-weighted) by scripts/test-online.sh (rewind-a/b).
-          - rewind-a
-          - rewind-b
-          # rpc/ is split 6-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-f).
+          # GLM online tests disabled due to flakiness
+          # - glm
+          - git-websocket
+          - rewind
+          # rpc/ is split 4-way (duration-weighted) by scripts/test-online.sh (rpc-a…rpc-d).
           - rpc-a
           - rpc-b
           - rpc-c
           - rpc-d
-          - rpc-e
-          - rpc-f
-          - sdk
-          # space/ is split 3-way (duration-weighted) by scripts/test-online.sh (space-a…space-c).
+          # space/ is split 2-way (duration-weighted) by scripts/test-online.sh (space-a…space-b).
           - space-a
           - space-b
-          - space-c
-          - websocket
-        include:
-          # mock_sdk: true → uses Dev Proxy (HYPERNEO_USE_DEV_PROXY) for mocking instead of real API calls.
-          # These modules test infrastructure/plumbing and don't need real AI responses.
-          # To run with real API locally, just omit the env var.
-          #
-          # NO module carries a hand-listed test_path anymore: every module's
-          # files are resolved at run time by scripts/test-online.sh (directory
-          # globs; oversized directories hash-split via scripts/lib/shard-split.sh),
-          # so a new online test file auto-routes to a shard with no YAML edit.
-          # Rebalance a split by editing its split count in scripts/test-online.sh.
-          # Run `bash scripts/validate-test-matrix.sh` + `scripts/test-online.sh --verify`
-          # to verify all files are covered.
-          - module: agent-sdk
-            mock_sdk: true
-          - module: components
-            mock_sdk: true
-          # GLM online tests disabled due to flakiness
-          # - module: glm
-          - module: convo
-            mock_sdk: true
-          - module: coordinator
-            timeout: 10
-            mock_sdk: true
-          - module: features-a
-            mock_sdk: true
-          - module: features-b
-            mock_sdk: true
-          - module: features-c
-            mock_sdk: true
-          - module: git
-            timeout: 10
-            mock_sdk: true
-          - module: lifecycle
-            mock_sdk: true
-          - module: mcp
-            mock_sdk: true
-          # - module: providers-anthropic-to-codex-bridge
-          # - module: providers-anthropic-copilot
-          #   timeout: 15
-          - module: rewind-a
-            mock_sdk: true
-          - module: rewind-b
-            mock_sdk: true
-          - module: rpc-a
-            mock_sdk: true
-          - module: rpc-b
-            mock_sdk: true
-          - module: rpc-c
-            mock_sdk: true
-          - module: rpc-d
-            mock_sdk: true
-          - module: rpc-e
-            mock_sdk: true
-          - module: rpc-f
-            mock_sdk: true
-          - module: sdk
-            mock_sdk: true
-          - module: space-a
-            mock_sdk: true
-          - module: space-b
-            mock_sdk: true
-          - module: space-c
-            mock_sdk: true
-          - module: websocket
-            mock_sdk: true
-          # Real-key cross-provider shards are manual-only in real-api-tests.yml.
+        # NO module carries a hand-listed test_path: every module's files are
+        # resolved at run time by scripts/test-online.sh (directory globs;
+        # oversized directories split via scripts/lib/shard-split.sh), so a new
+        # online test file auto-routes to a leg with no YAML edit. Rebalance a
+        # split by editing its split count in scripts/test-online.sh. Run
+        # `bash scripts/validate-test-matrix.sh` + `scripts/test-online.sh
+        # --verify` to verify all files are covered.
 
     steps:
       - uses: actions/checkout@v6
@@ -280,18 +281,8 @@ jobs:
           node-version: '24'
 
       - name: Setup Dev Proxy
-        if: runner.os == 'Linux' && matrix.mock_sdk == true
+        if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -304,22 +295,19 @@ jobs:
           --report test-results/flaky-quarantine-daemon-online-${{ matrix.module }}.json
           --
           bash -lc 'set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n "$paths" ] || exit 1; node_modules/.bin/vitest run --config vitest.online.config.ts $paths
-          --coverage
-          --coverage.reporter=lcov
-          --coverage.reportsDirectory=coverage-online-${{ matrix.module }}
           --reporter=junit
           --outputFile.junit=../../test-results/daemon-online-${{ matrix.module }}/junit-${{ matrix.module }}.xml'
         env:
-          # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
-          # This avoids proxy env var issues and TLS interception problems
-          HYPERNEO_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          # Every mocked-online module runs through the local Dev Proxy
+          # (HYPERNEO_USE_DEV_PROXY) — no real API calls, no real secrets.
+          HYPERNEO_USE_DEV_PROXY: '1'
           HYPERNEO_TEST_DISABLE_SANDBOX: '1'
           # Persist daemon structured/lifecycle logs into the results dir so a
           # failing shard's artifact carries the delivery lifecycle trace.
           HYPERNEO_LOG_FILE: ${{ github.workspace }}/test-results/daemon-online-${{ matrix.module }}/daemon.jsonl
-          ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
+          ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000'
           # For Dev Proxy tests, never pass real Anthropic credentials.
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || '' }}
+          ANTHROPIC_API_KEY: 'sk-devproxy-test-key'
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
           OPENAI_API_KEY: ""
@@ -330,21 +318,11 @@ jobs:
           DEFAULT_MODEL: ""
 
       - name: Stop Dev Proxy
-        if: always() && matrix.mock_sdk == true
+        if: always()
         run: |
           if [ -n "$DEVPROXY_PID" ]; then
             kill $DEVPROXY_PID 2>/dev/null || true
           fi
-
-      - name: Fix coverage paths and strip test utilities
-        working-directory: packages/daemon
-        run: |
-          LCOV=coverage-online-${{ matrix.module }}/lcov.info
-          # Fix paths: Bun generates relative to package dir, need repo root paths
-          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
-          # Strip test utility coverage (helpers, fixtures, mocks)
-          awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
       - name: Upload junit + diagnostics
         if: always()
@@ -354,28 +332,27 @@ jobs:
           path: test-results/daemon-online-${{ matrix.module }}/
           retention-days: 7
 
-      - name: Upload lcov artifact
-        if: hashFiles(format('packages/daemon/coverage-online-{0}/lcov.info', matrix.module)) != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: lcov-daemon-online-${{ matrix.module }}
-          path: packages/daemon/coverage-online-${{ matrix.module }}/lcov.info
-          retention-days: 7
-
   # ============================================
-  # DAEMON + SHARED UNIT TESTS (For coverage measurement)
-  # Run on: PR to dev, push to dev
+  # DAEMON + SHARED UNIT TESTS
+  # Run on: PR to dev (daemon paths), push to dev
+  # 6 legs (task #1399 rebalance): shared · 1-core (whole tree + migration
+  # bucket 0) · handlers-migrations · storage-migrations · 5-space-a/b
+  # (duration-weighted 2-way over the whole 5-space tree; the 117s migration
+  # chain is dealt 3-way across the three directory legs). Shard definitions
+  # live in scripts/test-daemon.sh (source of truth); validate-test-matrix.sh
+  # guards that every unit test file is owned by exactly one shard.
   # ============================================
 
   test-daemon-shared-unit:
     name: Daemon Unit Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.event.inputs.run_e2e_only != 'true'
     timeout-minutes: 12
-    if: github.event.inputs.run_e2e_only != 'true'
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 2-handlers-github, 2-handlers-other, 1-core-a, 1-core-b, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b, 5-space-runtime-c, 5-space-runtime-d, 5-space-runtime-e, 5-space-runtime-f, 5-space-runtime-g]
+        shard: [shared, 1-core, handlers-migrations, storage-migrations, 5-space-a, 5-space-b]
 
     steps:
       - uses: actions/checkout@v6
@@ -389,16 +366,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -410,24 +377,10 @@ jobs:
           --results-dir test-results/daemon
           --report test-results/flaky-quarantine-daemon-${{ matrix.shard }}.json
           --
-          ./scripts/test-daemon.sh ${{ matrix.shard }} --coverage
+          ./scripts/test-daemon.sh ${{ matrix.shard }}
         env:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
-
-      - name: Fix coverage paths for monorepo
-        if: always()
-        working-directory: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}
-        run: |
-          # Vitest writes SF: paths relative to the package dir (src/...); the
-          # local lcov merge needs repo-root paths (packages/<pkg>/src/...).
-          # Mirror the online/web jobs.
-          PKG="${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}"
-          LCOV=coverage/lcov.info
-          [ -f "$LCOV" ] || exit 0
-          sed -i "s|^SF:src/|SF:packages/${PKG}/src/|g" "$LCOV" || true
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' "$LCOV" || true
-          sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' "$LCOV" || true
 
       - name: Upload junit (balance report data)
         if: always()
@@ -437,31 +390,19 @@ jobs:
           path: test-results/daemon/junit-${{ matrix.shard }}.xml
           retention-days: 7
 
-      - name: Upload lcov artifact
-        if: always() && hashFiles(format('packages/{0}/coverage/lcov.info', matrix.shard == 'shared' && 'shared' || 'daemon')) != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: lcov-daemon-${{ matrix.shard }}
-          path: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
-          retention-days: 7
-
   # ============================================
   # WEB TESTS
-  # Run on: PR to dev, push to dev, workflow_dispatch
+  # Run on: PR to dev (web paths), push to dev, workflow_dispatch
+  # One leg (task #1399): the whole suite is ~1min of tests, so a single
+  # unsharded vitest run replaces the former 2-way --shard matrix.
   # ============================================
 
   test-web:
-    name: Web Tests (${{ matrix.shard }}/2)
+    name: Web Tests
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
     timeout-minutes: 9
-    if: (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        # vitest --shard distributes test FILES across legs; the union of
-        # shards 1..N runs the whole suite. scripts/validate-test-matrix.sh
-        # pins the axis against the runner's --shard denominator.
-        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v6
@@ -476,16 +417,6 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -494,38 +425,19 @@ jobs:
           bun run scripts/flaky-test-runner.ts
           --suite web
           --results-dir test-results/web
-          --report test-results/flaky-quarantine-web-${{ matrix.shard }}.json
+          --report test-results/flaky-quarantine-web.json
           --
           bash -lc 'cd packages/web && bunx vitest run
           --reporter dot
           --reporter junit
-          --outputFile.junit=../../test-results/web/junit-web-${{ matrix.shard }}.xml
-          --shard=${{ matrix.shard }}/2
-          --coverage
-          --coverage.reportsDirectory=coverage-web-${{ matrix.shard }}'
-
-      - name: Fix coverage paths for monorepo
-        run: |
-          # Vitest generates paths relative to package dir (src/...)
-          # the local lcov merge needs paths relative to repo root (packages/web/src/...)
-          sed -i 's|^SF:src/|SF:packages/web/src/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
-          # Fix cross-package paths (../shared/src/... -> packages/shared/src/...)
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          --outputFile.junit=../../test-results/web/junit-web.xml'
 
       - name: Upload junit (balance report data)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: web-junit-${{ matrix.shard }}
-          path: test-results/web/junit-web-${{ matrix.shard }}.xml
-          retention-days: 7
-
-      - name: Upload lcov artifact
-        if: hashFiles(format('packages/web/coverage-web-{0}/lcov.info', matrix.shard)) != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: lcov-web-${{ matrix.shard }}
-          path: packages/web/coverage-web-${{ matrix.shard }}/lcov.info
+          name: web-junit
+          path: test-results/web/junit-web.xml
           retention-days: 7
 
   # ============================================
@@ -534,7 +446,9 @@ jobs:
   # durations + per-shard totals into the run summary (see
   # scripts/ci-balance-report.ts). This is the measurement behind shard
   # rebalance decisions. Read-only reporting: intentionally NOT part of
-  # all-tests-pass gating.
+  # all-tests-pass gating, and it only runs when at least one test family
+  # actually ran (path-filtered PRs may skip whole families — the downloads
+  # tolerate the missing artifacts).
   # Run on: PR to dev, push to dev, workflow_dispatch (whenever tests ran)
   # ============================================
 
@@ -542,7 +456,7 @@ jobs:
     name: Test Duration Balance Report
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-daemon-online, test-web]
-    if: ${{ !cancelled() && github.event.inputs.run_e2e_only != 'true' }}
+    if: ${{ !cancelled() && github.event.inputs.run_e2e_only != 'true' && (contains(fromJSON('["success", "failure"]'), needs.test-daemon-shared-unit.result) || contains(fromJSON('["success", "failure"]'), needs.test-daemon-online.result) || contains(fromJSON('["success", "failure"]'), needs.test-web.result)) }}
     timeout-minutes: 3
 
     steps:
@@ -554,210 +468,28 @@ jobs:
           bun-version: 1.3.14
 
       - name: Download daemon unit junit
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           path: balance/unit
           pattern: daemon-unit-junit-*
 
       - name: Download daemon online junit
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           path: balance/online
           pattern: daemon-online-junit-*
 
       - name: Download web junit
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           path: balance/web
-          pattern: web-junit-*
+          pattern: web-junit*
 
       - name: Build balance report
         run: bun run scripts/ci-balance-report.ts balance --top 25
-
-  # ============================================
-  # COVERAGE QUALITY GATE (local)
-  # Downloads the per-job lcov-* artifacts, merges them locally (union of line
-  # hits per file across suites — daemon-unit and daemon-online overlap on
-  # packages/daemon/src, so hits are max-merged, never averaged), and enforces:
-  #   - overall coverage >= 30%
-  #   - overall coverage no more than 2% below the baseline
-  # Only files under packages/*/src count (tests/ helpers and unmapped
-  # cross-package paths are excluded).
-  # Also writes coverage-badge.json (shields endpoint format, superpipe
-  # pattern) from the merged result and uploads it as the coverage-badge
-  # artifact; coverage-badge-update publishes it on dev pushes only.
-  # The baseline lives on the coverage-baseline ref, not in the dev tree:
-  # dev's ruleset requires squash-merged PRs with signed commits, so CI cannot
-  # push baseline updates into dev itself. This job is strictly read-only.
-  # Run on: PR to dev, push to dev, workflow_dispatch
-  # ============================================
-
-  coverage-gate:
-    name: Coverage Quality Gate
-    runs-on: ubuntu-latest
-    needs: [test-daemon-shared-unit, test-web, test-daemon-online]
-    timeout-minutes: 3
-    if: github.event.inputs.run_e2e_only != 'true'
-    permissions:
-      contents: read
-      actions: read
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Fetch coverage baseline
-        run: |
-          if git fetch --no-tags origin refs/heads/coverage-baseline; then
-            git show FETCH_HEAD:coverage-baseline.json > coverage-baseline.json
-          else
-            echo "::error::coverage-baseline ref not found on origin — push it (see coverage-baseline-update job) before the gate can run"
-            exit 1
-          fi
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.14
-
-      - name: Download lcov artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: lcov-*
-          path: lcov-artifacts
-
-      # --verify-completeness lists this run's successful test-matrix jobs via the
-      # actions API and fails when any of them produced no lcov artifact, so a
-      # shard whose coverage report silently failed to generate cannot be quietly
-      # averaged out of the merge. The job-name -> artifact-name mapping lives in
-      # jobNameToArtifactName (scripts/coverage-gate.ts) and must follow the
-      # display names and artifact names in this file.
-      - name: Merge lcov and enforce coverage thresholds
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          bun run scripts/coverage-gate.ts
-          --artifacts lcov-artifacts
-          --baseline coverage-baseline.json
-          --min-coverage 30
-          --max-regression -2
-          --verify-completeness
-          --write-badge coverage-badge.json
-
-      - name: Upload coverage badge artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-badge
-          path: coverage-badge.json
-          retention-days: 7
-
-  # ============================================
-  # COVERAGE BASELINE UPDATE
-  # Replays the same local merge and rewrites coverage-baseline.json on the
-  # coverage-baseline ref (a single-file ref) so PR gates compare against the
-  # latest dev numbers. Pushes to that ref do not trigger any workflow.
-  # Run on: push to dev only, after a green gate (needs contents: write).
-  # ============================================
-
-  coverage-baseline-update:
-    name: Update Coverage Baseline
-    runs-on: ubuntu-latest
-    needs: [coverage-gate]
-    timeout-minutes: 3
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.coverage-gate.result == 'success'
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.14
-
-      - name: Download lcov artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: lcov-*
-          path: lcov-artifacts
-
-      - name: Write updated baseline
-        run: >-
-          bun run scripts/coverage-gate.ts
-          --artifacts lcov-artifacts
-          --baseline coverage-baseline.json
-          --write-baseline
-          --source-commit ${{ github.sha }}
-
-      - name: Push baseline to the coverage-baseline ref
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          push_baseline() {
-            local parent=""
-            if git fetch --no-tags origin refs/heads/coverage-baseline 2>/dev/null; then
-              parent="-p $(git rev-parse FETCH_HEAD)"
-            fi
-            local blob tree commit
-            blob=$(git hash-object -w coverage-baseline.json)
-            tree=$(printf '100644 blob %s\tcoverage-baseline.json\n' "$blob" | git mktree)
-            commit=$(git commit-tree "$tree" $parent \
-              -m "chore(coverage): update baseline for $(git rev-parse --short HEAD)")
-            git push origin "$commit:refs/heads/coverage-baseline"
-          }
-
-          for attempt in 1 2 3; do
-            if push_baseline; then
-              echo "Baseline ref updated"
-              exit 0
-            fi
-            echo "Push attempt $attempt failed (likely raced another dev run); retrying after re-fetch"
-            sleep 5
-          done
-          echo "::error::could not update the coverage-baseline ref after 3 attempts"
-          exit 1
-
-  # ============================================
-  # COVERAGE BADGE PUBLISH
-  # Force-pushes the badge JSON written by the coverage gate to the orphan
-  # `badges` branch (single file, no shared history — superpipe pattern). The
-  # README renders it via
-  # https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/lsm/HyperNeo/badges/coverage-badge.json.
-  # Last green dev run wins; no merge conflicts are possible, and pushes to
-  # `badges` trigger no workflow (on.push is dev-only) and match no ruleset
-  # (the dev ruleset pins refs/heads/dev only).
-  # Run on: push to dev only, after a green gate (needs contents: write).
-  # ============================================
-
-  coverage-badge-update:
-    name: Update Coverage Badge
-    runs-on: ubuntu-latest
-    needs: [coverage-gate]
-    timeout-minutes: 2
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.coverage-gate.result == 'success'
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download coverage badge artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: coverage-badge
-
-      - name: Publish badge to the badges branch
-        run: |
-          mkdir -p "$RUNNER_TEMP/badge"
-          cp coverage-badge.json "$RUNNER_TEMP/badge/"
-          cd "$RUNNER_TEMP/badge"
-          git init -q
-          git checkout -q --orphan badges
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add coverage-badge.json
-          git commit -q -m "coverage badge"
-          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" badges
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
@@ -794,16 +526,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -929,16 +651,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
 
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: |
-            node_modules
-            packages/*/node_modules
-          key: bun-deps-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
-          restore-keys: |
-            bun-deps-${{ runner.os }}-
-
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
@@ -1026,6 +738,10 @@ jobs:
 
   # ============================================
   # GATE - All tests must pass (handles conditional job results)
+  # Depends only on check + the test jobs (and the PR/dispatch-only build/
+  # discover/e2e chain, which is skipped on PRs) — no serialized tail after
+  # the last test. Path-filtered suites report "skipped" and pass. The
+  # balance report intentionally lags outside this gate.
   # ============================================
 
   all-tests-pass:
@@ -1035,12 +751,10 @@ jobs:
     if: always()
     needs:
       - check
+      - changes
       - test-daemon-online
       - test-daemon-shared-unit
       - test-web
-      - coverage-gate
-      - coverage-baseline-update
-      - coverage-badge-update
       - build
       - discover
       - e2e-no-llm
@@ -1056,39 +770,28 @@ jobs:
             FAILED=1
           fi
 
-          # test-daemon-online: PR to dev, push to dev
+          # changes: PR only — a failed path filter means the daemon/web
+          # booleans are unknown, so the suites were skipped unsafely.
+          if [[ "${{ needs.changes.result }}" == "failure" ]]; then
+            echo "❌ changes (path filter) failed"
+            FAILED=1
+          fi
+
+          # test-daemon-online: PR to dev (daemon paths), push to dev
           if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
             echo "❌ test-daemon-online failed"
             FAILED=1
           fi
 
-          # test-daemon-shared-unit: PR to dev, push to dev
+          # test-daemon-shared-unit: PR to dev (daemon paths), push to dev
           if [[ "${{ needs.test-daemon-shared-unit.result }}" == "failure" ]]; then
             echo "❌ test-daemon-shared-unit failed"
             FAILED=1
           fi
 
-          # test-web: PR to dev, push to dev
+          # test-web: PR to dev (web paths), push to dev
           if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
             echo "❌ test-web failed"
-            FAILED=1
-          fi
-
-          # coverage-gate: PR to dev, push to dev
-          if [[ "${{ needs.coverage-gate.result }}" == "failure" ]]; then
-            echo "❌ coverage-gate failed"
-            FAILED=1
-          fi
-
-          # coverage-baseline-update: push to dev only
-          if [[ "${{ needs.coverage-baseline-update.result }}" == "failure" ]]; then
-            echo "❌ coverage-baseline-update failed"
-            FAILED=1
-          fi
-
-          # coverage-badge-update: push to dev only
-          if [[ "${{ needs.coverage-badge-update.result }}" == "failure" ]]; then
-            echo "❌ coverage-badge-update failed"
             FAILED=1
           fi
 
@@ -1114,12 +817,10 @@ jobs:
             echo ""
             echo "One or more required jobs failed:"
             echo "  check: ${{ needs.check.result }}"
+            echo "  changes: ${{ needs.changes.result }}"
             echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
-            echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
-            echo "  coverage-baseline-update: ${{ needs.coverage-baseline-update.result }}"
-            echo "  coverage-badge-update: ${{ needs.coverage-badge-update.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
