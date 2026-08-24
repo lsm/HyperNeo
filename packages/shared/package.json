@@ -20,7 +20,8 @@
     "./message-hub/types": "./src/message-hub/types.ts",
     "./message-hub/message-hub": "./src/message-hub/message-hub.ts",
     "./sdk": "./src/sdk/index.ts",
-    "./sdk/*": "./src/sdk/*"
+    "./sdk/*": "./src/sdk/*.ts",
+    "./message-hub/router": "./src/message-hub/router.ts"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
