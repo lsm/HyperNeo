@@ -161,8 +161,8 @@ export class SpaceAgentInactivityClaimRepository {
       ) {
         return { acquired: true, claim: existing, created: false };
       }
-      const live = existing !== null && existing.state !== 'none' && !existing.degraded;
-      if (live && existing.windowAnchoredAt >= params.windowAnchoredAt) {
+      const relevant = existing !== null && (existing.degraded || existing.state !== 'none');
+      if (relevant && existing.windowAnchoredAt >= params.windowAnchoredAt) {
         return { acquired: false, claim: existing, created: false };
       }
       const id = existing?.id ?? generateUUID();
@@ -172,10 +172,10 @@ export class SpaceAgentInactivityClaimRepository {
           `INSERT INTO space_agent_inactivity_claims (
              id, space_id, agent_id, claim_key, state, window_anchored_at,
              attempt_generation, owner_token, config_revision, degraded, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'accepted', ?, ?, ?, ?, 0, ?, ?)
+           ) VALUES (?, ?, ?, ?, 'in_flight', ?, ?, ?, ?, 0, ?, ?)
            ON CONFLICT(space_id, agent_id) DO UPDATE SET
              claim_key = excluded.claim_key,
-             state = 'accepted',
+             state = 'in_flight',
              window_anchored_at = excluded.window_anchored_at,
              attempt_generation = excluded.attempt_generation,
              owner_token = excluded.owner_token,

@@ -121,7 +121,7 @@ describe('SpaceAgentInactivity repositories', () => {
       });
       expect(first.acquired).toBe(true);
       expect(first.created).toBe(true);
-      expect(first.claim.state).toBe('accepted');
+      expect(first.claim.state).toBe('in_flight');
 
       const retry = claimRepo.acquire({
         spaceId,
@@ -568,6 +568,36 @@ describe('SpaceAgentInactivity repositories', () => {
         claimRepo.releaseStale(spaceId, 'agent-1', acquired.claim.id, 100, Date.now() + 1000)
       ).toBe(false);
       expect(claimRepo.getByAgent(spaceId, 'agent-1')?.id).toBe(acquired.claim.id);
+    });
+
+    it('does not clear a newer degraded tombstone with a stale acquisition', () => {
+      const newer = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k',
+        windowAnchoredAt: 200,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-b',
+        configRevision: 1,
+      });
+      claimRepo.applyReset(spaceId, 'agent-1', newer.claim.id, 'k', 'scanner-b', 1, {
+        releaseClaim: false,
+        markDegraded: true,
+        advanceAttemptGeneration: true,
+      });
+      const stale = claimRepo.acquire({
+        spaceId,
+        agentId: 'agent-1',
+        claimKey: 'k2',
+        windowAnchoredAt: 100,
+        attemptGeneration: 0,
+        ownerToken: 'scanner-a',
+        configRevision: 1,
+      });
+      expect(stale.acquired).toBe(false);
+      const surviving = claimRepo.getByAgent(spaceId, 'agent-1');
+      expect(surviving?.degraded).toBe(true);
+      expect(surviving?.windowAnchoredAt).toBe(200);
     });
 
     it('ignores a late reset when the claim revision moved on', () => {
