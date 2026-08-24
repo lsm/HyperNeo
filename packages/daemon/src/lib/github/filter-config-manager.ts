@@ -1,11 +1,11 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   GitHubFilterConfig,
   GitHubAuthorFilter,
   GitHubLabelFilter,
   GitHubEventFilter,
 } from '@hyperneo/shared';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('github-filter-config');
 

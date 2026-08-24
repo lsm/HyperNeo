@@ -7,7 +7,7 @@ import {
   MAX_RESET_HORIZON_MS,
   RESET_BUFFER_MS,
   USAGE_CAP_KEYWORDS,
-} from './fallback-recovery';
+} from './fallback-recovery.ts';
 
 export type LimitErrorKind = 'rate_limit' | 'usage_limit';
 

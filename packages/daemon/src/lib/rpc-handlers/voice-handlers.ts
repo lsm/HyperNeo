@@ -2,9 +2,9 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
 import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
-import type { SettingsManager } from '../settings-manager';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
-import { withVoiceCredentialLock } from './voice-credential-lock';
+import type { SettingsManager } from '../settings-manager.ts';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 
 const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 

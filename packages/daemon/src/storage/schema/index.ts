@@ -1,132 +1,138 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { createEvolutionTables } from './evolution';
-import { createLongHorizonAgentTables } from './long-horizon-agents';
-import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions';
-import { backfillSessionCounters, createSessionCounters } from './session-counters';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { createEvolutionTables } from './evolution.ts';
+import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
+import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
+import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
-export { runMigrations } from './migrations';
+export { runMigrations } from './migrations.ts';
+export { reclaimPendingMigrationSpace } from './migration-space-reclaim.ts';
 // knip-ignore-next-line
-export { runMigration12 } from './migrations';
+export { runMigration12 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration47 } from './migrations';
+export { runMigration47 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration48 } from './migrations';
+export { runMigration48 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration49 } from './migrations';
+export { runMigration49 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration50 } from './migrations';
+export { runMigration50 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration51 } from './migrations';
+export { runMigration51 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration55 } from './migrations';
+export { runMigration55 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration56 } from './migrations';
+export { runMigration56 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration57 } from './migrations';
+export { runMigration57 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration58 } from './migrations';
+export { runMigration58 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration66 } from './migrations';
+export { runMigration66 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration68 } from './migrations';
+export { runMigration68 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration72 } from './migrations';
+export { runMigration72 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration74 } from './migrations';
+export { runMigration74 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration78 } from './migrations';
+export { runMigration78 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration86 } from './migrations';
+export { runMigration86 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration93 } from './migrations';
+export { runMigration93 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration94 } from './migrations';
+export { runMigration94 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration95 } from './migrations';
+export { runMigration95 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration96 } from './migrations';
+export { runMigration96 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration97 } from './migrations';
+export { runMigration97 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration98 } from './migrations';
+export { runMigration98 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration99 } from './migrations';
+export { runMigration99 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration100 } from './migrations';
+export { runMigration100 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration101 } from './migrations';
+export { runMigration101 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration109 } from './migrations';
+export { runMigration109 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration110 } from './migrations';
+export { runMigration110 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration111 } from './migrations';
+export { runMigration111 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration112 } from './migrations';
+export { runMigration112 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration117 } from './migrations';
+export { runMigration117 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration118 } from './migrations';
+export { runMigration118 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration119 } from './migrations';
+export { runMigration119 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration120 } from './migrations';
+export { runMigration120 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration121 } from './migrations';
+export { runMigration121 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration122 } from './migrations';
+export { runMigration122 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration123 } from './migrations';
+export { runMigration123 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration124 } from './migrations';
+export { runMigration124 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration125 } from './migrations';
+export { runMigration125 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration126 } from './migrations';
+export { runMigration126 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration127 } from './migrations';
+export { runMigration127 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration128 } from './migrations';
+export { runMigration128 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration129 } from './migrations';
+export { runMigration129 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration130 } from './migrations';
+export { runMigration130 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration131 } from './migrations';
+export { runMigration131 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration132 } from './migrations';
+export { runMigration132 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration133 } from './migrations';
+export { runMigration133 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration134 } from './migrations';
+export { runMigration134 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration137 } from './migrations';
+export { runMigration137 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration138 } from './migrations';
+export { runMigration138 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration139 } from './migrations';
+export { runMigration139 } from './migrations.ts';
 // knip-ignore-next-line
-export { configureMessageSearchFts, runMigration141 } from './migrations';
+export {
+  configureMessageSearchFts,
+  runMigration141,
+  runMigration211,
+  runMigration212,
+} from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration142 } from './migrations';
+export { runMigration142 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration143 } from './migrations';
+export { runMigration143 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration144 } from './migrations';
+export { runMigration144 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration148 } from './migrations';
+export { runMigration148 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration156 } from './migrations';
+export { runMigration156 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration166 } from './migrations';
+export { runMigration166 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration170 } from './migrations';
+export { runMigration170 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration174 } from './migrations';
+export { runMigration174 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration186 } from './migrations';
+export { runMigration186 } from './migrations.ts';
 
 export function createTables(db: BunDatabase): void {
   db.exec(`
@@ -184,7 +190,8 @@ export function createTables(db: BunDatabase): void {
 
   db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_messages (
-        id TEXT PRIMARY KEY,
+        seq INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
         session_id TEXT NOT NULL,
         message_type TEXT NOT NULL,
         message_subtype TEXT,
@@ -484,6 +491,49 @@ export function createTables(db: BunDatabase): void {
         counter     INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (entity_type, scope_id)
       )
+    `);
+
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS space_agent_inactivity_config (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        threshold_ms INTEGER,
+        prompt TEXT,
+        config_revision INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(space_id, agent_id),
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+      )
+    `);
+
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS space_agent_inactivity_claims (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        claim_key TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'accepted'
+          CHECK(state IN ('none', 'accepted', 'in_flight')),
+        window_anchored_at INTEGER NOT NULL,
+        attempt_generation INTEGER NOT NULL DEFAULT 0,
+        owner_token TEXT,
+        config_revision INTEGER,
+        degraded INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(space_id, agent_id),
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+      )
+    `);
+
+  db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_space_agent_inactivity_claims_space
+      ON space_agent_inactivity_claims(space_id, agent_id)
     `);
 
   db.exec(

@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   NodeExecution,
@@ -6,8 +6,8 @@ import type {
   CreateNodeExecutionParams,
   UpdateNodeExecutionParams,
 } from '@hyperneo/shared';
-import type { SQLiteValue } from '../types';
-import type { ReactiveDatabase } from '../reactive-database';
+import type { SQLiteValue } from '../types.ts';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 
 export class NodeExecutionRepository {
   constructor(

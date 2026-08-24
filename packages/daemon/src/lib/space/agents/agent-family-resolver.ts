@@ -1,6 +1,6 @@
 import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 
 export type AgentFamily = 'worker' | 'long_horizon';
 export type AgentFamilyClassification =

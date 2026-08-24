@@ -1,5 +1,5 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import type { ReactiveDatabase } from '../../storage/reactive-database';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -13,9 +13,9 @@ import {
   type StoreResult,
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
-} from './types';
-import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics';
-import { validateLiteralTopic, validateSource } from './topic-validator';
+} from './types.ts';
+import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics.ts';
+import { validateLiteralTopic, validateSource } from './topic-validator.ts';
 
 interface ExternalEventRow {
   id: string;

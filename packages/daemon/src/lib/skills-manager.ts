@@ -1,4 +1,4 @@
-import { getDataDir } from './data-dir';
+import { getDataDir } from './data-dir.ts';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { access, cp, mkdir, writeFile } from 'node:fs/promises';
@@ -11,15 +11,15 @@ import type {
   SkillSourceType,
   SkillValidationStatus,
 } from '@hyperneo/shared';
-import type { SkillRepository } from '../storage/repositories/skill-repository';
-import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository';
-import type { JobQueueRepository } from '../storage/repositories/job-queue-repository';
-import { SKILL_VALIDATE } from './job-queue-constants';
-import { BUILTIN_MCP_SERVERS, BUILTIN_SKILLS, type BuiltinSkill } from './builtins';
+import type { SkillRepository } from '../storage/repositories/skill-repository.ts';
+import type { AppMcpServerRepository } from '../storage/repositories/app-mcp-server-repository.ts';
+import type { JobQueueRepository } from '../storage/repositories/job-queue-repository.ts';
+import { SKILL_VALIDATE } from './job-queue-constants.ts';
+import { BUILTIN_MCP_SERVERS, BUILTIN_SKILLS, type BuiltinSkill } from './builtins.ts';
 import {
   defaultBuiltinSkillPluginRoot,
   ensureBuiltinSkillPluginWrappers,
-} from './agent/builtin-skill-plugin-wrapper';
+} from './agent/builtin-skill-plugin-wrapper.ts';
 
 export function resolveSkillRawUrl(url: string): string {
   if (url.startsWith('https://raw.githubusercontent.com/')) {

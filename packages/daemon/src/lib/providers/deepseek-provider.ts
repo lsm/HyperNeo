@@ -11,7 +11,12 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
-import { fetchRemoteModelList, type RemoteModelListEntry } from './shared/model-list.js';
+import { fetchRemoteModelList } from './shared/model-list.js';
+import {
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 export class DeepSeekProvider implements Provider {
   readonly id = 'deepseek';
@@ -60,8 +65,10 @@ export class DeepSeekProvider implements Provider {
   ];
 
   private credentials: ProviderCredentials | null = null;
+  private credentialsVersion = 0;
+  private credentialSignature: string | undefined;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
-  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
   private static readonly DISCOVERED_MODEL_CONTEXT_WINDOW = 128_000;
 
@@ -71,13 +78,18 @@ export class DeepSeekProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.credentialsVersion++;
+      this.probeCache.clear();
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
-    this.probeCache.clear();
-    this.clearModelCache();
   }
 
   clearModelCache(): void {
-    this.modelListCache.clear();
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -131,21 +143,44 @@ export class DeepSeekProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(DeepSeekProvider.BASE_URL, apiKey);
-    return DeepSeekProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      return mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
+    } catch {
+      return DeepSeekProvider.MODELS;
+    }
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      baseUrl: DeepSeekProvider.MODEL_LIST_URL,
+      credentialKey: this.getApiKey(),
+    });
   }
 
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error('DeepSeek API key not configured');
+    const credentialsVersion = this.credentialsVersion;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
     const models = await fetchRemoteModelList({
       url: DeepSeekProvider.MODEL_LIST_URL,
       headers: { Authorization: `Bearer ${apiKey}` },
-      force: options.force,
-      cache: this.modelListCache,
+      fetchImpl: this.fetchImpl,
     });
-    return models
+    if (credentialsVersion !== this.credentialsVersion) {
+      this.clearModelCache();
+      throw new Error('DeepSeek credentials changed during model discovery');
+    }
+    const discovered = models
       .filter((model) => this.ownsModel(model.id))
       .map((model) => this.toRemoteModelInfo(model));
+    this.discoveryCache.set(fingerprint, discovered);
+    return discovered;
   }
 
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {

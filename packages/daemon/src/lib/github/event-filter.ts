@@ -1,6 +1,6 @@
 import type { GitHubEvent, GitHubFilterConfig, FilterResult } from '@hyperneo/shared';
-import { Logger } from '../logger';
-import type { FilterConfigManager } from './filter-config-manager';
+import { Logger } from '../logger.ts';
+import type { FilterConfigManager } from './filter-config-manager.ts';
 
 const log = new Logger('github-event-filter');
 

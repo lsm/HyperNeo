@@ -1,4 +1,4 @@
-import type { RuntimeSocket } from '../lib/runtime-server';
+import type { RuntimeSocket } from '../lib/runtime-server/index.ts';
 import {
   createEventMessage,
   createErrorResponseMessage,
@@ -7,8 +7,8 @@ import {
 } from '@hyperneo/shared';
 import { DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE } from '@hyperneo/shared/message-hub/router';
 import type { HubMessage } from '@hyperneo/shared/message-hub/protocol';
-import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
-import type { SessionManager } from '../lib/session-manager';
+import type { WebSocketServerTransport } from '../lib/websocket-server-transport.ts';
+import type { SessionManager } from '../lib/session-manager.ts';
 
 const GLOBAL_SESSION_ID = 'global';
 

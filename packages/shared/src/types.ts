@@ -10,7 +10,7 @@ export type {
   ProviderId,
   ProviderSdkConfig,
   ProviderSessionConfig,
-} from './provider/types';
+} from './provider/types.ts';
 export type {
   AppMcpServer,
   AppMcpServerSourceType,
@@ -125,7 +125,7 @@ export interface WorktreeCommitStatus {
 }
 
 export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'ended' | 'archived';
-export type { RuntimeState } from './types/neo';
+export type { RuntimeState } from './types/neo.ts';
 
 export type Provider =
   | 'anthropic'

@@ -26,7 +26,7 @@ vi.mock('@github/copilot-sdk', () => {
 
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
 
-describe('createRuntimeClient() — CopilotClient.start() lifecycle', () => {
+describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
   let provider: AnthropicToCopilotBridgeProvider;
 
   beforeEach(() => {
@@ -35,13 +35,13 @@ describe('createRuntimeClient() — CopilotClient.start() lifecycle', () => {
   });
 
   it('calls start() on a freshly constructed CopilotClient', async () => {
-    const createClient = (
+    const getOrCreate = (
       provider as unknown as {
-        createRuntimeClient(token: string | undefined, generation: number): Promise<unknown>;
+        getOrCreateClient(token?: string): Promise<unknown>;
       }
-    ).createRuntimeClient.bind(provider);
+    ).getOrCreateClient.bind(provider);
 
-    const clientPromise = createClient('gho_test_token', 0);
+    const clientPromise = getOrCreate('gho_test_token');
 
     expect(startCalls).toHaveLength(1);
 
@@ -51,22 +51,42 @@ describe('createRuntimeClient() — CopilotClient.start() lifecycle', () => {
     expect(client).toBeDefined();
   });
 
-  it('stops the client and rejects when a runtime reset lands during start()', async () => {
-    const createClient = (
+  it('caches the client after a successful start() so subsequent calls skip start()', async () => {
+    const getOrCreate = (
       provider as unknown as {
-        createRuntimeClient(token: string | undefined, generation: number): Promise<unknown>;
+        getOrCreateClient(token?: string): Promise<unknown>;
       }
-    ).createRuntimeClient.bind(provider);
+    ).getOrCreateClient.bind(provider);
 
-    const state = provider as unknown as Record<string, unknown>;
-    const generation = state['runtimeGeneration'] as number;
-    const clientPromise = createClient('gho_old_token', generation);
+    const p1 = getOrCreate();
     expect(startCalls).toHaveLength(1);
-
-    state['runtimeGeneration'] = generation + 1;
     startCalls[0].resolve();
+    const client1 = await p1;
 
-    await expect(clientPromise).rejects.toThrow('reset during client start');
+    const client2 = await getOrCreate();
+    expect(startCalls).toHaveLength(1);
+    expect(client2).toBe(client1);
+  });
+
+  it('does NOT cache the client when start() throws, so a retry creates a fresh instance', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+
+    const p1 = getOrCreate();
+    expect(startCalls).toHaveLength(1);
+    startCalls[0].reject(new Error('CLI not found'));
+    await expect(p1).rejects.toThrow('CLI not found');
+
+    expect((provider as unknown as Record<string, unknown>)['clientCache']).toBeUndefined();
+
+    startCalls.length = 0;
+    const p2 = getOrCreate();
+    expect(startCalls).toHaveLength(1);
+    startCalls[0].resolve();
+    await expect(p2).resolves.toBeDefined();
   });
 
   it('propagates start() failure through ensureServerStarted()', async () => {

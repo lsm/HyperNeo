@@ -35,6 +35,7 @@ describe('Migration 158: cleanup terminal Space runtime state', () => {
         completed_at INTEGER
       );
       CREATE TABLE message_search_content (
+        id INTEGER PRIMARY KEY,
         kind TEXT NOT NULL,
         source_id TEXT NOT NULL,
         session_id TEXT

@@ -1,4 +1,4 @@
-import { getDataDir } from '../../data-dir';
+import { getDataDir } from '../../data-dir.ts';
 import type {
   Provider,
   ProviderCapabilities,
@@ -8,12 +8,11 @@ import type {
   ProviderAuthStatusInfo,
   ProviderCredentials,
   ProviderOAuthFlowData,
+  ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { CopilotClient, type ModelInfo as CopilotSdkModelInfo } from '@github/copilot-sdk';
-import { ExternalCredentialSourceError } from './errors.js';
 import { startEmbeddedServer, type EmbeddedServer } from './server.js';
-export { ExternalCredentialSourceError } from './errors.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
@@ -87,11 +86,21 @@ interface TokenCacheEntry {
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
 const RUNTIME_SHUTDOWN_WAIT_MS = 10_000;
 
-function delay(ms: number): Promise<void> {
+function delay(ms: number): Promise<undefined> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    const timer = setTimeout(() => resolve(undefined), ms);
     timer.unref?.();
   });
+}
+
+function awaitServerStartBounded(
+  starting: Promise<EmbeddedServer> | undefined
+): Promise<EmbeddedServer | undefined> {
+  if (!starting) return Promise.resolve(undefined);
+  return Promise.race([
+    starting.catch((): EmbeddedServer | undefined => undefined),
+    delay(RUNTIME_SHUTDOWN_WAIT_MS),
+  ]);
 }
 
 export class AnthropicToCopilotBridgeProvider implements Provider {
@@ -109,11 +118,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   private clientCache: CopilotClient | undefined = undefined;
   private serverCache: EmbeddedServer | undefined = undefined;
-  private serverStarting: Promise<{ server: EmbeddedServer; client: CopilotClient }> | undefined =
-    undefined;
-  private runtimeGeneration = 0;
+  private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
+  private shuttingDown = false;
+  private loggedOut = false;
+  private observedCuratedCatalog = false;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
+  private credentialsVersion = 0;
+  private clientCredentialsVersion = -1;
   private readonly credentialListeners = new Set<
     (credentials: ProviderCredentials) => void | Promise<void>
   >();
@@ -145,109 +157,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         ? credentials.apiKey
         : (credentials.accessToken ?? credentials.refreshToken);
     if (!token) return;
-    const previousToken = this.storedCredentialToken ?? this.tokenCache?.token;
+    this.loggedOut = false;
+    if (token !== this.storedCredentialToken) {
+      this.credentialsVersion++;
+      this.clearModelCache();
+      this.invalidateRunningBridge();
+    }
     this.storedCredentialToken = token;
     this.tokenCache = { token, expiresAt: Number.POSITIVE_INFINITY };
-    if (previousToken !== token) {
-      this.resetCredentialBoundCaches();
-    }
-  }
-
-  clearModelCache(): void {
-    this.dynamicModelsCache = null;
-    this.dynamicModelsCacheExpiresAt = 0;
-  }
-
-  private resetCredentialBoundCaches(options: { rebuild?: boolean } = {}): void {
-    this.clearModelCache();
-    const hadRuntime = this.serverCache !== undefined || this.serverStarting !== undefined;
-    if (options.rebuild === false || !hadRuntime) {
-      void this.resetEmbeddedRuntime();
-      return;
-    }
-    void this.rebuildEmbeddedRuntime();
-  }
-
-  private async rebuildEmbeddedRuntime(): Promise<void> {
-    const generation = ++this.runtimeGeneration;
-    const staleStarting = this.serverStarting;
-    const starting = this.createRuntime();
-    this.serverStarting = starting;
-
-    let runtime: { server: EmbeddedServer; client: CopilotClient };
-    try {
-      runtime = await starting;
-    } catch {
-      if (this.serverStarting === starting) {
-        this.serverStarting = undefined;
-      }
-      if (this.runtimeGeneration === generation) {
-        await this.resetEmbeddedRuntime();
-      }
-      return;
-    }
-
-    if (this.runtimeGeneration !== generation) {
-      await runtime.server.stop().catch(() => {});
-      await runtime.client.stop().catch(() => {});
-      return;
-    }
-
-    const oldServer = this.serverCache;
-    const oldClient = this.clientCache;
-    if (this.serverStarting === starting) {
-      this.serverStarting = undefined;
-    }
-    this.serverCache = runtime.server;
-    this.clientCache = runtime.client;
-
-    if (oldServer) {
-      await oldServer.stop().catch((err: unknown) => {
-        logger.warn('Error stopping embedded Anthropic server:', err);
-      });
-    }
-    if (oldClient) {
-      await oldClient.stop().catch((err: unknown) => {
-        logger.warn('Error stopping CopilotClient:', err);
-      });
-    }
-    if (staleStarting && staleStarting !== starting) {
-      const stale = await staleStarting.catch(() => undefined);
-      if (stale) {
-        await stale.server.stop().catch(() => {});
-        await stale.client.stop().catch(() => {});
-      }
-    }
-  }
-
-  private async resetEmbeddedRuntime(): Promise<void> {
-    const starting = this.serverStarting;
-    const server = this.serverCache;
-    const client = this.clientCache;
-    this.runtimeGeneration += 1;
-    this.serverStarting = undefined;
-    this.serverCache = undefined;
-    this.clientCache = undefined;
-    if (server) {
-      await server.stop().catch((err: unknown) => {
-        logger.warn('Error stopping embedded Anthropic server:', err);
-      });
-    }
-    if (client) {
-      await client.stop().catch((err: unknown) => {
-        logger.warn('Error stopping CopilotClient:', err);
-      });
-    }
-    if (starting) {
-      const stale = await Promise.race([
-        starting.catch(() => undefined),
-        delay(RUNTIME_SHUTDOWN_WAIT_MS),
-      ]);
-      if (stale) {
-        await stale.server.stop().catch(() => {});
-        await stale.client.stop().catch(() => {});
-      }
-    }
   }
 
   async getCredentials(): Promise<ProviderCredentials | null> {
@@ -282,41 +199,91 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async getModels(): Promise<ModelInfo[]> {
-    if (!(await this.isAvailable())) return [];
+    if (!(await this.isAvailable())) {
+      this.observedCuratedCatalog = false;
+      return [];
+    }
     try {
       await this.ensureServerStarted();
     } catch (err) {
       logger.error('Failed to start embedded Anthropic server:', err);
+      this.observedCuratedCatalog = false;
       return [];
     }
 
-    const now = Date.now();
-    if (this.dynamicModelsCache && now < this.dynamicModelsCacheExpiresAt) {
+    if (!this.clientCache) return COPILOT_ANTHROPIC_MODELS;
+
+    try {
+      const models = await this.fetchRemoteModels();
+      return models.length > 0 ? models : COPILOT_ANTHROPIC_MODELS;
+    } catch (err) {
+      logger.warn('client.listModels() failed, falling back to static model list:', err);
+      return COPILOT_ANTHROPIC_MODELS;
+    }
+  }
+
+  async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
+    if (!(await this.isAvailable())) {
+      throw new Error('GitHub Copilot is not authenticated');
+    }
+
+    if (
+      !options?.force &&
+      this.dynamicModelsCache &&
+      Date.now() < this.dynamicModelsCacheExpiresAt
+    ) {
       return this.dynamicModelsCache;
     }
 
-    const client = this.clientCache;
-    if (client) {
-      const generation = this.runtimeGeneration;
-      try {
-        const sdkModels = await client.listModels();
-        if (generation !== this.runtimeGeneration || client !== this.clientCache) {
-          return COPILOT_ANTHROPIC_MODELS;
-        }
-        const mapped = sdkModels
-          .filter((m) => m.policy?.state !== 'disabled')
-          .map((m) => this.mapCopilotSdkModel(m));
-        if (mapped.length > 0) {
-          this.dynamicModelsCache = mapped;
-          this.dynamicModelsCacheExpiresAt = now + TOKEN_CACHE_TTL_MS;
-          return mapped;
-        }
-      } catch (err) {
-        logger.warn('client.listModels() failed, falling back to static model list:', err);
-      }
+    await this.ensureServerStarted();
+    if (!this.clientCache) {
+      throw new Error('Copilot client unavailable after embedded server startup');
     }
 
-    return COPILOT_ANTHROPIC_MODELS;
+    return this.fetchRemoteModels(options);
+  }
+
+  clearModelCache(): void {
+    this.dynamicModelsCache = null;
+    this.dynamicModelsCacheExpiresAt = 0;
+    this.observedCuratedCatalog = false;
+  }
+
+  hasCuratedModelList(): boolean {
+    return this.observedCuratedCatalog;
+  }
+
+  private async fetchRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
+    const now = Date.now();
+    if (!options?.force && this.dynamicModelsCache && now < this.dynamicModelsCacheExpiresAt) {
+      return this.dynamicModelsCache;
+    }
+
+    if (!this.clientCache) {
+      throw new Error('Copilot client unavailable');
+    }
+    if (this.clientCredentialsVersion !== this.credentialsVersion) {
+      throw new Error('GitHub Copilot credentials changed before model discovery');
+    }
+
+    const credentialsVersion = this.credentialsVersion;
+    const client = this.clientCache;
+    const sdkModels = await client.listModels();
+    if (credentialsVersion !== this.credentialsVersion || client !== this.clientCache) {
+      throw new Error('GitHub Copilot credentials changed during model discovery');
+    }
+
+    const mapped = sdkModels
+      .filter((model) => model.policy?.state !== 'disabled')
+      .map((model) => this.mapCopilotSdkModel(model));
+    if (mapped.length > 0) {
+      this.dynamicModelsCache = mapped;
+      this.dynamicModelsCacheExpiresAt = now + TOKEN_CACHE_TTL_MS;
+    } else {
+      this.clearModelCache();
+    }
+    this.observedCuratedCatalog = true;
+    return mapped;
   }
 
   ownsModel(modelId: string): boolean {
@@ -357,8 +324,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
           'Await getModels() or ensureServerStarted() before calling buildSdkConfig().'
       );
     }
+    if (this.clientCredentialsVersion !== this.credentialsVersion) {
+      throw new Error(
+        'AnthropicToCopilotBridgeProvider: credentials changed. ' +
+          'Await ensureServerStarted() before calling buildSdkConfig().'
+      );
+    }
 
-    const allKnownModels = this.dynamicModelsCache ?? COPILOT_ANTHROPIC_MODELS;
+    const allKnownModels =
+      this.dynamicModelsCache && this.dynamicModelsCache.length > 0
+        ? this.dynamicModelsCache
+        : COPILOT_ANTHROPIC_MODELS;
     const entry = allKnownModels.find((m) => m.alias === modelId || m.id === modelId);
     const resolvedId = entry?.id ?? modelId;
     const workspacePath = (sessionConfig?.workspacePath as string | undefined) ?? this.cwd;
@@ -452,16 +428,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   async logout(): Promise<void> {
     const cachedExternalSource = this.freshCachedExternalSource();
     const externalSource = (await this.findExternalCredentialSource()) ?? cachedExternalSource;
-    if (externalSource) {
-      throw new ExternalCredentialSourceError(
-        `GitHub Copilot credentials are managed by ${externalSource}. ` +
-          'Remove that source to log out.'
-      );
-    }
-
+    const previousTokenCache = this.tokenCache;
+    const previousDynamicModelsCache = this.dynamicModelsCache;
+    const previousDynamicModelsCacheExpiresAt = this.dynamicModelsCacheExpiresAt;
     this.storedCredentialToken = null;
     this.tokenCache = null;
-    this.resetCredentialBoundCaches({ rebuild: false });
+    this.credentialsVersion++;
+    this.clearModelCache();
 
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
@@ -474,6 +447,30 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       }
     } catch {}
+
+    if (externalSource) {
+      if (this.clientCredentialsVersion >= 0) {
+        this.credentialsVersion = this.clientCredentialsVersion;
+        if (previousTokenCache) {
+          this.tokenCache = {
+            ...previousTokenCache,
+            expiresAt: Math.min(previousTokenCache.expiresAt, Date.now() + TOKEN_CACHE_TTL_MS),
+          };
+        }
+        this.dynamicModelsCache = previousDynamicModelsCache;
+        this.dynamicModelsCacheExpiresAt = previousDynamicModelsCacheExpiresAt;
+      }
+      const refusal = new Error(
+        `GitHub Copilot credentials are managed by ${externalSource}. ` +
+          'Remove that source to log out.'
+      ) as Error & { logoutRefused?: boolean };
+      refusal.logoutRefused = true;
+      throw refusal;
+    }
+
+    await awaitServerStartBounded(this.serverStarting);
+    await this.stopServerAndClient();
+    this.loggedOut = true;
   }
 
   private freshCachedExternalSource(): string | undefined {
@@ -503,51 +500,93 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
-    await this.resetEmbeddedRuntime();
+    this.shuttingDown = true;
+    await awaitServerStartBounded(this.serverStarting);
+    await this.stopServerAndClient();
+  }
+
+  private async stopServerAndClient(): Promise<void> {
+    if (this.serverCache) {
+      await this.serverCache.stop().catch((err: unknown) => {
+        logger.warn('Error stopping embedded Anthropic server:', err);
+      });
+      this.serverCache = undefined;
+    }
+    if (this.clientCache) {
+      await this.clientCache.stop().catch((err: unknown) => {
+        logger.warn('Error stopping CopilotClient:', err);
+      });
+      this.clientCache = undefined;
+    }
+    this.clientCredentialsVersion = -1;
+  }
+
+  private invalidateRunningBridge(): void {
+    if (this.shuttingDown || this.serverStarting) {
+      return;
+    }
+    if (!this.serverCache && !this.clientCache) {
+      return;
+    }
+    const restart = this.restartServerForCurrentCredentials();
+    restart
+      .catch(() => {})
+      .finally(() => {
+        if (this.serverStarting === restart) {
+          this.serverStarting = undefined;
+        }
+      });
+    this.serverStarting = restart;
   }
 
   async ensureServerStarted(): Promise<string> {
-    if (this.serverCache) return this.serverCache.url;
+    if (this.shuttingDown) {
+      throw new Error('GitHub Copilot provider is shutting down');
+    }
+    if (this.loggedOut) {
+      throw new Error('GitHub Copilot provider is logged out');
+    }
+    if (this.serverCache && this.clientCredentialsVersion === this.credentialsVersion) {
+      return this.serverCache.url;
+    }
 
     if (!this.serverStarting) {
-      this.serverStarting = this.createRuntime();
+      this.serverStarting = this.restartServerForCurrentCredentials();
     }
-    const starting = this.serverStarting;
 
-    let runtime: { server: EmbeddedServer; client: CopilotClient };
+    const starting = this.serverStarting;
     try {
-      runtime = await starting;
-    } catch (err) {
+      return (await starting).url;
+    } finally {
       if (this.serverStarting === starting) {
         this.serverStarting = undefined;
-        throw err;
       }
-      if (this.serverCache || this.serverStarting !== undefined) {
-        return this.ensureServerStarted();
-      }
-      throw err;
     }
+  }
 
-    if (this.serverStarting !== starting) {
-      if ((this.serverCache as EmbeddedServer | undefined) === runtime.server) {
-        return runtime.server.url;
+  private async restartServerForCurrentCredentials(): Promise<EmbeddedServer> {
+    while (!this.shuttingDown) {
+      await this.stopServerAndClient();
+      if (this.shuttingDown) break;
+      const credentialsVersion = this.credentialsVersion;
+      try {
+        const server = await this.createServer(credentialsVersion);
+        if (this.shuttingDown) {
+          await server.stop().catch(() => {});
+          break;
+        }
+        if (credentialsVersion === this.credentialsVersion) {
+          this.serverCache = server;
+          return server;
+        }
+        await server.stop().catch(() => {});
+      } catch (error) {
+        if (!this.shuttingDown && credentialsVersion === this.credentialsVersion) {
+          throw error;
+        }
       }
-      await runtime.server.stop().catch(() => {});
-      await runtime.client.stop().catch(() => {});
-      const current = this.serverCache as EmbeddedServer | undefined;
-      if (current) {
-        return current.url;
-      }
-      if (this.serverStarting !== undefined) {
-        return this.ensureServerStarted();
-      }
-      throw new Error('Copilot runtime was reset during server start');
     }
-
-    this.serverCache = runtime.server;
-    this.clientCache = runtime.client;
-    this.serverStarting = undefined;
-    return runtime.server.url;
+    throw new Error('GitHub Copilot provider is shutting down');
   }
 
   private async resolveGitHubToken(
@@ -565,7 +604,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return this.tokenCache.token;
     }
 
+    const credentialsVersion = this.credentialsVersion;
+    const previousToken = this.tokenCache?.token;
     const { token, source } = await this.discoverGitHubToken(propagateStoredCredentialError);
+    if (credentialsVersion !== this.credentialsVersion) {
+      return this.resolveGitHubToken(propagateStoredCredentialError);
+    }
+    if (previousToken !== undefined && token !== previousToken) {
+      this.credentialsVersion++;
+      this.clearModelCache();
+      this.invalidateRunningBridge();
+    }
     this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS, source };
     return token;
   }
@@ -749,7 +798,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         await this.saveCredentials(credentials);
         this.storedCredentialToken = null;
         this.tokenCache = null;
-        this.resetCredentialBoundCaches();
+        this.credentialsVersion++;
+        this.clearModelCache();
+        this.invalidateRunningBridge();
+        this.loggedOut = false;
         this.notifyCredentialsChanged({ type: 'oauth', accessToken: data.access_token });
 
         logger.debug('GitHub Copilot OAuth login successful');
@@ -804,44 +856,37 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     };
   }
 
-  private async createRuntime(): Promise<{ server: EmbeddedServer; client: CopilotClient }> {
-    const generation = this.runtimeGeneration;
+  private async createServer(credentialsVersion: number): Promise<EmbeddedServer> {
     const token = await this.resolveGitHubToken();
-    const client = await this.createRuntimeClient(token, generation);
-    let server: EmbeddedServer;
-    try {
-      server = await startEmbeddedServer(client, this.cwd);
-    } catch (err) {
-      await client.stop().catch(() => {});
-      throw err;
-    }
-    if (generation !== this.runtimeGeneration) {
-      await server.stop().catch(() => {});
-      await client.stop().catch(() => {});
-      throw new Error('Copilot runtime was reset during server start');
-    }
+    const client = await this.getOrCreateClient(token, credentialsVersion);
+    const server = await startEmbeddedServer(client, this.cwd);
     logger.debug(`Embedded Anthropic server started at ${server.url}`);
-    return { server, client };
+    return server;
   }
 
-  private async createRuntimeClient(
+  private async getOrCreateClient(
     token: string | undefined,
-    generation: number
+    credentialsVersion: number = this.credentialsVersion
   ): Promise<CopilotClient> {
-    const env: NodeJS.ProcessEnv = { ...this.env };
-    if (token) {
-      env.COPILOT_GITHUB_TOKEN = token;
+    if (this.clientCache === undefined) {
+      const env: NodeJS.ProcessEnv = { ...this.env };
+      if (token) {
+        env.COPILOT_GITHUB_TOKEN = token;
+      }
+      const client = new CopilotClient({
+        useStdio: true,
+        logLevel: 'error',
+        env: buildCopilotEnv(env),
+      });
+      await client.start();
+      if (credentialsVersion !== this.credentialsVersion) {
+        await client.stop().catch(() => {});
+        throw new Error('GitHub Copilot credentials changed during client startup');
+      }
+      this.clientCache = client;
+      this.clientCredentialsVersion = credentialsVersion;
+      logger.debug('Created CopilotClient (bundled CLI path)');
     }
-    const client = new CopilotClient({
-      useStdio: true,
-      logLevel: 'error',
-      env: buildCopilotEnv(env),
-    });
-    await client.start();
-    if (generation !== this.runtimeGeneration) {
-      await client.stop().catch(() => {});
-      throw new Error('Copilot runtime was reset during client start');
-    }
-    return client;
+    return this.clientCache;
   }
 }

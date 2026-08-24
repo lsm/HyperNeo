@@ -1101,6 +1101,8 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
       url: 'http://127.0.0.1:54321',
       stop: async () => {},
     };
+    const internals = p as unknown as Record<string, number>;
+    internals['clientCredentialsVersion'] = internals['credentialsVersion'];
     const cfg = p.buildSdkConfig('copilot-anthropic-sonnet');
     expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
       cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']

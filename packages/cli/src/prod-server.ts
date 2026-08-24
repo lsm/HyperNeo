@@ -12,7 +12,7 @@ import {
   shouldHaveImmutableCache,
   isHtmlFile,
   printServerUrls,
-} from './cli-utils';
+} from './cli-utils.ts';
 
 const log = createLogger('hyperneo:cli:prod-server');
 

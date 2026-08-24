@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';
-import type { RuntimeSocket, ServerHandle, ServerOptions, UpgradeFn } from './types';
+import type { RuntimeSocket, ServerHandle, ServerOptions, UpgradeFn } from './types.ts';
 
 function toRequest(req: IncomingMessage, hostname: string, port: number): Request {
   const url = `http://${hostname}:${port}${req.url ?? '/'}`;

@@ -1,16 +1,16 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type {
   SpaceTaskPriority,
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
 } from '@hyperneo/shared';
-import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository';
-import { getNextRunAt, isValidCronExpression } from './cron-utils';
-import { TASK_SCHEDULE_FIRE } from '../../job-queue-constants';
-import type { TaskScheduleFirePayload } from '../../job-handlers/task-schedule-fire.handler';
+import type { TaskScheduleRepository } from '../../../storage/repositories/task-schedule-repository.ts';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { getNextRunAt, isValidCronExpression } from './cron-utils.ts';
+import { TASK_SCHEDULE_FIRE } from '../../job-queue-constants.ts';
+import type { TaskScheduleFirePayload } from '../../job-handlers/task-schedule-fire.handler.ts';
 
 export interface CreateScheduleInput {
   spaceId: string;

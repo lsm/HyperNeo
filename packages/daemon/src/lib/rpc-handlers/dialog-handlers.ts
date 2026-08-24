@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('dialog-handlers');
 const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;

@@ -1,5 +1,5 @@
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 
 export interface WorkflowTargetKey {
   workflowRunId: string;

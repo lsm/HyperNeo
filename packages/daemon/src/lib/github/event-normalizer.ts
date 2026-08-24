@@ -5,7 +5,7 @@ import type {
   GitHubWebhookIssueCommentPayload,
   GitHubWebhookIssuesPayload,
   GitHubWebhookPullRequestPayload,
-} from './types';
+} from './types.ts';
 
 function generateEventId(): string {
   return crypto.randomUUID();

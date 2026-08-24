@@ -4,8 +4,8 @@ import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
-} from '../../../lib/agent/message-delivery';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository';
+} from '../../../lib/agent/message-delivery.ts';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
 export type InjectionDeliveryStatus = 'enqueued' | 'deferred' | 'failed';
 

@@ -1,5 +1,5 @@
-import type { RuntimeSocket } from './runtime-server';
-import { Logger } from './logger';
+import type { RuntimeSocket } from './runtime-server/index.ts';
+import { Logger } from './logger.ts';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@hyperneo/shared';
 import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protocol';
 import type { MessageHubRouter, ClientConnection } from '@hyperneo/shared';

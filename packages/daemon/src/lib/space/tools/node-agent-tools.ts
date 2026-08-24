@@ -1,20 +1,20 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import {
   ApproveTaskSchema,
   SubmitForApprovalSchema,
   MarkCompleteSchema,
-} from './task-agent-tool-schemas';
+} from './task-agent-tool-schemas.ts';
 import type {
   ApproveTaskInput,
   SubmitForApprovalInput,
   MarkCompleteInput,
-} from './task-agent-tool-schemas';
-import { Logger } from '../../logger';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import { ChannelResolver } from '../runtime/channel-resolver';
-import type { AgentMessageRouter } from '../runtime/agent-message-router';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+} from './task-agent-tool-schemas.ts';
+import { Logger } from '../../logger.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { ChannelResolver } from '../runtime/channel-resolver.ts';
+import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   ARTIFACT_SHAPES,
@@ -23,8 +23,8 @@ import {
   resolveNodeAgents,
   validateArtifactShape,
 } from '@hyperneo/shared';
-import { jsonResult } from './tool-result';
-import type { ToolResult } from './tool-result';
+import { jsonResult } from './tool-result.ts';
+import type { ToolResult } from './tool-result.ts';
 import {
   ListPeersSchema,
   SendMessageSchema,
@@ -45,7 +45,7 @@ import {
   GetExternalEventSchema,
   ListDeliveriesSchema,
   ListSubscriptionsSchema,
-} from './node-agent-tool-schemas';
+} from './node-agent-tool-schemas.ts';
 import type {
   ListPeersInput,
   SendMessageInput,
@@ -66,16 +66,16 @@ import type {
   GetExternalEventInput,
   ListDeliveriesInput,
   ListSubscriptionsInput,
-} from './node-agent-tool-schemas';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+} from './node-agent-tool-schemas.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceTask } from '@hyperneo/shared';
-import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
-import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
-import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
-import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
-import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
+import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import { translateLegacyNodeTargets } from '../messaging-adapter.ts';
+import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url.ts';
+import type { WorkflowArtifactProfile } from '../runtime/artifact-profile.ts';
+import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine.ts';
+import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
 
 function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | null {
   try {

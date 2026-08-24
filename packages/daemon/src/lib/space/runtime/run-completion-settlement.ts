@@ -1,5 +1,5 @@
 import type { NodeExecution, SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
-import type { PostApprovalRouteResult } from './post-approval-router';
+import type { PostApprovalRouteResult } from './post-approval-router.ts';
 
 export type PostApprovalDispatchMode = PostApprovalRouteResult['mode'];
 

@@ -1,12 +1,13 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
-import type { HookExecutorContext } from '../hook-executor';
-import { getConnector, registerConnector } from './connector';
+import type { HookExecutorContext } from '../hook-executor.ts';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { getConnector, registerConnector } from './connector.ts';
 import {
   createExternalStateValidator,
   type ExternalStateValidatorConfig,
-} from './external-state-validator';
-import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
-import type { Predicate } from './predicate';
+} from './external-state-validator.ts';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector.ts';
+import type { Predicate } from './predicate.ts';
 
 const PR_READY_LABEL = 'PR is not ready for Review';
 const PR_MERGED_LABEL = 'PR is not merged';
@@ -14,10 +15,7 @@ const CODEX_LABEL = 'codex review bot approval missing';
 
 const CODEX_RETRY_INTERVAL_MS = 60_000;
 
-export function registerGithubConnector(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
-): void {
+export function registerGithubConnector(spawnImpl: SpawnFn = spawnProcess): void {
   registerConnector(createGithubConnector(spawnImpl));
 }
 
@@ -58,8 +56,7 @@ const PR_READY_PENDING: Predicate = {
 };
 
 export function createPrReadyValidatorV2(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
+  spawnImpl: SpawnFn = spawnProcess
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
@@ -77,8 +74,7 @@ export function createPrReadyValidatorV2(
 }
 
 export function createPrMergedValidator(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
+  spawnImpl: SpawnFn = spawnProcess
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
@@ -142,8 +138,7 @@ function reviewPostedParamResolver(ctx: HookExecutorContext): Record<string, unk
 }
 
 export function createReviewPostedValidator(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
+  spawnImpl: SpawnFn = spawnProcess
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   const config: ExternalStateValidatorConfig = {
@@ -162,8 +157,7 @@ export function createReviewPostedValidator(
 }
 
 export function createCodexApprovalValidator(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
+  spawnImpl: SpawnFn = spawnProcess
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   registerGithubConnector(spawnImpl);
   return async (ctx) => {

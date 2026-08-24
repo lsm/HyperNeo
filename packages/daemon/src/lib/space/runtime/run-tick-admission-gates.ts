@@ -1,5 +1,5 @@
 import type { SpaceTaskStatus, WorkflowRunStatus } from '@hyperneo/shared';
-import { decideRunTickAdmissionViaPipeline } from './run-tick-decision-pipeline';
+import { decideRunTickAdmissionViaPipeline } from './run-tick-decision-pipeline.ts';
 
 export interface RunTickAdmissionInput {
   runStatus: WorkflowRunStatus | null;

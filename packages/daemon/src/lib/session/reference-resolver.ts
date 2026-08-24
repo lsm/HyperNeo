@@ -3,9 +3,9 @@ import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import type {
   TaskRepoForReference,
   GoalRepoForReference,
-} from '../rpc-handlers/reference-handlers';
-import { resolveFile, resolveFolder } from '../rpc-handlers/reference-handlers';
-import { Logger } from '../logger';
+} from '../rpc-handlers/reference-handlers.ts';
+import { resolveFile, resolveFolder } from '../rpc-handlers/reference-handlers.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('ReferenceResolver');
 

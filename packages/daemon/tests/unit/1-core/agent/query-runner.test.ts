@@ -1468,10 +1468,12 @@ describe('QueryRunner', () => {
         abortController.signal
       );
 
-      await expect(async () => {
-        for await (const _msg of generator) {
-        }
-      }).rejects.toThrow('Some SDK error');
+      await expect(
+        (async () => {
+          for await (const _msg of generator) {
+          }
+        })()
+      ).rejects.toThrow('Some SDK error');
     });
   });
 
@@ -2003,6 +2005,334 @@ describe('QueryRunner', () => {
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
         )._consumedUserMessages.get(1)
       ).toBeUndefined();
+    });
+  });
+
+  describe('startup retry arm decision table', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    async function runStartupArmRow(row: {
+      attempt: number;
+      status: 'idle' | 'processing' | 'interrupted';
+      abort: boolean;
+      cleaning: boolean;
+      redeliver: 'none' | 'queue' | 'consumed';
+    }) {
+      if (row.status !== 'idle') {
+        getStateSpy.mockReturnValue({ status: row.status });
+      }
+
+      if (row.redeliver === 'queue') {
+        sizeSpy.mockReturnValue(1);
+      }
+
+      const abortController = new AbortController();
+      if (row.abort) {
+        abortController.abort();
+      }
+
+      const ctx = createContext({
+        isCleaningUp: () => row.cleaning,
+        queryAbortController: row.abort ? abortController : null,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as { _consumedUserMessages: Map<number, unknown[]> };
+
+      if (row.redeliver === 'consumed') {
+        runnerPrivate._consumedUserMessages.set(1, [
+          { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+        ]);
+      }
+
+      if (row.attempt === 0) {
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+      } else {
+        ctx.incrementQueryGeneration();
+        await (
+          runner as unknown as {
+            runQuery: (
+              queryGeneration: number,
+              retryAttempt: number,
+              recoveryState: { rateLimitCooldownScheduled: boolean }
+            ) => Promise<void>;
+          }
+        ).runQuery(1, 1, { rateLimitCooldownScheduled: false });
+      }
+    }
+
+    function assertStartupArmOutcome(row: {
+      attempt: number;
+      status: 'idle' | 'processing' | 'interrupted';
+      abort: boolean;
+      cleaning: boolean;
+      redeliver: 'none' | 'queue' | 'consumed';
+    }) {
+      const shouldRetry =
+        row.attempt === 0 &&
+        !row.cleaning &&
+        row.status !== 'interrupted' &&
+        row.redeliver !== 'none';
+      const shouldHandleError = !row.cleaning;
+      const buildCalls = shouldRetry ? 2 : 1;
+      const saveSDKMessageCalls = shouldRetry ? 1 : 0;
+      const terminateCalls = shouldRetry ? 1 : 0;
+      const clearCalls = shouldHandleError ? 1 : 0;
+      const enqueueCalls = shouldRetry && row.redeliver === 'consumed' ? 1 : 0;
+
+      expect(buildSpy).toHaveBeenCalledTimes(buildCalls);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(shouldHandleError ? 1 : 0);
+      expect(saveSDKMessageSpy).toHaveBeenCalledTimes(saveSDKMessageCalls);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(terminateCalls);
+      expect(clearSpy).toHaveBeenCalledTimes(clearCalls);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(enqueueCalls);
+
+      if (shouldRetry) {
+        expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            type: 'assistant',
+            message: expect.objectContaining({
+              content: expect.arrayContaining([
+                expect.objectContaining({
+                  text: expect.stringContaining('Retrying once'),
+                }),
+              ]),
+            }),
+          })
+        );
+
+        if (row.redeliver === 'consumed') {
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+            'consumed-uuid',
+            expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+            false,
+            { prepend: true }
+          );
+        }
+      }
+
+      if (shouldHandleError) {
+        expect(handleErrorSpy).toHaveBeenCalledWith(
+          'test-session-id',
+          expect.any(Error),
+          ErrorCategory.TIMEOUT,
+          expect.anything(),
+          expect.anything(),
+          expect.anything()
+        );
+      }
+    }
+
+    const attempts = [0, 1] as const;
+    const statuses = ['idle', 'processing', 'interrupted'] as const;
+    const aborts = [false, true] as const;
+    const cleanings = [false, true] as const;
+    const redelivers = ['none', 'queue', 'consumed'] as const;
+
+    for (const attempt of attempts) {
+      for (const status of statuses) {
+        for (const abort of aborts) {
+          for (const cleaning of cleanings) {
+            for (const redeliver of redelivers) {
+              const name = `attempt=${attempt} status=${status} abort=${abort} cleaning=${cleaning} redeliver=${redeliver}`;
+              it(name, async () => {
+                await runStartupArmRow({ attempt, status, abort, cleaning, redeliver });
+                assertStartupArmOutcome({ attempt, status, abort, cleaning, redeliver });
+              });
+            }
+          }
+        }
+      }
+    }
+  });
+
+  describe('unfenced-window map (B1d)', () => {
+    let savedApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    function gateSetIdle() {
+      let markCalled!: () => void;
+      const called = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      setIdleSpy.mockImplementation(() => {
+        markCalled();
+        return gate;
+      });
+      return { waitCalled: () => called, release: () => release() };
+    }
+
+    it('pins: startup arm awaits setIdle before its first staleness guard', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.incrementQueryGeneration();
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm awaits setIdle after consuming the resume pointer, before its first staleness guard', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      const ctx = createContext({ consumePendingResumeSessionAt: consumeSpy });
+      runner = new QueryRunner(ctx);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.incrementQueryGeneration();
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: transient arm re-enqueues lastConsumedUserMessage ahead of its post-await guard (unfenced)', async () => {
+      const consumedUuid = 'stale-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'OLD' }];
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.incrementQueryGeneration();
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('The connection was interrupted'),
+              }),
+            ]),
+          }),
+        })
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(
+        (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
+      ).toBeNull();
+    });
+
+    it('pins: message-not-found resume-pointer consumption is NOT an unfenced window (stale generation reaches it with no intervening await)', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let gen = 0;
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => 2,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm recurses after the publication await with no intervening guard (reachable window)', async () => {
+      buildSpy
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+        .mockRejectedValueOnce(new Error('stop after retry'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      ctx.incrementQueryGeneration();
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+        'consumed-uuid',
+        expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+        false,
+        { prepend: true }
+      );
     });
   });
 
@@ -2837,6 +3167,334 @@ describe('QueryRunner', () => {
       expect(
         (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
       ).toBeNull();
+    });
+  });
+
+  describe('transient and provider arm decision table (B1b)', () => {
+    let savedApiKey: string | undefined;
+    let savedBaseDelay: string | undefined;
+    let savedMaxRetries: string | undefined;
+    let savedOpenRouterApiKey: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      savedBaseDelay = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      savedMaxRetries = process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
+      savedOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      process.env.OPENROUTER_API_KEY = 'sk-or-v1-test';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+      if (savedBaseDelay === undefined) {
+        delete process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      } else {
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = savedBaseDelay;
+      }
+      if (savedMaxRetries === undefined) {
+        delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
+      } else {
+        process.env.HYPERNEO_PROVIDER_MAX_RETRIES = savedMaxRetries;
+      }
+      if (savedOpenRouterApiKey === undefined) {
+        delete process.env.OPENROUTER_API_KEY;
+      } else {
+        process.env.OPENROUTER_API_KEY = savedOpenRouterApiKey;
+      }
+    });
+
+    async function runB1bRow(options: {
+      message: string;
+      attempt?: number;
+      maxRetries?: number;
+      provider?: 'anthropic' | 'openrouter';
+      onRateLimit?: (msg: string) => boolean;
+      consumed?: boolean;
+    }) {
+      if (options.maxRetries !== undefined) {
+        process.env.HYPERNEO_PROVIDER_MAX_RETRIES = String(options.maxRetries);
+      } else {
+        delete process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
+      }
+      if (options.provider) {
+        mockSession.config.provider = options.provider;
+      } else {
+        delete (mockSession.config as { provider?: string }).provider;
+      }
+
+      buildSpy.mockRejectedValue(new Error(options.message));
+      const onRateLimitExhausted = options.onRateLimit
+        ? mock(async (msg: string) => options.onRateLimit!(msg))
+        : undefined;
+
+      const ctx = createContext({ onRateLimitExhausted });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as {
+        _lastConsumedUserMessage: { uuid: string; content: unknown[] } | null;
+        _consumedUserMessages: Map<number, unknown[]>;
+        runQuery: (
+          queryGeneration: number,
+          retryAttempt: number,
+          recoveryState: { rateLimitCooldownScheduled: boolean }
+        ) => Promise<void>;
+      };
+
+      if (options.consumed) {
+        runnerPrivate._lastConsumedUserMessage = {
+          uuid: 'consumed-uuid',
+          content: [{ type: 'text' as const, text: 'C' }],
+        };
+        runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+      }
+
+      if (options.attempt === undefined) {
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+      } else {
+        ctx.incrementQueryGeneration();
+        isRunningSpy.mockReturnValue(true);
+        await runnerPrivate.runQuery(1, options.attempt, { rateLimitCooldownScheduled: false });
+      }
+    }
+
+    describe('error subtype and terminal-text precedence', () => {
+      const subtypeRows = [
+        {
+          name: 'text-only rate limit is not provider-retried and surfaces as RATE_LIMIT',
+          message: 'rate limit exceeded, please retry later',
+          expectedBuildCalls: 1,
+          expectedCategory: ErrorCategory.RATE_LIMIT,
+        },
+        {
+          name: 'mixed 429 service unavailable is terminal as PROVIDER_UNAVAILABLE for provider sessions',
+          message: '429 service unavailable',
+          provider: 'openrouter' as const,
+          expectedBuildCalls: 1,
+          expectedCategory: ErrorCategory.PROVIDER_UNAVAILABLE,
+        },
+        {
+          name: 'mixed 429 service unavailable is terminal as RATE_LIMIT for Anthropic',
+          message: '429 service unavailable',
+          provider: 'anthropic' as const,
+          expectedBuildCalls: 1,
+          expectedCategory: ErrorCategory.RATE_LIMIT,
+        },
+        {
+          name: 'terminal 503-quota is not retried and suppresses terminal on billing cooldown',
+          message: '503 Service Unavailable: quota exceeded for this billing cycle',
+          onRateLimit: () => true,
+          expectedBuildCalls: 1,
+          expectedHandleError: false,
+          expectedSetIdle: false,
+        },
+        {
+          name: 'terminal 503-quota for Anthropic surfaces as RATE_LIMIT',
+          message: '503 Service Unavailable: quota exceeded',
+          provider: 'anthropic' as const,
+          expectedBuildCalls: 1,
+          expectedCategory: ErrorCategory.RATE_LIMIT,
+        },
+        {
+          name: 'terminal 503-quota for provider session surfaces as PROVIDER_UNAVAILABLE',
+          message: '503 Service Unavailable: quota exceeded',
+          provider: 'openrouter' as const,
+          expectedBuildCalls: 1,
+          expectedCategory: ErrorCategory.PROVIDER_UNAVAILABLE,
+        },
+        {
+          name: 'retryable 5xx is retried up to the cap then terminal as SYSTEM',
+          message: '500 Internal Server Error',
+          expectedBuildCalls: 4,
+          expectedCategory: ErrorCategory.SYSTEM,
+          expectedRetryNoticeCount: 3,
+        },
+        {
+          name: 'retryable 529 overloaded is retried up to the cap',
+          message: '529 overloaded',
+          expectedBuildCalls: 4,
+          expectedCategory: ErrorCategory.SYSTEM,
+          expectedRetryNoticeCount: 3,
+        },
+      ];
+
+      for (const row of subtypeRows) {
+        it(row.name, async () => {
+          await runB1bRow({
+            message: row.message,
+            provider: row.provider,
+            onRateLimit: row.onRateLimit,
+          });
+
+          expect(buildSpy).toHaveBeenCalledTimes(row.expectedBuildCalls);
+
+          if (row.expectedHandleError === false) {
+            expect(handleErrorSpy).not.toHaveBeenCalled();
+            expect(setIdleSpy).not.toHaveBeenCalled();
+            expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+          } else {
+            expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+            expect(handleErrorSpy.mock.calls[0][2]).toBe(row.expectedCategory);
+            expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+            expect(setIdleSpy).toHaveBeenCalled();
+          }
+
+          if (row.expectedRetryNoticeCount !== undefined) {
+            const notices = (saveSDKMessageSpy.mock.calls as unknown[][]).filter((call) => {
+              const msg = call[1] as { message?: { content?: Array<{ text?: string }> } };
+              const content = msg.message?.content;
+              return Array.isArray(content) && content.some((c) => c.text?.includes('Retrying'));
+            });
+            expect(notices).toHaveLength(row.expectedRetryNoticeCount);
+          }
+        });
+      }
+    });
+
+    describe('attempt and cap exhaustion', () => {
+      const capRows = [
+        { attempt: 0, maxRetries: 0, expectedBuildCalls: 1 },
+        { attempt: 0, maxRetries: 1, expectedBuildCalls: 2 },
+        { attempt: 0, maxRetries: 3, expectedBuildCalls: 4 },
+        { attempt: 1, maxRetries: 3, expectedBuildCalls: 3 },
+        { attempt: 2, maxRetries: 3, expectedBuildCalls: 2 },
+        { attempt: 3, maxRetries: 3, expectedBuildCalls: 1 },
+      ];
+
+      for (const row of capRows) {
+        it(`attempt ${row.attempt} with maxRetries ${row.maxRetries} calls build ${row.expectedBuildCalls} time(s)`, async () => {
+          await runB1bRow({
+            message: '503 Service Unavailable',
+            attempt: row.attempt,
+            maxRetries: row.maxRetries,
+          });
+
+          expect(buildSpy).toHaveBeenCalledTimes(row.expectedBuildCalls);
+        });
+      }
+    });
+
+    describe('provider family (Anthropic SYSTEM vs PROVIDER_UNAVAILABLE)', () => {
+      const familyRows = [
+        {
+          name: 'Anthropic 503 exhausted as SYSTEM',
+          message: '503 Service Unavailable',
+          provider: 'anthropic' as const,
+          expectedCategory: ErrorCategory.SYSTEM,
+        },
+        {
+          name: 'provider 503 exhausted as PROVIDER_UNAVAILABLE',
+          message: '503 Service Unavailable',
+          provider: 'openrouter' as const,
+          expectedCategory: ErrorCategory.PROVIDER_UNAVAILABLE,
+        },
+      ];
+
+      for (const row of familyRows) {
+        it(row.name, async () => {
+          await runB1bRow({
+            message: row.message,
+            provider: row.provider,
+            attempt: 1,
+            maxRetries: 0,
+          });
+
+          expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+          expect(handleErrorSpy.mock.calls[0][2]).toBe(row.expectedCategory);
+        });
+      }
+    });
+
+    describe('billing-429 rate-limit handoff', () => {
+      it('suppresses terminal handling when onRateLimitExhausted returns true', async () => {
+        await runB1bRow({
+          message: '429 please upgrade your plan',
+          onRateLimit: () => true,
+        });
+
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+        expect(setIdleSpy).not.toHaveBeenCalled();
+      });
+
+      it('surfaces as RATE_LIMIT when onRateLimitExhausted returns false', async () => {
+        await runB1bRow({
+          message: '429 please upgrade your plan',
+          onRateLimit: () => false,
+        });
+
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy.mock.calls[0][2]).toBe(ErrorCategory.RATE_LIMIT);
+        expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+        expect(setIdleSpy).toHaveBeenCalled();
+      });
+
+      it('passes the consumed message and billingTerminal hint to onRateLimitExhausted', async () => {
+        const onRateLimitExhausted = mock(async () => true);
+
+        const ctx = createContext({ onRateLimitExhausted });
+        runner = new QueryRunner(ctx);
+        const runnerPrivate = runner as unknown as {
+          _lastConsumedUserMessage: { uuid: string; content: unknown[] };
+          _consumedUserMessages: Map<number, unknown[]>;
+          runQuery: (
+            queryGeneration: number,
+            retryAttempt: number,
+            recoveryState: { rateLimitCooldownScheduled: boolean }
+          ) => Promise<void>;
+        };
+
+        const consumedMessage = {
+          uuid: 'consumed-uuid',
+          content: [{ type: 'text' as const, text: 'C' }],
+        };
+        runnerPrivate._lastConsumedUserMessage = consumedMessage;
+        runnerPrivate._consumedUserMessages.set(1, [consumedMessage]);
+
+        buildSpy.mockRejectedValue(new Error('429 please upgrade your plan'));
+
+        ctx.incrementQueryGeneration();
+        await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+        expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+        expect(onRateLimitExhausted).toHaveBeenCalledWith(
+          'Error: 429 please upgrade your plan',
+          consumedMessage,
+          {
+            resetAtMs: null,
+            kind: 'usage_limit',
+            billingTerminal: true,
+          }
+        );
+      });
+    });
+
+    describe('unmatched-AbortError aborted_noop', () => {
+      it('clears the queue and skips terminal handling and error display', async () => {
+        const abortError = new Error('operation aborted by controller');
+        abortError.name = 'AbortError';
+        buildSpy.mockRejectedValue(abortError);
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(clearSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+        expect(setIdleSpy).toHaveBeenCalled();
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      });
     });
   });
 });

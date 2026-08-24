@@ -10,21 +10,20 @@ import type {
   ListProviderAuthStatusResponse,
   ProviderCredentials,
 } from '@hyperneo/shared/provider';
-import type { AuthManager } from '../auth-manager';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import type { AuthManager } from '../auth-manager.ts';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import { getProviderRegistry } from '../providers/registry';
+import { getProviderRegistry } from '../providers/registry.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import {
   applyRecordedFailureToAuthStatus,
   classifyProviderFailure,
 } from '../providers/provider-failure-store.js';
-import { ExternalCredentialSourceError } from '../providers/anthropic-copilot/errors.js';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
 async function clearCacheAndNotifyProvidersChanged(
@@ -242,16 +241,19 @@ export function setupAuthHandlers(
         await clearCacheAndNotifyProvidersChanged(internalEventBus);
         return { success: true };
       } catch (error) {
-        if (!(error instanceof ExternalCredentialSourceError)) {
-          try {
-            await removeCredentialsOrKeychainError(credentialManager, providerId);
-          } catch (cleanupError) {
-            if (!(cleanupError instanceof KeychainUnavailableError)) {
-              log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
-            }
+        try {
+          await removeCredentialsOrKeychainError(credentialManager, providerId);
+        } catch (cleanupError) {
+          if (!(cleanupError instanceof KeychainUnavailableError)) {
+            log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
           }
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        const refused =
+          error instanceof Error &&
+          (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
+        if (!refused) {
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,

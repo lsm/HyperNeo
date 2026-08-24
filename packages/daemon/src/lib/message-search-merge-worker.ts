@@ -1,5 +1,5 @@
-import { Database as BunDatabase } from '../storage/sqlite-compat';
-import { withBusyRetry } from '../storage/busy-retry';
+import { Database as BunDatabase } from '../storage/sqlite-compat.ts';
+import { withBusyRetry } from '../storage/busy-retry.ts';
 
 const FTS_MERGE_RANK = 1024;
 

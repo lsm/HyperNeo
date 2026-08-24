@@ -4,9 +4,9 @@ import type {
   TaskScheduleTriggerType,
   SpaceTaskPriority,
 } from '@hyperneo/shared';
-import { Logger } from '../logger';
-import type { ScheduleService } from '../space/schedule/schedule-service';
-import type { SpaceManager } from '../space/managers/space-manager';
+import { Logger } from '../logger.ts';
+import type { ScheduleService } from '../space/schedule/schedule-service.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
 
 const log = new Logger('task-schedule-handlers');
 

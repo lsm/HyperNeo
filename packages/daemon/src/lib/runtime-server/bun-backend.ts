@@ -1,4 +1,4 @@
-import type { RuntimeSocket, ServerHandle, ServerOptions, UpgradeFn } from './types';
+import type { RuntimeSocket, ServerHandle, ServerOptions, UpgradeFn } from './types.ts';
 
 type BunWebSocket = {
   data: unknown;

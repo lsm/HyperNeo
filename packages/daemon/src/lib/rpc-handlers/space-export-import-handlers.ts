@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageHub,
@@ -13,14 +13,14 @@ import type {
   ExportedSpaceWorkerAgent,
   ExportedSpaceWorkflow,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
-import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
-import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
-import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
+import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
+import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-export-import-handlers');
 const RESERVED_AGENT_HANDLE_SET = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);
