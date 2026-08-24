@@ -78,7 +78,7 @@ stores: `app-mcp-store`, `global-store`, `session-store`, `skills-store`,
 
 | Store | Verdict | Notes |
 | --- | --- | --- |
-| `app-mcp-store` | **Fits as-is** | Single fixed subscription, imperative `subscribe()`/`unsubscribe()`, snapshot/delta/error listeners, `onConnection` resubscribe, real error+loading signals. Maps 1:1 with `snapshotRetryEnabled: false`; settle-with-error ≈ its `error.value` + `loading=false`. Best first store consumer. |
+| `app-mcp-store` | **Fits with a small adapter** | Single fixed subscription, imperative `subscribe()`/`unsubscribe()`, snapshot/delta/error listeners, `onConnection` resubscribe, real error+loading signals. Maps 1:1 with `snapshotRetryEnabled: false` for snapshot-phase errors; but delta-phase `liveQuery.error` resubscribe rejections currently surface in `error.value`, while the machine's `transport-error` → `re-snapshot` path emits `settled-empty` (no error) when the resubscribe is rejected. The bridge must preserve that resubscribe-rejection error path. Best first store consumer. |
 | `global-store` | Fits with one small machine extension — or legitimately stays hand-rolled | `sessions.list` has dynamic params (`showArchived` toggles re-subscribe under a stable id); the machine has no params-changed event. Also swallows all errors and has no loading surface, so `error-retry`/`settled-empty` carry no UI meaning. |
 | `space-store` | Fits with machine extensions + a store adapter; highest payoff | Four near-identical blocks (`spaceTaskActivity.byTask`, `spaceTaskMessages.byTask.compact`, `nodeExecutions.byRun`, `spaceSessions.bySpace`). Caveats: no `liveQuery.error` listeners anywhere (migration would *add* an error path needing a policy decision); `subscribeTaskActivity`/`subscribeTaskMessageActivity` are awaited and throw on initial failure (needs an async bridge — the machine settles via emissions); reconnect resubscribe is fire-and-forget with no retry/settle. **Correction from #2788 review:** `nodeExecutions.byRun` is single-active in practice — `ensureNodeExecutions` unsubscribes every run subscription before subscribing to a new run — so one machine instance at a time suffices; the N-concurrent concern was overstated. |
 | `space-mcp-store` (inventoried here) | Fits, same caveats as `app-mcp-store` | Singleton `mcpEnablement.bySpace` subscription with snapshot/delta listeners, `onConnection` resubscribe, awaited subscribe that throws to the caller, loading+error signals, no `liveQuery.error` listener. Needs the async bridge and a fresh machine per actual subscription lifecycle (`disposed` is terminal). |
@@ -181,7 +181,12 @@ First store consumers; a fresh machine per actual subscription lifecycle
   adapter keys machine creation to the 0→1 transition, never to each
   acquisition call. The delta-gating caveat above applies: add a delta-emitting
   adapter/configuration, or explicitly accept and record the row-10 policy change
-  (the watchdog does not preserve these deltas). The three singleton stores already carry
+  (the watchdog does not preserve these deltas). `app-mcp-store` (the only one
+  of the three singleton stores with a `liveQuery.error` listener) must also
+  preserve its delta-phase resubscribe-rejection error: the machine's
+  `transport-error` → `re-snapshot` path emits `settled-empty` (no error) when
+  the resubscribe is rejected, so the bridge must set `error.value` directly from
+  the resubscribe request's catch. The three singleton stores already carry
   direct lifecycle pins (`lib/__tests__/app-mcp-store.test.ts`,
   `lib/__tests__/space-mcp-store.test.ts`, `lib/skills-store.test.ts` — subscribe
   failures, loading/snapshot, deltas, stale events, reconnect, unsubscribe): keep
