@@ -69,7 +69,7 @@ function successResult(uuid: string, overrides: Record<string, unknown> = {}): S
   } as unknown as SDKMessage;
 }
 
-function errorResult(uuid: string): SDKMessage {
+function errorResult(uuid: string, overrides: Record<string, unknown> = {}): SDKMessage {
   return {
     type: 'result',
     subtype: 'error_during_execution',
@@ -80,6 +80,7 @@ function errorResult(uuid: string): SDKMessage {
     usage: resultUsage,
     total_cost_usd: 0.001,
     modelUsage: {},
+    ...overrides,
   } as unknown as SDKMessage;
 }
 
@@ -373,8 +374,34 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         clearMessageInFlight: true,
       });
 
+      await handler.handleMessage(
+        errorResult('suppressed-nested-error', { parent_tool_use_id: 'toolu-1' })
+      );
+      expect(settled).toBe(null);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+      });
+
       await handler.handleMessage(successResult('suppressed-nested-top-level'));
       expect(await wait).toBe('confirmed');
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
+    });
+
+    it('a successful sent clear in legacy mode confirms immediately without a trailing idle', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
+
+      await handler.handleMessage(
+        successResult('legacy-sent-clear', { user_message_uuid: 'clear-msg-id' })
+      );
+
+      expect(await wait).toBe('confirmed');
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
     });
   });
@@ -599,11 +626,16 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           usesSessionStateChangedTurnEnd: true,
           expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: true,
+          clearMessageInFlight: true,
         },
         sendIdleEvent: true,
         expectedIdle: 'suppressed',
         expectedReplay: 0,
-        expectedFlags: { ...resetFlags, suppressIdleOnNextResult: true },
+        expectedFlags: {
+          ...resetFlags,
+          suppressIdleOnNextResult: true,
+          clearMessageInFlight: true,
+        },
         cleanupClear: true,
         expectedWait: 'reset',
       },
@@ -677,6 +709,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         }
         if (row.suppress === 'mismatch') {
           wait = handler.waitForSuppressedResult(5_000, 'other-msg-id');
+          handler.markClearMessageSent();
         }
         if (row.suppress === 'clearInFlight') {
           handler.suppressIdleForNextResult();
@@ -971,6 +1004,49 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       });
     });
 
+    it('a rejecting direct legacy setIdle stops the turn before any later effect', async () => {
+      setIdleSpy.mockImplementation(async () => {
+        throw new Error('setIdle transition failed');
+      });
+
+      await expect(handler.handleMessage(successResult('direct-idle-reject'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy.mock.calls[0]).toEqual([]);
+      expect(emitSpy.mock.calls.some((call) => call[0] === 'session.updated')).toBe(false);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
+    });
+
+    it('a failed save of an ordinary result performs no transition and leaves flags untouched', async () => {
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+
+      await handler.handleMessage(successResult('save-fail-plain'));
+
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a failed save under an armed clear unwinds the suppression without any idle action', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      saveSDKMessageSpy.mockReturnValueOnce(false);
+
+      await handler.handleMessage(successResult('save-fail-armed'));
+
+      expect(await wait).toBe('reset');
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
     it('session-state mode: a later-effect failure under an armed clear unwinds every flag', async () => {
       await handler.handleMessage(sessionState('running'));
       handler.suppressIdleForNextResult();
@@ -1179,6 +1255,15 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expectedFlags: { ...resetFlags, lastResultWasSuccess: true },
       },
       {
+        name: 'a top-level error result also resets both thinking counters',
+        messages: async () => {
+          await handler.handleMessage(thinkingTokensMessage(120));
+          await handler.handleMessage(thinkingAssistantMessage('thinking-stamp-error'));
+          await handler.handleMessage(errorResult('thinking-error-reset'));
+        },
+        expectedFlags: { ...resetFlags, lastResultWasSuccess: false },
+      },
+      {
         name: 'a nested result retains both the live estimate and the stamped counter',
         messages: async () => {
           await handler.handleMessage(thinkingTokensMessage(120));
@@ -1235,6 +1320,18 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
       await handler.handleMessage(assistantMessage('post-idle-assistant'));
       expect(readFlags(handler).lastResultWasSuccess).toBe(null);
+    });
+
+    it('a stale error verdict with no expectation armed still blocks replay on a direct idle event', async () => {
+      await handler.handleMessage(errorResult('direct-idle-stale-error'));
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(2);
+      expect(setIdleSpy.mock.calls[1]).toEqual([]);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
     });
   });
 });
