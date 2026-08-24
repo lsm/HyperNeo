@@ -424,13 +424,18 @@ describe('DatabaseCore', () => {
         const internals = dbCore as unknown as Record<string, unknown>;
         internals.tryFastCopy = () => false;
         internals.tryVacuumInto = () => false;
-        await dbCore.initialize();
+        await expect(dbCore.initialize()).rejects.toThrow(
+          'Migration space reclaim could not truncate the WAL'
+        );
       } finally {
         unsubscribe();
         configureLogger({ level: LogLevel.SILENT });
         raw.exec('ROLLBACK');
         raw.close();
       }
+
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
 
       const backups = listBackups();
       expect(backups).toHaveLength(1);

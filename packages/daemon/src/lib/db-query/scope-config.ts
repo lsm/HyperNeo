@@ -469,6 +469,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
   'migration_markers',
+  'migration_space_reclaims',
   'space_session_groups',
   'space_session_group_members',
   'space_workflow_transitions',
