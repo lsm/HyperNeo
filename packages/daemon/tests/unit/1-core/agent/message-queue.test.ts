@@ -956,6 +956,13 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('a NON-durable feed that was never yielded still rejects (pre-yield bound retained)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      const promise = q.enqueueWithId('msg-legacy-stalled', 'hello');
+      await expect(promise).rejects.toThrow('Message queue timeout');
+    });
+
     it('a DURABLE feed that was never yielded stays pending (timeout arms only once a consumer yields it)', async () => {
       const q = new MessageQueue();
       q.overrideTimeoutMsForTest(40);

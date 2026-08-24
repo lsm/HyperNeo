@@ -320,6 +320,33 @@ describe('delivery retry livelock convergence (task #1256 incident)', () => {
     expect(fourth).not.toBeInstanceOf(MessageDeliveryTerminalTurnError);
   });
 
+  it('never spends the zero-progress budget on already-consumed turn reclaims', async () => {
+    const agentSession = restoreSession();
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(SESSION_ID, WEDGE_UUID);
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let signalQueryReady!: () => void;
+      const queryReady = new Promise<void>((resolve) => {
+        signalQueryReady = resolve;
+      });
+      const observer = {
+        reportStage: (stage: string) => {
+          if (stage === 'query_ready') signalQueryReady();
+        },
+      };
+      await agentSession.stateManager.setProcessing(WEDGE_UUID);
+      const drive = agentSession
+        .driveDeliveryTurn(WEDGE_UUID, 'go', null, true, () => true, undefined, undefined, observer)
+        .catch((error: unknown) => error);
+      await queryReady;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setIdle();
+      const result = (await drive) as Error;
+      expect(result).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
+      expect(result).not.toBeInstanceOf(MessageDeliveryTerminalTurnError);
+    }
+  });
+
   it('clearStuckProcessingState resets a matching zombie processing state with no live query', async () => {
     const agentSession = restoreSession();
     const seams = agentSession as unknown as AgentSessionSeams;

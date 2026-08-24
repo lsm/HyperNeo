@@ -1840,7 +1840,7 @@ export class AgentSession
         throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
       }
       if (completion.outcome === 'recoverable_error') {
-        if (!kickoffAcknowledged) {
+        if (!kickoffAcknowledged && !alreadyConsumed) {
           const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
           if (terminal) throw terminal;
         }
@@ -1923,24 +1923,29 @@ export class AgentSession
   }
 
   async clearStuckProcessingState(messageUuid: string): Promise<boolean> {
-    const shouldReset = await withSessionLock(this.session.id, async () => {
+    return await withSessionLock(this.session.id, async () => {
       const state = this.stateManager.getState();
       if (state.status !== 'processing' || state.messageId !== messageUuid) return false;
-      return !this.hasLiveQuery();
+      if (this.hasLiveQuery()) return false;
+      this.logger.warn(
+        `delivery: clearing stuck processing state (messageId=${messageUuid}) after terminal ` +
+          `delivery failure — no live query owns the turn; resetting so the session accepts ` +
+          `new messages`
+      );
+      try {
+        const resetResult = await this.resetQuery({ restartQuery: false });
+        if (!resetResult.success) {
+          this.logger.warn(
+            `delivery: stuck-state reset reported failure: ${resetResult.error ?? 'unknown'}`
+          );
+          return false;
+        }
+      } catch (resetError) {
+        this.logger.warn('delivery: stuck-state reset failed:', resetError);
+        return false;
+      }
+      return true;
     });
-    if (!shouldReset) return false;
-    this.logger.warn(
-      `delivery: clearing stuck processing state (messageId=${messageUuid}) after terminal ` +
-        `delivery failure — no live query owns the turn; resetting so the session accepts ` +
-        `new messages`
-    );
-    try {
-      await this.resetQuery({ restartQuery: false });
-    } catch (resetError) {
-      this.logger.warn('delivery: stuck-state reset failed:', resetError);
-      return false;
-    }
-    return true;
   }
 
   private consumeTerminalTurnError(turnStartedAt: number): StructuredError | null {
