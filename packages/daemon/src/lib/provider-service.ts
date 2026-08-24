@@ -5,7 +5,7 @@ import type {
   Provider as RegisteredProvider,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
-import { resolveVisibleCanonicalModelId } from './model-service.js';
+import { fallbackModelsFor, resolveVisibleCanonicalModelId } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
@@ -218,9 +218,20 @@ export class ProviderService {
     return models[0]?.id || 'default';
   }
 
-  private async getProviderCatalogModels(provider: RegisteredProvider): Promise<ModelInfo[]> {
+  private async getProviderCatalogModels(
+    providerId: string,
+    provider: RegisteredProvider
+  ): Promise<ModelInfo[]> {
     try {
-      return await provider.getModels();
+      const models = await provider.getModels();
+      if (models.length > 0 || provider.hasCuratedModelList?.()) {
+        return models;
+      }
+      const curated = this.getRegistry().getCuratedModels(providerId);
+      if (curated !== undefined && curated.length === 0) {
+        return models;
+      }
+      return fallbackModelsFor(provider);
     } catch {
       return provider.getCachedModels?.() ?? [];
     }
@@ -235,7 +246,7 @@ export class ProviderService {
       return candidates.find((candidate) => candidate !== undefined);
     }
     const catalogIds = new Set(
-      (await this.getProviderCatalogModels(provider)).map((model) => model.id)
+      (await this.getProviderCatalogModels(providerId, provider)).map((model) => model.id)
     );
     for (const candidate of candidates) {
       if (!candidate) continue;
@@ -256,7 +267,7 @@ export class ProviderService {
     providerId: string,
     provider: RegisteredProvider
   ): Promise<string | undefined> {
-    const models = await this.getProviderCatalogModels(provider);
+    const models = await this.getProviderCatalogModels(providerId, provider);
     const curated = this.getRegistry().getCuratedModels(providerId);
     if (curated !== undefined) {
       const catalogIds = new Set(models.map((model) => model.id));

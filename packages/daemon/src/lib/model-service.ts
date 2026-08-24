@@ -329,7 +329,7 @@ type ProviderModelLoadResult =
   | { status: 'unavailable'; models: ModelInfo[] }
   | { status: 'failed'; models: ModelInfo[]; error?: unknown };
 
-function fallbackModelsFor(provider: Provider): ModelInfo[] {
+export function fallbackModelsFor(provider: Provider): ModelInfo[] {
   const cached = provider.getCachedModels?.();
   if (cached && cached.length > 0) {
     return cached;
@@ -1077,7 +1077,14 @@ export async function resolveVisibleCanonicalModelId(
   if (provider) {
     try {
       if (await provider.isAvailable()) {
-        liveModels = await provider.getModels();
+        const models = await provider.getModels();
+        const curated = getProviderRegistry().getCuratedModels(providerId);
+        liveModels =
+          models.length > 0 ||
+          provider.hasCuratedModelList?.() ||
+          (curated !== undefined && curated.length === 0)
+            ? models
+            : fallbackModelsFor(provider);
       }
     } catch {
       liveModels = provider.getCachedModels?.() ?? null;
