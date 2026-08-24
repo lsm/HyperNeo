@@ -2583,6 +2583,7 @@ describe('QueryRunner', () => {
       }
       Object.assign(ctx, config.overrides);
       ctx.startupTimeoutTimer = setTimeout(() => {}, 60000);
+      ctx.originalEnvVars = { ANTHROPIC_API_KEY: 'sk-test-key' };
       events.length = 0;
 
       let buildCount = 0;
@@ -2765,7 +2766,6 @@ describe('QueryRunner', () => {
         'idle',
         'exit.reset',
         'queue.stop',
-        'env.restore',
         'idle',
         'exit.reset',
         'queue.stop',
