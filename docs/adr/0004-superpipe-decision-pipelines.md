@@ -1905,8 +1905,11 @@ consume retry budget where the machine's generation guard drops it, restoring
 the full budget on reconnect.
 
 **The closing sweep found the migrations clean.** Diffed against their
-pre-migration bodies, the hooks retain no inline lifecycle remnants (the
-watchdog consts, retry ladders, and generation counters are all gone); knip
+pre-migration bodies, the hooks retain no retired inline lifecycle remnants —
+STM's watchdog consts, GRP's old `subscribeWithRetry`/`MAX_RETRIES` closure,
+and the inline generation counters are all gone; GRP's subscribe-rejection
+ladder survives by design as an executor concern (the machine has no
+request-failure event) and is U3's extraction target in the closing report; knip
 (files/dependencies/exports), oxlint, and `tsc --noEmit` are clean on web. The
 one find was the unused `superpipe` dependency above. Recorded, not removed:
 the `'full'` query variant of `useSpaceTaskMessages` has no production caller

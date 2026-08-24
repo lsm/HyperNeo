@@ -98,9 +98,11 @@ Flip PRJ/MIL/GRP to default config (drop `snapshotRetryEnabled: false`).
   subscribe/snapshot exchanges per dead query (daemon-side load if a query name
   is misconfigured), and "loading forever" becomes "empty after ~10s", a product
   call for MIL/GRP panels. Pins that must move: PR-4 rows 1–2 pins (no-watchdog,
-  messageless-settle), PR-5's no-watchdog and ladder-settle pins, plus GRP's
-  ladder interacts with the watchdog (both would retry — needs a decided
-  precedence, or U3 lands first and deletes the ladder as executor config).
+  messageless-settle), PR-5's no-watchdog and ladder-settle pins. GRP's ladder is
+  unaffected: it retries only *rejected* subscribe requests while the machine
+  sits in `subscribing`, whereas the watchdog arms only after `subscribed`
+  dispatches — disjoint phases, no precedence decision, so U1 stands alone for
+  GRP without U3.
 
 ### U2. One reconnect mechanism (kill row 8 drift)
 
@@ -142,8 +144,14 @@ awaited-and-throwing subscribes, `snapshotRetryEnabled: false`.
 - **Risk:** stores surface subscribe failures by throwing — the machine settles
   via emissions, so the bridge must reject the `subscribe()` promise on an
   `error`/`settled-empty` emission (a policy choice: settle-empty currently
-  means "release loading, no error"). No pins exist for the stores — pin first,
-  per the pilot's pins-before-migration rule.
+  means "release loading, no error"). The three singleton stores already carry
+  direct lifecycle pins (`lib/__tests__/app-mcp-store.test.ts`,
+  `lib/__tests__/space-mcp-store.test.ts`, `lib/skills-store.test.ts` — subscribe
+  failures, loading/snapshot, deltas, stale events, reconnect, unsubscribe): the
+  migration must keep those suites green as the pins and add only genuinely
+  missing cases (e.g. snapshot-error settle), not re-pin from scratch.
+  `space-store`/`global-store`/`session-store` are where the pin gap actually
+  sits.
 
 ### U5. Wire MIL's `liveQuery.error` listener (kill row 5/6 gap)
 
