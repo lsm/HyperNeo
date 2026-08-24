@@ -28,7 +28,7 @@ import type {
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database';
-import { ErrorManager, type StructuredError } from '../error-manager';
+import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
@@ -769,9 +769,12 @@ export class AgentSession
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
     this.messageHandler.cancelSuppressedResultWait();
-    this.resetTaskNotificationRequery();
 
     await this.interruptHandler.handleInterrupt(opts);
+  }
+
+  onInterruptRequested(): void {
+    this.resetTaskNotificationRequery();
   }
 
   isInterruptInProgress(): boolean {
@@ -1465,7 +1468,7 @@ export class AgentSession
         `for session ${this.session.id}`
     );
     try {
-      await this.messageQueue.enqueue(TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE, true);
+      await this.messageQueue.enqueue(TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE);
     } catch (error) {
       this.logger.warn(
         `task-notification requery: bare-continue delivery failed for session ${this.session.id}: ` +
@@ -1500,9 +1503,25 @@ export class AgentSession
     if (!event) {
       this.logger.warn(
         `task-notification requery budget exhausted after ${attempts} attempt(s) for session ` +
-          `${this.session.id}; needs attention: no space context resolved, the runtime ` +
-          'idle-watch backstop owns recovery'
+          `${this.session.id}; needs attention: no space context resolved, surfacing a ` +
+          'recoverable session error'
       );
+      try {
+        await this.errorManager.handleError(
+          this.session.id,
+          new Error(`task-notification re-query budget exhausted after ${attempts} attempt(s)`),
+          ErrorCategory.SYSTEM,
+          'A background-task notification could not be delivered to the model after repeated ' +
+            'automatic retries. Send a message to continue the session and consume it.',
+          this.stateManager.getState(),
+          { taskNotificationRequeryAttempts: attempts }
+        );
+      } catch (error) {
+        this.logger.warn(
+          `task-notification requery: failed to surface exhaustion error: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
       return;
     }
     this.logger.warn(

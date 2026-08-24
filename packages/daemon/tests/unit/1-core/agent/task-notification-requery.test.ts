@@ -304,7 +304,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       {
         publish: publishSpy,
-        publishAsync: mock(() => {}),
+        publishAsync: publishSpy,
         subscribe: mock(
           (_: string, __: (data: unknown) => void, ___: { subscriberName: string }) => () => {}
         ),
@@ -353,7 +353,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(1);
-    expect(enqueueSpy.mock.calls[0]).toEqual([TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE, true]);
+    expect(enqueueSpy.mock.calls[0]).toEqual([TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE]);
 
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
@@ -439,6 +439,11 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(continueCalls()).toBe(1);
     expect(needsAttentionPublishes()).toBe(0);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await agentSession.interruptHandler.handleInterrupt();
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(continueCalls()).toBe(1);
   });
 
   it('stands down without the live query and logs instead of publishing outside space context', async () => {
@@ -466,6 +471,14 @@ describe('AgentSession task-notification requery (incident replay)', () => {
         ([event]: [string]) => event === 'space.workflowRun.needsAttention'
       ).length
     ).toBe(0);
+    const sessionError = publishSpy.mock.calls.find(
+      ([event]: [string]) => event === 'session.error'
+    );
+    expect(sessionError).toBeDefined();
+    expect(sessionError?.[1]).toMatchObject({
+      sessionId: 'requery-session-id',
+      error: expect.stringContaining('background-task notification'),
+    });
 
     (
       detachedSession as unknown as { clearTaskNotificationRequeryTimer: () => void }
