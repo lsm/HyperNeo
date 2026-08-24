@@ -283,6 +283,39 @@ describe('decideInactivityNag', () => {
       expect(decision.action).toBe('nag');
     });
 
+    test('blocks a claimant recheck when competing work is queued or another delivery is pending', () => {
+      expect(
+        decideInactivityNag(
+          input({
+            actor: makeActor({ busyWithOtherWork: true }),
+            claim: makeClaim({ state: 'in_flight' }),
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'session_busy' });
+      expect(
+        decideInactivityNag(
+          input({
+            actor: makeActor({ pendingOtherAcceptedDelivery: true }),
+            claim: makeClaim({ state: 'in_flight' }),
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'delivery_pending' });
+    });
+
+    test('a one-sided null revision mismatch invalidates the claim', () => {
+      const nowNull = decideInactivityNag(
+        input({ configRevision: null, claim: makeClaim({ ownerToken: 'scanner-b' }) })
+      );
+      expect(nowNull.action).toBe('nag');
+      const claimNull = decideInactivityNag(
+        input({
+          configRevision: 8,
+          claim: makeClaim({ ownerToken: 'scanner-b', configRevision: null }),
+        })
+      );
+      expect(claimNull.action).toBe('nag');
+    });
+
     test('stops blocking on a degraded tombstone once activity advances past its window', () => {
       const decision = decideInactivityNag(
         input({
