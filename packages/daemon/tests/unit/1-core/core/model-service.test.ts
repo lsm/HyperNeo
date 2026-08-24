@@ -18,6 +18,7 @@ import {
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
+import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
@@ -1584,6 +1585,59 @@ describe('Model Service', () => {
       expect(await isValidModel('opus', 'global', 'anthropic')).toBe(false);
     });
 
+    it('accepts curated aliases by keeping their canonical model visible', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3' }]);
+      setModelsCache(new Map([['global', [...mockModels, ...KimiProvider.MODELS]]]));
+
+      expect(
+        getAvailableModels('global')
+          .filter((model) => model.provider === 'kimi')
+          .map((model) => model.id)
+      ).toEqual(['kimi-k3[1m]']);
+      expect(await getModelInfo('kimi-k3', 'global', 'kimi')).toMatchObject({
+        id: 'kimi-k3[1m]',
+        contextWindow: 1_048_576,
+      });
+      expect(await isValidModel('kimi-k3', 'global', 'kimi')).toBe(true);
+      expect(await isValidModel('kimi-for-coding', 'global', 'kimi')).toBe(false);
+    });
+
+    it('keeps capacity-tagged curated models exact without enabling their static prefix parent', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'moonshot-k3-128k' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              ...mockModels,
+              ...KimiProvider.MODELS,
+              {
+                id: 'moonshot-k3-128k',
+                name: 'moonshot-k3-128k',
+                alias: 'moonshot-k3-128k',
+                family: 'kimi',
+                provider: 'kimi',
+                contextWindow: 131_072,
+                preferContextWindowMetadata: true,
+                thinkingModes: 'granular',
+                description: 'moonshot-k3-128k via Kimi',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(
+        getAvailableModels('global')
+          .filter((model) => model.provider === 'kimi')
+          .map((model) => model.id)
+      ).toEqual(['moonshot-k3-128k']);
+    });
+
     it('treats an empty curation as no visible models', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const registry = getProviderRegistry();
@@ -1679,6 +1733,15 @@ describe('Model Service', () => {
       setModelsCache(new Map([['global', mockModels]]));
 
       expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(false);
+    });
+
+    it('keeps the canonical form of a curated alias curated-in for session validation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3' }]);
+      setModelsCache(new Map([['global', [...mockModels, ...KimiProvider.MODELS]]]));
+
+      expect(isCuratedOutModel('kimi-k3[1m]', 'kimi')).toBe(false);
+      expect(isCuratedOutModel('kimi-for-coding', 'kimi')).toBe(true);
     });
 
     it('reports a known model as curated out under an empty curation', async () => {
