@@ -411,6 +411,7 @@ function cancelProviderRetryTimer(providerId: string): void {
 function clearProviderRetry(providerId: string): void {
   cancelProviderRetryTimer(providerId);
   providerRetryEntries.delete(providerId);
+  providerProbesInFlight.delete(providerId);
 }
 
 function armProviderRetryTimer(providerId: string): void {
@@ -511,7 +512,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
   providerAppliedSeq.set(providerId, probeSeq);
   replaceProviderModelsInCache(providerId, result.models);
   clearProviderFailure(providerId);
-  providerRetryEntries.delete(providerId);
+  clearProviderRetry(providerId);
 }
 
 function isCacheStale(cacheKey: string): boolean {

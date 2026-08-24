@@ -1089,6 +1089,102 @@ describe('Model Service', () => {
         jest.useRealTimers();
       }
     });
+
+    it('cancels a timer re-armed while the scheduled probe was in flight', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let calls = 0;
+        let failForeground: ((error: Error) => void) | null = null;
+        let resolveScheduled: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          calls += 1;
+          if (calls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((_resolve, reject) => {
+              failForeground = reject;
+            });
+          }
+          if (calls === 3) {
+            return new Promise<ModelInfo[]>((resolve) => {
+              resolveScheduled = resolve;
+            });
+          }
+          return [glmModel('glm-5-phantom')];
+        });
+
+        await refreshModels();
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        failForeground?.(new Error('Endpoint returned HTTP 503'));
+        await foreground;
+        await flushMicrotasks();
+
+        resolveScheduled?.([glmModel('glm-5-recovered')]);
+        await flushMicrotasks();
+        expect(getProviderFailure('glm')).toBeUndefined();
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-phantom')).toBe(false);
+        expect(getProviderFailure('glm')).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('releases the probe slot when a foreground load recovers the provider', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseStall: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseStall = resolve;
+            });
+          }
+          return [glmModel('glm-5-back')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        mode = 'ok';
+        await refreshModels();
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        mode = 'fail';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(4);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        mode = 'ok';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(5);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-back')).toBe(true);
+        releaseStall?.([glmModel('glm-stale')]);
+        await flushMicrotasks();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('cache management', () => {
