@@ -130,7 +130,9 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
   const replayCount = (): number =>
     emitSpy.mock.calls.filter((call) => call[0] === 'query.trigger').length;
 
-  function createContext(): SDKMessageHandlerContext {
+  function createContext(
+    overrides: Partial<SDKMessageHandlerContext> = {}
+  ): SDKMessageHandlerContext {
     mockSession = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -224,6 +226,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       queryPromise: null,
       onInitSlashCommands: mock(async () => {}),
       onCommandsChanged: mock(async () => {}),
+      ...overrides,
     };
   }
 
@@ -1348,6 +1351,8 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a rejected publication of the first non-idle event leaves the mode flags unset', async () => {
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('nonidle-pub-reject-prime'));
       emitSpy.mockImplementation(async (topic: string) => {
         if (topic === 'sdk.message') {
           throw new Error('sdk.message subscriber failed');
@@ -1360,7 +1365,68 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
-      expect(readFlags(handler)).toEqual(resetFlags);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        currentThinkingTokensEstimate: 120,
+        lastStampedThinkingTokensEstimate: 120,
+      });
+    });
+
+    it('a failing suppressed result-less idle after the mode is armed retains every flag', async () => {
+      await handler.handleMessage(sessionState('running'));
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      setIdleSpy.mockImplementation(async () => {
+        throw new Error('setIdle transition failed');
+      });
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+
+      expect(settled).toBe(null);
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        suppressDeliveryWaiters: true,
+        suppressIdlePublish: true,
+        suppressIdleCallback: true,
+      });
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
+    it('an intercepted limit result still resets both thinking counters before its early return', async () => {
+      handler = new SDKMessageHandler(
+        createContext({ onResultLimitError: mock(async () => true) })
+      );
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('limit-prime-stamp'));
+
+      await handler.handleMessage(
+        successResult('limit-intercepted', {
+          is_error: true,
+          result: 'Usage limit reached. Your limit resets at 12:00 UTC.',
+          terminal_reason: 'blocking_limit',
+        })
+      );
+
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: false });
     });
 
     it('a failed save under an armed clear unwinds the suppression without any idle action', async () => {
