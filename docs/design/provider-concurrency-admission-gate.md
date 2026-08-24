@@ -173,7 +173,7 @@ ordered gates — first decision wins, per `decisionRun` semantics:
 | --- | --- | --- | --- |
 | 1 | `applyManualModeGate` | `queue` (reason `manual_mode`) | `isManualMode` → `'deferred'` |
 | 2 | `applyBusyDeferGate` | `queue` (reason `busy_defer`) | `deliveryMode === 'defer' && isBusy` → `'deferred'` |
-| 3 | `applyProviderConcurrencyGate` | `queue` (reason `provider_saturated`, `untilMs`) | **new** — today dispatches |
+| 3 | `applyProviderConcurrencyGate` — skipped when the session has a live turn (`liveTurnActive`): the send is a *steer candidate* (the outbox resolves the steer role later, and the claim-level `liveTurnSteer` bypass governs); queueing it here would park input the live turn is waiting on | `queue` (reason `provider_saturated`, `untilMs`) | **new** — today dispatches |
 | 4 | `applyDispatchFinalGate` | `dispatch` | `'enqueued'` + outbox job |
 
 The queue arm's interpreter is the **existing** non-outbox persist branch: insert the
@@ -186,7 +186,13 @@ path it extends, the provider-queue arm **still publishes `message.persisted` wi
 `message-persistence.ts:276-294`, and it is what clears the submitted composer
 draft and enqueues initial title generation — suppressing it would leave stale
 composer state on every saturated send; the subscriber's `skipQueryStart` guard
-already prevents a query start). This is the manual-mode code path today
+already prevents a query start). One side effect is deliberately deferred:
+`needsWorkspaceInit` is published **false** for a provider-queued send, because
+title generation runs its own SDK query outside the message pipeline — N new
+sessions on a saturated account would otherwise each fire a title query the
+gate never sees — and the promotion interpreter re-flags title generation when
+the queued row is finally delivered (still ungenerated). This is the
+manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
 
@@ -260,11 +266,16 @@ them, the consult sits at **`ensureQueryStarted` itself — the common provider-
 boundary every delivery path crosses** — with the handler-level V2 consult kept as
 the cheaper early park. `ensureQueryStarted` today takes only an optional
 `AbortSignal`, and `deliverRowsViaMemoryQueue` calls it once before iterating a
-batch — so the boundary gains an **explicit delivery-identity parameter** (the
-message uuid / batch head the start serves): it is what names the grant holder on
-admit and the row to defer-and-register on denial, and batch callers pass their
-per-uuid identity (calling the boundary per row where they currently call it
-once). A denial there has no job to park: the delivery settles its row back to
+batch — so the boundary gains an **optional delivery-identity parameter** (the
+message uuid / batch head the start serves): it is what names the grant holder
+on admit and the row to defer-and-register on denial, and batch callers pass
+their per-uuid identity (calling the boundary per row where they currently call
+it once). **Identity-less callers are exempt**: `ensureQueryStarted` is not
+exclusively a delivery boundary — `AskUserQuestionHandler` calls it before
+injecting an unpersisted tool result into the live query, and context-reset /
+restart paths call it with no message row; those starts ride existing
+turn-lifecycle mechanics (no new admission), and their limit errors still arm
+the registry through the classifier like any others. A denial there has no job to park: the delivery settles its row back to
 `'deferred'` with the `queue_reason` marker and registers it (V2 surfaces this as
 the recovery-pending park instead, upstream). A delivery holding the probe grant
 passes. Without the boundary consult, startup/manual pending replay and a Space
@@ -360,19 +371,21 @@ identity `query-runner.ts:665` resolves; but sessions may override
 provider id with different overrides reach **independent upstream accounts** —
 keying those together would queue healthy account B's traffic behind account A's
 429 for the full reset/ladder. The key therefore appends a non-secret fingerprint
-of the effective override — a hash of **every endpoint-affecting `providerConfig`
-field** (`baseUrl`, `region`, and a keyed digest of the API key — never the key
-itself; region included because e.g. `KimiProvider.buildSdkConfig` selects
-distinct China/global endpoints from it) when `providerConfig` is present, and
-is the bare provider id otherwise (the common case: one credential-store entry
-per provider).
+of the **normalized effective configuration** — hash what the provider
+normalizer actually routes by, not the raw user object: every endpoint-affecting
+field after normalization (`baseUrl` canonicalized, `region` casing-collapsed —
+e.g. `KimiProvider.buildSdkConfig` selects distinct China/global endpoints from
+it — and a keyed digest of the API key, never the key itself). An absent
+`providerConfig` and an effectively-default one must hash equal, so the
+common case (one credential-store entry per provider, no overrides) shares one
+key instead of splitting traffic that reaches the same account.
 
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
 | `saturation` | `{ untilMs, kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch) | admission facts, wake timer |
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | `Map<sessionId, insertion-ordered uuid set>` (idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release, registration cleanup, provider-change re-admission |
-| `probeGrant` | `{ messageUuid, leaseUntilMs } \| null` per provider | first admitting consult after a clear; consumed at query start; **the lease bounds only the unconsumed grant** (mint → start) — a consumed grant resolves solely on its query's termination; unconsumed-grant expiry re-mints for the next consult | downstream consults (same delivery passes), probe resolution |
+| `probeGrant` | `{ sessionId, messageUuid, leaseUntilMs } \| null` per provider (composite identity — message uuids are session-scoped and explicit injected ids can collide across sessions) | first admitting consult after a clear; consumed at query start; **the lease bounds only the unconsumed grant** (mint → start) — a consumed grant resolves solely on its query's termination; unconsumed-grant expiry re-mints for the next consult | downstream consults (same delivery passes), probe resolution |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
@@ -480,8 +493,12 @@ at provider scope.
 
 ### Queue and wake
 
-- **Registering:** every queue arm records `{sessionId → [messageUuid]}` (insertion
-  order = release order). Scope is per message, not per session, so the wake never
+- **Registering:** every queue arm appends a composite `(sessionId, messageUuid)`
+  entry to a **single global insertion-ordered queue** (per-session indices exist
+  only for wake routing and deregistration). Release order is the global arrival
+  order: per-session grouping alone would let a session with a large backlog
+  monopolize the one-at-a-time drain while earlier messages from other sessions
+  wait. Scope is per message, not per session, so the wake never
   promotes a user's deliberately deferred (manual-mode) rows —
   `handleQueryTrigger`'s blanket deferred→enqueued flip
   (`D/src/lib/agent/query-mode-handler.ts:39-108`) is *not* the wake path. The
@@ -502,7 +519,10 @@ at provider scope.
   binds `query.trigger` at `:103-110`) subscribes each session, and the handler
   re-runs the **full P1 admission per registered uuid** — manual-mode gate
   included: a session switched to manual after queueing keeps its registrations
-  deferred and retained — then promotes through the existing per-uuid promotion
+  deferred and retained, and drain selection **scans past retained entries**
+  (a skipped manual row consumes neither the successor grant nor the wake; the
+  earliest *eligible* entry is selected) — then promotes through the existing
+  per-uuid promotion
   path (the mechanism behind `session.messages.promotePending`,
   `session-handlers.ts:1126-1182`: deferred → enqueued → delivery job). A single
   `__global__` subscriber enumerating the registry is the equivalent alternative;
@@ -514,8 +534,12 @@ at provider scope.
   it, keyed by that delivery's message uuid; every downstream consult for the
   *same* delivery — the V2 claim, the V1 start, the retry — admits on the grant,
   so one logical delivery passes all backstops instead of deadlocking against its
-  own probing state. The grant is consumed when the turn starts — the query
-  consumes the granted delivery's prompt; the probe resolves exactly three ways:
+  own probing state. The grant is consumed **at the prompt yield — the turn
+  boundary — and that consumption is the authoritative grant check**: the
+  boundary-level consults are advisory early parks, and a grant whose lease
+  lapsed during SDK startup (mint → yield longer than the lease) does not start
+  a turn — the prompt is not yielded, the delivery returns to the queue, and
+  the successor proceeds. The probe resolves exactly three ways:
   its turn's clean completion **mints the successor grant and wakes the next
   queued delivery** (the drain is *pushed* — the remaining deferred rows have no
   jobs polling, so nothing else would ever re-run their admission; the pace
@@ -560,13 +584,14 @@ at provider scope.
   instructions are the natural carrier), so reconstruction never registers
   history the user or the pipeline retired. A stale marker on a retired row
   would otherwise mint a probe grant with nothing deliverable to resolve it.
-- **Provider changes re-admit their queue.** A model switch while rows are
-  registered behind the old provider's saturation (`switchModel` /
-  `handleModelSwitch` persists the new `session.config`) deregisters those rows
-  from the old key and immediately re-runs admission against the new key —
-  otherwise the switched session's queued rows wait on a wake for a provider the
-  session no longer uses, while newer messages on the new provider run ahead of
-  them.
+- **Provider changes re-admit their queue.** A provider/config change while
+  rows are registered behind the old key — `switchModel`/`handleModelSwitch`
+  **and** `SessionConfigHandler.updateConfig` (Space long-horizon refresh and
+  provider clearing go through it, never `switchModel`) — deregisters those
+  rows from the old key and immediately re-runs admission against the new key:
+  otherwise the switched session's queued rows wait on a wake for a provider
+  the session no longer uses, while newer messages on the new provider run
+  ahead of them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
   registered rows for the session, on terminal row status, and on session destroy.
   Registrations are idempotent insertion-ordered sets, so a parked job
@@ -604,12 +629,14 @@ at provider scope.
    query-runner was rejected: it would duplicate queue policy in a second place and
    hide saturation behind silently-blocked queries; claim-time consults at each
    message-pipeline decision point are the correct single home.
-4. **The registry is non-blocking bookkeeping at the query seam.**
-   `reportQueryStart/End` maintain `inFlight` (and the clean-completion signal for
-   the probe rule) at the exact sites the startup permit already brackets
-   (`query-runner.ts:713` acquire … `:820/:867/:1316` release) — but keyed by
-   `resolvedProviderId` and held for the whole query, not just the cold-start
-   window.
+4. **The registry is non-blocking bookkeeping at the provider-turn seam.**
+   `reportQueryStart/End` maintain `inFlight` (and the clean-completion signal
+   for the probe rule) at the **turn boundary** — start when the query yields
+   the delivery's prompt, end at that turn's terminal result — not at the
+   startup-permit sites and not for the whole streaming query, which stays
+   alive across turns. Every report is keyed by the **effective
+   provider-account key** (provider id + normalized endpoint fingerprint),
+   never the bare `resolvedProviderId`.
 
 ## Sequencing
 
@@ -691,10 +718,13 @@ by pre-existing suites):
    registration add/lookup/lazy cleanup; timer lifecycle (destroy clears;
    unref'd); clock and jitter injection throughout (the pilot-9 purity
    convention: every time check against an injected `now`).
-4. **Interpreter — persist:** provider-saturated `message.send` → row persisted
+4. **Interpreter — persist:** a send during a live turn skips the provider
+   gate (steer candidate — the claim-level `liveTurnSteer` bypass governs);
+   provider-saturated `message.send` → row persisted
    `'deferred'`, **no** `message_delivery` job, no `setQueuedIfIdle`,
    `messages.statusChanged` published, `message.persisted` published **with
-   `skipQueryStart: true`** (composer draft cleared, title generation enqueued),
+   `skipQueryStart: true`** (composer draft cleared; title generation deferred —
+   `needsWorkspaceInit: false`, re-flagged at promotion),
    registry registered; unsaturated → outbox path byte-for-byte today's behavior
    (PR1 pins).
 5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
@@ -729,7 +759,8 @@ by pre-existing suites):
    consult denial falls through to the existing `:1258` assessment (the watchdog
    arms; no bare skip-and-return), and each recursive re-entry consults admission.
 8. **Interpreter — wake and provider change:** one per-session publish per
-   registered session; the handler re-runs the full P1 admission per uuid — a
+   registered session; a turn-boundary grant-revalidation pin (a grant whose
+   lease lapses during SDK startup does not start a turn); the handler re-runs the full P1 admission per uuid — a
    session switched to manual mode after queueing is skipped and retained,
    delivered only by manual promotion; a **model switch** with rows queued behind
    the old provider deregisters them and immediately re-admits against the new
