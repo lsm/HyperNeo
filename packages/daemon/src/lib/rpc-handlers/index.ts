@@ -1201,6 +1201,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentInactivityWatchdog,
     cancelInactivityWatchdog: () => {
       inactivityAborted = true;
+      inactivityRunNowCancelled = true;
     },
   };
 }
