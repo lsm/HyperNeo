@@ -769,6 +769,7 @@ export class AgentSession
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
     this.messageHandler.cancelSuppressedResultWait();
+    this.resetTaskNotificationRequery();
 
     await this.interruptHandler.handleInterrupt(opts);
   }
@@ -1377,6 +1378,13 @@ export class AgentSession
 
   private observeTaskNotificationResult(message: import('@hyperneo/shared/sdk').SDKMessage): void {
     if (this.session.config.provider === 'acp') return;
+    if (message.type !== 'result') return;
+    const parentToolUseId = (
+      message as import('@hyperneo/shared/sdk').SDKMessage & {
+        parent_tool_use_id?: string | null;
+      }
+    ).parent_tool_use_id;
+    if (parentToolUseId !== null && parentToolUseId !== undefined) return;
     const decision = resolveTaskNotificationRequery({
       message,
       attempts: this.taskNotificationRequeryAttempts,
@@ -1399,6 +1407,15 @@ export class AgentSession
 
   private hasQueuedFollowUpDelivery(): boolean {
     if (this.messageQueue.size() > 0) return true;
+    const status = this.stateManager.getState().status;
+    if (
+      status === 'processing' ||
+      status === 'queued' ||
+      status === 'waiting_for_input' ||
+      status === 'interrupted'
+    ) {
+      return true;
+    }
     const jobQueue = this.db.getJobQueueRepo?.();
     return (jobQueue?.activeDeliveryMessageUuids(this.session.id)?.size ?? 0) > 0;
   }

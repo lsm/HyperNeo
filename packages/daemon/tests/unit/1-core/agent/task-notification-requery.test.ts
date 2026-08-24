@@ -289,7 +289,10 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       beginTransaction: mock(() => {}),
       commitTransaction: mock(() => {}),
       abortTransaction: mock(() => {}),
-      getJobQueueRepo: mock(() => ({ activeDeliveryMessageUuids: () => activeDeliveryUuids })),
+      getJobQueueRepo: mock(() => ({
+        activeDeliveryMessageUuids: () => activeDeliveryUuids,
+        cancelForSessionWithMessages: () => [],
+      })),
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: () => ({ id: 'exec-1', workflowRunId: 'run-1' }),
       })),
@@ -410,6 +413,31 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('holds the pending re-query while a consumed follow-up turn is processing', async () => {
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await agentSession.stateManager.setProcessing('user-follow-up', 'initializing');
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('clears a pending re-query timer when the user interrupts', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await agentSession.handleInterrupt();
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(continueCalls()).toBe(1);
     expect(needsAttentionPublishes()).toBe(0);
   });
 
