@@ -1169,6 +1169,7 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
         update: mock(() => {}),
+        getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
