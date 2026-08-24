@@ -1571,6 +1571,98 @@ describe('Model Service', () => {
     });
   });
 
+  describe('model curation', () => {
+    it('filters cached and fallback models to the configured provider subset', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
+      expect(await getModelInfo('sonnet', 'global', 'anthropic')).not.toBeNull();
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+      expect(await isValidModel('opus', 'global', 'anthropic')).toBe(false);
+    });
+
+    it('treats an empty curation as no visible models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('anthropic', []);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global')).toEqual([]);
+      expect(await getModelInfo('sonnet', 'global', 'anthropic')).toBeNull();
+      expect(await isValidModel('sonnet', 'global', 'anthropic', 'session-key')).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('preserves current cache, lookup, and validation behavior when curation is absent', async () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toMatchObject({ id: 'opus' });
+      expect(await isValidModel('opus', 'global', 'anthropic')).toBe(true);
+    });
+
+    it('filters provider-slice updates at the read boundary while storing them raw', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const visibleModel: ModelInfo = {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+      getProviderRegistry().setCuratedModels('acp', [{ id: visibleModel.id }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(
+        updateProviderModelsInCache('acp', [
+          visibleModel,
+          { ...visibleModel, id: 'curated-out-acp-model' },
+        ])
+      ).toBe(true);
+
+      expect(getAvailableModels('global').filter((model) => model.provider === 'acp')).toEqual([
+        visibleModel,
+      ]);
+      expect(
+        getModelsCache()
+          .get('global')
+          ?.map((model) => model.id)
+      ).toContain('curated-out-acp-model');
+    });
+
+    it('keeps the raw cache across refreshes so the unfiltered seam still resolves curated-out models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => mockModels,
+        isAvailable: async () => true,
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
+      expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
+    });
+  });
+
   describe('getAvailableModels', () => {
     beforeEach(() => {
       const testCache = new Map<string, ModelInfo[]>();
@@ -1631,6 +1723,26 @@ describe('Model Service', () => {
       const model = await getModelInfo('opus', 'global', 'anthropic');
       expect(model).not.toBeNull();
       expect(model?.id).toBe('opus');
+    });
+
+    it('does not resolve curated-out static aliases', async () => {
+      clearModelsCache();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+
+      expect(await getModelInfo('deepseek-pro', 'global', 'deepseek')).toBeNull();
+      expect(await getModelInfo('deepseek-flash', 'global', 'deepseek')).toMatchObject({
+        id: 'deepseek-v4-flash',
+      });
+    });
+
+    it('still resolves curated-out models through the unfiltered seam', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+      expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
     });
 
     it('should return null for unknown model', async () => {
@@ -1830,6 +1942,15 @@ describe('Model Service', () => {
       expect(await isValidModel('unknown-deepseek', 'global', 'deepseek', 'session-key')).toBe(
         false
       );
+    });
+
+    it('does not let a session-scoped API key bypass curation', async () => {
+      clearModelsCache();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+
+      expect(await isValidModel('deepseek-pro', 'global', 'deepseek', 'session-key')).toBe(false);
+      expect(await isValidModel('deepseek-flash', 'global', 'deepseek', 'session-key')).toBe(true);
     });
   });
 
@@ -2144,6 +2265,46 @@ describe('Model Service', () => {
       expect(models1).toEqual(models2);
       expect(models1.length).toBe(3);
     });
+
+    it('re-arms the background refresh for a stale empty cache', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'recovered-model',
+          name: 'Recovered Model',
+          family: 'test',
+          provider: 'stale-empty-provider',
+          contextWindow: 100000,
+          description: 'Recovered model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'stale-empty-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      setModelsCache(new Map([['global', []]]), Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(getAvailableModels('global')).toEqual([]);
+
+      const deadline = Date.now() + 3_000;
+      let loadTriggered = false;
+      while (Date.now() < deadline) {
+        if (getModels.mock.calls.length > 0) {
+          loadTriggered = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(loadTriggered, 'stale empty cache should re-trigger a provider load on read').toBe(
+        true
+      );
+    });
   });
 
   describe('provider loading', () => {
@@ -2307,6 +2468,93 @@ describe('Model Service', () => {
 
       expect(model?.id).toBe('gpt-5.6-sol');
       expect(model?.contextWindow).toBe(1050000);
+    });
+
+    it('preserves metadata for a session already on a curated-out model', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+
+      const model = await getSessionModelInfo({
+        config: { model: 'opus', provider: 'anthropic' },
+      } as any);
+
+      expect(model).toMatchObject({ id: 'opus' });
+    });
+
+    it('overlays Codex metadata for a copilot session on a curated-out model', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'gpt-5.3-codex',
+                name: 'GPT-5.3 Codex (Copilot API)',
+                alias: 'copilot-gpt-5-3-codex',
+                family: 'gpt',
+                provider: 'anthropic-copilot',
+                contextWindow: 200000,
+                description: 'GPT-5.3 Codex via GitHub Copilot',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+            ] as ModelInfo[],
+          ],
+        ])
+      );
+
+      expect(await getModelInfo('gpt-5.3-codex', 'global', 'anthropic-copilot')).toBeNull();
+
+      const model = await getSessionModelInfo({
+        config: { model: 'gpt-5.3-codex', provider: 'anthropic-copilot' },
+      } as any);
+
+      expect(model).toMatchObject({ id: 'gpt-5.3-codex', contextWindow: 272000 });
+      expect(model?.preferContextWindowMetadata).toBe(true);
+    });
+
+    it('scopes the preserved session metadata to the session provider', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
+      const sharedId = 'claude-sonnet-4.6';
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: sharedId,
+                name: 'Claude Sonnet 4.6 (Anthropic)',
+                alias: 'sonnet-4.6',
+                family: 'sonnet',
+                provider: 'anthropic',
+                contextWindow: 200000,
+                available: true,
+              },
+              {
+                id: sharedId,
+                name: 'Claude Sonnet 4.6 (Copilot)',
+                alias: 'copilot-sonnet',
+                family: 'sonnet',
+                provider: 'anthropic-copilot',
+                contextWindow: 272000,
+                available: true,
+              },
+            ] as ModelInfo[],
+          ],
+        ])
+      );
+
+      const model = await getSessionModelInfo({
+        config: { model: sharedId, provider: 'anthropic-copilot' },
+      } as any);
+
+      expect(model).toMatchObject({ id: sharedId, provider: 'anthropic-copilot' });
     });
 
     it('should return null when the session provider is missing', async () => {

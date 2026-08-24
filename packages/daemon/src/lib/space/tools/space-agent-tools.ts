@@ -90,7 +90,12 @@ import {
 import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-tool-schemas';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
-import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
+import {
+  getAvailableModels,
+  getModelsCache,
+  getModelInfoUnfiltered,
+  isValidModel,
+} from '../../model-service';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
 import {
@@ -232,7 +237,7 @@ async function validateLongHorizonModel(
   provider?: string | null
 ): Promise<string | null> {
   const available = getAvailableModels('global');
-  if (available.length === 0) return null;
+  if (available.length === 0 && !getModelsCache().has('global')) return null;
 
   if (provider) {
     const valid = await isValidModel(model, 'global', provider);

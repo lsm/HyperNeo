@@ -98,6 +98,27 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
   },
 ];
 
+function getCuratedModelIds(providerId: string): Set<string> | undefined {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  return curatedModels === undefined ? undefined : new Set(curatedModels.map((model) => model.id));
+}
+
+function filterProviderModels(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const curatedIds = getCuratedModelIds(providerId);
+  return curatedIds === undefined ? models : models.filter((model) => curatedIds.has(model.id));
+}
+
+function filterModelsByCuration(models: ModelInfo[]): ModelInfo[] {
+  const curatedIdsByProvider = new Map<string, Set<string> | undefined>();
+  return models.filter((model) => {
+    if (!curatedIdsByProvider.has(model.provider)) {
+      curatedIdsByProvider.set(model.provider, getCuratedModelIds(model.provider));
+    }
+    const curatedIds = curatedIdsByProvider.get(model.provider);
+    return curatedIds === undefined || curatedIds.has(model.id);
+  });
+}
+
 function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
   const modelMap = new Map<string, ModelInfo>();
   const registry = getProviderRegistry();
@@ -308,7 +329,11 @@ async function loadProviderModels(provider: Provider): Promise<ProviderModelLoad
       return { status: 'unavailable', models: [] };
     }
     const models = await provider.getModels();
-    if (models.length > 0 || provider.hasCuratedModelList?.()) {
+    if (
+      models.length > 0 ||
+      provider.hasCuratedModelList?.() ||
+      getCuratedModelIds(provider.id)?.size === 0
+    ) {
       return { status: 'loaded', models };
     }
     return {
@@ -543,18 +568,23 @@ function isCacheStale(cacheKey: string): boolean {
   return Date.now() - timestamp > CACHE_TTL;
 }
 
-export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
+function readCachedModels(cacheKey: string): ModelInfo[] | null {
   const cachedModels = modelsCache.get(cacheKey);
-
-  if (!cachedModels || cachedModels.length === 0) {
-    return [];
+  if (!cachedModels) {
+    return null;
   }
-
   if (isCacheStale(cacheKey)) {
     triggerBackgroundRefresh(cacheKey).catch(() => {});
   }
-
+  if (cachedModels.length === 0) {
+    return null;
+  }
   return cachedModels;
+}
+
+export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
+  const cachedModels = readCachedModels(cacheKey);
+  return cachedModels === null ? [] : filterModelsByCuration(cachedModels);
 }
 
 export async function initializeModels(): Promise<void> {
@@ -821,7 +851,10 @@ export async function getModelInfo(
     return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromCache) : fromCache;
   }
 
-  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const staticProviderModels = filterProviderModels(
+    providerId,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
+  );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
   return providerId === 'anthropic-copilot' && staticModel
     ? overlayCodexStaticMetadata(staticModel)
@@ -834,15 +867,29 @@ export async function getSessionModelInfo(
 ): Promise<ModelInfo | null> {
   const providerId = session.config.provider;
   if (!providerId) return null;
-  return getModelInfo(session.config.model, cacheKey, providerId);
+  const modelInfo = await getModelInfo(session.config.model, cacheKey, providerId);
+  if (modelInfo) return modelInfo;
+  const rawModels = readCachedModels(cacheKey);
+  if (rawModels) {
+    const providerModels = rawModels.filter((m) => m.provider === providerId);
+    const fromRaw = findInModels(providerModels, session.config.model);
+    if (fromRaw) {
+      return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromRaw) : fromRaw;
+    }
+  }
+  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
+  return providerId === 'anthropic-copilot' && fromStatic
+    ? overlayCodexStaticMetadata(fromStatic)
+    : fromStatic;
 }
 
 export async function getModelInfoUnfiltered(
   idOrAlias: string,
   cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
-  const availableModels = getAvailableModels(cacheKey);
-  return findInModels(availableModels, idOrAlias) ?? null;
+  const cachedModels = readCachedModels(cacheKey);
+  return cachedModels === null ? null : (findInModels(cachedModels, idOrAlias) ?? null);
 }
 
 export async function isValidModel(
@@ -857,7 +904,10 @@ export async function isValidModel(
     return true;
   }
 
-  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const staticProviderModels = filterProviderModels(
+    providerId,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
+  );
   if (!findInModels(staticProviderModels, idOrAlias)) {
     return false;
   }

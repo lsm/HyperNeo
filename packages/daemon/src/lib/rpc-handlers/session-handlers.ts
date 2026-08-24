@@ -64,9 +64,15 @@ export async function detectStrandedProviders(
   const cachedProviders = new Set(
     cachedModels.map((m) => m.provider).filter((p): p is string => !!p)
   );
-  const toProbe = getProviderRegistry()
+  const registry = getProviderRegistry();
+  const toProbe = registry
     .getAll()
-    .filter((p) => !cachedProviders.has(p.id) && !hasRefreshBeenAttemptedFor(p.id));
+    .filter(
+      (provider) =>
+        !cachedProviders.has(provider.id) &&
+        registry.getCuratedModels(provider.id)?.length !== 0 &&
+        !hasRefreshBeenAttemptedFor(provider.id)
+    );
   if (toProbe.length === 0) return [];
   markRefreshAttemptedFor(toProbe.map((p) => p.id));
   const stranded: string[] = [];
@@ -591,12 +597,11 @@ export function setupSessionHandlers(
       throw new Error('Session has no provider configured');
     }
 
-    const { resolveModelAlias, getModelInfo } = await import('../model-service.js');
-    const currentModelId = await resolveModelAlias(rawModelId, 'global', sessionProvider);
-    const modelInfo = await getModelInfo(currentModelId, 'global', sessionProvider);
+    const { getSessionModelInfo } = await import('../model-service.js');
+    const modelInfo = await getSessionModelInfo(agentSession.getSessionData(), 'global');
 
     return {
-      currentModel: currentModelId,
+      currentModel: modelInfo?.id ?? rawModelId,
       currentProvider: sessionProvider,
       modelInfo,
     };
@@ -755,7 +760,9 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('models.list', async (data) => {
     try {
-      const { getAvailableModels, refreshModels } = await import('../model-service.js');
+      const { getAvailableModels, getModelsCache, refreshModels } = await import(
+        '../model-service.js'
+      );
 
       const params = data as {
         forceRefresh?: boolean;
@@ -769,14 +776,15 @@ export function setupSessionHandlers(
       }
 
       let availableModels = getAvailableModels('global');
+      const cachePopulated = getModelsCache().has('global');
 
-      if (!forceRefresh && availableModels.length === 0) {
+      if (!forceRefresh && availableModels.length === 0 && !cachePopulated) {
         await refreshModels();
         availableModels = getAvailableModels('global');
         didRefresh = true;
       }
 
-      if (!forceRefresh && availableModels.length > 0) {
+      if (!forceRefresh && (availableModels.length > 0 || cachePopulated)) {
         const stranded = await detectStrandedProviders(availableModels);
         if (stranded.length > 0) {
           const providersBefore = new Set(

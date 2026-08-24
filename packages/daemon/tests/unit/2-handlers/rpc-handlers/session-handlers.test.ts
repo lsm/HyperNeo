@@ -191,6 +191,125 @@ describe('Session RPC Handlers — models.list', () => {
     setupSessionHandlers(messageHubData.hub, {} as SessionManager, eventBus, {} as SpaceManager);
   });
 
+  it('returns only the configured curation subset', async () => {
+    const models = [
+      {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        provider: 'deepseek',
+        contextWindow: 1_000_000,
+      },
+      {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        provider: 'deepseek',
+        contextWindow: 1_000_000,
+      },
+    ] as ModelInfo[];
+    getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+    setModelsCache(new Map([['global', models]]));
+
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+    };
+
+    expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
+  });
+
+  it('does not refresh when the cache is populated but curation leaves it empty', async () => {
+    let getModelCalls = 0;
+    getProviderRegistry().register({
+      id: 'curated-empty-provider',
+      displayName: 'Curated Empty',
+      isAvailable: () => true,
+      getModels: async () => {
+        getModelCalls++;
+        return [];
+      },
+      ownsModel: () => false,
+      getModelForTier: () => undefined,
+      buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+    } as unknown as Provider);
+    getProviderRegistry().setCuratedModels('curated-empty-provider', []);
+    setModelsCache(new Map([['global', []]]));
+
+    const handler = messageHubData.handlers.get('models.list')!;
+    const result = (await handler({ useCache: true }, {})) as {
+      models: Array<{ id: string }>;
+      cached: boolean;
+    };
+
+    expect(result.models).toEqual([]);
+    expect(getModelCalls).toBe(0);
+  });
+
+  it('session.model.get keeps metadata for a session on a curated-out model', async () => {
+    const models = [
+      { id: 'opus', name: 'Opus', provider: 'anthropic', contextWindow: 200000 },
+    ] as ModelInfo[];
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', models]]));
+
+    const sessionManager = {
+      getSessionAsync: async () => ({
+        getCurrentModel: () => ({ id: 'opus' }),
+        getSessionData: () => ({
+          id: 'session-1',
+          config: { model: 'opus', provider: 'anthropic' },
+        }),
+      }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers: setupForModelGet } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    const hub = createMockMessageHub();
+    setupForModelGet(hub.hub, sessionManager, eventBus, {} as SpaceManager);
+
+    const handler = hub.handlers.get('session.model.get')!;
+    const result = (await handler({ sessionId: 'session-1' }, {})) as {
+      currentModel: string;
+      currentProvider: string;
+      modelInfo: ModelInfo | null;
+    };
+
+    expect(result.currentModel).toBe('opus');
+    expect(result.currentProvider).toBe('anthropic');
+    expect(result.modelInfo).toMatchObject({ id: 'opus', provider: 'anthropic' });
+  });
+
+  it('session.model.get resolves a shared alias to the session provider model', async () => {
+    const models = [
+      { id: 'openrouter/qwen3', name: 'Qwen3', alias: 'qwen3', provider: 'openrouter-test' },
+      { id: 'qwen3:latest', name: 'Qwen3 Local', alias: 'qwen3', provider: 'ollama-test' },
+    ] as ModelInfo[];
+    setModelsCache(new Map([['global', models]]));
+
+    const sessionManager = {
+      getSessionAsync: async () => ({
+        getCurrentModel: () => ({ id: 'qwen3' }),
+        getSessionData: () => ({
+          id: 'session-2',
+          config: { model: 'qwen3', provider: 'ollama-test' },
+        }),
+      }),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers: setupForModelGet } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    const hub = createMockMessageHub();
+    setupForModelGet(hub.hub, sessionManager, eventBus, {} as SpaceManager);
+
+    const handler = hub.handlers.get('session.model.get')!;
+    const result = (await handler({ sessionId: 'session-2' }, {})) as {
+      currentModel: string;
+      modelInfo: ModelInfo | null;
+    };
+
+    expect(result.currentModel).toBe('qwen3:latest');
+    expect(result.modelInfo).toMatchObject({ id: 'qwen3:latest', provider: 'ollama-test' });
+  });
+
   it('returns cached models when cache is populated', async () => {
     const testCache = new Map<
       string,
@@ -428,6 +547,16 @@ describe('Session RPC Handlers — models.list', () => {
         { id: 'x', provider: 'stranded-rep' } as ModelInfo,
       ]);
       expect(stranded).not.toContain('stranded-rep');
+    });
+
+    it('skips providers configured with an empty curation', async () => {
+      const registry = getProviderRegistry();
+      registry.register(mockProvider('curated-empty', true));
+      registry.setCuratedModels('curated-empty', []);
+
+      const stranded = await detectStrandedProviders(anthropicOnly);
+
+      expect(stranded).not.toContain('curated-empty');
     });
 
     it('skips unavailable providers', async () => {
