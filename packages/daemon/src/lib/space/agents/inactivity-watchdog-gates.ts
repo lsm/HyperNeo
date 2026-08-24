@@ -10,6 +10,7 @@ export type InactivityNagSkipReason =
   | 'session_busy'
   | 'delivery_pending'
   | 'claim_held'
+  | 'stale_claim'
   | 'not_due';
 
 export type InactivityNagDecision =
@@ -49,6 +50,7 @@ export interface InactivityWatchdogCtx {
   configRevision: number | null;
   agentId: string;
   callerToken: string;
+  admissionRecheck: boolean;
   actor: InactivityWatchdogActorSnapshot | null;
   claim: InactivityWatchdogClaimSnapshot | null;
   decision: InactivityNagDecision | null;
@@ -102,6 +104,24 @@ function claimAnchoredToCurrentWindow(ctx: InactivityWatchdogCtx): boolean {
 export function applyDegradedGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
   const blocked = ctx.claim?.degraded === true && claimAnchoredToCurrentWindow(ctx);
   return blocked ? decided(ctx, { action: 'none', reason: 'degraded' }) : ctx;
+}
+
+export function applyStaleClaimGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
+  if (!ctx.admissionRecheck) return ctx;
+  const claim = ctx.claim;
+  if (claim === null || claim.state === 'none') {
+    return decided(ctx, { action: 'none', reason: 'stale_claim' });
+  }
+  if (!claimAnchoredToCurrentWindow(ctx)) {
+    return decided(ctx, { action: 'none', reason: 'stale_claim' });
+  }
+  if (claim.configRevision !== ctx.configRevision) {
+    return decided(ctx, { action: 'none', reason: 'stale_claim' });
+  }
+  if (claim.ownerToken !== ctx.callerToken) {
+    return decided(ctx, { action: 'none', reason: 'claim_held' });
+  }
+  return ctx;
 }
 
 export function applyActorInactiveGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
@@ -170,6 +190,7 @@ const inactivityWatchdogRun = decisionRun('inactivity-watchdog', [
   applyWatchdogDisabledGate,
   applyWatchdogUnconfiguredGate,
   applyDegradedGate,
+  applyStaleClaimGate,
   applyActorInactiveGate,
   applyBusySessionGate,
   applyPendingDeliveryGate,

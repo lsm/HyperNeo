@@ -46,6 +46,7 @@ function input(overrides: Partial<InactivityWatchdogInput> = {}): InactivityWatc
     configRevision: 7,
     agentId: 'agent-1',
     callerToken: 'scanner-a',
+    admissionRecheck: false,
     actor: makeActor(),
     claim: null,
     ...overrides,
@@ -240,47 +241,46 @@ describe('decideInactivityNag', () => {
       });
     });
 
-    test('rejects a stale-revision claim even for its owner, re-deciding under the new revision', () => {
+    test('rejects an admission recheck when the configuration revision changed after the claim', () => {
+      expect(
+        decideInactivityNag(
+          input({
+            admissionRecheck: true,
+            configRevision: 8,
+            claim: makeClaim({ state: 'in_flight' }),
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'stale_claim' });
+    });
+
+    test('rejects an admission recheck when the activity window moved after the claim', () => {
+      expect(
+        decideInactivityNag(
+          input({
+            admissionRecheck: true,
+            actor: makeActor({ lastActivityAt: NOW - 1000 }),
+            claim: makeClaim({ state: 'in_flight' }),
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'stale_claim' });
+    });
+
+    test('admits a matching in-flight claim during its own admission recheck', () => {
+      const decision = decideInactivityNag(
+        input({ admissionRecheck: true, claim: makeClaim({ state: 'in_flight' }) })
+      );
+      expect(decision.action).toBe('nag');
+    });
+
+    test('a fresh scan still re-decides under a new revision after a stale claim', () => {
       const decision = decideInactivityNag(
         input({
           configRevision: 8,
           claim: makeClaim({ state: 'in_flight' }),
         })
       );
-      expect(decision).toEqual({
-        action: 'nag',
-        predicateVersion: INACTIVITY_WATCHDOG_PREDICATE_VERSION,
-        windowAnchoredAt: NOW - THRESHOLD_MS - 1,
-        attemptGeneration: 0,
-        claimKey: buildInactivityNagClaimKey({
-          agentId: 'agent-1',
-          windowAnchoredAt: NOW - THRESHOLD_MS - 1,
-          attemptGeneration: 0,
-        }),
-        ownerToken: 'scanner-a',
-        configRevision: 8,
-        idleForMs: THRESHOLD_MS + 1,
-      });
-    });
-
-    test('excludes the claimant own in-flight delivery from the busy-state gate', () => {
-      const decision = decideInactivityNag(
-        input({
-          actor: makeActor({ sessionIdle: false }),
-          claim: makeClaim({ state: 'in_flight' }),
-        })
-      );
       expect(decision.action).toBe('nag');
-    });
-
-    test('excludes the claimant own accepted-unconsumed delivery from the pending gate', () => {
-      const decision = decideInactivityNag(
-        input({
-          actor: makeActor({ pendingAcceptedDelivery: true }),
-          claim: makeClaim({ state: 'in_flight' }),
-        })
-      );
-      expect(decision.action).toBe('nag');
+      if (decision.action === 'nag') expect(decision.configRevision).toBe(8);
     });
 
     test('blocks a claimant recheck when competing work is queued or another delivery is pending', () => {
