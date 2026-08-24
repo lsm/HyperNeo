@@ -1314,13 +1314,15 @@ github_rows AS (
     tt.id AS taskId,
     'github' AS category,
     CASE
-      -- The normalizer only ingests failed CI conclusions (success/
-      -- skipped/neutral are dropped) and emits them as .check_failed (check_run),
-      -- .suite_failed (check_suite), or .status_failure / .status_error
-      -- (external/legacy CI — Jenkins/Travis/custom). So any of those topics IS
-      -- a CI failure. ee.state is the event-global state (any failed recipient
-      -- delivery flips it), so for non-CI events derive the danger tone from
-      -- THIS task's own delivery row, not the global event state.
+      -- The normalizer ingests CI conclusions as .check_failed /
+      -- .check_cancelled / .check_skipped (check_run), .suite_failed /
+      -- .suite_cancelled (check_suite), or .status_failure / .status_error
+      -- (external/legacy CI — Jenkins/Travis/custom); success/neutral are
+      -- dropped. Only the failed/error topics are CI failures; cancelled and
+      -- skipped fall through to neutral. ee.state is the event-global state
+      -- (any failed recipient delivery flips it), so for non-CI events derive
+      -- the danger tone from THIS task's own delivery row, not the global
+      -- event state.
       WHEN ee.topic LIKE '%.check_failed'
         OR ee.topic LIKE '%.suite_failed'
         OR ee.topic LIKE '%.status_failure'
