@@ -596,6 +596,37 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(await wait).toBe('reset');
     });
 
+    it('a result-less idle after the mode is armed still uses the suppressed transition', async () => {
+      await handler.handleMessage(sessionState('running'));
+
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(settled).toBe(null);
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        suppressDeliveryWaiters: true,
+        suppressIdlePublish: true,
+        suppressIdleCallback: true,
+      });
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
     it('a suppressed confirmed result under session-state mode holds the shell retention row until idle', async () => {
       await handler.handleMessage(sessionState('running'));
       handler.suppressIdleForNextResult();
@@ -617,6 +648,11 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         clearAwaitingTrailingIdle: true,
         clearMessageInFlight: true,
       });
+
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('trailing-idle-prime'));
+      expect(readFlags(handler).currentThinkingTokensEstimate).toBe(120);
+      expect(readFlags(handler).lastStampedThinkingTokensEstimate).toBe(120);
 
       let settled: string | null = null;
       void wait.then((outcome) => {
@@ -812,12 +848,21 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           wait = handler.waitForSuppressedResult(5_000);
           handler.markClearMessageSent();
         }
+        let settled: string | null = null;
+        if (wait !== null) {
+          void wait.then((outcome) => {
+            settled = outcome;
+          });
+        }
 
         if (row.result) {
           await handler.handleMessage(row.result());
           expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
           expect(setIdleSpy).not.toHaveBeenCalled();
           expect(readFlags(handler)).toEqual(row.afterResult);
+          if (row.suppress === 'mismatch') {
+            expect(settled).toBe(null);
+          }
         }
 
         if (row.sendIdleEvent) {
@@ -843,6 +888,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expect(readFlags(handler)).toEqual(row.expectedFlags);
 
         if (row.cleanupClear) {
+          expect(settled).toBe(null);
           handler.clearIdleSuppression();
         }
         if (row.expectedWait !== undefined && wait !== null) {
@@ -1115,6 +1161,46 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(emitSpy.mock.calls.some((call) => call[0] === 'session.updated')).toBe(false);
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
+    });
+
+    it('a rejecting finishTurn idle after the earlier effects rejects the handle with no replay', async () => {
+      let idleCalls = 0;
+      setIdleSpy.mockImplementation(async () => {
+        idleCalls += 1;
+        if (idleCalls === 2) {
+          throw new Error('setIdle transition failed');
+        }
+      });
+
+      await expect(handler.handleMessage(successResult('finish-idle-reject'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(2);
+      expect(emitSpy.mock.calls.some((call) => call[0] === 'session.errorClear')).toBe(true);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
+    });
+
+    it('an armed sent clear whose error publication rejects also unwinds every flag', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      handler.markClearMessageSent();
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(
+        handler.handleMessage(errorResult('armed-error-publish-reject'))
+      ).rejects.toThrow('sdk.message subscriber failed');
+
+      expect(await wait).toBe('reset');
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
     });
 
     it('a failed save with a primed mode and verdict leaves them untouched and still blocks replay', async () => {
