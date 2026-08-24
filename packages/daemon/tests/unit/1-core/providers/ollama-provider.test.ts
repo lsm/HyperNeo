@@ -197,6 +197,31 @@ describe('OllamaProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('does not replace configured auth status from a base URL override probe', async () => {
+    process.env.OLLAMA_API_KEY = 'local-key';
+    const fetchMock = mock(async (url: RequestInfo | URL) => {
+      if (String(url).startsWith('https://ollama.example.test')) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({ models: [{ name: 'llama3.2:latest', model: 'llama3.2:latest' }] }),
+        { status: 200 }
+      );
+    });
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await provider.getModels();
+    await expect(
+      provider.listRemoteModels({ baseUrl: 'https://ollama.example.test/' })
+    ).rejects.toThrow('Ollama API key was rejected');
+
+    expect((await provider.getAuthStatus()).error).toBeUndefined();
+  });
+
   it('uses bearer auth and cloud base URL for Ollama Cloud model listing', async () => {
     process.env.OLLAMA_CLOUD_API_KEY = 'ollama-key';
     const fetchMock = mock(

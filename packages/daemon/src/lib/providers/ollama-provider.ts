@@ -257,8 +257,9 @@ export class OllamaProvider implements Provider {
     });
     if (response.status === 401 || response.status === 403) {
       const keyName = this.kind === 'cloud' ? 'OLLAMA_CLOUD_API_KEY' : 'OLLAMA_API_KEY';
-      this.lastAuthError = `Ollama API key was rejected. Check ${keyName}.`;
-      throw new OllamaModelAuthError(this.lastAuthError);
+      const authError = `Ollama API key was rejected. Check ${keyName}.`;
+      if (updateCache) this.lastAuthError = authError;
+      throw new OllamaModelAuthError(authError);
     }
     if (!response.ok) {
       throw new Error(`Ollama model listing returned HTTP ${response.status}`);
@@ -271,8 +272,8 @@ export class OllamaProvider implements Provider {
     if (updateCache) {
       this.modelCache = result;
       this.modelCacheAt = Date.now();
+      this.lastAuthError = undefined;
     }
-    this.lastAuthError = undefined;
     return result;
   }
 
