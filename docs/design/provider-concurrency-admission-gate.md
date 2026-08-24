@@ -340,16 +340,20 @@ gate never sees. Re-flagging and admission are two separate rules:
   **both sources converge on one upstream identity**: the inbox stores the
   upstream resource tuple (event/repo/row-id/`updated_at`) as a secondary
   index beside its source-specific key (`X-GitHub-Delivery` for webhooks,
-  the resource tuple for polls), and the keyed room-message upsert keys on
-  upstream tuple **plus the action** (webhook actions distinguish
-  same-second sequences — a comment created and immediately edited within
-  one second shares type/repo/row-id/`updated_at` but is a distinct action
-  that may route differently; the action field keeps them from merging,
-  while poll normalization's synthesized `updated` still collapses onto the
-  webhook equivalent) — so when webhook and polling both park the same
-  upstream change (both enabled is a supported configuration), the second
-  replay's upsert inserts nothing and emits nothing, instead of delivering
-  two room messages from two unrecognized keys. **Webhook-only installations** (webhooks enabled
+  the resource tuple for polls), and deduplication uses **two key levels**:
+  the per-source event key (upstream tuple **plus the action** — webhook
+  actions distinguish same-second sequences; a comment created and
+  immediately edited within one second shares type/repo/row-id/
+  `updated_at` but is a distinct action that may route differently) for
+  exactly-once within a source, and a **canonical correlation key** — the
+  action-insensitive upstream tuple (type/repo/row-id/`updated_at`) — for
+  cross-source suppression, because equivalent events do NOT share actions
+  across sources (polling synthesizes `updated` while the webhook emits
+  `opened`/`closed`/`synchronize`; keying cross-source dedupe on
+  tuple+action would deliver the same change twice from both-enabled
+  configurations). Delivery inserts under its per-source key and marks the
+  canonical key consumed; a second replay — same source or the other one —
+  finds the canonical key consumed and delivers nothing. **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
   persisted to a durable raw-event inbox keyed by the **GitHub delivery
@@ -375,14 +379,19 @@ gate never sees. Re-flagging and admission are two separate rules:
   **Drain is idempotent across crashes**: the replay's room delivery goes
   through a **keyed upsert at the sink** — the derived room message is
   persisted as a durable row keyed by the delivery key (insert-if-absent),
-  and the live `room.message` emission fires only on a fresh insert;
-  `deliverToRoom`'s current fire-and-forget `emitEvent`
-  (github-service.ts:425-436) has no idempotent sink, so record-stamping
-  alone cannot close the window (a crash after routing but before
-  mark-complete would replay-and-duplicate). The upsert IS the atomic step:
-  a crash at any point replays into the same key, inserts nothing, emits
-  nothing; without it, saturated-period events in these supported
-  configurations are silently lost or duplicated. This is the
+  and the live `room.message` emission fires only on a fresh insert — but
+  the durable row is itself the delivery: it persists through the standard
+  room-session message path (`sdk_messages`), which the web already
+  projects via LiveQuery `messages.bySession`, so connected rooms observe
+  the row through the durable projection regardless of whether the
+  one-shot `room.message` push fired. `room.message` (and
+  `deliverToRoom`'s current fire-and-forget `emitEvent`,
+  github-service.ts:425-436) is a live-push optimization, never the
+  record of delivery — a crash between the insert commit and the push
+  therefore loses nothing: replay inserts nothing, pushes nothing, and the
+  projection has already carried the message. Without the durable row as
+  the source of truth, saturated-period events in these supported
+  configurations would be silently lost or duplicated. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -969,7 +978,12 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   `:103-110`) and re-runs the **full admission of the arm that queued it**:
   every `{kind: 'message'}` registration records its origin — P1 (chat) or
   P2 (Space inject) — at registration time, and the wake re-runs that
-  pipeline's own gates for the bound uuid (an injected row re-runs the
+  pipeline's own gates for the bound uuid — **and the arm persists**: the
+  durable marker carries it (`queue_reason` values
+  `'provider_saturated_p1'`/`'provider_saturated_p2'`, same migration), so
+  the restart marker scan knows which pipeline each reconstructed row must
+  re-run instead of defaulting to P1 (which would bypass an injection's
+  parent-task, cooldown, and context-reset gates). An injected row re-runs the
   inject pipeline: parent-task-limited, session cooldown, and the
   context-reset arms are P2 facts P1 never evaluates, and P1's manual-mode
   semantics do not apply to an injection; routing an injected row through
@@ -1322,7 +1336,9 @@ by pre-existing suites):
    retained registrations; a clear that never leaves an outstanding probe
    (empty backlog, or a drain that empties through non-clean exits) consumes
    `chargeResetArmed` on the first clean turn started after it; the marker is retained
-   through promotion (cleared at yield or terminal exit) so reconstruction
+   through promotion and clears at **every admitted prompt yield**
+   (granted or grantless — migration-re-admitted rows hold no grant) or
+   terminal exit, so reconstruction
    still sees promoted-but-unstarted rows; the LLM classifier skips while its
    selected account is saturated; registration add/lookup/lazy cleanup;
    timer lifecycle (destroy clears;
@@ -1370,7 +1386,13 @@ by pre-existing suites):
    delivery passes. **Parked-row linkage** — the P3 park stamps the marker on
    the parked `'enqueued'` row, and restart reconstruction registers marker rows
    in both states, so a post-restart claim wave still meets a minted probe
-   grant. **Batch jobs split on park**: a multi-message V2 batch created
+   grant. **The prompt-yield check splits too**: a batch legitimately
+   built while the account read open (claim and `buildDeliveryBatch` both
+   passed) can reach the authoritative yield check after a sibling armed
+   saturation — at that boundary the head's grant (if any) covers the head
+   alone, and the tails are split into per-member rows/jobs exactly as the
+   park split below (markers, registrations, FIFO sequence), never left
+   riding the head's single-identity prompt. **Batch jobs split on park**: a multi-message V2 batch created
    while the account was open but claimed after saturation armed parks and
    registers only its head — the remaining `batchUuids` may not ride the
    head's grant (probing forbids it), and merely narrowing the job would
