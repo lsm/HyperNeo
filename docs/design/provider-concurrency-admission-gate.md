@@ -516,8 +516,16 @@ not inherit):
   keep issuing doomed calls to an exhausted account — contrary to Decision 2's
   all-limits-arm rule. `closed` admits nothing and clears only on a
   credential/account change (the same re-admission hooks as provider changes);
-  it has no probe and no ladder. This reconciles the old "do not arm" exception
-  with the provider-wide admission objective.
+  it has no probe and no ladder. **Durable parking under closure**: the job
+  queue's `run_at` is `INTEGER NOT NULL` and `requeue` takes a number, so a
+  closed denial parks an already-enqueued job at a far-future sentinel
+  (`CLOSED_PARK_MS`, e.g. 24 h) purely to keep the row durable — the sentinel
+  retry re-consults and re-parks (cheap) — and **registers the identity under
+  the closed account key**, so the credential-change re-admission hook
+  (which already re-admits registrations on `providers.update` /
+  `auth.login` / `auth.logout`) requeues it to `now` the moment the account
+  re-opens; no tick-retry loop ever hits the provider. This reconciles the
+  old "do not arm" exception with the provider-wide admission objective.
 - `resetAtMs` present (bounded by `MAX_RESET_HORIZON_MS`, the same check
   `decideRateLimitTrip` makes) → `untilMs = cooldownFromReset(resetAtMs).retryAtMs`
   (`limit-error-classifier.ts:185-194`). Authoritative: nothing clears it early.
@@ -575,6 +583,14 @@ not inherit):
   trigger a fresh call to the already-saturated account outside the registry.
   The classifier therefore skips (and its callers treat the attempt as
   unrefined) while its selected effective account is saturated or probing.
+  And **the classifier query's own failures arm the registry too**:
+  `classifyUncached` currently swallows them
+  (`limit-error-llm-classifier.ts:313-315`), so a 429 received by the
+  classifier's call on an otherwise-open alternate account would leave that
+  account open to siblings — the PR3 wiring classifies the classifier
+  query's thrown/error-result failures and reports them via
+  `reportLimitError` under that account's canonical key, per the
+  all-classified-limits-arm rule.
   This is the design's full consumption of #2664's tier, not just its
   deterministic half.
 
@@ -1015,7 +1031,11 @@ by pre-existing suites):
    the handler re-runs the full P1 admission for the bound uuid only — if that
    row's session switched to manual mode after queueing it is skipped and
    retained (grant re-binds next eligible), delivered only by manual
-   promotion; a **model switch** with rows queued behind
+   promotion; a **multi-session shared-credential change**
+   (`providers.update` resync and `auth.login`/`auth.logout`) re-admits every
+   registered session on the old fingerprint — including never-loaded
+   sessions with jobless deferred rows — deregistering from the old key and
+   re-admitting under the new one; a **model switch** with rows queued behind
    the old provider deregisters them and immediately re-admits against the new
    key (no waiting on the old provider's wake; no newer-message overtake).
 9. **Scenario — the GLM herd, mocked SDK:** two sessions, one provider; A's query
