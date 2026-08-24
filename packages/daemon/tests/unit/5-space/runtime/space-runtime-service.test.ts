@@ -1032,6 +1032,7 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
         update: mock(() => {}),
+        getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
@@ -1966,6 +1967,54 @@ describe('SpaceRuntimeService', () => {
       expect(longHorizonAgentRepo.ensureCoordinator).toHaveBeenCalledWith(notification.spaceId);
     });
 
+    test('routes a noncanonical handle-coordinator wake to the Space chat session', async () => {
+      const sessions = new Map<string, AgentSession>();
+      sessions.set(`space:chat:${mockSpace.id}`, makeWakeSession(`space:chat:${mockSpace.id}`));
+      const sessionManager = makeWakeSessionManager(sessions);
+      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
+      const longHorizonAgentRepo = {
+        getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
+        ensureCoordinator: mock(() => ({ id: 'coordinator-alt' })),
+        getCoordinator: mock(() => ({ id: 'coordinator-alt' })),
+        getById: mock(() =>
+          buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
+        ),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const goalService = {
+        getGoal: mock(() => ({ id: notification.goalId, spaceId: notification.spaceId })),
+      } as unknown as SpaceRuntimeServiceConfig['goalService'];
+      const outcomeNotificationRepo = {
+        getById: mock(() => ({
+          id: notification.id,
+          goalId: notification.goalId,
+          spaceId: notification.spaceId,
+          status: 'pending',
+        })),
+      } as unknown as SpaceGoalOutcomeNotificationRepository;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        enableGoalOutcomeWake: true,
+        reactiveDb,
+        longHorizonAgentRepo,
+        goalService,
+        outcomeNotificationRepo,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      await svc.deliverGoalOutcomeWake(notification);
+
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        `space:chat:${mockSpace.id}`,
+        expect.objectContaining({ type: 'user' }),
+        'enqueued'
+      );
+      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
+    });
+
     function makeWakeSession(sessionId: string): AgentSession {
       return {
         setRuntimeMcpServers: mock(() => {}),
@@ -2035,6 +2084,7 @@ describe('SpaceRuntimeService', () => {
           ownerCalls += 1;
           return ownerCalls >= 3 ? ownerB : ownerA;
         }),
+        getCoordinator: mock(() => null),
         getById: mock((id: string) => buildLongHorizonAgent({ id, handle: id, displayName: id })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
@@ -2089,6 +2139,7 @@ describe('SpaceRuntimeService', () => {
           action: 'resolved',
           owner: { agentId: 'lh-agent-1' },
         })),
+        getCoordinator: mock(() => null),
         getById: mock(() => buildLongHorizonAgent()),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
