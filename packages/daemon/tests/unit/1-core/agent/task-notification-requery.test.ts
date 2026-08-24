@@ -635,12 +635,16 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(needsAttentionPublishes()).toBe(0);
   });
 
-  it('keeps arming episodes after an interrupt that landed while idle', async () => {
+  it('keeps arming episodes after a post-Stop restart', async () => {
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(1);
 
     agentSession.onInterruptRequested();
+    (
+      agentSession as unknown as { incrementQueryGeneration: () => number }
+    ).incrementQueryGeneration();
+
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
     await settleRequery();
     expect(continueCalls()).toBe(2);
@@ -1675,6 +1679,84 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
     oldHolder.release?.();
     await oldCall;
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('routes interrupts through the real path while an acknowledged continuation runs', async () => {
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+
+    expect(agentSession.messageQueue.isRunning()).toBe(true);
+    await agentSession.handleInterrupt();
+    expect(agentSession.messageQueue.isRunning()).toBe(false);
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('honours a successful space delivery despite partial publish failure', async () => {
+    publishSpy.mockImplementation(
+      async (event?: unknown, payload?: { handledBySpaceService?: boolean }) => {
+        if (event === 'space.workflowRun.needsAttention') {
+          if (payload) payload.handledBySpaceService = true;
+          throw new Error('other subscriber boom');
+        }
+        return { delivered: 1, failures: [] };
+      }
+    );
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
+      undefined
+    );
+  });
+
+  it('re-parks when limit recovery starts during the dead-query restart', async () => {
+    let recoveryPending = false;
+    let restartedOnce = false;
+    const ensureQueryStarted = mock(async () => {
+      if (!restartedOnce) {
+        restartedOnce = true;
+        recoveryPending = true;
+      }
+      return 'started' as const;
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: {
+          ensureQueryStarted: typeof ensureQueryStarted;
+          executeDeferredRestartIfPending: () => Promise<void>;
+        };
+      }
+    ).lifecycleManager = {
+      ensureQueryStarted,
+      executeDeferredRestartIfPending: async () => {},
+    };
+    (
+      agentSession as unknown as {
+        rateLimitWatchdog: { isRecoveryPending: () => boolean };
+      }
+    ).rateLimitWatchdog = { isRecoveryPending: () => recoveryPending };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(ensureQueryStarted.mock.calls.length).toBe(1);
+
+    recoveryPending = false;
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
     await settleRequery();
     expect(continueCalls()).toBe(1);
   });

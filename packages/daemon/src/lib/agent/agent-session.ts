@@ -1461,6 +1461,7 @@ export class AgentSession
       }
     ).parent_tool_use_id;
     if (parentToolUseId !== null && parentToolUseId !== undefined) return;
+    this.taskNotificationRequeryContinueMessageId = null;
     const decision = resolveTaskNotificationRequery({
       message,
       attempts: this.taskNotificationRequeryAttempts,
@@ -1706,6 +1707,12 @@ export class AgentSession
           this.taskNotificationRequeryPendingDelayMs = 0;
           return;
         }
+        if (this.isLimitRecoveryPending()) {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          this.scheduleTaskNotificationRequery(1000);
+          return;
+        }
         if (this.stateManager.getState().status !== 'idle') {
           this.taskNotificationRequeryPending = true;
           return;
@@ -1750,11 +1757,10 @@ export class AgentSession
         `task-notification requery: bare-continue delivery failed for session ${this.session.id}: ` +
           `${error instanceof Error ? error.message : String(error)}`
       );
-      this.handleTaskNotificationRequeryFailure();
-    } finally {
       if (this.taskNotificationRequeryContinueMessageId === continueMessageId) {
         this.taskNotificationRequeryContinueMessageId = null;
       }
+      this.handleTaskNotificationRequeryFailure();
     }
   }
 
@@ -1814,8 +1820,10 @@ export class AgentSession
       `task-notification requery budget exhausted after ${attempts} attempt(s); needs attention: ` +
         `session=${this.session.id} run=${event.runId} task=${event.taskId}`
     );
+    let payload: (typeof event & import('../internal-event-bus').InternalEventPayload) | null =
+      null;
     try {
-      const payload = {
+      payload = {
         ...event,
         handledBySpaceService: false,
       } as typeof event & import('../internal-event-bus').InternalEventPayload;
@@ -1830,6 +1838,14 @@ export class AgentSession
       }
     } catch (error) {
       if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
+      if (payload?.handledBySpaceService) {
+        this.logger.warn(
+          `task-notification requery: needs-attention escalation was delivered to space ` +
+            `${event.spaceId} despite a partial publish failure: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+        return;
+      }
       this.logger.warn(
         `task-notification requery: failed to publish needs-attention escalation: ` +
           `${error instanceof Error ? error.message : String(error)}`
