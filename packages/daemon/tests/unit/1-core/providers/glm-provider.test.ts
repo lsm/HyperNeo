@@ -267,7 +267,7 @@ describe('GlmProvider', () => {
           alias: 'glm-new',
           family: 'glm',
           provider: 'glm',
-          contextWindow: 200_000,
+          contextWindow: 128_000,
           preferContextWindowMetadata: true,
           thinkingModes: 'granular',
           description: 'glm-new via Z.ai',
@@ -276,9 +276,9 @@ describe('GlmProvider', () => {
         },
       ]);
       expect(provider.ownsModel('glm-new')).toBe(true);
-      expect(provider.buildSdkConfig('glm-new').envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
-        'glm-new'
-      );
+      const config = provider.buildSdkConfig('glm-new');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-new');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
     });
 
     it('serves its cache unless force is true and stores the forced result', async () => {

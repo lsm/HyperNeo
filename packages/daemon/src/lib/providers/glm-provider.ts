@@ -125,6 +125,7 @@ export class GlmProvider implements Provider {
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly DISCOVERED_MODEL_CONTEXT_WINDOW = 128_000;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -222,7 +223,7 @@ export class GlmProvider implements Provider {
       alias: model.id,
       family: 'glm',
       provider: this.id,
-      contextWindow: 200_000,
+      contextWindow: GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
       preferContextWindowMetadata: true,
       thinkingModes: this.capabilities.thinkingModes,
       description: `${model.name ?? model.id} via Z.ai`,
@@ -257,7 +258,9 @@ export class GlmProvider implements Provider {
         ? baseModelId
         : 'glm-5-turbo';
 
-    const contextWindow = GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ?? 200_000;
+    const contextWindow =
+      GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ??
+      GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
 
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,
