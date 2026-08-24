@@ -526,7 +526,7 @@ export class KimiProvider implements Provider {
 
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo | null {
     const normalized = KimiProvider.normalizeKimiModelId(model.id);
-    const staticModel = KimiProvider.MODELS.find((candidate) => {
+    const exactMatch = KimiProvider.MODELS.find((candidate) => {
       const identifiers = [
         candidate.id,
         ...(candidate.sdkModelIds ?? []),
@@ -536,7 +536,17 @@ export class KimiProvider implements Provider {
         (identifier) => KimiProvider.normalizeKimiModelId(identifier) === normalized
       );
     });
-    return staticModel ?? null;
+    if (exactMatch) return exactMatch;
+    let prefixMatch: { model: ModelInfo; length: number } | undefined;
+    for (const candidate of KimiProvider.MODELS) {
+      for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {
+        const prefix = KimiProvider.normalizeKimiModelId(rawPrefix);
+        if (normalized.startsWith(prefix) && (!prefixMatch || prefix.length > prefixMatch.length)) {
+          prefixMatch = { model: candidate, length: prefix.length };
+        }
+      }
+    }
+    return prefixMatch?.model ?? null;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

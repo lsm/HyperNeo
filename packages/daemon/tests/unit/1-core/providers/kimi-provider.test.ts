@@ -374,12 +374,13 @@ describe('KimiProvider', () => {
       expect(provider.getDefaultRegion()).toBe('global');
     });
 
-    it('filters discovered IDs that Kimi cannot route yet', async () => {
+    it('matches supported prefix aliases and filters IDs Kimi cannot route yet', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       installModelListFetch([
         {
           data: [
-            { id: 'kimi-k3', object: 'model' },
+            { id: 'moonshot-k3-preview', object: 'model' },
+            { id: 'moonshot-v1-32k', object: 'model' },
             { id: 'kimi-k4', object: 'model' },
           ],
         },
@@ -388,12 +389,13 @@ describe('KimiProvider', () => {
 
       const models = await provider.listRemoteModels();
 
-      expect(models).toHaveLength(1);
+      expect(models).toHaveLength(2);
       expect(models[0]).toMatchObject({
         id: 'kimi-k3[1m]',
         contextWindow: 1_048_576,
         thinkingModes: 'granular',
       });
+      expect(models[1]).toEqual(KimiProvider.MODELS[3]);
     });
 
     it('caches successful discovery and force bypasses the cache', async () => {
