@@ -553,6 +553,18 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(continueCalls()).toBe(2);
   });
 
+  it('suppresses episodes trailing an interrupt during an SDK-busy turn', async () => {
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await agentSession.handleInterrupt();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
   it('restarts a dead query to deliver the pending continuation', async () => {
     const ensureQueryStarted = mock(async () => 'started' as const);
     (

@@ -788,7 +788,10 @@ export class AgentSession
 
   onInterruptRequested(): void {
     const status = this.stateManager.getState().status;
-    if (status !== 'idle' && status !== 'interrupted') {
+    if (
+      (status !== 'idle' && status !== 'interrupted') ||
+      this.taskNotificationRequeryAwaitingSdkIdle
+    ) {
       this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
     }
     this.resetTaskNotificationRequery();
