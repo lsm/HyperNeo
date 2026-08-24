@@ -577,12 +577,6 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
     loadProviderModels(provider),
     PROVIDER_RETRY_PROBE_TIMEOUT_MS
   );
-  if (
-    providerRetryGeneration !== generationAtStart ||
-    (providerAppliedSeq.get(providerId) ?? 0) > probeSeq
-  ) {
-    return true;
-  }
   if (result === 'timeout' || result.status === 'unavailable') {
     armProviderRetryTimer(providerId);
     return true;
@@ -598,6 +592,12 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
       loadSeq: probeSeq,
       providerIds: [providerId],
     });
+    return true;
+  }
+  if (
+    providerRetryGeneration !== generationAtStart ||
+    (providerAppliedSeq.get(providerId) ?? 0) > probeSeq
+  ) {
     return true;
   }
   providerAppliedSeq.set(providerId, probeSeq);

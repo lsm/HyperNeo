@@ -1425,6 +1425,39 @@ describe('Model Service', () => {
       expect(getModelsCache().has('global')).toBe(false);
     });
 
+    it('re-records the failure when a global clear lands mid-probe and the probe still rejects', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let rejectProbe: ((err: Error) => void) | null = null;
+      registerGlmProvider(
+        (): Promise<ModelInfo[]> =>
+          new Promise<ModelInfo[]>((_resolve, reject) => {
+            probeCall++;
+            if (probeCall === 1) {
+              reject(new Error('Request failed (http 401)'));
+            } else {
+              rejectProbe = reject;
+            }
+          })
+      );
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      clearModelsCache();
+      rejectProbe?.(new Error('Request failed (http 401)'));
+      await recovery;
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
     it('does not clobber a foreground refresh that overtakes the recovery probe', async () => {
       const { refreshModels, recoverDormantProvider } = await import(
         '../../../../src/lib/model-service'

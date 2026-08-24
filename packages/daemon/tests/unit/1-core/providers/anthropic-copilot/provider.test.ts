@@ -893,6 +893,25 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
     });
 
+    it('tears down the embedded runtime on logout', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const runtime = fakeRuntime();
+      (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
+      (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
+      (p as unknown as Record<string, unknown>)['storedCredentialToken'] = 'gho_logged_out';
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+
+      await p.logout();
+      await settle();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(runtime.stops).toEqual(['server', 'client']);
+      expect(state['serverCache']).toBeUndefined();
+      expect(state['clientCache']).toBeUndefined();
+      expect(state['dynamicModelsCache']).toBeNull();
+      expect(state['storedCredentialToken']).toBeNull();
+    });
+
     it('resets the credential-bound runtime when the OAuth flow completes', async () => {
       const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-oauth-reset-'));
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);

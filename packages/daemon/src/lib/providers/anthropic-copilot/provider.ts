@@ -100,6 +100,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private clientCache: CopilotClient | undefined = undefined;
   private serverCache: EmbeddedServer | undefined = undefined;
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
+  private runtimeGeneration = 0;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
   private readonly credentialListeners = new Set<
@@ -155,6 +156,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const starting = this.serverStarting;
     const server = this.serverCache;
     const client = this.clientCache;
+    this.runtimeGeneration += 1;
     this.serverStarting = undefined;
     this.serverCache = undefined;
     this.clientCache = undefined;
@@ -170,15 +172,8 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     }
     if (starting) {
       const started = await starting.catch(() => undefined);
-      const lateClient = this.clientCache as CopilotClient | undefined;
-      if (lateClient) {
-        this.clientCache = undefined;
-      }
       if (started) {
         await started.stop().catch(() => {});
-      }
-      if (lateClient) {
-        await lateClient.stop().catch(() => {});
       }
     }
   }
@@ -381,6 +376,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const cachedExternalSource = this.freshCachedExternalSource();
     this.storedCredentialToken = null;
     this.tokenCache = null;
+    this.resetCredentialBoundCaches();
 
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');
@@ -724,6 +720,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   private async getOrCreateClient(token?: string): Promise<CopilotClient> {
     if (this.clientCache === undefined) {
+      const generation = this.runtimeGeneration;
       const env: NodeJS.ProcessEnv = { ...this.env };
       if (token) {
         env.COPILOT_GITHUB_TOKEN = token;
@@ -734,6 +731,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         env: buildCopilotEnv(env),
       });
       await client.start();
+      if (generation !== this.runtimeGeneration) {
+        await client.stop().catch(() => {});
+        throw new Error('Copilot runtime was reset during client start');
+      }
       this.clientCache = client;
       logger.debug('Created CopilotClient (bundled CLI path)');
     }

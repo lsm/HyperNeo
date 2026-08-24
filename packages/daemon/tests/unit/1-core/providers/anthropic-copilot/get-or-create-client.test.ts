@@ -104,4 +104,22 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
 
     await expect(p).rejects.toThrow();
   });
+
+  it('stops the client and rejects when a runtime reset lands during start()', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+
+    const p1 = getOrCreate('gho_old_token');
+    expect(startCalls).toHaveLength(1);
+
+    const state = provider as unknown as Record<string, unknown>;
+    state['runtimeGeneration'] = (state['runtimeGeneration'] as number) + 1;
+    startCalls[0].resolve();
+
+    await expect(p1).rejects.toThrow('reset during client start');
+    expect(state['clientCache']).toBeUndefined();
+  });
 });
