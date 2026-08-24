@@ -144,6 +144,7 @@ export class SpaceAgentInactivityClaimRepository {
   acquire(params: AcquireAgentInactivityClaimParams): {
     acquired: boolean;
     claim: SpaceAgentInactivityClaim;
+    created: boolean;
   } {
     const now = Date.now();
     const result = this.db.transaction(() => {
@@ -158,16 +159,11 @@ export class SpaceAgentInactivityClaimRepository {
         existing.windowAnchoredAt === params.windowAnchoredAt &&
         existing.configRevision === params.configRevision
       ) {
-        return { acquired: true, claim: existing };
+        return { acquired: true, claim: existing, created: false };
       }
-      const blocksCurrentWindow =
-        existing !== null &&
-        existing.state !== 'none' &&
-        !existing.degraded &&
-        existing.windowAnchoredAt === params.windowAnchoredAt &&
-        existing.configRevision === params.configRevision;
-      if (blocksCurrentWindow) {
-        return { acquired: false, claim: existing };
+      const relevant = existing !== null && (existing.degraded || existing.state !== 'none');
+      if (relevant && existing.windowAnchoredAt >= params.windowAnchoredAt) {
+        return { acquired: false, claim: existing, created: false };
       }
       const id = existing?.id ?? generateUUID();
       const createdAt = existing?.createdAt ?? now;
@@ -176,10 +172,10 @@ export class SpaceAgentInactivityClaimRepository {
           `INSERT INTO space_agent_inactivity_claims (
              id, space_id, agent_id, claim_key, state, window_anchored_at,
              attempt_generation, owner_token, config_revision, degraded, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'accepted', ?, ?, ?, ?, 0, ?, ?)
+           ) VALUES (?, ?, ?, ?, 'in_flight', ?, ?, ?, ?, 0, ?, ?)
            ON CONFLICT(space_id, agent_id) DO UPDATE SET
              claim_key = excluded.claim_key,
-             state = 'accepted',
+             state = 'in_flight',
              window_anchored_at = excluded.window_anchored_at,
              attempt_generation = excluded.attempt_generation,
              owner_token = excluded.owner_token,
@@ -199,7 +195,11 @@ export class SpaceAgentInactivityClaimRepository {
           createdAt,
           now
         );
-      return { acquired: true, claim: this.getByAgent(params.spaceId, params.agentId)! };
+      return {
+        acquired: true,
+        claim: this.getByAgent(params.spaceId, params.agentId)!,
+        created: true,
+      };
     })();
     return result;
   }
@@ -215,11 +215,29 @@ export class SpaceAgentInactivityClaimRepository {
     return result.changes > 0;
   }
 
+  releaseStale(
+    spaceId: string,
+    agentId: string,
+    expectedClaimId: string,
+    windowCutoff: number,
+    staleBefore: number
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `DELETE FROM space_agent_inactivity_claims
+         WHERE id = ? AND space_id = ? AND agent_id = ? AND window_anchored_at <= ? AND state != 'none' AND degraded = 0 AND updated_at <= ?`
+      )
+      .run(expectedClaimId, spaceId, agentId, windowCutoff, staleBefore);
+    return result.changes > 0;
+  }
+
   applyReset(
     spaceId: string,
     agentId: string,
+    expectedClaimId: string,
     expectedClaimKey: string,
     expectedOwnerToken: string | null,
+    expectedConfigRevision: number | null,
     reset: {
       releaseClaim: boolean;
       markDegraded: boolean;
@@ -230,7 +248,12 @@ export class SpaceAgentInactivityClaimRepository {
     return this.db.transaction(() => {
       const existing = this.getByAgent(spaceId, agentId);
       if (existing === null) return null;
-      if (existing.claimKey !== expectedClaimKey || existing.ownerToken !== expectedOwnerToken) {
+      if (
+        existing.id !== expectedClaimId ||
+        existing.claimKey !== expectedClaimKey ||
+        existing.ownerToken !== expectedOwnerToken ||
+        existing.configRevision !== expectedConfigRevision
+      ) {
         return existing;
       }
       if (reset.releaseClaim) {
@@ -238,7 +261,12 @@ export class SpaceAgentInactivityClaimRepository {
         return null;
       }
       if (!reset.markDegraded && !reset.advanceAttemptGeneration) {
-        return existing;
+        this.db
+          .prepare(
+            `UPDATE space_agent_inactivity_claims SET state = 'accepted', updated_at = ? WHERE id = ?`
+          )
+          .run(now, existing.id);
+        return this.getByAgent(spaceId, agentId);
       }
       this.db
         .prepare(
