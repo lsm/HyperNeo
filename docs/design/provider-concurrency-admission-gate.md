@@ -188,13 +188,27 @@ draft and enqueues initial title generation — suppressing it would leave stale
 composer state on every saturated send; the subscriber's `skipQueryStart` guard
 already prevents a query start). One side effect is deliberately deferred:
 `needsWorkspaceInit` is published **false** for a provider-queued send, because
-title generation runs its own SDK query outside the message pipeline — N new
+title generation runs its own SDK query outside the message pipeline
+(`session-title.handler.ts:4-20` → `generateTitleWithSdk`,
+`session-lifecycle.ts:926-979`, which invokes the SDK directly) — N new
 sessions on a saturated account would otherwise each fire a title query the
-gate never sees. It is re-flagged **only after the granted delivery's probe
-turn completes cleanly** (not at promotion, which happens while the provider is
-still probing — a title query racing the one allowed probe defeats the
-one-at-a-time recovery), and if the session still needs a title then, the title
-query itself runs through the same admission consult. This is the
+gate never sees. Re-flagging and admission are two separate rules:
+
+- **Re-flag** happens only after the granted delivery's probe turn completes
+  cleanly (not at promotion, which happens while the provider is still
+  probing), when the session still needs a title.
+- **The title job has its own admission interpreter.** Title generation is
+  lowest-priority background work: it admits **only when the account is fully
+  open — not saturated and not probing** — and never holds or competes for a
+  probe grant (its consult uses the synthetic identity
+  `(sessionId, 'title')`; one such job per session, idempotent). The consult
+  sits at `handleSessionTitleGeneration`'s entry, before any lifecycle work;
+  denial returns the same parked shape P3 uses — `requeue(job.id, retryAt)`
+  with `retryAt` = the saturation deadline, or the probe tick while probing —
+  so the job retries through the ordinary queue instead of throwing into the
+  job-queue default retry. This keeps background titling strictly behind the
+  user-visible drain: chat deliveries consume grants and wake each other;
+  title jobs wait for full openness. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -701,7 +715,7 @@ at provider scope.
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — and the retry consult (P4); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (fully-open-only, synthetic identity, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -773,7 +787,10 @@ by pre-existing suites):
    `messages.statusChanged` published, `message.persisted` published **with
    `skipQueryStart: true`** (composer draft cleared; title generation deferred —
    `needsWorkspaceInit: false`, re-flagged only after the granted delivery's
-   clean probe turn, with the title query then passing the same consult),
+   clean probe turn); the title-job interpreter — denial at
+   `handleSessionTitleGeneration` parks at the saturation deadline (probe tick
+   while probing), no grant is held or consumed, admission only when fully
+   open, and the re-enqueued job succeeds once open,
    registry registered; unsaturated → outbox path byte-for-byte today's behavior
    (PR1 pins).
 5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
