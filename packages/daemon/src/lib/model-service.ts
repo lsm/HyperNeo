@@ -291,6 +291,9 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
       (providerRetryInvalidations.get(provider.id) ?? 0) !==
       (invalidationsAtStart.get(provider.id) ?? 0)
     ) {
+      const cachedSlice =
+        modelsCache.get('global')?.filter((m) => m.provider === provider.id) ?? [];
+      allModels.push(...cachedSlice);
       return;
     }
     allModels.push(...result.value.models);

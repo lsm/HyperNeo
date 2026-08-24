@@ -628,6 +628,69 @@ describe('Model Service', () => {
       }
     });
 
+    it('preserves a recovered slice when an overlapping foreground merge installs a larger list', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const stubModel = (id: string): ModelInfo => ({
+          ...glmModel(id),
+          provider: 'stub-b',
+          family: 'stub-b',
+        });
+        let releaseForegroundProviders: () => void = () => {};
+        const foregroundGate = new Promise<void>((resolve) => {
+          releaseForegroundProviders = () => resolve();
+        });
+        let glmCalls = 0;
+        let otherCalls = 0;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          glmCalls += 1;
+          if (glmCalls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (glmCalls === 2) {
+            await foregroundGate;
+            throw new Error('Endpoint returned HTTP 503');
+          }
+          return [glmModel('glm-5-recovered')];
+        });
+        getProviderRegistry().register({
+          id: 'stub-b',
+          isAvailable: async () => true,
+          getModels: async (): Promise<ModelInfo[]> => {
+            otherCalls += 1;
+            if (otherCalls === 1) return [stubModel('stub-b-1')];
+            await foregroundGate;
+            return Array.from({ length: 20 }, (_v, i) => stubModel(`stub-b-${i + 1}`));
+          },
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as ProviderLike);
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-recovered')).toBe(true);
+
+        releaseForegroundProviders();
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+        expect(getAvailableModels('global').filter((m) => m.provider === 'stub-b').length).toBe(20);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('re-arms the retry when a scheduled probe never settles', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       jest.useFakeTimers();
