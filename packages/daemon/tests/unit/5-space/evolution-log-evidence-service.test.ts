@@ -590,6 +590,42 @@ describe('EvolutionLogEvidenceService', () => {
     expect(evidence[0].metadata.count).toBe(1);
   });
 
+  it('counts distinct same-millisecond occurrences separately', async () => {
+    const timestamp = Date.now();
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      dedupeWindowMs: 60_000,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'burst warning', timestamp }));
+    service.capture(createEvent({ level: 'warn', message: 'burst warning', timestamp }));
+    await service.flushAsync();
+
+    const burstEvidence = evolutionRepo.listEvidence(scopeId);
+    expect(burstEvidence).toHaveLength(1);
+    expect(burstEvidence[0].metadata.count).toBe(2);
+  });
+
+  it('does not double-count when the same event is written twice', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    const event = createEvent({ level: 'warn', message: 'single warning' });
+    service.capture(event);
+    await service.flushAsync();
+    service.capture(event);
+    await service.flushAsync();
+
+    const singleEvidence = evolutionRepo.listEvidence(scopeId);
+    expect(singleEvidence).toHaveLength(1);
+    expect(singleEvidence[0].metadata.count).toBe(1);
+  });
+
   it('does not double-write evidence when flush interrupts an active drain', async () => {
     const sleepSync = (ms: number): void => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

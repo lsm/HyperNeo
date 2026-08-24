@@ -268,7 +268,7 @@ export class EvolutionLogEvidenceService {
     if (existing) {
       const firstSeenAt = numberOr(existing.metadata.firstSeenAt, now);
       const lastSeenAt = numberOr(existing.metadata.lastSeenAt, firstSeenAt);
-      if (lastSeenAt === now) return;
+      if (existing.metadata.lastWriteEventId === event.id) return;
       if (now - lastSeenAt <= (this.deps.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS)) {
         this.deps.evolutionRepo.updateEvidence(existing.id, {
           summary,
@@ -438,6 +438,7 @@ function buildMetadata(
     count: state.count,
     firstSeenAt: state.firstSeenAt,
     lastSeenAt: event.timestamp,
+    lastWriteEventId: event.id,
     metadata: event.metadata,
     samples: [...state.previousSamples, sampleEvent(event)].slice(-MAX_SAMPLES),
   }) as Record<string, unknown>;
