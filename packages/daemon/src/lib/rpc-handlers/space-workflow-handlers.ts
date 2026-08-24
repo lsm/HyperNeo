@@ -25,6 +25,11 @@ const log = new Logger('space-workflow-handlers');
 
 const DRIFT_SUMMARY_MAX_CHARS = 900;
 
+function boundDriftEntryPart(value: string): string {
+  const max = Math.floor((DRIFT_SUMMARY_MAX_CHARS - 32) / 2);
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
+
 const PRESET_AGENT_NAMES_LOWER = new Set(
   getPresetAgentTemplates().map((p) => p.name.toLowerCase())
 );
@@ -215,12 +220,11 @@ export async function checkBuiltInWorkflowDriftOnStartup(
 
     if (updatesAvailable.length > 0) {
       const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) => {
-        const entry = customized
-          ? `${spaceName}/${workflowName} (customized)`
-          : `${spaceName}/${workflowName}`;
-        return entry.length > DRIFT_SUMMARY_MAX_CHARS
-          ? `${entry.slice(0, DRIFT_SUMMARY_MAX_CHARS - 3)}...`
-          : entry;
+        const spacePart = boundDriftEntryPart(spaceName);
+        const workflowPart = boundDriftEntryPart(workflowName);
+        return customized
+          ? `${spacePart}/${workflowPart} (customized)`
+          : `${spacePart}/${workflowPart}`;
       });
       const header =
         `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +

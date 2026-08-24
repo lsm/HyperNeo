@@ -1704,15 +1704,16 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     }
   });
 
-  it('bounds individually oversized workflow names in the drift summary', async () => {
+  it('bounds individually oversized names in the drift summary', async () => {
     const [template] = getBuiltInWorkflows();
-    const longName = `X`.repeat(1200);
-    const space: Space = { ...mockSpace, id: 'sp-long', name: 'Long Space' };
+    const longSpaceName = `S`.repeat(1200);
+    const longWorkflowName = `X`.repeat(1200);
+    const space: Space = { ...mockSpace, id: 'sp-long', name: longSpaceName };
     const workflow: SpaceWorkflow = {
       ...mockWorkflow,
       id: 'wf-long',
       spaceId: 'sp-long',
-      name: longName,
+      name: longWorkflowName,
       templateName: template.name,
       templateHash: 'stale-long',
     };
@@ -1737,6 +1738,7 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     for (const message of warnings) {
       expect(message.length).toBeLessThanOrEqual(1000);
     }
+    expect(warnings.some((message) => message.includes('S'.repeat(100)))).toBe(true);
     expect(warnings.some((message) => message.includes('X'.repeat(100)))).toBe(true);
   });
 
