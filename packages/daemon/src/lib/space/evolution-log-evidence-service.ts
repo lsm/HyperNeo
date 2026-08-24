@@ -23,6 +23,7 @@ export interface EvolutionLogEvidenceServiceDeps {
   dedupeWindowMs?: number;
   maxBufferedEvents?: number;
   subscriptionRefreshMs?: number;
+  flushDelayMs?: number;
 }
 
 type LogEvidenceRepository = EvolutionRepository & {
@@ -38,16 +39,20 @@ interface BufferedEvent {
 const DEFAULT_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_SUBSCRIPTION_REFRESH_MS = 30 * 1000;
 const DEFAULT_MAX_BUFFERED_EVENTS = 500;
+const DEFAULT_FLUSH_DELAY_MS = 1000;
 const MAX_SAMPLES = 5;
 
 export class EvolutionLogEvidenceService {
   private buffer: BufferedEvent[] = [];
   private cachedDefaultSubscriptions: LogEvidenceSubscription[] = [];
   private nextSubscriptionRefreshAt = 0;
+  private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private drainPromise: Promise<void> | null = null;
 
   constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
   capture(event: StructuredLogEvent): void {
+    let captured = false;
     for (const subscription of this.getSubscriptions()) {
       if (!matchesSubscription(subscription, event)) continue;
       this.buffer.push({
@@ -55,18 +60,56 @@ export class EvolutionLogEvidenceService {
         subscription,
         fingerprint: fingerprintLogEvent(event),
       });
+      captured = true;
     }
+    if (captured) this.scheduleDrain();
     const max = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
     if (this.buffer.length > max) this.buffer.splice(0, this.buffer.length - max);
   }
 
+  scheduleDrain(): void {
+    if (this.drainTimer !== null || this.drainPromise !== null) return;
+    const timer = setTimeout(() => {
+      this.drainTimer = null;
+      void this.flushAsync();
+    }, this.deps.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS);
+    timer.unref?.();
+    this.drainTimer = timer;
+  }
+
+  flushAsync(): Promise<void> {
+    this.cancelScheduledDrain();
+    this.drainPromise ??= this.drainBuffer().finally(() => {
+      this.drainPromise = null;
+    });
+    return this.drainPromise;
+  }
+
+  private async drainBuffer(): Promise<void> {
+    while (this.buffer.length > 0) {
+      const item = this.buffer.shift();
+      if (!item) break;
+      try {
+        this.writeEvidence(item);
+      } catch {}
+      await yieldToEventLoop();
+    }
+  }
+
   flush(): void {
+    this.cancelScheduledDrain();
     const batch = this.buffer.splice(0);
     for (const item of batch) {
       try {
         this.writeEvidence(item);
       } catch {}
     }
+  }
+
+  private cancelScheduledDrain(): void {
+    if (this.drainTimer === null) return;
+    clearTimeout(this.drainTimer);
+    this.drainTimer = null;
   }
 
   private writeEvidence(item: BufferedEvent): void {
@@ -169,6 +212,10 @@ export class EvolutionLogEvidenceService {
       return null;
     }
   }
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function matchesSubscription(

@@ -213,15 +213,16 @@ export async function checkBuiltInWorkflowDriftOnStartup(
 
     if (updatesAvailable.length > 0) {
       log.warn(
-        `[startup] ${updatesAvailable.length} workflow(s) have a template update available. ` +
-          `Open the Workflow List in the UI and click "Sync" to apply them.`
+        `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +
+          `(open the Workflow List in the UI and click "Sync" to apply): ` +
+          updatesAvailable
+            .map(({ spaceName, workflowName, customized }) =>
+              customized
+                ? `${spaceName}/${workflowName} (customized)`
+                : `${spaceName}/${workflowName}`
+            )
+            .join(', ')
       );
-      for (const { spaceName, workflowName, templateName, customized } of updatesAvailable) {
-        log.warn(
-          `  • Space "${spaceName}" / Workflow "${workflowName}" (template: "${templateName}") — ` +
-            (customized ? 'update available (customized)' : 'update available')
-        );
-      }
     }
     if (customizedOnlyCount > 0) {
       log.info(

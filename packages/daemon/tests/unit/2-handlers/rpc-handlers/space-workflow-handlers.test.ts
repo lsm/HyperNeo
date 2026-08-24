@@ -1,5 +1,5 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
+import { configureLogger, LogLevel, MessageHub, subscribeToStructuredLogs } from '@hyperneo/shared';
 import type { Space, SpaceWorkflow } from '@hyperneo/shared';
 import {
   setupSpaceWorkflowHandlers,
@@ -1611,6 +1611,49 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
     expect(wm.listWorkflows).toHaveBeenCalledWith('sp-a');
     expect(wm.listWorkflows).toHaveBeenCalledWith('sp-b');
+  });
+
+  it('emits one summary warning listing every workflow with an update available', async () => {
+    const [template] = getBuiltInWorkflows();
+    const spaceA: Space = { ...mockSpace, id: 'sp-a', name: 'Space A' };
+    const spaceB: Space = { ...mockSpace, id: 'sp-b', name: 'Space B' };
+    const staleA: SpaceWorkflow = {
+      ...mockWorkflow,
+      id: 'wf-a',
+      spaceId: 'sp-a',
+      name: 'Alpha',
+      templateName: template.name,
+      templateHash: 'stale-a',
+    };
+    const staleB: SpaceWorkflow = {
+      ...mockWorkflow,
+      id: 'wf-b',
+      spaceId: 'sp-b',
+      name: 'Beta',
+      templateName: template.name,
+      templateHash: 'stale-b',
+    };
+    const sm = makeSpaceManager([spaceA, spaceB]);
+    const wm = makeWorkflowManager({ 'sp-a': [staleA], 'sp-b': [staleB] });
+
+    const warnings: string[] = [];
+    configureLogger({ level: LogLevel.WARN });
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:space-workflow-handlers' && event.level === 'warn') {
+        warnings.push(event.message);
+      }
+    });
+    try {
+      await checkBuiltInWorkflowDriftOnStartup(wm, sm);
+    } finally {
+      unsubscribe();
+      configureLogger({ level: LogLevel.SILENT });
+    }
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('2 workflow(s) have a template update available');
+    expect(warnings[0]).toContain('Space A/Alpha');
+    expect(warnings[0]).toContain('Space B/Beta');
   });
 
   it('resolves without throwing when spaceManager.listSpaces rejects (non-fatal)', async () => {
