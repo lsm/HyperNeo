@@ -1,7 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+const embeddedServerControl = vi.hoisted(() => ({ failNextStart: false }));
+
+vi.mock('../../../../../src/lib/providers/anthropic-copilot/server', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../../../src/lib/providers/anthropic-copilot/server')
+    >();
+  return {
+    ...actual,
+    startEmbeddedServer: async (
+      ...args: Parameters<typeof actual.startEmbeddedServer>
+    ): ReturnType<typeof actual.startEmbeddedServer> => {
+      if (embeddedServerControl.failNextStart) {
+        embeddedServerControl.failNextStart = false;
+        throw new Error('port in use');
+      }
+      return actual.startEmbeddedServer(...args);
+    },
+  };
+});
+
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
 import {
   initializeProviders,
@@ -1020,6 +1043,78 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(url1).toBe('http://127.0.0.1:9999');
       expect(url2).toBe('http://127.0.0.1:9999');
       expect(url3).toBe('http://127.0.0.1:9999');
+    });
+  });
+
+  describe('superseded runtime starts', () => {
+    it('stops the client when embedded server startup fails', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      (p as unknown as Record<string, unknown>)['tokenCache'] = {
+        token: 'gho_test',
+        expiresAt: Date.now() + 60_000,
+      };
+      const clientStops: string[] = [];
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'createRuntimeClient' as never
+      ).mockImplementation(
+        async () =>
+          ({
+            stop: async () => {
+              clientStops.push('client');
+            },
+          }) as never
+      );
+      embeddedServerControl.failNextStart = true;
+
+      await expect(
+        (p as unknown as { createRuntime(): Promise<unknown> }).createRuntime()
+      ).rejects.toThrow('port in use');
+      expect(clientStops).toEqual(['client']);
+    });
+
+    it('joins the replacement runtime when a rebuild supersedes an in-flight start', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const replacementStops: string[] = [];
+      const replacement = {
+        server: {
+          url: 'http://127.0.0.1:45678',
+          stop: async () => {
+            replacementStops.push('server');
+          },
+        },
+        client: {
+          stop: async () => {
+            replacementStops.push('client');
+          },
+        },
+      };
+      let createCall = 0;
+      let rejectInitial: ((err: Error) => void) | undefined;
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        (() => {
+          createCall++;
+          if (createCall === 1) {
+            return new Promise((_resolve, reject) => {
+              rejectInitial = reject;
+            });
+          }
+          return Promise.resolve(replacement);
+        }) as never
+      );
+
+      const started = p.ensureServerStarted();
+      await Promise.resolve();
+      expect(createCall).toBe(1);
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_replacement_token' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect((p as unknown as Record<string, unknown>)['serverCache']).toBe(replacement.server);
+
+      rejectInitial?.(new Error('Copilot runtime was reset during client start'));
+      await expect(started).resolves.toBe('http://127.0.0.1:45678');
+      expect(replacementStops).toEqual([]);
     });
   });
 

@@ -502,8 +502,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     } catch (err) {
       if (this.serverStarting === starting) {
         this.serverStarting = undefined;
+        throw err;
       }
-      throw err;
+      return this.ensureServerStarted();
     }
 
     if (this.serverStarting !== starting) {
@@ -774,7 +775,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const generation = this.runtimeGeneration;
     const token = await this.resolveGitHubToken();
     const client = await this.createRuntimeClient(token, generation);
-    const server = await startEmbeddedServer(client, this.cwd);
+    let server: EmbeddedServer;
+    try {
+      server = await startEmbeddedServer(client, this.cwd);
+    } catch (err) {
+      await client.stop().catch(() => {});
+      throw err;
+    }
     if (generation !== this.runtimeGeneration) {
       await server.stop().catch(() => {});
       await client.stop().catch(() => {});

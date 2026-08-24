@@ -580,7 +580,9 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
     return true;
   }
   if (result === 'timeout' || result.status === 'unavailable') {
-    armProviderRetryTimer(providerId);
+    if (providerRetryGeneration === generationAtStart) {
+      armProviderRetryTimer(providerId);
+    }
     return true;
   }
   const error = result.status === 'failed' ? result.error : undefined;

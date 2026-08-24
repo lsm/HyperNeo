@@ -1397,6 +1397,47 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
     });
 
+    it('does not rearm a retry when a global clear supersedes an unavailable probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      jest.useFakeTimers();
+      try {
+        let availableCalls = 0;
+        let releaseAvailable: ((available: boolean) => void) | null = null;
+        const { getModels } = registerGlmProvider(
+          async (): Promise<ModelInfo[]> => {
+            throw new Error('Request failed (http 401)');
+          },
+          (): Promise<boolean> => {
+            availableCalls++;
+            if (availableCalls === 1) return Promise.resolve(true);
+            return new Promise<boolean>((resolve) => {
+              releaseAvailable = resolve;
+            });
+          }
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        const recovery = recoverDormantProvider('glm');
+        await flushMicrotasks();
+        expect(availableCalls).toBe(2);
+
+        clearModelsCache();
+        releaseAvailable?.(false);
+        await recovery;
+
+        jest.advanceTimersByTime(120_000);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('does not install a stale slice when a global clear lands mid-probe', async () => {
       const { refreshModels, recoverDormantProvider } = await import(
         '../../../../src/lib/model-service'
