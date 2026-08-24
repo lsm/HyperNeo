@@ -39,7 +39,7 @@ A source sweep of `packages/daemon/src` for `node:child_process` and `Bun.spawn`
 | `packages/daemon/src/lib/space/runtime/connectors/presets.ts` | 18, 59, 77, 141, 160 | Validator factories default to `spawnProcess` | Same as github-connector; helpers pass `buildGitHubLookupEnv()` | **enroll / sanitize** | Same treatment: default `spawnImpl` must not be able to launch with live `process.env`. |
 | `packages/daemon/src/lib/space/runtime/connectors/production.ts` | 23 | `registerProductionConnectors(spawnImpl = spawnProcess)` | Same as github-connector | **enroll / sanitize** | Same. |
 | `packages/daemon/src/lib/space/runtime/built-in-validators/pr-ready-validator.ts` | 58, 116, 135, 188 | `spawnImpl` default and calls | `runTextCommand` and `runCommand` pass `buildGitHubLookupEnv()`; the `git config` call (279) also uses that allowlist | **sanitize** | Continue to pass an explicit allowlist.  The `git config` call does not need GH tokens, so a generic `buildCommandEnv` is cleaner, but the GitHub allowlist is safe. |
-| `packages/daemon/src/lib/space/runtime/hook-executor.ts` | 302 | Hook script `bash -c` execution | `spawnProcess(args, { cwd, env: restrictedEnv, ... })` | **sanitize + verify** | Already the canonical `sanitize` pattern.  `buildHookRestrictedEnv` must be sourced from the active coordinator baseline (or the hook context's immutable env), not a direct `Object.entries(process.env)` read. |
+| `packages/daemon/src/lib/space/runtime/hook-executor.ts` | 302 | Hook script `bash -c` execution | `spawnProcess(args, { cwd, env: restrictedEnv, ... })` | **sanitize (source fix in 0g)** | Already the canonical `sanitize` pattern at the call site.  `buildHookRestrictedEnv` currently sources from `Object.entries(process.env)` and must be updated in 0g to use the active coordinator baseline or the hook context's immutable env. |
 
 ## 3. SDK-hosted spawns (indirect, via SDK `query` or ACP client)
 
@@ -47,6 +47,7 @@ A source sweep of `packages/daemon/src` for `node:child_process` and `Bun.spawn`
 |---|---|---|---|---|---|
 | `packages/daemon/src/lib/github/security-agent.ts` | 162–193 | `query()` API key hand-off | Sets `process.env.ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` before `query()`, restores after | **sanitize** | SDK `query` accepts an `env` option.  Construct an explicit `env` from the agent's immutable key baseline plus a safe PATH/HOME baseline; do not mutate `process.env`. |
 | `packages/daemon/src/lib/github/router-agent.ts` | 202–233 | `query()` API key hand-off | Same set/restore pattern | **sanitize** | Same treatment as security-agent. |
+| `packages/daemon/src/lib/providers/anthropic-provider.ts` | 169–185 | `loadModelsFromSdk()` model discovery | `applyEnvVarsForSdk` sets/restores `process.env` around SDK `query`, which is called without `env` | **enroll / sanitize** | `anthropic.loadModelsFromSdk` is already a coordinator owner.  0g either wraps the call in `providerEnvCoordinator.runWithLease` or, preferably, passes explicit `env: buildSdkQueryEnv(this.env, envVars)` to SDK `query` and removes the `process.env` mutation. |
 
 ## 4. Already protected or verification-only paths
 
@@ -73,10 +74,11 @@ These are not spawns, but they explain why live `process.env` is dangerous.  The
 | `packages/daemon/src/lib/github/security-agent.ts` | 162–193 | Mutates `process.env` around SDK call | Remove by using SDK `env` option (this doc) |
 | `packages/daemon/src/lib/github/router-agent.ts` | 202–233 | Mutates `process.env` around SDK call | Remove by using SDK `env` option (this doc) |
 | `packages/daemon/src/lib/credentials/credential-store.ts` | 448–449 | Reads `process.env[ENCRYPTION_KEY_ENV]` | Move to immutable baseline (0e scope) |
+| `packages/daemon/src/lib/providers/anthropic-provider.ts` | 342–370 | `applyEnvVarsForSdk` sets/restores `process.env` around SDK `query` | Pass explicit `env` to SDK `query` and remove `process.env` mutation (0g) |
 
 ## Decision
 
-1. **Default rule:** every new process launch in the daemon must receive an explicit `env`.  The `runtime-spawn` `SpawnFn` contract will be updated so that an omitted `env` does **not** fall back to live `process.env`; it falls back to the active coordinator baseline (when a lease is held) or the immutable startup baseline (when no lease is held).  This makes the root spawn implementation **sanitize-by-default**.
+1. **Default rule:** every new process launch in the daemon must receive an explicit `env`.  The `runtime-spawn` `SpawnFn` contract will be updated so that an omitted `env` does **not** fall back to live `process.env`.  If the caller propagates a valid `provider-env-coordinator` lease token, the fallback is the coordinator-managed baseline for that token; otherwise the fallback is the immutable startup baseline.  This makes the root spawn implementation **sanitize-by-default** and prevents a background task from accidentally inheriting another session's active lease.
 
 2. **Sanitize** is the preferred treatment for the bulk of the sites: `git`, `gh`, `security`, `ps`, `curl`, `which`, `osascript`/`zenity`/`kdialog`/`powershell`, the bun-node-sqlite probe, user condition expressions, and the GitHub CLI token reader.  Each gets a small, purpose-built allowlist derived from the current owner's immutable baseline (or the coordinator's active lease for session-owned calls).  No site in this inventory is allowed to pass the full live `process.env` to a child.
 
@@ -84,6 +86,6 @@ These are not spawns, but they explain why live `process.env` is dangerous.  The
 
 4. **Immutable baseline** is the rule for all credential and API-key reads.  Providers, agents, and credential readers must capture the env they need at construction (or per-owner initialization) and stop reading `process.env` after that point.  The Copilot provider's `credentialEnvBaseline` is the existing pattern; the GitHub router/security agents and the bun-node-wrapper should adopt it.
 
-5. **0g mechanical application** will: (a) add `env` to every call in §1 using the appropriate `build*Env` helper; (b) update `runtime-spawn` to stop defaulting to `process.env`; (c) fix `acp-model-fetcher.ts:27` with an explicit safe env; (d) add verification rows for the already-protected paths in §4; (e) remove the `process.env` set/restore blocks in the GitHub agents by using the SDK `env` option.
+5. **0g mechanical application** will: (a) add `env` to every call in §1 using the appropriate `build*Env` helper; (b) update `runtime-spawn` to require a propagated lease token before using the active coordinator baseline, and otherwise fall back to the immutable startup baseline; (c) fix `acp-model-fetcher.ts:27` with an explicit safe env; (d) add verification rows for the already-protected paths in §4; (e) remove the `process.env` set/restore blocks in the GitHub agents and `anthropic-provider.ts:169-185` by using the SDK `env` option; (f) update `hook-executor.ts:153-191` (`buildHookRestrictedEnv`) to source from the active coordinator baseline or hook context rather than live `process.env`.
 
 This decision makes the daemon's child processes independent of the live `process.env` mutation window, closing the cross-session credential-leak path described in §8.1.
