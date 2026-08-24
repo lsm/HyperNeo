@@ -26,6 +26,7 @@ vi.mock('../../../../../src/lib/providers/anthropic-copilot/server', async (impo
 });
 
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
+import { COPILOT_ANTHROPIC_MODELS } from '../../../../../src/lib/providers/anthropic-copilot/models';
 import {
   initializeProviders,
   resetProviderFactory,
@@ -1151,6 +1152,77 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       await shutdownPromise;
       expect(createCall).toBe(1);
     });
+
+    it('does not stop the runtime when a concurrent caller already installed it', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const stops: string[] = [];
+      let releaseStart: (() => void) | undefined;
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        (() =>
+          new Promise((resolve) => {
+            releaseStart = () =>
+              resolve({
+                server: {
+                  url: 'http://127.0.0.1:9999',
+                  stop: async () => {
+                    stops.push('server');
+                  },
+                },
+                client: {
+                  stop: async () => {
+                    stops.push('client');
+                  },
+                },
+              });
+          })) as never
+      );
+
+      const first = p.ensureServerStarted();
+      const second = p.ensureServerStarted();
+      await Promise.resolve();
+      releaseStart?.();
+
+      const [url1, url2] = await Promise.all([first, second]);
+      expect(url1).toBe('http://127.0.0.1:9999');
+      expect(url2).toBe('http://127.0.0.1:9999');
+      expect(stops).toEqual([]);
+    });
+
+    it('discards listModels results that straddle a runtime reset', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_env' });
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
+      let releaseList: ((models: unknown[]) => void) | undefined;
+      (p as unknown as Record<string, unknown>)['clientCache'] = {
+        listModels: () =>
+          new Promise<unknown[]>((resolve) => {
+            releaseList = resolve;
+          }),
+      };
+
+      const modelsPromise = p.getModels();
+      await Promise.resolve();
+      const state = p as unknown as Record<string, unknown>;
+      state['runtimeGeneration'] = (state['runtimeGeneration'] as number) + 1;
+      releaseList?.([
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          capabilities: {
+            supports: { vision: true, reasoningEffort: false },
+            limits: { max_context_window_tokens: 128000 },
+          },
+          policy: { state: 'enabled', terms: '' },
+        },
+      ]);
+
+      const models = await modelsPromise;
+      expect(models).toEqual(COPILOT_ANTHROPIC_MODELS);
+      expect((p as unknown as Record<string, unknown>)['dynamicModelsCache']).toBeNull();
+    });
   });
 
   describe('shutdown()', () => {
@@ -1347,12 +1419,16 @@ describe('logout()', () => {
     await expect(p.logout()).rejects.toThrow('gh CLI');
   });
 
-  it('clears owned credentials even when an external source keeps the provider authenticated', async () => {
+  it('preserves owned credentials when an external source blocks logout', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
     p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
     await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
-    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBeNull();
-    expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
+    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBe(
+      'gho_stored_tok'
+    );
+    expect(
+      ((p as unknown as Record<string, unknown>)['tokenCache'] as { token: string }).token
+    ).toBe('gho_stored_tok');
   });
 
   it('does not block logout for an unusable classic PAT (ghp_) in COPILOT_GITHUB_TOKEN', async () => {

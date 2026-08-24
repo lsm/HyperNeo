@@ -1,5 +1,6 @@
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
+import type { ProviderRecoveryOutcome } from '../model-service.js';
 import type { ProviderCredentialManager } from './provider-credential-manager.js';
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
@@ -13,7 +14,7 @@ export interface OAuthRefreshSchedulerOptions {
   registry?: ProviderRegistry;
   now?: () => number;
   onProviderChanged?: (providerId: string) => void;
-  recoverDormantProvider?: (providerId: string) => Promise<boolean>;
+  recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
 }
 
 export class OAuthRefreshScheduler {
@@ -25,7 +26,9 @@ export class OAuthRefreshScheduler {
   private readonly registry: ProviderRegistry;
   private readonly now: () => number;
   private readonly onProviderChanged?: (providerId: string) => void;
-  private readonly recoverDormantProvider?: (providerId: string) => Promise<boolean>;
+  private readonly recoverDormantProvider?: (
+    providerId: string
+  ) => Promise<ProviderRecoveryOutcome>;
 
   constructor(
     private readonly credentialManager: ProviderCredentialManager,
@@ -102,7 +105,10 @@ export class OAuthRefreshScheduler {
   private async recoverDormant(providerId: string): Promise<void> {
     if (!this.recoverDormantProvider) return;
     try {
-      await this.recoverDormantProvider(providerId);
+      const outcome = await this.recoverDormantProvider(providerId);
+      if (outcome === 'failed') {
+        this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      }
     } catch {}
   }
 

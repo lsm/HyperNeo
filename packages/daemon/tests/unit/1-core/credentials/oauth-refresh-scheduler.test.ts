@@ -264,7 +264,7 @@ describe('OAuthRefreshScheduler', () => {
       recoverDormantProvider: async (providerId) => {
         await Promise.resolve();
         order.push(`recovered:${providerId}`);
-        return true;
+        return 'recovered';
       },
       onProviderChanged: (providerId) => {
         order.push(`changed:${providerId}`);
@@ -275,6 +275,33 @@ describe('OAuthRefreshScheduler', () => {
 
     expect(order).toEqual(['recovered:oauth-provider', 'changed:oauth-provider']);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
+  });
+
+  it('marks the provider unhealthy when recovery reports a failed probe', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const changed: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      recoverDormantProvider: async () => 'failed',
+      onProviderChanged: (providerId) => {
+        changed.push(providerId);
+      },
+    });
+
+    await scheduler.tick();
+
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    expect(changed).toEqual(['oauth-provider']);
   });
 
   it('swallows dormancy recovery failures so the refresh still completes', async () => {
@@ -325,7 +352,7 @@ describe('OAuthRefreshScheduler', () => {
       maxRetries: 1,
       recoverDormantProvider: async (providerId) => {
         recovered.push(providerId);
-        return false;
+        return 'no-op';
       },
     });
 

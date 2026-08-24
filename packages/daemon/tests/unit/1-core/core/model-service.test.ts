@@ -1305,7 +1305,7 @@ describe('Model Service', () => {
       subscribeProviderFailureChanges((change) => changes.push(change));
       failing = false;
 
-      await expect(recoverDormantProvider('glm')).resolves.toBe(true);
+      await expect(recoverDormantProvider('glm')).resolves.toBe('recovered');
 
       expect(getModels).toHaveBeenCalledTimes(2);
       expect(getProviderFailure('glm')).toBeUndefined();
@@ -1318,7 +1318,7 @@ describe('Model Service', () => {
       const { recoverDormantProvider } = await import('../../../../src/lib/model-service');
       const { getModels } = registerGlmProvider(async () => [glmModel('glm-fine')]);
 
-      await expect(recoverDormantProvider('glm')).resolves.toBe(false);
+      await expect(recoverDormantProvider('glm')).resolves.toBe('no-op');
 
       expect(getModels).toHaveBeenCalledTimes(0);
       expect(getProviderFailure('glm')).toBeUndefined();
@@ -1335,7 +1335,7 @@ describe('Model Service', () => {
       await refreshModels();
       expect(getProviderFailure('glm')?.errorKind).toBe('transient');
 
-      await expect(recoverDormantProvider('glm')).resolves.toBe(false);
+      await expect(recoverDormantProvider('glm')).resolves.toBe('no-op');
 
       expect(getModels).toHaveBeenCalledTimes(1);
       expect(getProviderFailure('glm')?.errorKind).toBe('transient');
@@ -1353,7 +1353,7 @@ describe('Model Service', () => {
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
 
       getProviderRegistry().unregister('glm');
-      await expect(recoverDormantProvider('glm')).resolves.toBe(false);
+      await expect(recoverDormantProvider('glm')).resolves.toBe('no-op');
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
     });
 
@@ -1368,7 +1368,7 @@ describe('Model Service', () => {
       await refreshModels();
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
 
-      await expect(recoverDormantProvider('glm')).resolves.toBe(true);
+      await expect(recoverDormantProvider('glm')).resolves.toBe('failed');
 
       expect(getModels).toHaveBeenCalledTimes(2);
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
@@ -1391,7 +1391,7 @@ describe('Model Service', () => {
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
 
       available = false;
-      await expect(recoverDormantProvider('glm')).resolves.toBe(true);
+      await expect(recoverDormantProvider('glm')).resolves.toBe('failed');
 
       expect(getProviderFailure('glm')?.errorKind).toBe('credential');
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);

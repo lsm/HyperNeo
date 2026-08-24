@@ -282,9 +282,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return this.dynamicModelsCache;
     }
 
-    if (this.clientCache) {
+    const client = this.clientCache;
+    if (client) {
+      const generation = this.runtimeGeneration;
       try {
-        const sdkModels = await this.clientCache.listModels();
+        const sdkModels = await client.listModels();
+        if (generation !== this.runtimeGeneration) {
+          return COPILOT_ANTHROPIC_MODELS;
+        }
         const mapped = sdkModels
           .filter((m) => m.policy?.state !== 'disabled')
           .map((m) => this.mapCopilotSdkModel(m));
@@ -511,6 +516,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     }
 
     if (this.serverStarting !== starting) {
+      if ((this.serverCache as EmbeddedServer | undefined) === runtime.server) {
+        return runtime.server.url;
+      }
       await runtime.server.stop().catch(() => {});
       await runtime.client.stop().catch(() => {});
       const current = this.serverCache as EmbeddedServer | undefined;

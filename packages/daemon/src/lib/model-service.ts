@@ -562,10 +562,12 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
   clearProviderRetry(providerId);
 }
 
-export async function recoverDormantProvider(providerId: string): Promise<boolean> {
-  if (getProviderFailure(providerId)?.errorKind !== 'credential') return false;
+export type ProviderRecoveryOutcome = 'no-op' | 'recovered' | 'failed';
+
+export async function recoverDormantProvider(providerId: string): Promise<ProviderRecoveryOutcome> {
+  if (getProviderFailure(providerId)?.errorKind !== 'credential') return 'no-op';
   const provider = getProviderRegistry().get(providerId);
-  if (!provider) return false;
+  if (!provider) return 'no-op';
 
   clearProviderRetry(providerId);
   provider.clearModelCache?.();
@@ -577,13 +579,13 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
     PROVIDER_RETRY_PROBE_TIMEOUT_MS
   );
   if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
-    return true;
+    return 'no-op';
   }
   if (result === 'timeout' || result.status === 'unavailable') {
     if (providerRetryGeneration === generationAtStart) {
       armProviderRetryTimer(providerId);
     }
-    return true;
+    return 'failed';
   }
   const error = result.status === 'failed' ? result.error : undefined;
   if (error !== undefined) {
@@ -596,16 +598,16 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
       loadSeq: probeSeq,
       providerIds: [providerId],
     });
-    return true;
+    return 'failed';
   }
   clearProviderFailure(providerId);
   clearProviderRetry(providerId);
   if (providerRetryGeneration !== generationAtStart) {
-    return true;
+    return 'recovered';
   }
   providerAppliedSeq.set(providerId, probeSeq);
   replaceProviderModelsInCache(providerId, result.models);
-  return true;
+  return 'recovered';
 }
 
 function isCacheStale(cacheKey: string): boolean {
