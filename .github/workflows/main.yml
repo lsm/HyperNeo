@@ -208,7 +208,7 @@ jobs:
             # web unless the file is daemon-side-only or inert docs (packages/ui
             # and root tooling count as web-relevant — they feed the web build)
             case "$f" in
-              packages/daemon/*|packages/shared/*|packages/messaging/*|packages/prompts/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/e2e/*) ;;
+              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/e2e/*) ;;
               *.md|docs/*) ;;
               *) web=true ;;
             esac
@@ -511,7 +511,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: balance/web
-          pattern: web-junit-*
+          pattern: web-junit*
 
       - name: Build balance report
         run: bun run scripts/ci-balance-report.ts balance --top 25
