@@ -16,6 +16,7 @@ const log = new Logger('inactivity-watchdog');
 
 export const INACTIVITY_NAG_PROMPT_MAX_CHARS = 4000;
 export const INACTIVITY_NAG_DELIVERY_TIMEOUT_MS = 30_000;
+const INACTIVITY_CLAIM_LEASE_MS = 5 * 60 * 1000;
 
 export const DEFAULT_INACTIVITY_NAG_PROMPT =
   'You have been idle for a while. Check your goals, reminders, and pending reviews; if nothing needs you, say so briefly and stand by.';
@@ -106,18 +107,24 @@ export class SpaceAgentInactivityWatchdogService {
     ) {
       const deliveryFailed = this.deps.isNagDeliveryFailed(spaceId, agentId, claim.claimKey);
       const superseded = claim.configRevision !== config.configRevision;
-      this.deps.claimRepo.applyReset(
-        spaceId,
-        agentId,
-        claim.id,
-        claim.claimKey,
-        claim.ownerToken,
-        claim.configRevision,
-        deliveryFailed && !superseded
-          ? { releaseClaim: false, markDegraded: true, advanceAttemptGeneration: true }
-          : { releaseClaim: true, markDegraded: false, advanceAttemptGeneration: false }
-      );
-      claim = null;
+      const freshInFlight =
+        claim.state === 'in_flight' &&
+        !deliveryFailed &&
+        claim.updatedAt > Date.now() - INACTIVITY_CLAIM_LEASE_MS;
+      if (!freshInFlight) {
+        this.deps.claimRepo.applyReset(
+          spaceId,
+          agentId,
+          claim.id,
+          claim.claimKey,
+          claim.ownerToken,
+          claim.configRevision,
+          deliveryFailed && !superseded
+            ? { releaseClaim: false, markDegraded: true, advanceAttemptGeneration: true }
+            : { releaseClaim: true, markDegraded: false, advanceAttemptGeneration: false }
+        );
+        claim = null;
+      }
     }
     claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     const decision = decideInactivityNag({
