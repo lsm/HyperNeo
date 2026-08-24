@@ -1,6 +1,7 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+
 import {
   getProviderLabel,
   groupModelsByProvider,
@@ -29,6 +30,7 @@ interface NewChatModelPickerProps {
 
 function providerDotClass(status: ProviderAuthStatus | undefined): string {
   if (!status) return 'bg-gray-500';
+  if (status.errorKind === 'transient') return 'bg-gray-500';
   if (!status.isAuthenticated) return 'bg-red-500';
   if (status.needsRefresh) return 'bg-yellow-500';
   return 'bg-green-500';
@@ -43,6 +45,7 @@ export function NewChatModelPicker({
 }: NewChatModelPickerProps) {
   const dropdown = useModal();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
@@ -51,15 +54,14 @@ export function NewChatModelPicker({
 
   useClickOutside(dropdownRef, dropdown.close, dropdown.isOpen);
 
-  useEffect(() => {
-    if (!isConnected) return;
-    let cancelled = false;
+  const loadAuthStatuses = useCallback(() => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
+    const requestId = ++requestIdRef.current;
     hub
       .request<{ providers?: ProviderAuthStatus[] }>('auth.providers', {})
       .then((result) => {
-        if (cancelled) return;
+        if (requestId !== requestIdRef.current) return;
         const statusMap = new Map<string, ProviderAuthStatus>();
         for (const provider of result.providers ?? []) {
           statusMap.set(provider.id, provider);
@@ -67,10 +69,23 @@ export function NewChatModelPicker({
         setProviderAuthStatuses(statusMap);
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    loadAuthStatuses();
+  }, [isConnected, loadAuthStatuses]);
+
+  useEffect(() => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    const unsub = hub.onEvent('providers.changed', () => {
+      loadAuthStatuses();
+    });
     return () => {
-      cancelled = true;
+      unsub();
     };
-  }, [isConnected]);
+  }, [loadAuthStatuses, connectionState.value]);
 
   useEffect(() => {
     if (!dropdown.isOpen) setSearchQuery('');
@@ -80,6 +95,7 @@ export function NewChatModelPicker({
     availableModels,
     providerAuthStatuses,
     activeModelInfo?.provider,
+    activeModelInfo?.id,
     searchQuery
   );
   const groupedModels = groupModelsByProvider(filteredModels);

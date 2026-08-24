@@ -646,7 +646,10 @@ export class SpaceGoalService {
     const updates: UpdateSpaceGoalParams = {};
     if (params.summary !== undefined) updates.summary = params.summary;
     if (params.nextSteps !== undefined) updates.nextSteps = params.nextSteps;
-    if (params.progress !== undefined && goal.type !== 'recurring') {
+    if (params.progress !== undefined && goal.type === 'recurring') {
+      throw new Error('Recurring goals do not accept progress updates through outcome review');
+    }
+    if (params.progress !== undefined) {
       updates.progress = params.progress;
     }
     if (metrics !== null) updates.metrics = metrics;

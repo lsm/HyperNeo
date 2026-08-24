@@ -131,7 +131,6 @@
         "remark-math": "6.0.0",
         "remark-parse": "11.0.0",
         "remark-rehype": "11.1.2",
-        "superpipe": "0.17.0",
         "unified": "11.0.5",
       },
       "devDependencies": {

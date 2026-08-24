@@ -1,7 +1,6 @@
 # HyperNeo
 
 [![CI](https://github.com/lsm/HyperNeo/actions/workflows/main.yml/badge.svg?branch=dev)](https://github.com/lsm/HyperNeo/actions/workflows/main.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/lsm/HyperNeo/badges/coverage-badge.json)](https://github.com/lsm/HyperNeo/actions/workflows/main.yml)
 
 Claude Code web UI for coding, life, and anything in between.
 

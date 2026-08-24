@@ -236,6 +236,10 @@ export class AcpProvider implements Provider {
     }));
   }
 
+  hasCuratedModelList(): boolean {
+    return this.curatedModels !== undefined;
+  }
+
   setConfigOptions(configOptions: AcpConfigOption[]): void {
     if (this.curatedModels !== undefined) return;
     const modelOption = configOptions.find((option) => option.category === 'model');

@@ -176,6 +176,28 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(result.error).toBeTruthy();
     });
 
+    it('treats a missing auth file as definitively logged out', async () => {
+      provider = makeProvider({}, emptyDir, emptyDir);
+
+      const result = await provider.getAuthStatus();
+
+      expect(result.isAuthenticated).toBe(false);
+      expect(result.errorKind).toBeUndefined();
+      expect(result.error).toContain('Not logged in');
+    });
+
+    it('classifies unreadable auth credentials as transient', async () => {
+      const hyperneoDir = path.join(emptyDir, 'hyperneo');
+      mkdirSync(hyperneoDir, { recursive: true });
+      writeFileSync(path.join(hyperneoDir, 'auth.json'), '{invalid json', { mode: 0o600 });
+      provider = makeProvider({}, hyperneoDir, emptyDir);
+
+      const result = await provider.getAuthStatus();
+
+      expect(result.isAuthenticated).toBe(false);
+      expect(result.errorKind).toBe('transient');
+    });
+
     it('returns isAuthenticated=false when only OPENAI_API_KEY env var is set (env vars are daemon/test only)', async () => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, emptyDir, emptyDir);
       const result = await provider.getAuthStatus();

@@ -21,7 +21,6 @@
     "check:space-task-handler-tests": "bun run scripts/check-space-task-handler-tests.ts",
     "test:space-task-handler-gate": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/check-space-task-handler-tests.test.ts",
     "test:strip-comments": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/strip-comments.test.ts",
-    "test:coverage-gate": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/coverage-gate.test.ts",
     "test:ci-balance-report": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-balance-report.test.ts",
     "test:generate-shard-weights": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/generate-shard-weights.test.ts",
     "ci:balance-report": "bun run scripts/ci-balance-report.ts",
