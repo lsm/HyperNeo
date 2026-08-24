@@ -1,26 +1,35 @@
-import type { MessageHub } from '@hyperneo/shared';
-import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
-import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
-import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
+import type {
+  CreateProviderParams,
+  MessageHub,
+  ModelInfo,
+  ProviderRecord,
+  UpdateProviderParams,
+} from '@hyperneo/shared';
+import type {
+  CuratedModel,
+  ListRemoteModelsOptions,
+  ProviderCredentials,
+} from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { parseAcpCommand } from '../acp/acp-command.js';
+import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import {
-  parseProviderConfig,
-  syncProviderToRegistry,
-  removeProviderFromRegistry,
-} from '../providers/provider-sync.js';
-import { getProviderRegistry } from '../providers/registry.js';
-import { markBuiltInProviderDisabled } from '../providers/factory.js';
-import { AcpProvider } from '../providers/acp-provider.js';
-import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
-import { parseAcpCommand } from '../acp/acp-command.js';
-import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { AcpProvider } from '../providers/acp-provider.js';
+import { markBuiltInProviderDisabled } from '../providers/factory.js';
+import {
+  parseProviderConfig,
+  removeProviderFromRegistry,
+  syncProviderToRegistry,
+} from '../providers/provider-sync.js';
+import { getProviderRegistry } from '../providers/registry.js';
+import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
+import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 
 const log = new Logger('provider-handlers');
 
@@ -225,6 +234,21 @@ function validateRemoteModelRequest(data: unknown): RemoteModelRequest {
   return { id: input.id, options: input.options };
 }
 
+type RefreshDiscoveryRequest = { id: string };
+
+function validateRefreshDiscoveryRequest(data: unknown): RefreshDiscoveryRequest {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Invalid refresh discovery request');
+  }
+  const input = data as Record<string, unknown>;
+  const unknown = Object.keys(input).find((key) => key !== 'id');
+  if (unknown) throw new Error(`Unknown refresh discovery request field: ${unknown}`);
+  if (typeof input.id !== 'string' || !input.id.trim()) {
+    throw new Error('Provider id is required');
+  }
+  return { id: input.id };
+}
+
 async function listAcpRemoteModels(
   record: ProviderRecord,
   options: ListRemoteModelsOptions
@@ -245,11 +269,83 @@ async function listAcpRemoteModels(
   return fetchAcpModels(provider, { command: options.command || undefined });
 }
 
+function isUnchangedSavedConfig(
+  record: ProviderRecord | null,
+  saved: { baseUrl?: string; configJson?: string }
+): boolean {
+  return (
+    !!record &&
+    record.isEnabled !== false &&
+    record.baseUrl === saved.baseUrl &&
+    record.configJson === saved.configJson
+  );
+}
+
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+}
+
+const LAST_GOOD_DISCOVERY_KEY = 'discoveredModels';
+const LAST_GOOD_DISCOVERY_MAX_CHARS = MAX_JSON_FIELD_LEN / 2;
+
+interface LastGoodDiscoveredModels {
+  models: CuratedModel[];
+  truncated?: boolean;
+}
+
+function buildLastGoodDiscoveredModels(
+  providerId: string,
+  discovered: ModelInfo[]
+): LastGoodDiscoveredModels {
+  const curatedIds = new Set(
+    getProviderRegistry()
+      .getCuratedModels(providerId)
+      ?.map((model) => model.id) ?? []
+  );
+  const ordered = [
+    ...discovered.filter((model) => curatedIds.has(model.id)),
+    ...discovered.filter((model) => !curatedIds.has(model.id)),
+  ];
+  const models: CuratedModel[] = [];
+  let used = 2;
+  let truncated = false;
+  for (let index = 0; index < ordered.length; index++) {
+    const { id, name } = ordered[index];
+    const entry = { id, ...(name === undefined ? {} : { name }) };
+    const cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
+    if (used + cost > LAST_GOOD_DISCOVERY_MAX_CHARS) {
+      truncated = true;
+      break;
+    }
+    models.push(entry);
+    used += cost;
+  }
+  return { models, ...(truncated ? { truncated: true } : {}) };
+}
+
+function persistLastGoodDiscoveredModels(
+  providerRepo: ProviderRepository,
+  record: ProviderRecord,
+  discovered: ModelInfo[]
+): boolean {
+  let base: Record<string, unknown> = {};
+  if (record.configJson) {
+    try {
+      const parsed: unknown = JSON.parse(record.configJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      base = {};
+    }
+  }
+  const lastGood = buildLastGoodDiscoveredModels(record.providerId, discovered);
+  base[LAST_GOOD_DISCOVERY_KEY] = lastGood;
+  providerRepo.updateProvider(record.id, { configJson: JSON.stringify(base) });
+  return lastGood.truncated === true;
 }
 
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
@@ -313,6 +409,46 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       models = await provider.listRemoteModels(options);
     }
     return {
+      models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
+    };
+  });
+
+  messageHub.onRequest('providers.refreshDiscovery', async (data: unknown) => {
+    const request = validateRefreshDiscoveryRequest(data);
+    const record = providerRepo.getProvider(request.id);
+    if (!record) throw new Error(`Provider ${request.id} not found`);
+    const provider = getProviderRegistry().get(record.providerId);
+    if (!provider) throw new Error(`Provider ${record.providerId} is not registered`);
+    if (!provider.listRemoteModels) {
+      throw new Error(`Provider ${record.providerId} does not support remote model listing`);
+    }
+
+    const { getModelsCacheGeneration, applyDiscoveredProviderModels } = await import(
+      '../model-service.js'
+    );
+    const generationAtStart = getModelsCacheGeneration();
+    const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
+
+    const discovered = await provider.listRemoteModels({ force: true });
+    const models = await provider.getModels();
+
+    if (
+      getModelsCacheGeneration() !== generationAtStart ||
+      !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
+    ) {
+      return { success: false, reason: 'superseded' };
+    }
+    if (models.length === 0) {
+      throw new Error(`Provider ${record.providerId} returned no models`);
+    }
+
+    const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
+    applyDiscoveredProviderModels(record.providerId, models);
+    notifyProvidersChanged(internalEventBus);
+
+    return {
+      success: true,
+      ...(truncated ? { truncated: true } : {}),
       models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
     };
   });

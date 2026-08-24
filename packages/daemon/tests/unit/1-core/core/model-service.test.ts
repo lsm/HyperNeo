@@ -7,6 +7,7 @@ import {
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
+  applyDiscoveredProviderModels,
   clearModelsCache,
   getModelsCache,
   setModelsCache,
@@ -2056,6 +2057,81 @@ describe('Model Service', () => {
         loadTriggered,
         `stale entry should trigger a provider load on read; registry=[${registryState}]`
       ).toBe(true);
+    });
+  });
+
+  describe('applyDiscoveredProviderModels', () => {
+    const discoveredModels: ModelInfo[] = [
+      {
+        id: 'acp-kept',
+        name: 'ACP Kept',
+        alias: 'acp-kept',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'Curated-in discovered model',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+      {
+        id: 'acp-dropped',
+        name: 'ACP Dropped',
+        alias: 'acp-dropped',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'Curated-out discovered model',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ];
+
+    function makeOtherProviderModel(): ModelInfo {
+      return {
+        id: 'other-model',
+        name: 'Other Model',
+        alias: 'other-model',
+        family: 'other',
+        provider: 'other-provider',
+        contextWindow: 100000,
+        description: 'Loaded by another provider',
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    it('replaces the provider slice through the curation filter while preserving other providers', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const staleAcp: ModelInfo = { ...discoveredModels[0], id: 'stale-acp' };
+      setModelsCache(new Map([['global', [...mockModels, staleAcp]]]));
+      getProviderRegistry().setCuratedModels('acp', [{ id: 'acp-kept' }]);
+
+      expect(applyDiscoveredProviderModels('acp', discoveredModels)).toBe(true);
+
+      const rawModels = getModelsCache().get('global') ?? [];
+      expect(rawModels.filter((model) => model.provider === 'acp')).toEqual([discoveredModels[0]]);
+      expect(getAvailableModels('global')).toEqual([...mockModels, discoveredModels[0]]);
+    });
+
+    it('defers through a pending slice instead of creating an uninitialized global cache entry', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'other-provider',
+        getModels: async () => [makeOtherProviderModel()],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(applyDiscoveredProviderModels('acp', discoveredModels)).toBe(false);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      await initializeModels();
+
+      const models = getAvailableModels('global');
+      expect(models.filter((model) => model.provider === 'other-provider')).toEqual([
+        makeOtherProviderModel(),
+      ]);
+      expect(models.filter((model) => model.provider === 'acp')).toEqual(discoveredModels);
     });
   });
 

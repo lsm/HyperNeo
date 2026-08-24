@@ -1,22 +1,22 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
+import type { Provider, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
 import type { QueryLike } from './agent/query-like.ts';
+import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
+import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
+import { DeepSeekProvider } from './providers/deepseek-provider.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
-import { getProviderRegistry } from './providers/registry.js';
+import { GlmProvider } from './providers/glm-provider.js';
+import { KimiProvider } from './providers/kimi-provider.js';
+import { MinimaxProvider } from './providers/minimax-provider.js';
 import {
-  clearProviderFailure,
   classifyProviderFailure,
+  clearProviderFailure,
   getAllProviderFailures,
   getProviderFailure,
   recordClassifiedProviderFailure,
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
-import type { Provider, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
-import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
-import { GlmProvider } from './providers/glm-provider.js';
-import { KimiProvider } from './providers/kimi-provider.js';
-import { DeepSeekProvider } from './providers/deepseek-provider.js';
-import { MinimaxProvider } from './providers/minimax-provider.js';
-import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
+import { getProviderRegistry } from './providers/registry.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -963,6 +963,22 @@ export function updateProviderModelsInCache(
       .catch(() => {});
   }
   return true;
+}
+
+export function getModelsCacheGeneration(cacheKey: string = 'global'): number {
+  return cacheGeneration.get(cacheKey) ?? 0;
+}
+
+export function applyDiscoveredProviderModels(
+  providerId: string,
+  models: ModelInfo[],
+  cacheKey: string = 'global'
+): boolean {
+  return updateProviderModelsInCache(
+    providerId,
+    filterProviderModels(providerId, models),
+    cacheKey
+  );
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
