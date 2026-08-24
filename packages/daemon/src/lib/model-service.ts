@@ -798,7 +798,9 @@ function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
 }
 
 export function clearModelsCache(cacheKey?: string): void {
-  cacheClearSequence += 1;
+  if (!cacheKey || cacheKey === 'global') {
+    cacheClearSequence += 1;
+  }
   if (cacheKey) {
     const hadInFlight = refreshInProgress.has(cacheKey);
     modelsCache.delete(cacheKey);
@@ -988,6 +990,10 @@ export function markProviderRefreshSucceeded(providerId: string): boolean {
   providerAppliedSeq.set(providerId, ++modelLoadSequence);
   clearProviderRetry(providerId);
   return clearProviderFailure(providerId);
+}
+
+export function releaseAppliedProviderSlice(providerId: string, cacheKey: string = 'global'): void {
+  pendingProviderSlices.delete(pendingSliceKey(cacheKey, providerId));
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {

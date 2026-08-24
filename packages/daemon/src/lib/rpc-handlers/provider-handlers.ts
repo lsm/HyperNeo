@@ -312,11 +312,14 @@ function buildLastGoodDiscoveredModels(
   const registry = getProviderRegistry();
   const byId = new Map<string, CuratedModel>();
   for (const curated of registry.getCuratedModels(providerId) ?? []) {
-    byId.set(curated.id, {
-      id: curated.id,
-      ...(curated.name === undefined ? {} : { name: curated.name }),
-    });
+    if (!byId.has(curated.id)) {
+      byId.set(curated.id, {
+        id: curated.id,
+        ...(curated.name === undefined ? {} : { name: curated.name }),
+      });
+    }
   }
+  const curatedCount = byId.size;
   for (const model of discovered) {
     const seeded = byId.get(model.id);
     if (seeded) {
@@ -327,16 +330,21 @@ function buildLastGoodDiscoveredModels(
   }
   const models: CuratedModel[] = [];
   let used = 2;
+  let index = 0;
   let truncated = false;
   for (const entry of byId.values()) {
     const serialized = JSON.stringify(entry);
     const cost = serialized.length + (models.length === 0 ? 0 : 1);
     if (used + cost > budget) {
+      if (index < curatedCount) {
+        throw new Error('Provider config has no capacity to retain all curated models');
+      }
       truncated = true;
       break;
     }
     models.push(entry);
     used += cost;
+    index++;
   }
   return { models, ...(truncated ? { truncated: true } : {}) };
 }
@@ -446,6 +454,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       const {
         getModelsCacheClearSequence,
         applyDiscoveredProviderModels,
+        releaseAppliedProviderSlice,
         markProviderRefreshSucceeded,
       } = await import('../model-service.js');
       const clearsAtStart = getModelsCacheClearSequence();
@@ -471,6 +480,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
       const truncated = persistLastGoodDiscoveredModels(providerRepo, record, discovered);
       applyDiscoveredProviderModels(record.providerId, models);
+      releaseAppliedProviderSlice(record.providerId);
       const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
       if (!recoveredFailure) notifyProvidersChanged(internalEventBus);
 
