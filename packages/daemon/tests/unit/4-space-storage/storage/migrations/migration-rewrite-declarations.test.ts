@@ -27,8 +27,8 @@ function importedMigrationBodies(source: string): Map<string, string> {
     const localName = match[2] ?? match[1];
     const moduleUrl = new URL(`./${match[3]}.ts`, migrationsPath);
     const moduleBodies = functionBodies(readFileSync(moduleUrl, 'utf8'));
-    const exported = moduleBodies.get(match[1]);
-    if (exported && localName) bodies.set(localName, exported);
+    const reachable = match[1] ? reachableBody(match[1], moduleBodies) : '';
+    if (reachable && localName) bodies.set(localName, reachable);
   }
   return bodies;
 }
