@@ -60,8 +60,9 @@ MIL = `useTaskMilestones` (#2756), GRP = `useGroupMessages` (#2788).
 
 Rows 4–8 are the behavior-relevant drift; row 11 is pure config; rows 2/3 are
 config-plus-executor drift — PRJ/MIL/GRP's `executeEffects` does not schedule
-`retry-with-backoff` or `schedule-cleanup`, so flipping `snapshotRetryEnabled`
-alone does not enable the watchdog. Rows 9–13 are structural. Rows 1–12 are pinned: machine contract suite
+`retry-with-backoff` (only STM does); PRJ/MIL also omit `schedule-cleanup`, while
+GRP handles it at `packages/web/src/hooks/useGroupMessages.ts:263-267`, so
+flipping `snapshotRetryEnabled` alone does not enable the watchdog. Rows 9–13 are structural. Rows 1–12 are pinned: machine contract suite
 (`live-query-lifecycle.test.ts`, 22 tests incl. the full status×event table) plus
 four `.lifecycle.test.ts` characterization files (584/352/272/414 lines) written
 green against the pre-migration hooks and unchanged since. Row 13's pagination
