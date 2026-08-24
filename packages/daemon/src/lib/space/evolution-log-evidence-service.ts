@@ -44,6 +44,7 @@ const DEFAULT_FLUSH_DELAY_MS = 1000;
 const BUSY_RETRY_BASE_MS = 1000;
 const MAX_BUSY_RETRY_MS = 30 * 1000;
 const MAX_SAMPLES = 5;
+const DEFAULT_CAPTURE_LEVELS: ReadonlySet<StructuredLogLevel> = new Set(['warn', 'error', 'fatal']);
 
 export class EvolutionLogEvidenceService {
   private buffer: StructuredLogEvent[] = [];
@@ -54,14 +55,25 @@ export class EvolutionLogEvidenceService {
   private drainItem: DrainItem | null = null;
   private retryDelayMs: number | null = null;
   private busyRetryCount = 0;
+  private captureLevels: ReadonlySet<StructuredLogLevel> | null = null;
 
   constructor(private deps: EvolutionLogEvidenceServiceDeps) {}
 
   capture(event: StructuredLogEvent): void {
+    if (!this.getCaptureLevels().has(event.level)) return;
     this.buffer.push(event);
     this.scheduleDrain();
     const max = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
     if (this.buffer.length > max) this.buffer.splice(0, this.buffer.length - max);
+  }
+
+  private getCaptureLevels(): ReadonlySet<StructuredLogLevel> {
+    if (this.captureLevels === null) {
+      this.captureLevels = this.deps.subscriptions
+        ? new Set(this.deps.subscriptions.flatMap((subscription) => subscription.levels))
+        : DEFAULT_CAPTURE_LEVELS;
+    }
+    return this.captureLevels;
   }
 
   scheduleDrain(): void {
@@ -110,8 +122,9 @@ export class EvolutionLogEvidenceService {
       const item = this.drainItem;
       while (item.offset < item.subscriptions.length) {
         try {
-          await this.writeEvidenceInterleaved(item.event, item.subscriptions[item.offset]);
+          await this.writeEvidenceInterleaved(item, item.subscriptions[item.offset]);
         } catch (error) {
+          if (this.drainItem !== item) return;
           if (!isSqliteBusyError(error)) {
             item.offset += 1;
             continue;
@@ -123,9 +136,11 @@ export class EvolutionLogEvidenceService {
           );
           return;
         }
+        if (this.drainItem !== item) return;
         item.offset += 1;
         this.busyRetryCount = 0;
         await yieldToEventLoop();
+        if (this.drainItem !== item) return;
       }
       this.drainItem = null;
       await yieldToEventLoop();
@@ -145,7 +160,12 @@ export class EvolutionLogEvidenceService {
     }
     const batch = this.buffer.splice(0);
     if (batch.length === 0) return;
-    const subscriptions = this.getSubscriptions();
+    let subscriptions: LogEvidenceSubscription[];
+    try {
+      subscriptions = this.getSubscriptions();
+    } catch {
+      return;
+    }
     for (const event of batch) {
       for (const subscription of subscriptions) {
         if (!matchesSubscription(subscription, event)) continue;
@@ -175,20 +195,26 @@ export class EvolutionLogEvidenceService {
   }
 
   private async writeEvidenceInterleaved(
-    event: StructuredLogEvent,
+    item: DrainItem,
     subscription: LogEvidenceSubscription
   ): Promise<void> {
+    const event = item.event;
     const fingerprint = fingerprintLogEvent(event);
     const scope = this.deps.evolutionRepo.getScope(subscription.scopeId);
-    await yieldToEventLoop();
+    if (!(await this.continueDrain(item))) return;
     if (!scope) return;
     const existing = this.findExistingEvidence(
       subscription.scopeId,
       `log:${fingerprint}`,
       fingerprint
     );
-    await yieldToEventLoop();
+    if (!(await this.continueDrain(item))) return;
     this.writeMatchedEvidence(event, subscription.scopeId, fingerprint, existing);
+  }
+
+  private async continueDrain(item: DrainItem): Promise<boolean> {
+    await yieldToEventLoop();
+    return this.drainItem === item;
   }
 
   private writeMatchedEvidence(

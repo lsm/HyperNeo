@@ -14,13 +14,14 @@ describe('EvolutionLogEvidenceService', () => {
   let db: Database;
   let evolutionRepo: EvolutionRepository;
   let scopeId: string;
+  let spaceId: string;
 
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceTables(db);
     const spaceRepo = new SpaceRepository(db as never);
     evolutionRepo = new EvolutionRepository(db as never);
-    const spaceId = spaceRepo.createSpace({
+    spaceId = spaceRepo.createSpace({
       workspacePath: '/workspace/log-evidence',
       slug: 'log-evidence',
       name: 'Log Evidence',
@@ -119,7 +120,7 @@ describe('EvolutionLogEvidenceService', () => {
       .find((item) => item.policy.logEvidenceProductScope === true);
     expect(scope).toBeTruthy();
     expect(evolutionRepo.listEvidence(scope!.id)).toHaveLength(2);
-    expect(listSpacesCalls).toBe(2);
+    expect(listSpacesCalls).toBe(1);
   });
 
   it('refreshes empty default subscriptions when spaces are created later', () => {
@@ -471,6 +472,74 @@ describe('EvolutionLogEvidenceService', () => {
 
     expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(1);
     await service.flushAsync();
+  });
+
+  it('does not let unsubscribed log levels evict buffered evidence', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      maxBufferedEvents: 5,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'kept warning' }));
+    for (let i = 0; i < 20; i++) {
+      service.capture(createEvent({ level: 'info', message: `noise ${i}` }));
+    }
+
+    await service.flushAsync();
+
+    expect(evolutionRepo.listEvidence(scopeId)).toHaveLength(1);
+    expect(evolutionRepo.listEvidence(scopeId)[0].summary).toContain('kept warning');
+  });
+
+  it('does not double-write evidence when flush interrupts an active drain', async () => {
+    const sleepSync = (ms: number): void => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    };
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.getScope = (id: string) => {
+      sleepSync(10);
+      return evolutionRepo.getScope(id);
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      subscriptions: [{ scopeId, levels: ['warn'] }],
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'raced warning' }));
+    const drain = service.flushAsync();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    service.flush();
+    await drain;
+
+    const evidence = evolutionRepo.listEvidence(scopeId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].metadata.count).toBe(1);
+  });
+
+  it('keeps flush non-throwing when subscription resolution fails', () => {
+    const repo = Object.create(evolutionRepo) as EvolutionRepository;
+    repo.listScopes = () => {
+      throw new Error('database is locked');
+    };
+    const failingSpaceRepo = Object.create(new SpaceRepository(db as never)) as SpaceRepository;
+    failingSpaceRepo.listSpaces = () => {
+      throw new Error('database is locked');
+    };
+    repo.getScope = () => {
+      throw new Error('database is locked');
+    };
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo: repo,
+      spaceRepo: failingSpaceRepo,
+      subscriptionRefreshMs: 0,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'locked out warning' }));
+
+    expect(() => service.flush()).not.toThrow();
   });
 });
 
