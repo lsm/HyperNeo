@@ -247,11 +247,16 @@ gate never sees. Re-flagging and admission are two separate rules:
   restart**: their synthetic registrations are in-memory and they have no
   `sdk_messages` row for the marker scan, so the park stamps a
   `provider_park` reason on the job-queue row itself — cleared by the same
-  lifecycle as its registration: at grant consumption when the job starts,
-  on its terminal completion/failure, and on explicit user removal — so a
-  job that starts then fails non-limit-wise requeues through the ordinary
-  retry backoff without a stale marker letting restart reconstruction wake
-  it ahead of that backoff. The startup scan
+  lifecycle as its registration: **at the admitted query's start itself**
+  (mirroring the message-row prompt-yield rule — a job re-admitted onto an
+  already-open account after credential rotation or a Space provider
+  change starts with no grant to consume, and keying the clear to grant
+  consumption would leave its marker durable through a crash, letting
+  reconstruction wake already-started work), on its terminal
+  completion/failure, and on explicit user removal — so a job that starts
+  then fails non-limit-wise requeues through the ordinary retry backoff
+  without a stale marker letting restart reconstruction wake it ahead of
+  that backoff. The startup scan
   extends to parked background jobs (registering them into the background
   queue by park order) — otherwise their shared `run_at` becomes due against
   an open registry and every claim starts concurrently, recreating the herd.
@@ -298,12 +303,18 @@ gate never sees. Re-flagging and admission are two separate rules:
   them by convention. The GitHub agents' denial shape **splits by invocation**:
   the poll path (a durable tick) skips the agent work this tick — the denial
   returns `skipped_provider_saturated`, and **cursor/ETag handling follows
-  the sole-owner rule below exactly** (advance past every event; the denied
-  event retries from the inbox, never the poll): withholding `lastPollTime`
-  instead would eat the polling window silently (`pollRepository` advances
-  after the callbacks, `github/polling-service.ts:121-133`), and withholding
-  the ETag can 304 the next poll over stored ETags (`pollIssues`/
-  `pollComments` store them before the callback, `:174-184`/`:229-239`).
+  the sole-owner rule below exactly** — advance past every event *whose
+  inbox commit succeeded*: the denied event retries from the inbox, never
+  the poll. Advancing is not unconditional, because `pollIssues`/
+  `pollComments` store the response ETag BEFORE the callback runs
+  (`:174-184`/`:229-239`) — if the inbox commit then fails, the next poll
+  304s over that stored ETag and never sees the uncommitted event again,
+  permanently losing it. The denial handler therefore **restores the prior
+  ETag/cursor when the inbox commit fails** (the poller re-observes the
+  event next tick and re-attempts the park), while `lastPollTime` still
+  advances (`pollRepository` advances after the callbacks,
+  `polling-service.ts:121-133` — withholding it would eat the window
+  silently; the restored ETag is what forces re-observation).
   The **webhook path**
   reprocessed by the next poll either (dual owners would duplicate room
   messages); the inbox wake drains each persisted event exactly once once
@@ -320,7 +331,15 @@ gate never sees. Re-flagging and admission are two separate rules:
   not a substitute — normalization synthesizes actions (`updated`) that
   differ from webhook actions (`opened`/`closed`/`synchronize`), so replaying
   via the next poll would route differently or be filtered out entirely.
-  Every skipped webhook goes to the inbox regardless of polling mode. **Webhook-only installations** (webhooks enabled
+  Every skipped webhook goes to the inbox regardless of polling mode, and
+  **both sources converge on one upstream identity**: the inbox stores the
+  upstream resource tuple (event/repo/row-id/`updated_at`) as a secondary
+  index beside its source-specific key (`X-GitHub-Delivery` for webhooks,
+  the resource tuple for polls), and the keyed room-message upsert keys on
+  that upstream tuple — so when webhook and polling both park the same
+  upstream change (both enabled is a supported configuration), the second
+  replay's upsert inserts nothing and emits nothing, instead of delivering
+  two room messages from two unrecognized keys. **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
   persisted to a durable raw-event inbox keyed by the **GitHub delivery
@@ -679,12 +698,21 @@ not inherit):
   (which already re-admits registrations on `providers.update` /
   `auth.login` / `auth.logout`) requeues it to `now` the moment the account
   re-opens; no tick-retry loop ever hits the provider. **The daily health
-  probe's operation is the provider's `isAvailable()`** — the same
-  credential-bearing check `providers.healthCheck` already performs
-  (provider-handlers.ts:458-499); `getModels()` is deliberately NOT used
-  (its 429 handling is chain C1's scope), and a no-op timer firing with no
-  provider call could never "succeed". Manual Retry needs no separate
-  operation — it executes the retried message itself as its probe turn.
+  probe's operation is a minimal one-shot upstream request** on the closed
+  account's own credential — a single-turn SDK `query()` with a trivial
+  prompt (the same direct-call shape as the classifier/background
+  interpreters), reported through the turn start/end wiring so its outcome
+  is classified: clean completion clears closure, a billing-terminal
+  response re-arms it, a non-billing classified limit transitions to timed
+  saturation, other errors leave it armed. `isAvailable()` is explicitly
+  NOT sufficient — for most providers it is a local key/base-URL presence
+  check (GLM/DeepSeek/MiniMax/Kimi/Anthropic test key presence,
+  CustomEndpoint tests `baseUrl`), and a billing-closed account still has
+  its credentials, so the timer would "succeed" without ever reaching the
+  upstream and clear closure blindly. `getModels()` is deliberately not
+  used either (its 429 handling is chain C1's scope). Manual Retry needs
+  no separate operation — it executes the retried message itself as its
+  probe turn.
   **Closure probes are
   the one admitted lane while closed — exactly one at a time**: a bypass
   requires holding the account's **closure-probe grant**, a single atomic
