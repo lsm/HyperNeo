@@ -381,8 +381,16 @@ gate never sees. Re-flagging and admission are two separate rules:
   search finds no caller for the service method, so specifying the
   interpreter there would leave the live endpoint unprotected during
   saturation. The extension's handler processes the event **without**
-  agent analysis — and the **acknowledgment becomes conditional**: the 200 is
-  returned only after the durable inbox commit succeeds; if the inbox write
+  agent analysis — and because that request **starts no provider call, it
+  is not admission-gated at all**: the handler persists the event to the
+  durable store and publishes to `SpaceRuntime` immediately regardless of
+  provider state (parking the raw webhook during saturation would delay
+  Space subscriptions and non-AI workflows — potentially indefinitely —
+  for a request that never touches the provider); admission applies only
+  at the downstream provider-call boundary, where any agent injection the
+  Space routing eventually triggers consults P2 and parks there. What the
+  webhook path DOES gain is the **conditional acknowledgment**: the 200 is
+  returned only after the durable store commit succeeds; if the write
   throws, the handler **first retries the commit in-process within the
   callback window** (a short bounded backoff — transient SQLite contention
   is the expected failure, and the callback must still complete quickly or
@@ -392,17 +400,20 @@ gate never sees. Re-flagging and admission are two separate rules:
   survival past the in-process retries is backstopped only where a token
   exists — a **reconciliation sweep** (caveat 9) lists the hook's recent
   failed deliveries via the GitHub deliveries API and re-ingests their
-  payloads through the same inbox path; a token-less webhook-only
+  payloads through the same store; a token-less webhook-only
   installation has no backstop, and the guarantee is qualified accordingly
-  (today's catch path still 200s, which would silently drop the saturated
+  (today's catch path still 200s, which would silently drop the
   event even when local persistence is healthy). The callback must complete quickly either way — GitHub
-  would otherwise time out and retry — and **persists the original
-  webhook payload to the inbox for exact replay**: poll-derived events are
+  would otherwise time out and retry — and **the raw webhook payload is
+  persisted for exact replay**: poll-derived events are
   not a substitute — normalization synthesizes actions (`updated`) that
   differ from webhook actions (`opened`/`closed`/`synchronize`), so replaying
   via the next poll would route differently or be filtered out entirely.
-  Every skipped webhook goes to the inbox regardless of polling mode, and
-  **both sources converge on one upstream identity**: the inbox stores the
+  The provider-queue **inbox is therefore poll-path and downstream-agent
+  territory**: poll-path events park at ingest (their agents run there),
+  and webhook-derived agent work parks at P2 under its own identity —
+  the raw webhook itself never parks. Deduplication still makes
+  **both sources converge on one upstream identity**: the store records the
   upstream resource tuple (event/repo/row-id/`updated_at`) as a secondary
   index beside its source-specific key, and deduplication uses **two key
   levels**. The per-source exactly-once key is **source-appropriate**:
@@ -449,7 +460,12 @@ gate never sees. Re-flagging and admission are two separate rules:
   transition it does not), in either arrival order, because suppression
   follows payload equivalence, not first-arrival; the reverse order
   (webhooks first, poll last) suppresses the poll against the matching
-  webhook by the same test. A global once-latch or a first-arrival slot on
+  webhook by the same test. **Each recorded event's pairing slot is
+  one-use**: the match consumes the record's slot — one opposite-source
+  event, one suppression — so two distinct webhook deliveries carrying the
+  same canonical projection as one poll observation suppress at most one
+  of them (the other matches nothing unconsumed and delivers), never both
+  off a single record. A global once-latch or a first-arrival slot on
   the coarse tuple would instead drop BOTH webhooks off one poll (or the
   earlier transition while re-delivering the final state twice) —
   order-dependent loss of a transition that may route differently. A
@@ -476,20 +492,29 @@ gate never sees. Re-flagging and admission are two separate rules:
   the projection.
   **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
-  disables polling entirely) have no next poll: the skipped analysis is
-  persisted to a durable raw-event inbox keyed by the **GitHub delivery
-  id** (`X-GitHub-Delivery`, github-event-extension.ts:671) — not the
+  disables polling entirely) have no next poll — and under the ungated
+  rule above they need none at ingest: the raw webhook publishes
+  immediately whatever the provider state, and any downstream agent work
+  parks at P2. Their raw-event store is still keyed by the **GitHub
+  delivery id** (`X-GitHub-Delivery`, github-event-extension.ts:671) — not the
   normalized event id, which the normalizer regenerates per receipt
   (`crypto.randomUUID()`, github-normalizer.ts:1094), so a crash before the
   200 response (whose delivery is later re-ingested by the caveat-9
   reconciliation sweep or a manual redelivery — both reuse the delivery id)
   would land as an
   unrelated key and bypass the delivery-record dedupe — and for **polled**
-  events the replay key is the stable upstream tuple (**eventType + repo +
-  upstream row id + `updated_at`** — the normalizer distinguishes pulls,
+  events the replay key is the full **per-source poll key: the stable
+  upstream tuple (eventType + repo +
+  upstream row id + `updated_at`) plus the action and the canonical
+  payload-projection digest** (the normalizer distinguishes pulls,
   issue comments, and review comments by `eventType` plus the row's own
   `id`, github-normalizer.ts:386-408, and second-resolution `updated_at`
-  alone would collide two comments on one PR, permanently suppressing one):
+  alone would collide two comments on one PR, permanently suppressing one
+  — and the tuple alone would collide two same-second states of ONE
+  resource in the inbox before the per-source dedupe can distinguish
+  them, permanently dropping the later event; the digest component makes
+  a different state a different key while a re-observation of the same
+  state still replays to nothing):
   a crash after the inbox commit but
   before `lastPollTime` persists (polling-service.ts:132) re-polls the same
   object and normalization mints yet another fresh UUID
@@ -499,26 +524,20 @@ gate never sees. Re-flagging and admission are two separate rules:
   clear of their account key (normal timer/probe clears included, via the
   same wake that drains the background queue), not only by the
   credential-change hook (which covers the billing-closed case).
-  **Webhook-sourced entries replay through the extension's own pipeline,
-  never through the legacy agents**: the active route
-  (`GitHubEventExtension.handleWebhook` → `context.publisher.publish`,
-  github-event-extension.ts:725-735,1731-1737 — durably stores the event,
-  then notifies `SpaceRuntime`) never invokes the security/router agents;
-  draining a saturated webhook through those agents and
-  `GitHubService.deliverToRoom` would make the event's destination and
-  delivery semantics depend on whether the provider happened to be
-  saturated — bypassing the extension's Space subscriptions and its
-  existing delivery records. The wake therefore re-publishes the stored
-  raw event through `ExternalEventService`/`SpaceRuntime`, so the replay
-  takes exactly the unsaturated path's routing, subscriptions, and
-  delivery records; idempotence is the delivery-id dedupe itself (a
-  re-published delivery id finds its record consumed and delivers
-  nothing), and any agent work the Space routing eventually triggers
-  consults admission at its own boundary (the P2 park) rather than
-  riding the wake. **Poll-sourced entries keep the service-pipeline
-  drain** — the poll path IS the service path (`processEvent` and its
-  agents), so their replay re-enters `processEvent` under the
-  per-event admission consults above. This is the
+  **Webhook-derived work never rides this inbox at all**: the raw webhook
+  publishes at ingest regardless of provider state (the ungated rule
+  above — `context.publisher.publish` durably stores the event, then
+  notifies `SpaceRuntime`, github-event-extension.ts:725-735,1731-1737,
+  and never invokes the security/router agents), so there is no
+  webhook-sourced inbox entry to drain — routing a saturated webhook
+  through the legacy agents and `GitHubService.deliverToRoom` would make
+  its destination and delivery semantics depend on whether the provider
+  happened to be saturated, bypassing the extension's Space subscriptions
+  and delivery records. The inbox's waiters are therefore **poll-path
+  entries** (the poll path IS the service path — `processEvent` and its
+  agents — so their replay re-enters `processEvent` under the per-event
+  admission consults above) **and P2-parked downstream agent work**,
+  which wakes through the message channel under its own identity. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -752,7 +771,16 @@ result is what populates the `holdsProbeGrant` fact the pure core reads;
 the core itself never mints, binds, or claims). "First consult wins" over
 an already-BINDABLE queue is the removed A2/B1 race; a CAS over an
 identity-null grant has no queue to steal from and no race window — one
-atomic transition. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
+atomic transition. **`liveTurnSteer` consults never claim**: the steer's
+provider turn started BEFORE the clear (the bypass exists precisely
+because it adds no new concurrency), so its completion is not a valid
+post-clear probe — claiming would let it resolve the grant and open the
+account prematurely, and a steer that never crosses the new-turn
+lifecycle hooks would strand probing until lease expiry. The claim
+eligibility check mirrors the core's own first rule: a consult admitting
+on the `liveTurnSteer` fact reads the pending grant but leaves it
+pending; the next admission that actually starts a post-clear provider
+turn claims it. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
 shapes (`(ctx) => ctx`, pass-through identity per Decision item 6(b)).
 
 Hot-path check: this core runs once per message send / inject / job claim — the
@@ -784,10 +812,19 @@ billing closure gate the other. The digest is therefore
 provider family/upstream authority (the same family namespace the
 credentialless keys use), so logical records for the SAME upstream account
 still converge (same family, same credential → same key) while unrelated
-issuers never do:
+issuers never do. **Custom endpoints add their baseUrl to the authority**:
+two credential-backed custom endpoints of the same resolved type routinely
+share a literal placeholder or locally managed key while their `baseUrl`
+values point at unrelated upstreams — for custom endpoints the key is
+`digest(family + ':' + baseUrl + ':' + credential)`, so identical records
+(same endpoint, same credential) converge and different endpoints never
+gate each other; built-in providers keep `family + credential` (the same
+credential through a built-in provider's endpoint variants is still one
+pool, per the endpoint rule below):
 
-- **Stored default credentials**: key = `digest(family + ':' +
-  storedCredential)` scoped by
+- **Stored default credentials**: key = the family- (and for custom
+  endpoints, baseUrl-) namespaced digest of the
+  storedCredential, scoped by
   the provider id only as a namespace for *finding* the credential — and the
   digest changes when the stored credential does, so an
   `auth.logout`/`auth.login` rotation moves sessions and their backlog to a
@@ -847,7 +884,7 @@ equal, so the common case shares one key.
 
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
-| `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query) | admission facts, wake timer |
+| `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query, **and the closure-health probe** — a renewed billing account answering its daily probe with a classified NON-billing limit must transition `closed` → timed saturation via this report, or the account stays indefinitely closed waiting for another daily probe) | admission facts, wake timer |
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner **+ every direct SDK interpreter — title, the Space background jobs, the GitHub agents, the LLM classifier, the closure-health probe — the same complete lifecycle roster the feed-site contract below wires; a direct caller that skips the report leaves its consumed grant unresolved and strands the queue**) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}` / **transient arms** `{kind:'restart', sessionId, toolUseId}` (chat lane — the AskUserQuestion answer park) and `{kind:'ephemeral', callerKind, callId}` (a grant-holder record ONLY — see the wake contract), so every claimable/registrable identity is representable; chat-first priority: background admits only when the chat lane is empty), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks, the answer-restart park | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
 | `probeGrant` | `{ identity: GrantIdentity \| null (typed union — see queuedMessages; null ONLY in the post-empty-clear pending window), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time when the backlog is non-empty** (never by the first admitting consult); a clear that drained to nothing mints **pending (identity null)** — the first admission consult of any kind binds it via the registry's atomic `claimPendingGrant` CAS; consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield, or pending → claim) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints (bound again, or pending again for a still-empty backlog) and re-binds | downstream consults (same delivery passes), probe resolution |
@@ -863,7 +900,14 @@ job-queue rows (background-waiter linkage and ordering); the raw-event
 inbox table (payload + stable replay key + ingest sequence + per-event
 delivery-record state); the persisted shared sequence allocator's
 counter row; and the **per-account saturation marker row** (key, kind,
-`untilMs`/closed, charge, and — stored with the closed kind — the same
+`untilMs`/closed, charge, the episode's **clearability provenance —
+`authoritative` (parsed/structured reset, non-probe-clearable) vs ladder
+(probe-clearable) — and `armedAtMs`** (the probe floor's timing), because
+`kind` plus `untilMs` alone cannot reconstruct the episode's semantics:
+treating an authoritative reset as probe-clearable would probe before the
+reset, treating a ladder episode as authoritative would forfeit its
+intended early recovery, and without `armedAtMs` the probe floor is
+unknown; and — stored with the closed kind — the same
 resolvable `configRef` snapshot the in-memory `closureProbeGrant` carries:
 provider id plus effective providerConfig/credential reference, captured
 when closure armed and kept current by the rotation hooks; a restart
@@ -1515,7 +1559,7 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the raw-event inbox (payload, upstream-tuple secondary index, ingest sequence, per-event delivery records), the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes incl. the closed kind's resolvable `configRef`, its repository, and the reconstruction wiring that re-enters saturation/closed from it, without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier/closure-probe interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the raw-event inbox (payload, upstream-tuple secondary index, ingest sequence, per-event delivery records), the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes incl. the closed kind's resolvable `configRef`, its repository, and the reconstruction wiring that re-enters saturation/closed from it, without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -1576,12 +1620,24 @@ by pre-existing suites):
    and termination are awaited before the grant resolves (no successor
    overlaps a live timed-out request), and a grantless event whose account
    saturates between security and routing parks via the inbox and resumes
-   at `routeEvent` on the wake (security not repeated); a saturated
-   WEBHOOK entry's wake re-publishes the stored raw event through
-   `ExternalEventService`/`SpaceRuntime` (the extension pipeline — Space
-   subscriptions and delivery records apply; the delivery-id dedupe makes
-   the replay idempotent; no legacy-agent routing for webhook-sourced
-   entries), while poll-sourced entries re-enter `processEvent`; an
+   at `routeEvent` on the wake (security not repeated); a webhook
+   received while the provider is saturated publishes at ingest (Space
+   subscriptions fire; no inbox entry, no legacy-agent routing) and any
+   Space-triggered agent injection parks at P2 and wakes through the
+   message channel, while poll-sourced entries re-enter `processEvent`;
+   two poll observations of DIFFERENT same-second states are distinct
+   inbox keys (the replay key carries the projection digest) while a
+   same-state re-observation replays to nothing; one poll record
+   suppresses at most one payload-matching webhook (one-use pairing
+   slots — two distinct same-projection webhooks cannot both be consumed
+   by it); a closure-health probe's classified non-billing limit reports
+   via `reportLimitError` and transitions closed → timed saturation; the
+   persisted saturation row reconstructs authoritative-vs-ladder
+   clearability and the probe floor from its `authoritative` flag and
+   `armedAtMs`; a steer consult against a pending grant leaves it
+   pending (the next post-clear turn-start claims); custom-endpoint keys
+   include the baseUrl authority (same literal key, different endpoints —
+   two keys) while identical records converge; an
    ephemeral caller's pending-grant claim writes the `{kind:'ephemeral',
    callerKind, callId}` holder record, resolved by its own
    `reportQueryEnd` (no dispatcher, no stuck probing); a parked
@@ -1816,7 +1872,9 @@ by pre-existing suites):
    new send passes admission before any response re-arms, recreating the
    post-restart herd the single-discovery-probe promise excludes. Arming
    therefore persists **one saturation row per account key** (key, kind,
-   `untilMs` or `closed`, charge, and the resolvable `configRef` snapshot
+   `untilMs` or `closed`, charge, the clearability provenance
+   (`authoritative` vs ladder) with `armedAtMs`, and the resolvable
+   `configRef` snapshot
    alongside the closed kind — the restart's daily health probe needs a
    buildable request, which a digest alone cannot provide — written on
    arm, updated on refine,
