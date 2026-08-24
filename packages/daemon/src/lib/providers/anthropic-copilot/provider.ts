@@ -147,9 +147,14 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     this.dynamicModelsCacheExpiresAt = 0;
   }
 
-  private resetCredentialBoundCaches(): void {
+  private resetCredentialBoundCaches(options: { prewarm?: boolean } = {}): void {
     this.clearModelCache();
-    void this.resetEmbeddedRuntime();
+    const hadRuntime = this.serverCache !== undefined || this.serverStarting !== undefined;
+    void this.resetEmbeddedRuntime().then(async () => {
+      if (options.prewarm !== false && hadRuntime) {
+        await this.ensureServerStarted().catch(() => {});
+      }
+    });
   }
 
   private async resetEmbeddedRuntime(): Promise<void> {
@@ -376,7 +381,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const cachedExternalSource = this.freshCachedExternalSource();
     this.storedCredentialToken = null;
     this.tokenCache = null;
-    this.resetCredentialBoundCaches();
+    this.resetCredentialBoundCaches({ prewarm: false });
 
     try {
       const content = await fs.readFile(this.authPath, 'utf-8');

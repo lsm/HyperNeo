@@ -1375,7 +1375,7 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
     });
 
-    it('arms a scheduled retry when the provider is unavailable after the refresh', async () => {
+    it('keeps the recorded failure and arms a scheduled retry when the provider is unavailable after the refresh', async () => {
       const { refreshModels, recoverDormantProvider } = await import(
         '../../../../src/lib/model-service'
       );
@@ -1393,7 +1393,7 @@ describe('Model Service', () => {
       available = false;
       await expect(recoverDormantProvider('glm')).resolves.toBe(true);
 
-      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
     });
 
@@ -1493,6 +1493,44 @@ describe('Model Service', () => {
 
       expect(getAvailableModels('global').some((m) => m.id === 'glm-recovery-model')).toBe(false);
       expect(getAvailableModels('global').some((m) => m.id === 'glm-foreground-0')).toBe(true);
+    });
+
+    it('discards a stale rejection when a newer refresh already recovered the provider', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const foregroundModels = GlmProvider.MODELS.map((_model, index) =>
+        glmModel(`glm-newer-${index}`)
+      );
+      let probeCall = 0;
+      let rejectProbe: ((err: Error) => void) | null = null;
+      registerGlmProvider((): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) return Promise.reject(new Error('Request failed (http 401)'));
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((_resolve, reject) => {
+            rejectProbe = reject;
+          });
+        }
+        return Promise.resolve(foregroundModels);
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-newer-0')).toBe(true);
+
+      rejectProbe?.(new Error('Request failed (http 401)'));
+      await recovery;
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-newer-0')).toBe(true);
     });
   });
 

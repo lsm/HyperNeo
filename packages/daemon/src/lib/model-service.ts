@@ -567,7 +567,6 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
   const provider = getProviderRegistry().get(providerId);
   if (!provider) return false;
 
-  clearProviderFailure(providerId);
   clearProviderRetry(providerId);
   provider.clearModelCache?.();
 
@@ -577,6 +576,9 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
     loadProviderModels(provider),
     PROVIDER_RETRY_PROBE_TIMEOUT_MS
   );
+  if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
+    return true;
+  }
   if (result === 'timeout' || result.status === 'unavailable') {
     armProviderRetryTimer(providerId);
     return true;
@@ -594,10 +596,9 @@ export async function recoverDormantProvider(providerId: string): Promise<boolea
     });
     return true;
   }
-  if (
-    providerRetryGeneration !== generationAtStart ||
-    (providerAppliedSeq.get(providerId) ?? 0) > probeSeq
-  ) {
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+  if (providerRetryGeneration !== generationAtStart) {
     return true;
   }
   providerAppliedSeq.set(providerId, probeSeq);

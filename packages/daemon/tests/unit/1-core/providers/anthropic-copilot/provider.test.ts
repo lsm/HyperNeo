@@ -816,6 +816,9 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     it('tears down dynamic models, client, and server caches when the token changes', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       const runtime = fakeRuntime();
+      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+        'http://127.0.0.1:9999' as never
+      );
       (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
       (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
       (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
@@ -832,6 +835,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['dynamicModelsCache']).toBeNull();
       expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
       expect(state['storedCredentialToken']).toBe('gho_replacement_token');
+      expect(ensureSpy).toHaveBeenCalledTimes(1);
     });
 
     it('keeps runtime caches when the same token is re-applied', async () => {
@@ -856,6 +860,9 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
     it('stops a server that is still starting when credentials change', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+        'http://127.0.0.1:9999' as never
+      );
       const stops: string[] = [];
       let resolveStart: ((server: unknown) => void) | undefined;
       const starting = new Promise<unknown>((resolve) => {
@@ -878,6 +885,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
       expect(stops).toEqual(['server']);
       expect((p as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
+      expect(ensureSpy).toHaveBeenCalledTimes(1);
     });
 
     it('clears dynamic model caches through clearModelCache()', () => {
@@ -896,6 +904,9 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     it('tears down the embedded runtime on logout', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       const runtime = fakeRuntime();
+      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+        'http://127.0.0.1:9999' as never
+      );
       (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
       (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
       (p as unknown as Record<string, unknown>)['storedCredentialToken'] = 'gho_logged_out';
@@ -910,12 +921,16 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['clientCache']).toBeUndefined();
       expect(state['dynamicModelsCache']).toBeNull();
       expect(state['storedCredentialToken']).toBeNull();
+      expect(ensureSpy).not.toHaveBeenCalled();
     });
 
     it('resets the credential-bound runtime when the OAuth flow completes', async () => {
       const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-oauth-reset-'));
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
       const stops: string[] = [];
+      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+        'http://127.0.0.1:9999' as never
+      );
       (p as unknown as Record<string, unknown>)['serverCache'] = {
         url: 'http://127.0.0.1:45680',
         stop: async () => {
@@ -960,6 +975,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         expect(state['dynamicModelsCache']).toBeNull();
         expect(state['storedCredentialToken']).toBeNull();
         expect(state['tokenCache']).toBeNull();
+        expect(ensureSpy).toHaveBeenCalledTimes(1);
       } finally {
         fetchSpy.mockRestore();
         fs.rmSync(authDir, { recursive: true, force: true });
