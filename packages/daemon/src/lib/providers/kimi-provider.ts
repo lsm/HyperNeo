@@ -191,13 +191,7 @@ export class KimiProvider implements Provider {
 
   static isKimiK3Model(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    return (
-      id === 'k3' ||
-      id === 'kimi-k3' ||
-      id === 'k3-256k' ||
-      id === 'kimi-k3-256k' ||
-      id.startsWith('moonshot-k3')
-    );
+    return id.startsWith('k3') || id.startsWith('kimi-k3') || id.startsWith('moonshot-k3');
   }
 
   static isKimiK3OneMModel(modelId: string): boolean {
@@ -410,8 +404,7 @@ export class KimiProvider implements Provider {
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
-    if (id === 'kimi' || id === 'kimi-for-coding' || id.startsWith('moonshot-'))
-      return 'kimi-for-coding';
+    if (id === 'kimi' || id === 'kimi-for-coding') return 'kimi-for-coding';
     return modelId;
   }
 
@@ -443,12 +436,7 @@ export class KimiProvider implements Provider {
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {
       return useLegacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
     }
-    if (
-      id === 'kimi-k2.7-code' ||
-      id === 'kimi' ||
-      id === 'kimi-for-coding' ||
-      id.startsWith('moonshot-')
-    ) {
+    if (id === 'kimi-k2.7-code' || id === 'kimi' || id === 'kimi-for-coding') {
       return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
     }
     if (KimiProvider.isDiscoveredKimiModelId(modelId)) {
@@ -459,7 +447,11 @@ export class KimiProvider implements Provider {
 
   static resolveContextWindow(modelId: string): number {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
-    if (KimiProvider.normalizeKimiModelId(canonical) === 'kimi-k3') return 1_048_576;
+    const normalized = KimiProvider.normalizeKimiModelId(canonical);
+    if (normalized === 'k3-256k' || normalized === 'kimi-k3-256k') return 262_144;
+    if (normalized === 'kimi-k3' || KimiProvider.hasOneMContextSuffix(modelId)) {
+      return 1_048_576;
+    }
     return 262_144;
   }
 
@@ -562,7 +554,7 @@ export class KimiProvider implements Provider {
         }
       }
     }
-    if (prefixMatch) return prefixMatch.model;
+    if (prefixMatch && KimiProvider.isKimiK3Model(model.id)) return prefixMatch.model;
     if (KimiProvider.isDiscoveredKimiModelId(model.id)) {
       return {
         id: model.id,
@@ -572,7 +564,7 @@ export class KimiProvider implements Provider {
         provider: this.id,
         contextWindow: KimiProvider.resolveContextWindow(model.id),
         preferContextWindowMetadata: true,
-        thinkingModes: 'on',
+        thinkingModes: KimiProvider.isKimiK3Model(model.id) ? 'granular' : 'on',
         description: `${model.name ?? model.id} via Kimi`,
         releaseDate: '',
         available: true,

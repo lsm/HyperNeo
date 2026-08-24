@@ -396,7 +396,16 @@ describe('KimiProvider', () => {
         contextWindow: 1_048_576,
         thinkingModes: 'granular',
       });
-      expect(models[1]).toEqual(KimiProvider.MODELS[3]);
+      expect(models[1]).toMatchObject({
+        id: 'moonshot-v1-32k',
+        name: 'moonshot-v1-32k',
+        alias: 'moonshot-v1-32k',
+        family: 'kimi',
+        provider: 'kimi',
+        contextWindow: 262_144,
+        thinkingModes: 'on',
+        available: true,
+      });
       expect(models[2]).toMatchObject({
         id: 'kimi-k4',
         name: 'kimi-k4',
@@ -407,6 +416,35 @@ describe('KimiProvider', () => {
         thinkingModes: 'on',
         available: true,
       });
+    });
+
+    it('surfaces discovered K3-family variants as themselves with granular thinking', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([
+        {
+          data: [
+            { id: 'k3-preview', object: 'model' },
+            { id: 'kimi-k4[1m]', object: 'model' },
+          ],
+        },
+      ]);
+      provider = new KimiProvider();
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toHaveLength(2);
+      expect(models[0]).toMatchObject({
+        id: 'k3-preview',
+        contextWindow: 262_144,
+        thinkingModes: 'granular',
+      });
+      expect(models[1]).toMatchObject({
+        id: 'kimi-k4[1m]',
+        contextWindow: 1_048_576,
+        thinkingModes: 'on',
+      });
+      expect(provider.getModelThinkingMode('k3-preview')).toBe('granular');
+      expect(KimiProvider.isKimiK3OneMModel('k3-preview')).toBe(true);
     });
 
     it('caches successful discovery and force bypasses the cache', async () => {
@@ -505,6 +543,28 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k4');
     });
 
+    it('honors the 1M suffix on discovered IDs while keeping 256K exceptions', () => {
+      expect(KimiProvider.resolveContextWindow('k3-preview[1m]')).toBe(1_048_576);
+      expect(KimiProvider.resolveContextWindow('kimi-k4[1m]')).toBe(1_048_576);
+      expect(KimiProvider.resolveContextWindow('k3-preview')).toBe(262_144);
+      expect(KimiProvider.resolveContextWindow('k3-256k[1m]')).toBe(262_144);
+      expect(KimiProvider.resolveContextWindow('moonshot-k3-256k')).toBe(262_144);
+      expect(KimiProvider.resolveContextWindow('kimi-k3')).toBe(1_048_576);
+
+      const config = provider.buildSdkConfig('kimi-k4[1m]');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-k4[1m]');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1048576');
+    });
+
+    it('preserves newly discovered moonshot IDs instead of routing them to K2.7', () => {
+      expect(provider.ownsModel('moonshot-k4')).toBe(true);
+
+      const config = provider.buildSdkConfig('moonshot-k4');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('moonshot-k4');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-k4');
+      expect(provider.translateModelIdForSdk('moonshot-k4')).toBe('moonshot-k4');
+    });
+
     it('keeps foreign and colon-tagged IDs on the region default', () => {
       expect(provider.ownsModel('gpt-4o')).toBe(false);
       expect(provider.ownsModel('abab6.5s-chat')).toBe(false);
@@ -574,13 +634,14 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
     });
 
-    it('should normalize moonshot- prefixed model IDs to China model by default', () => {
+    it('routes moonshot- prefixed discovered IDs to themselves by default', () => {
       process.env.KIMI_API_KEY = 'test-key';
       provider = new KimiProvider();
 
       const config = provider.buildSdkConfig('moonshot-v1-32k');
 
-      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-for-coding');
+      expect(config.envVars.ANTHROPIC_MODEL).toBe('moonshot-v1-32k');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('moonshot-v1-32k');
     });
 
     it('should use session config API key and base URL overrides', () => {
@@ -1054,7 +1115,8 @@ describe('KimiProvider', () => {
     it('should return canonical model ID to avoid settings.json overrides', () => {
       expect(provider.translateModelIdForSdk('kimi-k2.7-code')).toBe('kimi-k2.7-code');
       expect(provider.translateModelIdForSdk('kimi-for-coding')).toBe('kimi-for-coding');
-      expect(provider.translateModelIdForSdk('moonshot-v1-32k')).toBe('kimi-for-coding');
+      expect(provider.translateModelIdForSdk('moonshot-v1-32k')).toBe('moonshot-v1-32k');
+      expect(provider.translateModelIdForSdk('moonshot-k4')).toBe('moonshot-k4');
       expect(provider.translateModelIdForSdk('moonshot-k3')).toBe('kimi-k3[1m]');
       expect(provider.translateModelIdForSdk('moonshot-k3-preview')).toBe('kimi-k3[1m]');
       expect(provider.translateModelIdForSdk('kimi')).toBe('kimi-for-coding');
