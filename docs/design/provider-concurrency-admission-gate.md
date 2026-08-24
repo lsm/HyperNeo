@@ -140,8 +140,8 @@ flowchart LR
   QRY --> FLR
   SAT -->|"snapshot facts"| MS & INJ & JOB
   FLR --> SAT
-  SAT -->|"clear: floor timer + clean-completion probe"| WAKE["provider.concurrency.open\n(per-session, probing release)"]
-  WAKE -->|"one registered uuid per\nclear / clean completion"| ROW
+  SAT -->|"clear: floor timer + clean-completion probe"| WAKE["provider.concurrency.open\n(per-session, probe grant)"]
+  WAKE -->|"one granted delivery; next per\nprobe resolution"| ROW
 ```
 
 Three properties carry the design:
@@ -178,11 +178,17 @@ ordered gates — first decision wins, per `decisionRun` semantics:
 
 The queue arm's interpreter is the **existing** non-outbox persist branch: insert the
 row with `send_status='deferred'` (and, for the `provider_saturated` reason, the
-`queue_reason` marker — see Queue and wake), publish
-`messages.statusChanged`, and register the `{sessionId, messageUuid}` with the
-registry. `shouldDispatchToQuery` is false, so no `message_delivery` job is created
-and the session is not flipped to queued. This is precisely the manual-mode code
-path today (`message-persistence.ts:227-229`); the gate adds a third way to reach it.
+`queue_reason` marker — see Queue and wake), publish `messages.statusChanged`, and
+register the `{sessionId, messageUuid}` with the registry. No `message_delivery` job
+is created and the session is not flipped to queued — but unlike the manual-mode
+path it extends, the provider-queue arm **still publishes `message.persisted` with
+`skipQueryStart: true`** (the event fires only under `shouldDispatchToQuery` today,
+`message-persistence.ts:276-294`, and it is what clears the submitted composer
+draft and enqueues initial title generation — suppressing it would leave stale
+composer state on every saturated send; the subscriber's `skipQueryStart` guard
+already prevents a query start). This is the manual-mode code path today
+(`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
+reach it.
 
 **"Before it is persisted to the session," interpreted.** The ADR's phrase is
 realized as: the admission decision runs **before the persist transaction chooses
@@ -233,28 +239,33 @@ wake obligation typed, and leaves the pinned defer decision table untouched.
 
 **V2 (default):** consult `decideProviderAdmission` in the delivery handler at the
 existing skip cluster (`D/src/lib/job-handlers/message-delivery.handler.ts:81-84`):
-if the row is deliverable but the provider is saturated **or probing**, return the
-same parked shape the recovery-pending arm already produces
-(`requeue(job.id, retryAt)` → `{ parked: 'provider_saturated', retryAt }`), with
-`retryAt` = the saturation deadline for the first park and a short probe tick
-afterwards — parked jobs re-consult on every claim, so the probing release admits
-them one clean completion at a time instead of releasing a 64-wide claim wave at
-the shared deadline (`D/src/app.ts:307-318`). Because the consult sits ahead of
-`driveDeliveryTurn`, the session lock is never taken and no turn state is touched;
-the interpreter obligation it adds is restoring an idle session that persist had
-flipped to queued via `setQueuedIfIdle` (`message-persistence.ts:224-226`) —
-pinned in the test plan.
+if the row is deliverable but the provider is saturated **or probing without a
+grant for this delivery**, return the same parked shape the recovery-pending arm
+already produces (`requeue(job.id, retryAt)` →
+`{ parked: 'provider_saturated', retryAt }`), with `retryAt` = the saturation
+deadline for the first park and a short probe tick afterwards — parked jobs
+re-consult on every claim, so the probing release admits them one probe at a time
+instead of releasing a 64-wide claim wave at the shared deadline
+(`D/src/app.ts:307-318`). Because the consult sits ahead of `driveDeliveryTurn`,
+the session lock is never taken and no turn state is touched; the interpreter
+obligation it adds is restoring an idle session that persist had flipped to queued
+via `setQueuedIfIdle` (`message-persistence.ts:224-226`) — pinned in the test plan.
 
-**V1 (`HYPERNEO_MESSAGE_DELIVERY_V2=0`):** there is no job claim — chat dispatches
-inline through `startQueryAndEnqueue` (`message-persistence.ts:271-275`), so the
-V2 consult never runs and a message that passed P1 just before a sibling armed
-saturation would start its provider call anyway. The same point consult therefore
-sits at `startQueryAndEnqueue`'s entry; when saturated there is no job to park, so
-the interpreter settles the row back to `'deferred'`
-(`markDeliveryDeferredByUuid`) with the `queue_reason` marker and
-registers it. Without this arm, the documented rollback mode
-(`docs/features/message-delivery-v2.md`) would silently void the gate's
-enforcement claim.
+**V1 (`HYPERNEO_MESSAGE_DELIVERY_V2=0`) and every direct-start path:** the V1
+surface is not one call site — `startQueryAndEnqueue`
+(`message-persistence.ts:271-275`), `deliverRowsViaMemoryQueue`, and the V1 branch
+of `deliverInjectedMessage` all reach `ensureQueryStarted()` directly
+(`D/src/lib/agent/query-lifecycle-manager.ts:432-525`). Rather than enumerating
+them, the consult sits at **`ensureQueryStarted` itself — the common provider-start
+boundary every delivery path crosses** — with the handler-level V2 consult kept as
+the cheaper early park. A denial there has no job to park: the delivery settles
+its row back to `'deferred'` with the `queue_reason` marker and registers it (V2
+surfaces this as the recovery-pending park instead, upstream). A delivery holding
+the probe grant passes. Without the boundary consult, startup/manual pending
+replay and a Space injection that passed P2 just before a sibling armed saturation
+could still start their provider calls — voiding the enforcement claim in the
+documented rollback mode (`docs/features/message-delivery-v2.md`) and the replay
+paths alike.
 
 Together these are the backstop that makes races convergent:
 
@@ -291,8 +302,9 @@ interface ProviderAdmissionFacts {
   configuredCap: number | null;     // v1: always null (reactive only)
   inFlight: number;                 // registry snapshot
   saturationUntilMs: number | null; // registry snapshot
-  probing: boolean;                 // post-clear / post-restart: one unproven
-                                    // admission outstanding, none completed
+  probing: boolean;                 // post-clear / post-restart: a probe grant
+                                    // is outstanding and unresolved
+  holdsProbeGrant: boolean;         // this delivery owns the grant
 }
 type ProviderAdmission =
   | { action: 'admit' }
@@ -301,13 +313,14 @@ type ProviderAdmission =
 
 `decideProviderAdmission(facts)` is pure and synchronous (`.end`, never
 `.endAsync` — Decision item 5): saturated → `queue_until` with the registry's
-deadline; else probing → `queue_until` (reason `probing`, until = the probe tick,
-the next admission slot); else if `configuredCap !== null && inFlight >=
+deadline; else probing without the grant → `queue_until` (reason `probing`,
+until = the probe tick); else if `configuredCap !== null && inFlight >=
 configuredCap` → `queue_until` (reason `slot_pressure`, until = null-safe probe
-tick); else `admit`. Interpreters that admit call `registry.noteAdmission` so the
-probing counter is exact. The two `apply*Gate` wrappers above adapt the core to
-their pipelines' ctx shapes (`(ctx) => ctx`, pass-through identity per Decision
-item 6(b)).
+tick); else `admit`. The first admitting consult after a clear mints the grant
+(the registry, not the core, owns it — the core only reads `holdsProbeGrant`);
+grant minting, consumption at query start, and release are registry state-machine
+steps. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
+shapes (`(ctx) => ctx`, pass-through identity per Decision item 6(b)).
 
 Hot-path check: this core runs once per message send / inject / job claim — the
 same frequency class as `AgentMessageRouter`, whose awaited repository reads are
@@ -325,17 +338,23 @@ module-level singleton + `resetForTests()`, following the `getSdkStartupGate`
 not a pipeline: it owns timers and an event publisher, and pipelines/cores receive
 only its snapshots (the ADR resource-ownership rule).
 
-Per **provider key = resolved provider id** (the same identity
-`query-runner.ts:665` resolves and the fallback tried-keys use,
-`` `${provider}/${model}` `` aside — concurrency caps attach to the account, hence
-the provider id; one credential store entry per provider):
+Per **provider key = resolved provider id + account fingerprint**. The base is the
+identity `query-runner.ts:665` resolves; but sessions may override
+`session.config.providerConfig` (`apiKey`, `baseUrl`), and two sessions on one
+provider id with different overrides reach **independent upstream accounts** —
+keying those together would queue healthy account B's traffic behind account A's
+429 for the full reset/ladder. The key therefore appends a non-secret fingerprint
+of the effective override (hash of `baseUrl` + a keyed digest of the API key —
+never the key itself) when `providerConfig` is present, and is the bare provider
+id otherwise (the common case: one credential-store entry per provider).
 
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
 | `saturation` | `{ untilMs, kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch) | admission facts, wake timer |
-| `inFlight` | count per provider | `reportQueryStart` / `reportQueryEnd` (query-runner) | admission facts (cap follow-up), probe-clear condition |
-| `queuedMessages` | `Map<sessionId, messageUuid[]>` (insertion-ordered) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release, registration cleanup |
-| `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule, charge reset |
+| `inFlight` | count per provider | `reportQueryStart` / `reportQueryEnd` (query-runner + ACP runner) | admission facts (cap follow-up), probe evidence |
+| `queuedMessages` | `Map<sessionId, insertion-ordered uuid set>` (idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3) | probing release, registration cleanup, provider-change re-admission |
+| `probeGrant` | `{ messageUuid, leaseUntilMs } \| null` per provider | first admitting consult after a clear; consumed at query start; released on non-limit termination or lease expiry | downstream consults (same delivery passes), probe resolution |
+| `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
 Registry state is in-memory; the one durable addition is the `queue_reason`
@@ -376,7 +395,12 @@ not inherit):
   stream loop can fulfill normally (`sdk-message-handler.ts:1198-1234` classifies
   it from the message), so the outcome flag is derived from the turn/result
   classification, not from mere iteration fulfillment — a limited turn reports
-  `limited` (it arms/re-arms saturation, never probe evidence).
+  `limited` (it arms/re-arms saturation, never probe evidence). Floor evidence
+  and probe resolution are **different events**: pre-clear in-flight completions
+  may satisfy the floor condition, but only the completion of a query **started
+  after the clear** — the outstanding probe itself — ends probing. A second
+  pre-arm completion arriving while the probe runs is more floor evidence, never
+  a second release.
   Self-correcting, and honest about the classifier's limit: `assessLimitError`
   cannot distinguish a concurrency-cap 429 from an RPM 429 (the GLM brackets
   `[1305]/[1308]/[1313]` and the framed-429 regex are limit markers, not
@@ -402,9 +426,16 @@ whatever `isRetryableProviderError` accepts — a taxonomy-data-driven predicate
 attempts *before* the `:1258` site is ever reached, so a bracketed GLM limit
 carrying no literal 4xx code could burn four calls per session while the
 registry stays clear. The branch classifies the raw message before deciding the
-retry: a limit assessment reports to the registry immediately (the session's own
-retry/fallback behavior is unchanged), and each recursive re-entry consults
-admission (P4-style) so a retry never starts into a saturated provider.
+retry: a limit assessment reports to the registry immediately, and the consult
+gates only the **recursive re-entry** — a denial must not skip-and-return (the
+branch tail-returns `runQuery(...)`, so a bare skip would return from the outer
+catch and swallow the error before the `:1258` assessment ever arms the session
+watchdog or restores the consumed message); it falls through to the existing
+error-path assessment, exactly as an exhausted retry does. Lifecycle reporting
+is wired symmetrically: `reportQueryStart`/`reportQueryEnd` attach to the SDK
+`QueryRunner` seam **and** the ACP runner — saturation arms from
+`acp-query-runner.ts:1009`, so an ACP probe's completion must be reportable too,
+or an ACP-cleared saturation would probe once and stay probing forever.
 
 **Charging is per saturation episode, not per report.** N sibling sessions 429ing
 within the same window produce N `reportLimitError` calls; reports arriving while
@@ -449,31 +480,53 @@ watchdog's `retryCount` / `freeWait` distinction at provider scope.
   `__global__` subscriber enumerating the registry is the equivalent alternative;
   per-session publish is chosen because the registry already holds exactly that
   set.
-- **Probing release — one unproven admission at a time.** After **any** clear
-  (probe rule, timer expiry, or startup reconstruction), the provider enters a
-  `probing` state: one admission granted, zero completions observed. While
-  probing, every consult — wake promotions, parked-job claims, fresh sends,
-  reconstructed rows — queues until the probe resolves: a clean completion ends
-  probing and admits the next; a 429 re-arms saturation. Admission counting is
-  exact, not inferred from query start — each consult site that admits calls
-  `registry.noteAdmission(providerId)` synchronously, so there is no
-  claim-to-start window. Without this rule, every path that consults a clear
-  snapshot simultaneously recreates the herd the gate exists to prevent: N parked
-  V2 jobs requeued to one deadline and claimed up to 64-wide by the delivery
-  processor (`D/src/app.ts:307-318`), a backlog wake promoting every registered
-  uuid, or post-restart reconstruction firing independently in several sessions.
+- **Probing release — one probe grant, carried end-to-end.** After **any** clear
+  (probe rule, timer expiry, or startup reconstruction), the provider mints a
+  single **probe grant**. The first admitting consult receives it, keyed by that
+  delivery's message uuid; every downstream consult for the *same* delivery —
+  the V2 claim, the V1 start, the retry — admits on the grant, so one logical
+  delivery passes all backstops instead of deadlocking against its own probing
+  state. The grant is consumed at provider query start, entering an
+  outstanding-probe state under a **bounded lease**; the probe resolves exactly
+  three ways: its query's clean completion ends probing (capacity proven — the
+  next admission is a normal admit), its classified 429 re-arms saturation, and
+  any other termination (interrupt, session destroy, non-limit error, lease
+  expiry) releases the permit for the next consult. All other consults while
+  probing queue at a short probe tick. Without this rule, every path that
+  consults a clear snapshot simultaneously recreates the herd the gate exists to
+  prevent: N parked V2 jobs requeued to one deadline and claimed up to 64-wide by
+  the delivery processor (`D/src/app.ts:307-318`), a backlog wake promoting every
+  registered uuid, or post-restart reconstruction firing independently in several
+  sessions.
 - **Restart reconstruction:** the `queue_reason` marker rebuilds the queue. At
   session startup, beside `scheduleInitialPendingMessageReplay`
   (`agent-session.ts:671-682`), rows with `queue_reason = 'provider_saturated'`
-  are re-registered; rows without the marker (manual-mode, user-deferred) are
-  untouched. The first reconstructed registration puts the fresh registry into
-  `probing`, so the restart drain is serialized by the same one-at-a-time
-  release — one probe query runs, the rest wait for its completion or its
-  re-arming 429. Saturation *state* is still lost, so that probe may pay one
-  discovery 429 — bounded, one charge.
+  **and `send_status = 'deferred'`** are re-registered; rows without the marker
+  (manual-mode, user-deferred) are untouched, and historical rows that left the
+  queue are invisible because the marker is cleared on exit (below). The first
+  reconstructed registration mints the probe grant, so the restart drain is
+  serialized by the same one-at-a-time release — one probe query runs, the rest
+  wait for its resolution. Saturation *state* is still lost, so that probe may
+  pay one discovery 429 — bounded, one charge.
+- **Marker clearing on exit.** Every transition that moves a provider-queued row
+  out of its queued state — promotion to `'enqueued'`, terminal `'consumed'` /
+  `'failed'` — clears `queue_reason` in the same statement as the
+  `send_status` flip (the chain-B status-plan interpreter's instructions are the
+  natural carrier), so reconstruction never registers delivered history. A stale
+  marker on a non-deferred row would otherwise mint a probe grant with nothing
+  deliverable to resolve it.
+- **Provider changes re-admit their queue.** A model switch while rows are
+  registered behind the old provider's saturation (`switchModel` /
+  `handleModelSwitch` persists the new `session.config`) deregisters those rows
+  from the old key and immediately re-runs admission against the new key —
+  otherwise the switched session's queued rows wait on a wake for a provider the
+  session no longer uses, while newer messages on the new provider run ahead of
+  them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
   registered rows for the session, on terminal row status, and on session destroy.
-  Bounded memory by construction.
+  Registrations are idempotent insertion-ordered sets, so a parked job
+  re-consulting every probe tick cannot accumulate duplicates. Bounded memory by
+  construction.
 
 ### What does NOT change
 
@@ -540,7 +593,7 @@ watchdog's `retryCount` / `freeWait` distinction at provider scope.
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts`; insert the provider gate into P1 and `decideInjectDelivery`; add the delivery-start consults — V2 claim and V1 `startQueryAndEnqueue` (P3) — and the retry consult (P4); wire `reportLimitError`/`reportQueryStart(End)`/`reportRefinedReset`; the `queue_reason` migration with its startup reconstruction; per-session wake publishes + probing release + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — and the retry consult (P4); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction (deferred-only); per-session wake publishes + grant lifecycle + provider-change re-admission + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -574,17 +627,25 @@ by pre-existing suites):
    ladder `untilMs` and never shortens a parsed one; **wake routing** — one
    session-scoped `provider.concurrency.open` per registered session (a
    provider-wide payload reaches zero per-session subscribers;
-   `internal-event-bus.ts:116-135`); **probing release** — one admission per
-   clear, the next per clean completion (`noteAdmission` counting), release
-   halted by a re-arming 429; evidence expiry at arm time; the clean-completion
-   flag derived from turn classification, not iteration fulfillment;
+   `internal-event-bus.ts:116-135`); **probe grant lifecycle** — mint at first
+   admitting consult, honored by downstream consults for the same delivery
+   (the end-to-end pass that prevents the self-deadlock), consumed at query
+   start, ended by its own query's clean completion (a second pre-arm completion
+   arriving mid-probe must NOT release), re-armed by its 429, and released by
+   non-limit termination and lease expiry; evidence expiry at arm time; the
+   clean-completion flag derived from turn classification, not iteration
+   fulfillment; **keying** — distinct `providerConfig` overrides (apiKey /
+   baseUrl) produce distinct provider keys; **idempotent registration** — a
+   parked job re-consulting every probe tick never duplicates its uuid;
    registration add/lookup/lazy cleanup; timer lifecycle (destroy clears;
    unref'd); clock and jitter injection throughout (the pilot-9 purity
    convention: every time check against an injected `now`).
 4. **Interpreter — persist:** provider-saturated `message.send` → row persisted
    `'deferred'`, **no** `message_delivery` job, no `setQueuedIfIdle`,
-   `messages.statusChanged` published, registry registered; unsaturated → outbox
-   path byte-for-byte today's behavior (PR1 pins).
+   `messages.statusChanged` published, `message.persisted` published **with
+   `skipQueryStart: true`** (composer draft cleared, title generation enqueued),
+   registry registered; unsaturated → outbox path byte-for-byte today's behavior
+   (PR1 pins).
 5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
    registers; precedence over deliver; parity of the earlier arms (pipeline suite
    extension).
@@ -592,29 +653,38 @@ by pre-existing suites):
    requeued at `retryAt`, session restored to idle if persist had queued it, no
    `driveDeliveryTurn` call; after clear, re-claim delivers; a parked-job wave
    variant (N jobs requeued to one deadline) pins the probing re-park at the probe
-   tick — one delivers per clean completion, not N at the deadline. V1 — saturated
-   `startQueryAndEnqueue` → no query start, row settled back to `'deferred'` with
-   the `queue_reason` marker, registered; after clear, re-dispatch delivers.
+   tick — one delivers per probe resolution, not N at the deadline. Boundary
+   (`ensureQueryStarted`) — a saturated denial settles the row back to
+   `'deferred'` with the `queue_reason` marker and registers it, for every
+   direct-start path (V1 `startQueryAndEnqueue`, `deliverRowsViaMemoryQueue`, V1
+   `deliverInjectedMessage`); a grant-holding delivery passes. **Marker exit** —
+   promotion and terminal transitions clear `queue_reason` in the same statement;
+   reconstruction registers only `send_status = 'deferred'` rows.
 7. **Interpreter — retry consult (P4):** saturated auto-retry skips the start,
    settles the row deferred, registers; fallback-switched session (different
    provider) unaffected; the **provider-retry branch** classifies before deciding
-   the retry — a bracketed GLM limit reports to the registry at attempt 0 (the
-   registry arms before the recursive retries burn their calls), and each
-   recursive re-entry consults admission.
-8. **Interpreter — wake:** one per-session publish per registered session; the
-   handler re-runs the full P1 admission per uuid — a session switched to manual
-   mode after queueing is skipped and retained, delivered only by manual
-   promotion.
+   the retry — a bracketed GLM limit reports to the registry at attempt 0, a
+   consult denial falls through to the existing `:1258` assessment (the watchdog
+   arms; no bare skip-and-return), and each recursive re-entry consults admission.
+8. **Interpreter — wake and provider change:** one per-session publish per
+   registered session; the handler re-runs the full P1 admission per uuid — a
+   session switched to manual mode after queueing is skipped and retained,
+   delivered only by manual promotion; a **model switch** with rows queued behind
+   the old provider deregisters them and immediately re-admits against the new
+   key (no waiting on the old provider's wake; no newer-message overtake).
 9. **Scenario — the GLM herd, mocked SDK:** two sessions, one provider; A's query
    429s with a GLM-bracket message → registry armed (charge 1) → B's subsequent
-   `message.send` queues at persist → probe/timer clears → probing release
-   promotes B's uuid → row deferred→enqueued→submitted→consumed → exactly one
-   provider query start for B (stubbed start count); a many-session variant pins
-   the release pace (N queued → one start, then one per clean completion).
-   Restart variant: fresh registry (no saturation) → the `queue_reason` marker
-   re-registers the queued rows at startup → with several sessions reconstructed,
-   exactly one probe starts, the rest wait → the probe 429s → re-arms at charge 1
-   (not 2) — the bounded-recovery and restart-serialization pins.
+   `message.send` queues at persist → probe/timer clears → the granted delivery
+   passes P1 and the claim consult end-to-end → row deferred→enqueued→
+   submitted→consumed → exactly one provider query start for B (stubbed start
+   count); a many-session variant pins the release pace (N queued → one start,
+   then one per probe resolution). Restart variant: fresh registry (no
+   saturation) → the `queue_reason` marker re-registers the still-deferred rows
+   at startup → with several sessions reconstructed, exactly one probe starts,
+   the rest wait → the probe 429s → re-arms at charge 1 (not 2) — the
+   bounded-recovery and restart-serialization pins. An ACP variant pins the
+   symmetric lifecycle wiring: saturation armed from an ACP limit clears and the
+   ACP probe's completion is reported (no permanently-probing ACP provider).
 10. **No-regression:** the pre-existing agent-session / delivery / inject suites
     pass unchanged except the PR1 pins deliberately flipped in PR3 — the parity
     proof, as in every pilot.
