@@ -16,7 +16,6 @@ const log = new Logger('inactivity-watchdog');
 
 export const INACTIVITY_NAG_PROMPT_MAX_CHARS = 4000;
 export const INACTIVITY_NAG_DELIVERY_TIMEOUT_MS = 30_000;
-export const INACTIVITY_CLAIM_LEASE_MS = 5 * 60 * 1000;
 
 export const DEFAULT_INACTIVITY_NAG_PROMPT =
   'You have been idle for a while. Check your goals, reminders, and pending reviews; if nothing needs you, say so briefly and stand by.';
@@ -99,19 +98,10 @@ export class SpaceAgentInactivityWatchdogService {
     if (lastActivityAt === null) return;
     const space = await this.deps.spaceManager.getSpace(spaceId);
     let claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
-    const staleBefore = Date.now() - INACTIVITY_CLAIM_LEASE_MS;
     if (
       claim !== null &&
-      claim.state === 'in_flight' &&
+      claim.state !== 'none' &&
       !claim.degraded &&
-      claim.updatedAt <= staleBefore
-    ) {
-      this.deps.claimRepo.releaseStale(spaceId, agentId, claim.id, lastActivityAt, staleBefore);
-    }
-    claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
-    if (
-      claim !== null &&
-      claim.state === 'accepted' &&
       !this.deps.isNagDeliveryPending(spaceId, agentId, claim.claimKey)
     ) {
       const deliveryFailed = this.deps.isNagDeliveryFailed(spaceId, agentId, claim.claimKey);

@@ -425,7 +425,22 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     db.prepare(
       `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
     ).run(spaceId, 'agent-1');
-    await makeService().scanSpace(spaceId);
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => false,
+      isNagDeliveryFailed: () => false,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
     expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
   });
