@@ -23,6 +23,8 @@ import { Logger } from '../logger';
 
 const log = new Logger('space-workflow-handlers');
 
+const DRIFT_SUMMARY_MAX_CHARS = 900;
+
 const PRESET_AGENT_NAMES_LOWER = new Set(
   getPresetAgentTemplates().map((p) => p.name.toLowerCase())
 );
@@ -212,17 +214,29 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     if (updatesAvailable.length === 0 && customizedOnlyCount === 0) return;
 
     if (updatesAvailable.length > 0) {
-      log.warn(
-        `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +
-          `(open the Workflow List in the UI and click "Sync" to apply): ` +
-          updatesAvailable
-            .map(({ spaceName, workflowName, customized }) =>
-              customized
-                ? `${spaceName}/${workflowName} (customized)`
-                : `${spaceName}/${workflowName}`
-            )
-            .join(', ')
+      const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) =>
+        customized ? `${spaceName}/${workflowName} (customized)` : `${spaceName}/${workflowName}`
       );
+      const header =
+        `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +
+        `(open the Workflow List in the UI and click "Sync" to apply)`;
+      const single = `${header}: ${entries.join(', ')}`;
+      if (single.length <= DRIFT_SUMMARY_MAX_CHARS) {
+        log.warn(single);
+      } else {
+        log.warn(`${header}. Affected workflows (chunked to fit the log line cap):`);
+        let line = '';
+        for (const entry of entries) {
+          const candidate = line ? `${line}, ${entry}` : entry;
+          if (candidate.length > DRIFT_SUMMARY_MAX_CHARS && line) {
+            log.warn(`  ${line},`);
+            line = entry;
+          } else {
+            line = candidate;
+          }
+        }
+        if (line) log.warn(`  ${line}`);
+      }
     }
     if (customizedOnlyCount > 0) {
       log.info(

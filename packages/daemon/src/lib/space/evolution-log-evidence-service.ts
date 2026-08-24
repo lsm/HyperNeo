@@ -170,7 +170,11 @@ export class EvolutionLogEvidenceService {
       }
     }
     const batch = this.buffer.splice(0);
-    if (batch.length > 0) {
+    if (batch.length > 0 && this.drainItem !== null) {
+      for (let remain = batch.length - 1; remain >= 0; remain--) {
+        this.buffer.unshift(batch[remain]);
+      }
+    } else if (batch.length > 0) {
       try {
         const subscriptions = this.getSubscriptions();
         for (let index = 0; index < batch.length; index++) {

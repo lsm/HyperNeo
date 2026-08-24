@@ -547,16 +547,20 @@ describe('EvolutionLogEvidenceService', () => {
 
     service.capture(createEvent({ level: 'warn', message: 'busy refresh warning' }));
 
-    const deadline = Date.now() + 5000;
     const productScope = () =>
       evolutionRepo
         .listScopes({ spaceId })
         .find((scope) => scope.policy.logEvidenceProductScope === true);
-    while (!productScope() && Date.now() < deadline) {
+    const evidenceReady = () => {
+      const scope = productScope();
+      return scope ? evolutionRepo.listEvidence(scope.id).length > 0 : false;
+    };
+    const deadline = Date.now() + 6000;
+    while (!evidenceReady() && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
 
-    expect(productScope()).toBeTruthy();
+    expect(evidenceReady()).toBe(true);
     expect(evolutionRepo.listEvidence(productScope()!.id)).toHaveLength(1);
   });
 
