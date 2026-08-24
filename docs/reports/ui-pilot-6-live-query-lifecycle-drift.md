@@ -88,8 +88,11 @@ One caveat shared by every "fits" verdict above: these stores currently apply
 matching deltas **unconditionally**, while the machine emits deltas only from
 `live` (drift row 10). After a resubscribe whose snapshot is lost or delayed, a
 migrated store with `snapshotRetryEnabled: false` would sit frozen in
-`awaiting-snapshot` and drop deltas that today's stores apply. The U4 migration
-must either keep the watchdog armed for stores or explicitly accept and record
+`awaiting-snapshot` and drop deltas that today's stores apply; arming the
+watchdog only delays settling and does not emit pre-snapshot deltas either
+(`transitionAwaitingSnapshot` ignores `delta-arrived` regardless of config), so
+it is not a complete remedy. The U4 migration must either add an adapter/
+configuration that emits pre-snapshot deltas, or explicitly accept and record
 the gating change.
 | `session-store` `messages.bySession` (inventoried here) | **Does not fit today** | The subscription is wrapped in a recovery protocol: `MESSAGE_TOO_LARGE` handling, a hand-rolled `awaitingSnapshot` delta gate (its own version of the machine's `live` gating), `beginRecovery`/`performRecovery` on disconnect/reconnect, and optimistic-message preservation in the apply path (`mergeSnapshotIntoTranscript`'s prefix preservation plus uuid-keyed dedup in `mergeSdkMessagesWithDedup`). All of it lives above the subscription lifecycle; candidate only after recovery orchestration is itself extracted. |
 
