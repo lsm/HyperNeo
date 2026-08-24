@@ -1,6 +1,7 @@
 import type {
   CreateProviderParams,
   MessageHub,
+  ModelInfo,
   ProviderRecord,
   UpdateProviderParams,
 } from '@hyperneo/shared';
@@ -492,14 +493,25 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
       const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
 
-      const discovered = await raceWithTimeout(
-        provider.listRemoteModels({ force: true }),
-        DISCOVERY_REFRESH_TIMEOUT_MS
-      );
+      const discoveryPromise = provider.listRemoteModels({ force: true });
+      let discovered: ModelInfo[];
+      try {
+        discovered = await raceWithTimeout(discoveryPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
+      } catch (error) {
+        await discoveryPromise.catch(() => {});
+        throw error;
+      }
       if (discovered.length === 0) {
         throw new Error(`Provider ${record.providerId} returned no models`);
       }
-      const models = await raceWithTimeout(provider.getModels(), DISCOVERY_REFRESH_TIMEOUT_MS);
+      const modelsPromise = provider.getModels();
+      let models: ModelInfo[];
+      try {
+        models = await raceWithTimeout(modelsPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
+      } catch (error) {
+        await modelsPromise.catch(() => {});
+        throw error;
+      }
 
       if (
         getModelsCacheClearSequence() !== clearsAtStart ||

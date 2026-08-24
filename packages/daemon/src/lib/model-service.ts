@@ -184,10 +184,18 @@ function pendingSliceKey(cacheKey: string, providerId: string): string {
 
 function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
   let merged = models;
+  const matchedKeys: string[] = [];
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
     merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+    matchedKeys.push(key);
+  }
+  for (const key of matchedKeys) {
+    if (pendingSliceReleases.has(key)) {
+      pendingSliceReleases.delete(key);
+      pendingProviderSlices.delete(key);
+    }
   }
   return merged;
 }
@@ -291,12 +299,6 @@ function releaseRefreshState(cacheKey: string, refreshPromise: Promise<void>): v
   }
   refreshInProgress.delete(cacheKey);
   refreshModes.delete(cacheKey);
-  for (const key of [...pendingSliceReleases]) {
-    if (key.startsWith(`${cacheKey}:`)) {
-      pendingSliceReleases.delete(key);
-      pendingProviderSlices.delete(key);
-    }
-  }
   if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
     cacheGeneration.delete(cacheKey);
   }

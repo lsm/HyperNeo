@@ -32,9 +32,10 @@ const log = new Logger('auth-handlers');
 async function clearCacheAndNotifyProvidersChanged(
   providerId: string | undefined,
   providerRepo: ProviderRepository | undefined,
-  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
+  stripPersisted = true
 ): Promise<void> {
-  if (providerId && providerRepo) {
+  if (providerId && providerRepo && stripPersisted) {
     const record = providerRepo.getProviderByProviderId(providerId);
     if (record) {
       const stripped = stripPersistedDiscovery(record.configJson);
@@ -308,8 +309,15 @@ export function setupAuthHandlers(
           const remaining = await provider.getCredentials?.();
           if (remaining?.type === 'oauth') {
             await credentialManager?.storeOAuthTokens(providerId, remaining);
+            await clearCacheAndNotifyProvidersChanged(
+              providerId,
+              providerRepo,
+              internalEventBus,
+              false
+            );
+          } else {
+            await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
           }
-          await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',
