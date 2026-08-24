@@ -21,9 +21,10 @@ import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import {
   clearModelsCache,
   hasRefreshBeenAttemptedFor,
+  isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
-import { getProviderRegistry } from '../providers/registry.js';
+import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
@@ -350,6 +351,36 @@ export function setupSessionHandlers(
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
     const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;
+
+    const configUpdate = (updates as Partial<Session>).config;
+    if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
+      const existingConfig =
+        agentSessionForUpdate?.getSessionData().config ??
+        sessionManager.getSessionFromDB(targetSessionId)?.config;
+      const currentModel = existingConfig?.model;
+      const currentProvider =
+        existingConfig?.provider ??
+        (currentModel ? inferProviderForModel(currentModel) : undefined);
+      const effectiveModel = configUpdate.model ?? currentModel;
+      const providerId =
+        configUpdate.provider ??
+        existingConfig?.provider ??
+        (effectiveModel ? inferProviderForModel(effectiveModel) : undefined);
+      const rewritesOwnPair =
+        existingConfig !== undefined &&
+        effectiveModel === currentModel &&
+        providerId === currentProvider;
+      if (
+        providerId &&
+        effectiveModel &&
+        !rewritesOwnPair &&
+        isCuratedOutModel(effectiveModel, providerId)
+      ) {
+        throw new Error(
+          `Model '${effectiveModel}' is curated out for provider '${providerId}' and cannot be set on a session`
+        );
+      }
+    }
 
     await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
 
