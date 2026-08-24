@@ -45,6 +45,7 @@ export interface InactivityWatchdogDeps {
   deliveryTimeoutMs?: number;
   getSessionSnapshot(spaceId: string, agentId: string): InactivityWatchdogSessionSnapshot | null;
   isNagDeliveryPending(spaceId: string, agentId: string, claimKey: string): boolean;
+  isNagDeliveryFailed(spaceId: string, agentId: string, claimKey: string): boolean;
   deliverNag(args: {
     spaceId: string;
     agentId: string;
@@ -118,11 +119,9 @@ export class SpaceAgentInactivityWatchdogService {
         claim.claimKey,
         claim.ownerToken,
         claim.configRevision,
-        {
-          releaseClaim: true,
-          markDegraded: false,
-          advanceAttemptGeneration: false,
-        }
+        this.deps.isNagDeliveryFailed(spaceId, agentId, claim.claimKey)
+          ? { releaseClaim: false, markDegraded: true, advanceAttemptGeneration: true }
+          : { releaseClaim: true, markDegraded: false, advanceAttemptGeneration: false }
       );
       claim = null;
     }

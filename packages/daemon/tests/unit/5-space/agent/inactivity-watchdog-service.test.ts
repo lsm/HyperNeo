@@ -112,6 +112,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       now: () => NOW,
       getSessionSnapshot: overrides.getSessionSnapshot ?? (() => sessionSnapshot),
       isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -153,6 +154,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
         };
       },
       isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -246,6 +248,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
       isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliveryTimeoutMs: 50,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
@@ -288,6 +291,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
       isNagDeliveryPending: () => false,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -295,6 +299,32 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(2);
+  });
+
+  it('degrades an accepted claim whose delivery failed', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    nextOutcome = 'accepted';
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => false,
+      isNagDeliveryFailed: () => true,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
+    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    expect(claim?.degraded).toBe(true);
+    expect(outcomes).toHaveLength(1);
   });
 
   it('does not reclaim an accepted delivery that outlives the scanner lease', async () => {
@@ -332,6 +362,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
       isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -368,6 +399,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
       isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;

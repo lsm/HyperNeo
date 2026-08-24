@@ -317,6 +317,8 @@ export interface RPCHandlerSetupResult {
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
+  const pendingInactivityRunNow = new Set<Promise<void>>();
+  let inactivityRunNowCancelled = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
   setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -688,37 +690,50 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     inactivityConfigRepo: spaceAgentInactivityConfigRepo,
     inactivityClaimRepo: spaceAgentInactivityClaimRepo,
     inactivityRunNow: (spaceId, agentId) => {
-      void (async () => {
-        const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
-        const db = deps.db.getDatabase();
-        const deadline = Date.now() + 120_000;
-        while (Date.now() < deadline) {
-          if (sessionId !== null && sessionId !== undefined) {
-            const row = db
-              .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
-              .get(sessionId) as { processing_state?: string | null } | null;
-            let status = 'idle';
-            try {
-              const parsed = row?.processing_state
-                ? (JSON.parse(row.processing_state) as { status?: unknown })
-                : null;
-              if (parsed && typeof parsed.status === 'string') status = parsed.status;
-            } catch {}
-            if (
-              status !== 'processing' &&
-              status !== 'queued' &&
-              status !== 'running' &&
-              status !== 'waiting_for_input'
-            ) {
+      let task: Promise<void>;
+      const run = async () => {
+        try {
+          const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
+          const db = deps.db.getDatabase();
+          const deadline = Date.now() + 120_000;
+          while (!inactivityRunNowCancelled && Date.now() < deadline) {
+            if (sessionId !== null && sessionId !== undefined) {
+              const row = db
+                .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
+                .get(sessionId) as { processing_state?: string | null } | null;
+              let status = 'idle';
+              try {
+                const parsed = row?.processing_state
+                  ? (JSON.parse(row.processing_state) as { status?: unknown })
+                  : null;
+                if (parsed && typeof parsed.status === 'string') status = parsed.status;
+              } catch {}
+              if (
+                status !== 'processing' &&
+                status !== 'queued' &&
+                status !== 'running' &&
+                status !== 'waiting_for_input'
+              ) {
+                break;
+              }
+            } else {
               break;
             }
-          } else {
-            break;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 2000);
+              timer.unref();
+            });
           }
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (!inactivityRunNowCancelled) {
+            await spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId).catch(() => {});
+          }
+        } finally {
+          pendingInactivityRunNow.delete(task);
         }
-        await spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId).catch(() => {});
-      })();
+      };
+      task = run();
+      pendingInactivityRunNow.add(task);
+      void task.catch(() => {});
       return Promise.resolve();
     },
   });
@@ -790,6 +805,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
         const status = row?.send_status ?? null;
         return status === 'enqueued' || status === 'submitted' || status === 'deferred';
+      },
+      isNagDeliveryFailed: (spaceId, agentId, claimKey) => {
+        const agent = longHorizonAgentRepo.getById(agentId);
+        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const row = deps.db
+          .getDatabase()
+          .prepare(
+            `SELECT send_status FROM sdk_messages
+             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
+          )
+          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
+        return row?.send_status === 'failed';
       },
       deliverNag: (args) =>
         spaceRuntimeService.deliverLongHorizonAgentNag({
@@ -1151,6 +1178,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   return {
     cleanup: async () => {
+      inactivityRunNowCancelled = true;
+      await Promise.allSettled(pendingInactivityRunNow);
       unsubLiveQuery();
       await spaceRuntimeService.stop();
       fileIndex.dispose();

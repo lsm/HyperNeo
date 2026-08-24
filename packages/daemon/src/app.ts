@@ -1055,7 +1055,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         });
         return run;
       };
-      void scanInactivityWatchdog();
+      void spaceRuntimeReadyPromise.then(() => {
+        void scanInactivityWatchdog();
+      });
       const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
       inactivityWatchdogTimer = setInterval(() => {
         void scanInactivityWatchdog();
