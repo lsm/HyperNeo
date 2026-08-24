@@ -1182,6 +1182,119 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
     });
 
+    it('a failing idle transition retains the error verdict and replay stays blocked on retry', async () => {
+      await handler.handleMessage(sessionState('running'));
+      await handler.handleMessage(errorResult('verdict-fail-error'));
+
+      setIdleSpy.mockImplementation(async () => {
+        throw new Error('setIdle transition failed');
+      });
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        lastResultWasSuccess: false,
+      });
+
+      setIdleSpy.mockImplementation(async () => {});
+      await handler.handleMessage(sessionState('idle'));
+      expect(setIdleSpy).toHaveBeenCalledTimes(2);
+      expect(setIdleSpy.mock.calls[1]).toEqual([]);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a confirmed clear that never receives its trailing idle times out as reset via the rearmed timer', async () => {
+      await handler.handleMessage(sessionState('running'));
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(25, 'clear-msg-id');
+      handler.markClearMessageSent();
+
+      await handler.handleMessage(
+        successResult('trailing-idle-timeout', { user_message_uuid: 'clear-msg-id' })
+      );
+      expect(readFlags(handler).clearAwaitingTrailingIdle).toBe(true);
+
+      expect(await wait).toBe('reset');
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        lastResultWasSuccess: true,
+        clearAwaitingTrailingIdle: true,
+        clearMessageInFlight: true,
+      });
+    });
+
+    it('a rejected publication of an unrelated result leaves the armed clear waiting', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await expect(
+        handler.handleMessage(
+          successResult('mismatch-publish-reject', { user_message_uuid: 'unrelated-msg-id' })
+        )
+      ).rejects.toThrow('sdk.message subscriber failed');
+
+      expect(settled).toBe(null);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+        lastResultWasSuccess: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
+    it('a failed bookkeeping effect of an unrelated result leaves the armed clear waiting', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
+      handler.markClearMessageSent();
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'session.errorClear') {
+          throw new Error('session.errorClear subscriber failed');
+        }
+      });
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await expect(
+        handler.handleMessage(
+          successResult('mismatch-effect-reject', { user_message_uuid: 'unrelated-msg-id' })
+        )
+      ).rejects.toThrow('session.errorClear subscriber failed');
+
+      expect(settled).toBe(null);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        suppressIdleOnNextResult: true,
+        clearMessageInFlight: true,
+        lastResultWasSuccess: true,
+      });
+
+      handler.clearIdleSuppression();
+      expect(await wait).toBe('reset');
+    });
+
     it('an armed sent clear whose error publication rejects also unwinds every flag', async () => {
       handler.suppressIdleForNextResult();
       const wait = handler.waitForSuppressedResult(5_000);
@@ -1455,6 +1568,8 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a failing setIdle on a first idle event retains the mode flag without the expectation', async () => {
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('first-idle-fail-prime'));
       setIdleSpy.mockImplementation(async () => {
         throw new Error('setIdle transition failed');
       });
