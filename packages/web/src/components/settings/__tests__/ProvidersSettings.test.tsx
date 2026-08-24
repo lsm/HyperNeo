@@ -24,6 +24,7 @@ const {
   mockUnsubscribe,
   mockListProviderRemoteModels,
   mockListAvailableModels,
+  mockRequest,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockListProviderAuthStatus: vi.fn(),
@@ -46,6 +47,7 @@ const {
   mockUnsubscribe: vi.fn(),
   mockListProviderRemoteModels: vi.fn(),
   mockListAvailableModels: vi.fn(),
+  mockRequest: vi.fn(),
 }));
 
 vi.mock('../../../lib/api-helpers.ts', () => ({
@@ -273,7 +275,9 @@ describe('ProvidersSettings', () => {
     mockOnEvent.mockReset();
     mockOnEvent.mockReturnValue(mockUnsubscribe);
     mockGetHubIfConnected.mockReset();
-    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent });
+    mockGetHubIfConnected.mockReturnValue({ onEvent: mockOnEvent, request: mockRequest });
+    mockRequest.mockReset();
+    mockRequest.mockResolvedValue({ models: [], cached: true });
     mockListProviderRemoteModels.mockReset();
     mockListAvailableModels.mockReset();
     mockListAvailableModels.mockResolvedValue({ models: [], cached: true });
@@ -1702,7 +1706,7 @@ describe('ProvidersSettings', () => {
       expect(boxes.length).toBe(2);
       for (const box of boxes) {
         expect(box.checked).toBe(true);
-        expect(box.disabled).toBe(true);
+        expect(box.disabled).toBe(false);
       }
       expect(mockUpdateProvider).not.toHaveBeenCalled();
     });
@@ -1736,7 +1740,7 @@ describe('ProvidersSettings', () => {
       expect(boxes[0].checked).toBe(true);
       expect(boxes[1].checked).toBe(false);
       for (const box of boxes) {
-        expect(box.disabled).toBe(true);
+        expect(box.disabled).toBe(false);
       }
       expect(mockUpdateProvider).not.toHaveBeenCalled();
     });
@@ -1766,7 +1770,7 @@ describe('ProvidersSettings', () => {
       }
     });
 
-    it('probes the stored ACP command as a read-only override', async () => {
+    it('probes the stored ACP command and allows toggling before save', async () => {
       const provider = createMockProvider('acp-1', 'acp', {
         displayName: 'ACP Agent',
         authType: 'none',
@@ -1794,7 +1798,7 @@ describe('ProvidersSettings', () => {
       expect(mockToastSuccess).not.toHaveBeenCalled();
       const box = panel.querySelector<HTMLInputElement>('input[type="checkbox"]');
       expect(box?.checked).toBe(true);
-      expect(box?.disabled).toBe(true);
+      expect(box?.disabled).toBe(false);
       fireEvent.click(box!);
       expect(mockUpdateProvider).not.toHaveBeenCalled();
     });
@@ -1924,6 +1928,117 @@ describe('ProvidersSettings', () => {
       await waitFor(() => expect(container.textContent).toContain('Authentication'));
       expect(screen.queryByTestId('visible-models-panel')).toBeNull();
       expect(screen.queryByText('Fetch models')).toBeNull();
+    });
+
+    it('saves the checked subset and triggers a curation-filtered refresh', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3', name: 'Kimi K3' }, { id: 'kimi-k4' }],
+      });
+      mockUpdateProvider.mockResolvedValue({ success: true, provider });
+      mockRequest.mockResolvedValue({ models: [{ id: 'kimi-k3', provider: 'kimi' }] });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() => expect(panel.textContent).toContain('kimi-k4'));
+
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[1]);
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => {
+        expect(mockUpdateProvider).toHaveBeenCalledWith(
+          'k1',
+          { configJson: expect.stringContaining('"models"') },
+          undefined
+        );
+      });
+      const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
+      expect(JSON.parse(params.configJson).models).toEqual([{ id: 'kimi-k3', name: 'Kimi K3' }]);
+      expect(mockRequest).toHaveBeenCalledWith('models.list', { forceRefresh: true });
+    });
+
+    it('shows a confirm and persists an empty curation when saving an empty selection', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+      mockUpdateProvider.mockResolvedValue({ success: true, provider });
+      vi.stubGlobal('confirm', () => true);
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() => expect(panel.textContent).toContain('kimi-k4'));
+
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[0]);
+      fireEvent.click(boxes[1]);
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => {
+        expect(mockUpdateProvider).toHaveBeenCalledWith(
+          'k1',
+          { configJson: expect.stringContaining('"models"') },
+          undefined
+        );
+      });
+      const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
+      expect(JSON.parse(params.configJson).models).toEqual([]);
+      expect(mockRequest).toHaveBeenCalledWith('models.list', { forceRefresh: true });
+    });
+
+    it('picker reflects the new subset after save', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+      mockUpdateProvider.mockResolvedValue({ success: true, provider });
+      mockRequest.mockResolvedValue({ models: [{ id: 'kimi-k3', provider: 'kimi' }] });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() => expect(panel.textContent).toContain('kimi-k4'));
+
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[1]);
+
+      mockListProviders.mockResolvedValue({
+        providers: [
+          createMockProvider('k1', 'kimi', {
+            displayName: 'Kimi',
+            configJson: JSON.stringify({ models: [{ id: 'kimi-k3' }] }),
+          }),
+        ],
+      });
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(2), { timeout: 5000 });
+      await waitFor(
+        () => {
+          expect(screen.getByTestId('visible-models-panel').textContent).toContain(
+            '1 of 1 visible.'
+          );
+        },
+        { timeout: 5000 }
+      );
+      const updatedPanel = screen.getByTestId('visible-models-panel');
+      expect(updatedPanel.textContent).toContain('kimi-k3');
+      expect(updatedPanel.textContent).not.toContain('kimi-k4');
     });
   });
 });
