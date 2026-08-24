@@ -633,10 +633,15 @@ path unchanged.
   the same message uuid are ignored. When the deferred backlog cap supersedes
   buffered rows into an early envelope, that envelope is itself admitted to
   the buffer, so cap-folded direct events still reach the mid-turn steer.
-  Steers render without the digest snippet truncation — review feedback
-  arrives in full because its source rows are consumed — and only
-  direct-class events are rendered even when a fold carries digest-tier
-  passengers. The flush runs under `withSessionResetCoordination` — the same
+  Steers render review bodies up to `DIRECT_STEER_SNIPPET_MAX_CHARS`
+  (2,000 chars) — far beyond the turn-end digest's 160-char snippets since
+  their source rows are consumed — and any body past that bound is truncated
+  with an ellipsis while every line carries its eventId for retrieval via
+  `get_external_event`. Only direct-class events are rendered even when a
+  fold carries digest-tier passengers; those passengers are re-deferred (see
+  below), and the omitted-events notice appears exactly once — in the steer
+  when there is no passenger remainder, otherwise in the deferred remainder
+  that reports it at turn end. The flush runs under `withSessionResetCoordination` — the same
   lock the turn-end fold holds — and only folds rows that are still `deferred`;
   if the turn ended first (turn-end flush already consumed them), no steer is
   emitted and nothing is delivered twice.

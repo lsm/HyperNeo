@@ -4007,7 +4007,7 @@ export class TaskAgentManager {
       title: 'Direct external events while you were working (injected mid-turn)',
       snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
       renderAllReviewBodies: true,
-      ...(carriedDropped > 0 ? { droppedEventCount: carriedDropped } : {}),
+      ...(passengerDbId || carriedDropped <= 0 ? {} : { droppedEventCount: carriedDropped }),
     });
     const message = buildSyntheticExternalEventMessage(sessionId, steerText);
     const steerMessageId = String(message.uuid);

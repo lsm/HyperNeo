@@ -877,6 +877,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     const steerText = rowText(steers[0]!.message);
     expect(steerText).toContain('pax-review');
     expect(steerText).not.toContain('HUMAN_NOTE_MARKER');
+    expect(steerText).not.toContain('older events were omitted');
 
     const passengerRow = harness.rows.find(
       (row) => row.status === 'deferred' && rowText(row.message).includes('HUMAN_NOTE_MARKER')
