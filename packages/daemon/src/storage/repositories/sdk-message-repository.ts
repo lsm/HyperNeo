@@ -27,6 +27,7 @@ import {
   routeDeliveryTransition,
 } from './delivery-status-routing';
 import { decideMessageSearchAdmission } from './message-search-admission';
+import type { MessageSearchEligibilityRow } from './message-search-admission';
 import {
   decideMessageAdmission,
   extractReplacementEdges,
@@ -101,6 +102,146 @@ const EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST = toSqlStringList([
   'model_refusal_fallback',
 ]);
 
+export const HAS_TERMINAL_RESULT_AFTER_SQL = `SELECT 1
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.message_subtype = 'success'
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ?
+               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
+            )
+            AND NOT (
+              COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
+              AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+              AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+            )
+          LIMIT 1`;
+
+export const HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL = `SELECT 1
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ?
+               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
+            )
+            AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
+            AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+          LIMIT 1`;
+
+export const GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL = `SELECT r.message_subtype AS subtype
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.message_subtype IS NOT NULL
+            AND r.message_subtype != 'success'
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ?
+               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
+            )
+          ORDER BY r.consumed_seq DESC
+          LIMIT 1`;
+
+export const MESSAGE_SUPERSEDED_PROBE_SQL = `SELECT 1
+           FROM sdk_message_replacements replacement
+           WHERE replacement.session_id = ?
+             AND replacement.source_message_id != ?
+             AND replacement.target_uuid = ?
+           LIMIT 1`;
+
+export const SEARCHABLE_USER_STATUS_PROBE_SQL = `SELECT COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages WHERE id = ?`;
+
+export interface MessageSearchAdmissionSchemaFeatures {
+  hasSessions: boolean;
+  hasSpaceTasks: boolean;
+  hasSessionTitle: boolean;
+  hasSessionStatus: boolean;
+  hasSessionType: boolean;
+  hasSessionLastActiveAt: boolean;
+  hasSessionRoomId: boolean;
+  hasTaskStatus: boolean;
+  hasTaskCompletedAt: boolean;
+  hasTaskUpdatedAt: boolean;
+}
+
+export function detectMessageSearchAdmissionFeatures(
+  db: BunDatabase
+): MessageSearchAdmissionSchemaFeatures {
+  const tableExists = (name: string): boolean => {
+    try {
+      return !!db.prepare(`SELECT name FROM sqlite_master WHERE name = ?`).get(name);
+    } catch {
+      return false;
+    }
+  };
+  const tableHasColumn = (table: string, column: string): boolean => {
+    try {
+      const rows = db.prepare(`PRAGMA table_xinfo(${table})`).all() as Array<{ name?: string }>;
+      return rows.some((row) => row.name === column);
+    } catch {
+      return false;
+    }
+  };
+  const hasSessions = tableExists('sessions');
+  const hasSpaceTasks = tableExists('space_tasks');
+  return {
+    hasSessions,
+    hasSpaceTasks,
+    hasSessionTitle: hasSessions && tableHasColumn('sessions', 'title'),
+    hasSessionStatus: hasSessions && tableHasColumn('sessions', 'status'),
+    hasSessionType: hasSessions && tableHasColumn('sessions', 'type'),
+    hasSessionLastActiveAt: hasSessions && tableHasColumn('sessions', 'last_active_at'),
+    hasSessionRoomId: hasSessions && tableHasColumn('sessions', 'room_id'),
+    hasTaskStatus: hasSpaceTasks && tableHasColumn('space_tasks', 'status'),
+    hasTaskCompletedAt: hasSpaceTasks && tableHasColumn('space_tasks', 'completed_at'),
+    hasTaskUpdatedAt: hasSpaceTasks && tableHasColumn('space_tasks', 'updated_at'),
+  };
+}
+
+export function buildMessageSearchAdmissionLookupSql(
+  features: MessageSearchAdmissionSchemaFeatures
+): string {
+  const sessionTitleSelect = features.hasSessionTitle
+    ? 's.title AS session_title'
+    : 'sm.session_id AS session_title';
+  const sessionPolicySelect = `${features.hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
+				   ${features.hasSessionType ? 's.type' : 'NULL'} AS session_type,
+				   ${features.hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
+				   ${features.hasSessionRoomId ? 's.room_id' : 'NULL'} AS session_room_id`;
+  const spaceTaskSelect = features.hasSpaceTasks
+    ? `st.space_id, st.task_number,
+				   ${features.hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
+				   ${features.hasTaskCompletedAt ? 'st.completed_at' : 'NULL'} AS task_completed_at,
+				   ${features.hasTaskUpdatedAt ? 'st.updated_at' : 'NULL'} AS task_updated_at`
+    : `NULL AS space_id, NULL AS task_number,
+				   NULL AS task_status,
+				   NULL AS task_completed_at,
+				   NULL AS task_updated_at`;
+  const sessionJoin = features.hasSessions ? 'LEFT JOIN sessions s ON s.id = sm.session_id' : '';
+  const spaceTaskJoin = features.hasSpaceTasks
+    ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id'
+    : '';
+  return `SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.sdk_message, sm.timestamp,
+					${sessionTitleSelect}, ${sessionPolicySelect}, ${spaceTaskSelect}
+			 FROM sdk_messages sm
+			 ${sessionJoin}
+			 ${spaceTaskJoin}
+			 WHERE sm.id = ?`;
+}
+
 type TimestampComparison = '>' | '>=';
 
 export class SDKMessageRepository {
@@ -170,64 +311,30 @@ export class SDKMessageRepository {
     }
   }
 
+  private admissionFeaturesCache: MessageSearchAdmissionSchemaFeatures | null = null;
+
+  private admissionFeatures(): MessageSearchAdmissionSchemaFeatures {
+    if (!this.admissionFeaturesCache) {
+      this.admissionFeaturesCache = detectMessageSearchAdmissionFeatures(this.db);
+    }
+    return this.admissionFeaturesCache;
+  }
+
   private upsertMessageSearchRow(rowId: string, now: number): void {
     if (!this.hasMessageSearchIndex()) return;
-    const hasSessions = this.tableExists('sessions');
-    const hasSpaceTasks = this.tableExists('space_tasks');
-    const hasSessionTitle = hasSessions && this.tableHasColumn('sessions', 'title');
-    const hasSessionStatus = hasSessions && this.tableHasColumn('sessions', 'status');
-    const hasSessionType = hasSessions && this.tableHasColumn('sessions', 'type');
-    const hasSessionLastActiveAt = hasSessions && this.tableHasColumn('sessions', 'last_active_at');
-    const hasSessionRoomId = hasSessions && this.tableHasColumn('sessions', 'room_id');
-    const hasTaskStatus = hasSpaceTasks && this.tableHasColumn('space_tasks', 'status');
-    const hasTaskCompletedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'completed_at');
-    const hasTaskUpdatedAt = hasSpaceTasks && this.tableHasColumn('space_tasks', 'updated_at');
-    const sessionTitleSelect = hasSessionTitle
-      ? 's.title AS session_title'
-      : 'sm.session_id AS session_title';
-    const sessionPolicySelect = `${hasSessionStatus ? 's.status' : 'NULL'} AS session_status,
-			   ${hasSessionType ? 's.type' : 'NULL'} AS session_type,
-			   ${hasSessionLastActiveAt ? 's.last_active_at' : 'NULL'} AS session_last_active_at,
-			   ${hasSessionRoomId ? 's.room_id' : 'NULL'} AS session_room_id`;
-    const spaceTaskSelect = hasSpaceTasks
-      ? `st.space_id, st.task_number,
-			   ${hasTaskStatus ? 'st.status' : 'NULL'} AS task_status,
-			   ${hasTaskCompletedAt ? 'st.completed_at' : 'NULL'} AS task_completed_at,
-			   ${hasTaskUpdatedAt ? 'st.updated_at' : 'NULL'} AS task_updated_at`
-      : `NULL AS space_id, NULL AS task_number,
-			   NULL AS task_status,
-			   NULL AS task_completed_at,
-			   NULL AS task_updated_at`;
-    const sessionJoin = hasSessions ? 'LEFT JOIN sessions s ON s.id = sm.session_id' : '';
-    const spaceTaskJoin = hasSpaceTasks ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id' : '';
     const row = this.db
-      .prepare(
-        `SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.sdk_message, sm.timestamp,
-				        ${sessionTitleSelect}, ${sessionPolicySelect}, ${spaceTaskSelect}
-				 FROM sdk_messages sm
-				 ${sessionJoin}
-				 ${spaceTaskJoin}
-				 WHERE sm.id = ?`
-      )
+      .prepare(buildMessageSearchAdmissionLookupSql(this.admissionFeatures()))
       .get(rowId) as
-      | {
+      | (MessageSearchEligibilityRow & {
           id: string;
-          session_id: string;
           task_id: string | null;
           message_type: string;
           sdk_message: string;
           timestamp: string;
           session_title: string | null;
-          session_status: string | null;
-          session_type: string | null;
-          session_last_active_at: string | null;
-          session_room_id: string | null;
           space_id: string | null;
           task_number: number | null;
-          task_status: string | null;
-          task_completed_at: number | null;
-          task_updated_at: number | null;
-        }
+        })
       | undefined;
     if (!row) return;
 
@@ -344,26 +451,13 @@ export class SDKMessageRepository {
     const sdkUuid = (sdkMessage as { uuid?: unknown }).uuid;
     if (typeof sdkUuid !== 'string' || sdkUuid.length === 0) return false;
 
-    return Boolean(
-      this.db
-        .prepare(
-          `SELECT 1
-           FROM sdk_message_replacements replacement
-           WHERE replacement.session_id = ?
-             AND replacement.source_message_id != ?
-             AND replacement.target_uuid = ?
-           LIMIT 1`
-        )
-        .get(sessionId, rowId, sdkUuid)
-    );
+    return Boolean(this.db.prepare(MESSAGE_SUPERSEDED_PROBE_SQL).get(sessionId, rowId, sdkUuid));
   }
 
   private isSearchableUserMessageStatus(rowId: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages WHERE id = ?`
-      )
-      .get(rowId) as { send_status: SendStatus } | undefined;
+    const row = this.db.prepare(SEARCHABLE_USER_STATUS_PROBE_SQL).get(rowId) as
+      | { send_status: SendStatus }
+      | undefined;
     return row?.send_status === 'consumed' || row?.send_status === 'failed';
   }
 
@@ -1315,29 +1409,10 @@ export class SDKMessageRepository {
   }
 
   hasTerminalResultAfter(sessionId: string, uuid: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT 1
-           FROM sdk_messages r
-          WHERE r.session_id = ?
-            AND r.message_type = 'result'
-            AND r.is_terminal = 1
-            AND r.message_subtype = 'success'
-            AND r.parent_tool_use_id IS NULL
-            AND r.consumed_seq IS NOT NULL
-            AND r.consumed_seq >= (
-              SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ?
-               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
-            )
-            AND NOT (
-              COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
-              AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
-              AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
-            )
-          LIMIT 1`
-      )
-      .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
+    const row = this.db.prepare(HAS_TERMINAL_RESULT_AFTER_SQL).get(sessionId, sessionId, uuid) as
+      | { 1: number }
+      | undefined
+      | null;
     return row != null;
   }
 
@@ -1357,47 +1432,14 @@ export class SDKMessageRepository {
 
   hasRecoveryInterceptedResultAfter(sessionId: string, uuid: string): boolean {
     const row = this.db
-      .prepare(
-        `SELECT 1
-           FROM sdk_messages r
-          WHERE r.session_id = ?
-            AND r.message_type = 'result'
-            AND r.is_terminal = 1
-            AND r.parent_tool_use_id IS NULL
-            AND r.consumed_seq IS NOT NULL
-            AND r.consumed_seq >= (
-              SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ?
-               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
-            )
-            AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
-            AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
-          LIMIT 1`
-      )
+      .prepare(HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL)
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
     return row != null;
   }
 
   getErrorTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
     const row = this.db
-      .prepare(
-        `SELECT r.message_subtype AS subtype
-           FROM sdk_messages r
-          WHERE r.session_id = ?
-            AND r.message_type = 'result'
-            AND r.is_terminal = 1
-            AND r.message_subtype IS NOT NULL
-            AND r.message_subtype != 'success'
-            AND r.parent_tool_use_id IS NULL
-            AND r.consumed_seq IS NOT NULL
-            AND r.consumed_seq >= (
-              SELECT m.consumed_seq FROM sdk_messages m
-               WHERE m.session_id = ? AND m.sdk_uuid = ?
-               ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
-            )
-          ORDER BY r.consumed_seq DESC
-          LIMIT 1`
-      )
+      .prepare(GET_ERROR_TERMINAL_RESULT_SUBTYPE_AFTER_SQL)
       .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;
     return row?.subtype ?? null;
   }

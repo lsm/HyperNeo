@@ -12,12 +12,17 @@ import { basename, dirname, join } from 'node:path';
 import { Logger } from '../lib/logger';
 import { runMessageSearchMerge } from '../lib/message-search-merge';
 import { DatabaseLock } from './database-lock';
+import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability';
 import { configureMessageSearchFts, createTables, runMigrations } from './schema';
 import { Database as BunDatabase } from './sqlite-compat';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
 const MAX_MESSAGE_SEARCH_MERGE_WORKER_FAILURES = 3;
+
+export interface DatabaseCoreOptions {
+  queryObservability?: SQLiteQueryObservabilityOptions;
+}
 
 export class DatabaseCore {
   private db: BunDatabase;
@@ -29,7 +34,10 @@ export class DatabaseCore {
   private messageSearchMergeCancel: (() => void) | null = null;
   private messageSearchMergeWorkerFailures = 0;
 
-  constructor(private dbPath: string) {
+  constructor(
+    private dbPath: string,
+    private readonly options: DatabaseCoreOptions = {}
+  ) {
     this.db = null as unknown as BunDatabase;
     this.lock = new DatabaseLock(dbPath);
   }
@@ -39,27 +47,40 @@ export class DatabaseCore {
 
     this.lock.acquire();
 
-    const dir = dirname(this.dbPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    try {
+      const dir = dirname(this.dbPath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+
+      this.db = this.options.queryObservability
+        ? new BunDatabase(this.dbPath, { queryObservability: this.options.queryObservability })
+        : new BunDatabase(this.dbPath);
+
+      this.db.exec('PRAGMA journal_mode = WAL');
+
+      this.db.exec('PRAGMA busy_timeout = 5000');
+
+      this.db.exec('PRAGMA synchronous = NORMAL');
+
+      this.db.exec('PRAGMA foreign_keys = ON');
+
+      runMigrations(this.db, () => this.createBackup());
+
+      createTables(this.db);
+
+      configureMessageSearchFts(this.db);
+      this.startMessageSearchMergeTimer();
+    } catch (error) {
+      if (this.db !== null) {
+        try {
+          this.db.close();
+        } catch {}
+        this.db = null as unknown as BunDatabase;
+      }
+      this.lock.release();
+      throw error;
     }
-
-    this.db = new BunDatabase(this.dbPath);
-
-    this.db.exec('PRAGMA journal_mode = WAL');
-
-    this.db.exec('PRAGMA busy_timeout = 5000');
-
-    this.db.exec('PRAGMA synchronous = NORMAL');
-
-    this.db.exec('PRAGMA foreign_keys = ON');
-
-    runMigrations(this.db, () => this.createBackup());
-
-    createTables(this.db);
-
-    configureMessageSearchFts(this.db);
-    this.startMessageSearchMergeTimer();
   }
 
   private startMessageSearchMergeTimer(): void {

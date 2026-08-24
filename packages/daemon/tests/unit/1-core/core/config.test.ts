@@ -280,6 +280,57 @@ describe('getConfig', () => {
 
     expect(config.anthropicAuthToken).toBe('auth-token-456');
   });
+
+  test('sql query observability defaults on outside tests and off in test env', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.HYPERNEO_SQL_QUERY_OBSERVABILITY;
+    delete process.env.HYPERNEO_SQL_QUERY_SLOW_THRESHOLD_MS;
+    delete process.env.HYPERNEO_SQL_QUERY_SUMMARY_INTERVAL_MS;
+    delete process.env.HYPERNEO_SQL_QUERY_MAX_QUERY_GROUPS;
+    delete process.env.HYPERNEO_SQL_QUERY_SUMMARY_LIMIT;
+    expect(getConfig().sqlQueryObservability).toEqual({
+      slowThresholdMs: 250,
+      summaryIntervalMs: 300_000,
+      maxQueryGroups: 500,
+      summaryQueryLimit: 10,
+    });
+
+    process.env.NODE_ENV = 'test';
+    expect(getConfig().sqlQueryObservability).toBeUndefined();
+
+    process.env.HYPERNEO_SQL_QUERY_OBSERVABILITY = '1';
+    expect(getConfig().sqlQueryObservability).toBeDefined();
+  });
+
+  test('sql query observability env tuning, disabling, and invalid fallbacks', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.HYPERNEO_SQL_QUERY_OBSERVABILITY = '0';
+    expect(getConfig().sqlQueryObservability).toBeUndefined();
+
+    process.env.HYPERNEO_SQL_QUERY_OBSERVABILITY = 'false';
+    expect(getConfig().sqlQueryObservability).toBeUndefined();
+
+    process.env.HYPERNEO_SQL_QUERY_OBSERVABILITY = 'on';
+    process.env.HYPERNEO_SQL_QUERY_SLOW_THRESHOLD_MS = '100';
+    process.env.HYPERNEO_SQL_QUERY_SUMMARY_INTERVAL_MS = '60000';
+    process.env.HYPERNEO_SQL_QUERY_MAX_QUERY_GROUPS = '25';
+    process.env.HYPERNEO_SQL_QUERY_SUMMARY_LIMIT = '3';
+    expect(getConfig().sqlQueryObservability).toEqual({
+      slowThresholdMs: 100,
+      summaryIntervalMs: 60_000,
+      maxQueryGroups: 25,
+      summaryQueryLimit: 3,
+    });
+
+    process.env.HYPERNEO_SQL_QUERY_SLOW_THRESHOLD_MS = 'not-a-number';
+    process.env.HYPERNEO_SQL_QUERY_SUMMARY_INTERVAL_MS = '0';
+    expect(getConfig().sqlQueryObservability).toEqual({
+      slowThresholdMs: 250,
+      summaryIntervalMs: 300_000,
+      maxQueryGroups: 25,
+      summaryQueryLimit: 3,
+    });
+  });
 });
 
 describe('parsePositiveInt', () => {
