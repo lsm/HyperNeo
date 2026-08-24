@@ -512,6 +512,54 @@ describe('EvolutionLogEvidenceService', () => {
     expect(evolutionRepo.listEvidence(scopeId)[0].summary).toContain('payment:');
   });
 
+  it('matches stateful patterns consistently across capture and drain', async () => {
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [{ scopeId, levels: ['warn'], patterns: [/burst error \d/g] }],
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'burst error 7' }));
+    await service.flushAsync();
+
+    const evidence = evolutionRepo.listEvidence(scopeId);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].summary).toContain('burst error 7');
+  });
+
+  it('retains events when subscription refresh hits a busy database', async () => {
+    const underlying = new SpaceRepository(db as never);
+    let failNextRefresh = true;
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      spaceRepo: {
+        listSpaces: (includeArchived?: boolean) => {
+          if (failNextRefresh) {
+            failNextRefresh = false;
+            throw new Error('database is locked');
+          }
+          return underlying.listSpaces(includeArchived);
+        },
+      },
+      subscriptionRefreshMs: 0,
+      flushDelayMs: 10,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'busy refresh warning' }));
+
+    const deadline = Date.now() + 5000;
+    const productScope = () =>
+      evolutionRepo
+        .listScopes({ spaceId })
+        .find((scope) => scope.policy.logEvidenceProductScope === true);
+    while (!productScope() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect(productScope()).toBeTruthy();
+    expect(evolutionRepo.listEvidence(productScope()!.id)).toHaveLength(1);
+  });
+
   it('does not double-write evidence when flush interrupts an active drain', async () => {
     const sleepSync = (ms: number): void => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

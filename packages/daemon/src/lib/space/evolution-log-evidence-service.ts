@@ -103,9 +103,16 @@ export class EvolutionLogEvidenceService {
           subscriptions = this.getSubscriptions().filter((candidate) =>
             matchesSubscription(candidate, event)
           );
-        } catch {
-          await yieldToEventLoop();
-          continue;
+        } catch (error) {
+          this.buffer.unshift(event);
+          if (isSqliteBusyError(error)) {
+            this.busyRetryCount += 1;
+            this.retryDelayMs = Math.min(
+              BUSY_RETRY_BASE_MS * 2 ** (this.busyRetryCount - 1),
+              MAX_BUSY_RETRY_MS
+            );
+          }
+          return;
         }
         if (subscriptions.length === 0) {
           await yieldToEventLoop();
@@ -143,30 +150,37 @@ export class EvolutionLogEvidenceService {
 
   flush(): void {
     this.cancelScheduledDrain();
+    let busyHit = false;
     const interrupted = this.drainItem;
     if (interrupted !== null) {
       this.drainItem = null;
       for (const subscription of interrupted.subscriptions.slice(interrupted.offset)) {
         try {
           this.writeEvidence(interrupted.event, subscription);
-        } catch {}
+        } catch (error) {
+          if (isSqliteBusyError(error)) busyHit = true;
+        }
       }
     }
     const batch = this.buffer.splice(0);
-    if (batch.length === 0) return;
-    let subscriptions: LogEvidenceSubscription[];
-    try {
-      subscriptions = this.getSubscriptions();
-    } catch {
-      return;
+    if (batch.length > 0) {
+      try {
+        const subscriptions = this.getSubscriptions();
+        for (const event of batch) {
+          for (const subscription of subscriptions) {
+            if (!matchesSubscription(subscription, event)) continue;
+            try {
+              this.writeEvidence(event, subscription);
+            } catch (error) {
+              if (isSqliteBusyError(error)) busyHit = true;
+            }
+          }
+        }
+      } catch {}
     }
-    for (const event of batch) {
-      for (const subscription of subscriptions) {
-        if (!matchesSubscription(subscription, event)) continue;
-        try {
-          this.writeEvidence(event, subscription);
-        } catch {}
-      }
+    if (!busyHit) {
+      this.busyRetryCount = 0;
+      this.retryDelayMs = null;
     }
   }
 
@@ -322,7 +336,10 @@ function matchesSubscription(
   if (subscription.modules?.length && !subscription.modules.includes(event.module ?? ''))
     return false;
   if (subscription.patterns?.length) {
-    return subscription.patterns.some((pattern) => pattern.test(event.message));
+    return subscription.patterns.some((pattern) => {
+      pattern.lastIndex = 0;
+      return pattern.test(event.message);
+    });
   }
   return true;
 }
