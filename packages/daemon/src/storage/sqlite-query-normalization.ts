@@ -184,7 +184,7 @@ export function normalizeSQLiteQuery(sql: string): string {
     .replace(/\(\s+/g, '(')
     .replace(/\s+\)/g, ')')
     .replace(/\s+,/g, ',')
-    .replace(/\(\?(?:\s*,\s*\?)+\)/g, '( ?.. )')
+    .replace(/\bin\s*\(\?(?:\s*,\s*\?)+\)/g, 'in ( ?.. )')
     .trim();
 }
 

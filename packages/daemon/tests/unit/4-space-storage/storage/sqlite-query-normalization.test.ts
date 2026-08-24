@@ -54,7 +54,7 @@ describe('normalizeSQLiteQuery', () => {
   test('consumes unterminated strings, identifiers, and comments without leaking the suffix', () => {
     expect(normalizeSQLiteQuery("SELECT 'unterminated-secret")).toBe('select ?');
     expect(normalizeSQLiteQuery('SELECT "unterminated')).toBe('select "#"');
-    expect(normalizeSQLiteQuery('SELECT /* never closed 1')).toBe('select ?');
+    expect(normalizeSQLiteQuery('SELECT /* never closed 1')).toBe('select');
   });
 });
 

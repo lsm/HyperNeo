@@ -10,6 +10,8 @@ import { STATEMENT_CACHE_CAPACITY, StatementCache } from './statement-cache';
 
 const isBun = typeof Bun !== 'undefined';
 
+const TRANSACTION_CONTROL_SQL_PATTERN = /^\s*(begin|commit|rollback|savepoint|release)\b/i;
+
 let Database: typeof NodeDatabase;
 if (isBun) {
   const { Database: BunDatabaseImpl } = await import('bun:sqlite');
@@ -61,6 +63,12 @@ if (isBun) {
     }
 
     override run(sql: string, ...params: unknown[]): { changes: number; lastInsertRowid: number } {
+      if (TRANSACTION_CONTROL_SQL_PATTERN.test(sql)) {
+        return super.run(sql, ...(params as never[])) as {
+          changes: number;
+          lastInsertRowid: number;
+        };
+      }
       return this.prepare(sql).run(...(params as never[])) as {
         changes: number;
         lastInsertRowid: number;

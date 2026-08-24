@@ -169,9 +169,9 @@ const DISCOVERY_SESSION_FOR_UUID_SQL =
 const DISCOVERY_UUID_FOR_SESSION_SQL =
   'SELECT sdk_uuid FROM sdk_messages WHERE session_id = ? AND sdk_uuid IS NOT NULL AND consumed_seq IS NOT NULL ORDER BY rowid DESC LIMIT 1';
 const DISCOVERY_WATERMARK_PAIR_SQL =
-  'SELECT 1 FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? LIMIT 1';
+  'SELECT 1 FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND consumed_seq IS NOT NULL LIMIT 1';
 const DISCOVERY_MESSAGE_SQL =
-  'SELECT id FROM sdk_messages WHERE json_valid(sdk_message) ORDER BY rowid DESC LIMIT 1';
+  "SELECT id FROM sdk_messages WHERE json_valid(sdk_message) AND message_type IN ('user', 'assistant', 'system') ORDER BY CASE message_type WHEN 'user' THEN 0 WHEN 'assistant' THEN 1 ELSE 2 END, rowid DESC LIMIT 1";
 const DISCOVERY_PENDING_QUEUE_SQL =
   'SELECT queue FROM job_queue WHERE status = ? ORDER BY rowid DESC LIMIT 1';
 const DISCOVERY_ANY_QUEUE_SQL = 'SELECT queue FROM job_queue ORDER BY rowid DESC LIMIT 1';
@@ -437,14 +437,17 @@ function discoverSingle(
   const value = row?.[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
+function rowExists(db: CompatDatabase, sql: string, params: unknown[]): boolean {
+  return runGet(prepareQuery(db, sql), params) !== null;
+}
 
 function resolveMessagesSession(
   db: CompatDatabase,
   options: LiveScaleQueryOptions
 ): ResolvedInput<string> {
   if (options.sessionId) {
-    const exists = discoverSingle(db, DISCOVERY_SESSION_EXISTS_SQL, [options.sessionId], '1');
-    return { value: exists === null ? null : options.sessionId, source: 'override' };
+    const exists = rowExists(db, DISCOVERY_SESSION_EXISTS_SQL, [options.sessionId]);
+    return { value: exists ? options.sessionId : null, source: 'override' };
   }
   return {
     value: discoverSingle(db, DISCOVERY_SESSION_SQL, [], 'session_id'),
@@ -454,13 +457,10 @@ function resolveMessagesSession(
 
 function resolveSpaceId(db: CompatDatabase, options: LiveScaleQueryOptions): ResolvedInput<string> {
   if (options.spaceId) {
-    const exists = discoverSingle(
-      db,
-      'SELECT 1 FROM space_workflows WHERE space_id = ? LIMIT 1',
-      [options.spaceId],
-      '1'
-    );
-    return { value: exists === null ? null : options.spaceId, source: 'override' };
+    const exists = rowExists(db, 'SELECT 1 FROM space_workflows WHERE space_id = ? LIMIT 1', [
+      options.spaceId,
+    ]);
+    return { value: exists ? options.spaceId : null, source: 'override' };
   }
   return { value: discoverSingle(db, DISCOVERY_SPACE_SQL, [], 'space_id'), source: 'discovered' };
 }
@@ -470,14 +470,12 @@ function resolveWatermark(
   options: LiveScaleQueryOptions
 ): ResolvedInput<{ sessionId: string; sdkUuid: string }> {
   if (options.sessionId && options.messageUuid) {
-    const pair = discoverSingle(
-      db,
-      DISCOVERY_WATERMARK_PAIR_SQL,
-      [options.sessionId, options.messageUuid],
-      '1'
-    );
+    const pair = rowExists(db, DISCOVERY_WATERMARK_PAIR_SQL, [
+      options.sessionId,
+      options.messageUuid,
+    ]);
     return {
-      value: pair === null ? null : { sessionId: options.sessionId, sdkUuid: options.messageUuid },
+      value: pair ? { sessionId: options.sessionId, sdkUuid: options.messageUuid } : null,
       source: 'override',
     };
   }
@@ -520,26 +518,20 @@ function resolveAdmissionMessage(
   options: LiveScaleQueryOptions
 ): ResolvedInput<string> {
   if (options.messageId) {
-    const exists = discoverSingle(
-      db,
-      'SELECT 1 FROM sdk_messages WHERE id = ? LIMIT 1',
-      [options.messageId],
-      '1'
-    );
-    return { value: exists === null ? null : options.messageId, source: 'override' };
+    const exists = rowExists(db, 'SELECT 1 FROM sdk_messages WHERE id = ? LIMIT 1', [
+      options.messageId,
+    ]);
+    return { value: exists ? options.messageId : null, source: 'override' };
   }
   return { value: discoverSingle(db, DISCOVERY_MESSAGE_SQL, [], 'id'), source: 'discovered' };
 }
 
 function resolveQueue(db: CompatDatabase, options: LiveScaleQueryOptions): ResolvedInput<string> {
   if (options.queue) {
-    const exists = discoverSingle(
-      db,
-      'SELECT 1 FROM job_queue WHERE queue = ? LIMIT 1',
-      [options.queue],
-      '1'
-    );
-    return { value: exists === null ? null : options.queue, source: 'override' };
+    const exists = rowExists(db, 'SELECT 1 FROM job_queue WHERE queue = ? LIMIT 1', [
+      options.queue,
+    ]);
+    return { value: exists ? options.queue : null, source: 'override' };
   }
   const pending = discoverSingle(db, DISCOVERY_PENDING_QUEUE_SQL, ['pending'], 'queue');
   if (pending) return { value: pending, source: 'discovered' };
@@ -615,18 +607,27 @@ function buildAdmissionCases(db: CompatDatabase, messageId: string): CaseSpec[] 
   const stmtLookup = prepareQuery(db, lookupSql);
   const stmtSuperseded = prepareQuery(db, MESSAGE_SUPERSEDED_PROBE_SQL);
   const stmtStatus = prepareQuery(db, SEARCHABLE_USER_STATUS_PROBE_SQL);
+  let executedStatements = 0;
   return [
     {
       name: 'admission-lookup-and-policy',
-      statements: [{ sql: lookupSql, params: [messageId] }],
+      statements: [
+        { sql: lookupSql, params: [messageId] },
+        {
+          sql: MESSAGE_SUPERSEDED_PROBE_SQL,
+          params: ['session-id-bound', 'row-id-bound', 'uuid-bound'],
+        },
+        { sql: SEARCHABLE_USER_STATUS_PROBE_SQL, params: ['row-id-bound'] },
+      ],
       run: (): CaseExecution => {
+        executedStatements = 1;
         const row = runGet(stmtLookup, [messageId]);
-        if (!row) return { rows: 0, statements: 1 };
+        if (!row) return { rows: 0, statements: executedStatements };
         let message: unknown = null;
         try {
           message = JSON.parse(String(row.sdk_message));
         } catch {
-          return { rows: 1, statements: 1 };
+          return { rows: 1, statements: executedStatements };
         }
         const uuid =
           message && typeof message === 'object' && 'uuid' in message
@@ -637,13 +638,17 @@ function buildAdmissionCases(db: CompatDatabase, messageId: string): CaseSpec[] 
           body: extractVisibleSearchText(message as never),
           now: Date.now(),
           eligibility: row as never,
-          isSuperseded: () => runGet(stmtSuperseded, [row.session_id, row.id, uuid]) !== null,
+          isSuperseded: () => {
+            executedStatements += 1;
+            return runGet(stmtSuperseded, [row.session_id, row.id, uuid]) !== null;
+          },
           isSearchableUserStatus: () => {
+            executedStatements += 1;
             const statusRow = runGet(stmtStatus, [row.id]);
             return statusRow?.send_status === 'consumed' || statusRow?.send_status === 'failed';
           },
         });
-        return { rows: 1, statements: 1 };
+        return { rows: 1, statements: executedStatements };
       },
     },
   ];
@@ -789,35 +794,42 @@ export function runLiveScaleQueryRegression(options: LiveScaleQueryOptions): {
       }
     };
 
-    runProfile(
-      'messages-by-session',
-      () => resolveMessagesSession(db, options),
-      (sessionId) => buildMessagesBySessionCases(db, sessionId, options)
-    );
-
-    runProfile(
-      'space-workflows',
-      () => resolveSpaceId(db, options),
-      (spaceId) => buildSpaceWorkflowsCases(db, spaceId)
-    );
-
-    runProfile(
-      'consumed-seq-watermarks',
-      () => resolveWatermark(db, options),
-      (value) => buildWatermarkCases(db, value.sessionId, value.sdkUuid)
-    );
-
-    runProfile(
-      'message-search-admission',
-      () => resolveAdmissionMessage(db, options),
-      (messageId) => buildAdmissionCases(db, messageId)
-    );
-
-    runProfile(
-      'job-queue-candidate',
-      () => resolveQueue(db, options),
-      (queue) => buildJobQueueCandidateCases(db, queue, options)
-    );
+    const selectedProfileNames = new Set<LiveScaleQueryProfileName>(options.profiles);
+    if (selectedProfileNames.has('messages-by-session')) {
+      runProfile(
+        'messages-by-session',
+        () => resolveMessagesSession(db, options),
+        (sessionId) => buildMessagesBySessionCases(db, sessionId, options)
+      );
+    }
+    if (selectedProfileNames.has('space-workflows')) {
+      runProfile(
+        'space-workflows',
+        () => resolveSpaceId(db, options),
+        (spaceId) => buildSpaceWorkflowsCases(db, spaceId)
+      );
+    }
+    if (selectedProfileNames.has('consumed-seq-watermarks')) {
+      runProfile(
+        'consumed-seq-watermarks',
+        () => resolveWatermark(db, options),
+        (value) => buildWatermarkCases(db, value.sessionId, value.sdkUuid)
+      );
+    }
+    if (selectedProfileNames.has('message-search-admission')) {
+      runProfile(
+        'message-search-admission',
+        () => resolveAdmissionMessage(db, options),
+        (messageId) => buildAdmissionCases(db, messageId)
+      );
+    }
+    if (selectedProfileNames.has('job-queue-candidate')) {
+      runProfile(
+        'job-queue-candidate',
+        () => resolveQueue(db, options),
+        (queue) => buildJobQueueCandidateCases(db, queue, options)
+      );
+    }
 
     const selectedProfiles = options.profiles;
     const executedProfiles = profiles.filter(

@@ -472,6 +472,8 @@ describe('live-scale query regression harness', () => {
 
     const admission = profileByName.get('message-search-admission');
     expect(admission?.cases[0].rowsReturned).toEqual({ min: 1, max: 1 });
+    expect(admission?.cases[0].statementsPerIteration).toEqual({ min: 3, max: 3 });
+    expect(admission?.cases[0].statements).toHaveLength(3);
 
     const queue = profileByName.get('job-queue-candidate');
     expect(queue?.cases[0].rowsReturned).toEqual({ min: 2, max: 2 });

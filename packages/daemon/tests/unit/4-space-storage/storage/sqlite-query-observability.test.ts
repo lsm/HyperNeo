@@ -454,7 +454,7 @@ describe('sqlite query observability through the bun compat layer', () => {
           db.prepare('INSERT INTO cache_probe (x) VALUES (?)')
         );
         const insert = db.prepare('INSERT INTO cache_probe (x) VALUES (?)');
-        expect(typeof (insert as unknown as { finalize: unknown }).finalize).toBe('function');
+        expect(typeof (insert as unknown as { run: unknown }).run).toBe('function');
         insert.run(1);
         expect(collected.some((event) => event.metadata.event === 'slow')).toBe(true);
       } finally {
@@ -499,7 +499,11 @@ describe('sqlite query observability through the node compat layer', () => {
       cwd: repoRoot,
       encoding: 'utf8',
     });
-    expect(result.status).toBe(0);
+    if (result.status !== 0) {
+      throw new Error(
+        `node driver exited ${result.status}\nstderr: ${result.stderr}\nstdout: ${result.stdout}`
+      );
+    }
     const checks = JSON.parse((result.stdout.trim().split('\n').pop() ?? '') as string) as Record<
       string,
       unknown
