@@ -2070,5 +2070,158 @@ describe('ProvidersSettings', () => {
       expect(updatedPanel.textContent).toContain('kimi-k3');
       expect(updatedPanel.textContent).not.toContain('kimi-k4');
     });
+
+    it('keeps the save successful when the post-save refresh fails', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+      mockUpdateProvider.mockResolvedValue({ success: true, provider });
+      mockRequest.mockRejectedValue(new Error('refresh timed out'));
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-k4')
+      );
+
+      const boxes = screen
+        .getByTestId('visible-models-panel')
+        .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[1]);
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled());
+      expect(mockToastWarning).toHaveBeenCalledWith(
+        expect.stringContaining('could not be verified')
+      );
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(mockListProviders).toHaveBeenCalledTimes(2);
+    });
+
+    it('merges cached static provider models into the candidate list', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({ models: [{ id: 'kimi-k3', name: 'K3' }] });
+      mockRequest.mockImplementation((_method: string, params?: { forceRefresh?: boolean }) => {
+        if (params?.forceRefresh) {
+          return Promise.resolve({ models: [{ id: 'kimi-k3', provider: 'kimi' }] });
+        }
+        return Promise.resolve({
+          models: [
+            { id: 'kimi-k3', display_name: 'K3', provider: 'kimi' },
+            { id: 'kimi-offline', display_name: 'Offline Static', provider: 'kimi' },
+          ],
+        });
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-offline')
+      );
+
+      const panelEl = screen.getByTestId('visible-models-panel');
+      expect(panelEl.textContent).toContain('kimi-k3');
+
+      const boxes = panelEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[0]);
+      expect(panelEl.textContent).toContain('1 of 2 selected (unsaved).');
+    });
+
+    it('disables curation checkboxes while candidates are fetching', async () => {
+      const provider = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ models: [{ id: 'kimi-k3' }] }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockReturnValue(new Promise(() => {}));
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+
+      await waitFor(() => {
+        const boxes = screen
+          .getByTestId('visible-models-panel')
+          .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+        expect(boxes.length).toBeGreaterThan(0);
+        for (const box of boxes) {
+          expect(box.disabled).toBe(true);
+        }
+      });
+    });
+
+    it('preserves stored model names when saving a subset', async () => {
+      const provider = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ models: [{ id: 'kimi-k3', name: 'Stored Name' }] }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3', name: 'Remote Name' }, { id: 'kimi-k4' }],
+      });
+      mockUpdateProvider.mockResolvedValue({ success: true, provider });
+      mockRequest.mockResolvedValue({ models: [{ id: 'kimi-k3', provider: 'kimi' }] });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      const panel = await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() => expect(panel.textContent).toContain('kimi-k4'));
+
+      const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[1]);
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => expect(mockUpdateProvider).toHaveBeenCalled());
+      const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
+      const stored = JSON.parse(params.configJson).models as Array<{ id: string; name?: string }>;
+      expect(stored.find((model) => model.id === 'kimi-k3')?.name).toBe('Stored Name');
+    });
+
+    it('rejects a curation that would exceed the config size limit', async () => {
+      const provider = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ padding: 'x'.repeat(64 * 1024) }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-k4')
+      );
+
+      const boxes = screen
+        .getByTestId('visible-models-panel')
+        .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[1]);
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() =>
+        expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('too large to store'))
+      );
+      expect(mockUpdateProvider).not.toHaveBeenCalled();
+    });
   });
 });

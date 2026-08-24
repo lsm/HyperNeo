@@ -620,7 +620,27 @@ export function ProvidersSettings() {
         },
       }));
     } else {
-      const candidates = mergeVisibleModelCandidates([remote.models, curatedList]);
+      const cached = (await connectionManager
+        .getHubIfConnected()
+        ?.request('models.list', { useCache: true })
+        .catch(() => null)) as {
+        models?: Array<{ id?: unknown; display_name?: unknown; provider?: unknown }>;
+      } | null;
+      const cachedProviderModels = (cached?.models ?? []).flatMap((model) =>
+        model.provider === provider.providerId && typeof model.id === 'string'
+          ? [
+              {
+                id: model.id,
+                ...(typeof model.display_name === 'string' ? { name: model.display_name } : {}),
+              },
+            ]
+          : []
+      );
+      const candidates = mergeVisibleModelCandidates([
+        curatedList,
+        remote.models,
+        cachedProviderModels,
+      ]);
       setVisibleModelsPanels((prev) => ({
         ...prev,
         [provider.id]: {
@@ -646,7 +666,14 @@ export function ProvidersSettings() {
       } else {
         checkedIds.add(modelId);
       }
-      return { ...prev, [provider.id]: { ...panel, draftCheckedIds: checkedIds } };
+      return {
+        ...prev,
+        [provider.id]: {
+          ...panel,
+          fingerprint: panel.fingerprint ?? getVisibleModelsFingerprint(provider),
+          draftCheckedIds: checkedIds,
+        },
+      };
     });
   };
 
@@ -665,36 +692,51 @@ export function ProvidersSettings() {
       if (!confirmed) return;
     }
 
+    const configJson = mergeProviderConfig(provider.configJson, { models });
+    if (configJson.length > 64 * 1024) {
+      toast.error(
+        `${provider.displayName} curation is too large to store (${configJson.length} chars, limit 65536). Select fewer models.`
+      );
+      return;
+    }
+
     setPendingId(provider.id);
     try {
-      await updateProvider(provider.id, {
-        configJson: mergeProviderConfig(provider.configJson, { models }),
-      });
-      const hub = connectionManager.getHubIfConnected();
-      if (hub) {
+      await updateProvider(provider.id, { configJson });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save curation');
+      setPendingId(null);
+      return;
+    }
+    const hub = connectionManager.getHubIfConnected();
+    if (hub) {
+      try {
         const response = (await hub.request('models.list', { forceRefresh: true })) as {
           models?: Array<{ id?: string; provider?: string }>;
         };
-        const providerModels = (response.models ?? []).filter(
-          (model) => model.provider === provider.providerId
-        );
-        const visibleIds = new Set(providerModels.map((model) => model.id));
-        const coherent =
-          models.every((model) => visibleIds.has(model.id)) &&
-          providerModels.every((model) => !!model.id && checkedIds.has(model.id));
-        if (!coherent) {
-          toast.warning(
-            `${provider.displayName} curation saved, but the refreshed model list does not match yet. Try fetching models again.`
+        if (provider.isEnabled) {
+          const providerModels = (response.models ?? []).filter(
+            (model) => model.provider === provider.providerId
           );
+          const visibleIds = new Set(providerModels.map((model) => model.id));
+          const coherent =
+            models.every((model) => visibleIds.has(model.id)) &&
+            providerModels.every((model) => !!model.id && checkedIds.has(model.id));
+          if (!coherent) {
+            toast.warning(
+              `${provider.displayName} curation saved, but the refreshed model list does not match yet. Try fetching models again.`
+            );
+          }
         }
+      } catch {
+        toast.warning(
+          `${provider.displayName} curation saved, but the refresh could not be verified.`
+        );
       }
-      await loadProviders();
-      toast.success(`${provider.displayName} curation saved`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save curation');
-    } finally {
-      setPendingId(null);
     }
+    await loadProviders();
+    toast.success(`${provider.displayName} curation saved`);
+    setPendingId(null);
   };
 
   const healthDotClass = (status: string) => {
@@ -1162,7 +1204,9 @@ export function ProvidersSettings() {
                                 <p class="text-[11px] text-gray-500 mt-2">
                                   {storedCuratedIds
                                     ? `${visibleCheckedCount} of ${visibleRows.length} visible.`
-                                    : `${visibleRows.length} model${visibleRows.length === 1 ? '' : 's'} — all visible (no curation stored).`}
+                                    : hasUnsavedVisibleModels
+                                      ? `${visibleCheckedCount} of ${visibleRows.length} selected (unsaved).`
+                                      : `${visibleRows.length} model${visibleRows.length === 1 ? '' : 's'} — all visible (no curation stored).`}
                                 </p>
                                 <div class="max-h-48 overflow-y-auto space-y-1 mt-1">
                                   {visibleRows.map((model) => (
@@ -1173,7 +1217,7 @@ export function ProvidersSettings() {
                                       <input
                                         type="checkbox"
                                         checked={draftCheckedIds.has(model.id)}
-                                        disabled={isPending}
+                                        disabled={isPending || visiblePanel.fetching}
                                         onChange={() =>
                                           handleToggleVisibleModel(provider, model.id)
                                         }
