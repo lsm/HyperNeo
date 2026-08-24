@@ -5239,7 +5239,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             )
             .optional()
             .describe('Accumulate metric observations as numeric deltas'),
-          progress: z.number().int().min(0).max(100).optional().describe('Set goal progress 0-100'),
+          progress: z
+            .number()
+            .int()
+            .min(0)
+            .max(100)
+            .optional()
+            .describe('Set goal progress 0-100 (rejected for recurring goals)'),
         },
         (args) => handlers.review_goal_outcome(args)
       )

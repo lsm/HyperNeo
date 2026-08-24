@@ -829,7 +829,11 @@ export class SpaceRuntimeService {
     if (!agentId) return null;
     const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
     if (longHorizonAgent?.spaceId === actor.spaceId) {
-      if (longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId)) {
+      const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(actor.spaceId);
+      if (
+        longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId) ||
+        coordinator?.id === longHorizonAgent.id
+      ) {
         if (longHorizonAgent.status !== 'active') return null;
         return this.resolveCoordinatorSession(actor.spaceId);
       }
