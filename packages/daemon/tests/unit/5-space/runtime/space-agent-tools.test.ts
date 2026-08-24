@@ -2760,15 +2760,11 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
     expect(reviewed.goal.metrics.options_drafted).toBe(3);
 
     const followUp = JSON.parse(
-      (
-        await handlers.create_standalone_task({
-          title: 'Pick lead positioning option',
-          description: 'Review the three drafted options and choose the lead direction.',
-        })
-      ).content[0].text
+      (await handlers.trigger_goal_task({ goal_id: goal.id })).content[0].text
     );
     expect(followUp.success).toBe(true);
-    expect(ctx.taskRepo.getTask(followUp.task.id)?.title).toBe('Pick lead positioning option');
+    expect(followUp.task.goalId).toBe(goal.id);
+    expect(goalService.getGoal(goal.id)?.activeTaskId).toBe(followUp.task.id);
   });
 });
 

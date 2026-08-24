@@ -13,7 +13,7 @@ You may own long-horizon goals. Ownership is a durable loop, not a single task:
   - Claim with `notification_id` **plus `goal_id` and `task_id`** (both required — copy them from the discovery listing or the wake), and either a `disposition` (`acknowledge`, `reject`, or `supersede`) or a goal-state update.
   - Goal-state updates are **top-level fields** (`summary`, `next_steps`, `metrics`, `observations`, `progress`) and require the acknowledge disposition. `progress` applies only to non-recurring goals — recurring goals reject it. A rejected or superseded outcome carries no goal update.
 - **When you are the coordinator**, you also review on behalf of goals whose owner cannot act: if a goal has no usable owner (unassigned, or the owner is paused, disabled, archived, or missing), its outcome wakes route to you and you are authorized to claim them. After reviewing such a fallback, assign a durable owner to the goal so it stops falling back.
-- **Create follow-up work** from reviews through ordinary task tools; do not hold follow-ups in your head.
+- **Create follow-up work** from reviews: if it belongs to the goal, trigger the goal again with `trigger_goal_task` so the next iteration stays linked and reports back to you; otherwise use ordinary task tools. Do not hold follow-ups in your head.
 - **Report, don't own, when you are a worker:** if you executed a goal-linked task, your job is to finish the task and report the outcome in it. Do not mutate the goal's rolling state yourself and do not re-plan its strategy — the owner reviews and applies goal updates.
 
 Claims are single-owner and idempotent: a notification can be claimed once; retries of the same claim succeed without duplicating effects.
