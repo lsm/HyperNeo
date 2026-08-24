@@ -1,10 +1,12 @@
 # CI - Build, test, and quality checks
 #
-# Free-tier shape (task #1399): one PR run occupies at most 20 parallel jobs
-# (1 check + 1 path-filter + 6 unit legs + 11 online legs + 1 web leg — the
-# balance report runs after the tests, inside the same budget) so a solo run
-# never queues behind the repo's 20 shared concurrent runners. Coverage
-# instrumentation is REMOVED from CI entirely (owner directive 2026-08-23):
+# Free-tier shape (task #1399): one PR run occupies at most 21 parallel jobs
+# (1 check + 1 path-filter + 6 unit legs + 11 online legs + 1 web leg + 1
+# Deno boot smoke — the balance report runs after the tests, inside the same
+# budget) so a solo run never queues behind the repo's 20 shared concurrent
+# runners (the short Deno smoke leg may briefly wait for a free slot).
+# Coverage instrumentation is REMOVED from CI entirely (owner directive
+# 2026-08-23):
 # no per-job --coverage, no lcov artifacts, no coverage gate, baseline, or
 # badge. Test jobs still upload junit XML (balance report + shard weights).
 # Local coverage runs remain available via `./scripts/test-daemon.sh
@@ -26,6 +28,10 @@
 # NOTE: E2E tests are NOT run on any automatic trigger (push / PR). No-LLM E2E
 # remains manual-only here via workflow_dispatch on any branch. Real-API daemon
 # shards and LLM E2E are manual-only in real-api-tests.yml.
+#
+# NOTE: The Deno boot smoke job runs on every trigger regardless of the
+# daemon/web path filters (docs-only PRs included) — it guards the Bun/Deno
+# dual-support migration and is non-blocking until flipped to required.
 #
 # NOTE: Sandbox apt packages (bubblewrap/socat/ripgrep) are intentionally not
 # installed on test/build jobs — no CI-executed test there runs a real sandbox
@@ -144,6 +150,47 @@ jobs:
             echo "ERROR: Non-exact version pins found. Use exact versions only (no ^ or ~)."
             exit 1
           fi
+
+  # ============================================
+  # DENO BOOT SMOKE (dual-runtime support, task #1409)
+  # Boots the daemon under pinned Deno 2.9.4 via scripts/deno-smoke.sh and
+  # verifies HTTP 200 on /, the /ws WebSocket handshake, >80 sqlite tables
+  # from migrations, and graceful SIGTERM teardown. This is the guardrail
+  # that keeps later Bun/Deno dual-runtime PRs safe to land incrementally;
+  # it runs on every trigger regardless of the daemon/web path filters.
+  # NON-BLOCKING for now (continue-on-error): once it has been green for a
+  # few days, flip it to required — remove continue-on-error, add the job to
+  # all-tests-pass.needs, and add its check name to the repo ruleset.
+  # Run on: PR to dev, push to dev, workflow_dispatch
+  # ============================================
+
+  deno-boot-smoke:
+    name: Deno Boot Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    if: github.event.inputs.run_e2e_only != 'true'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.3.14
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.4
+
+      # Deno resolves workspace npm deps from the bun-installed node_modules
+      # (BYONM), so this install is what lets the daemon boot with no network.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run Deno boot smoke
+        run: ./scripts/deno-smoke.sh
 
   # ============================================
   # PATH FILTERS
