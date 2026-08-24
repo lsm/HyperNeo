@@ -51,7 +51,7 @@ MIL = `useTaskMilestones` (#2756), GRP = `useGroupMessages` (#2788).
 | 5 | `liveQuery.error`, snapshot phase | machine settles with `error` emission; surfaced as `error` in result | settles with error emission; **error payload discarded** (no `error` in result), only loading released | **no error listener at all** — error ignored, loading can stay claimed | settles with error emission; payload discarded |
 | 6 | `liveQuery.error`, delta phase | `transport-error` → same-subscriptionId resubscribe (generation bump) | same | not wired (stream loss does not resubscribe) | same as STM |
 | 7 | Error surfaced to UI | yes (`lifecycle.error` mirrored; exhausted-watchdog settle keeps it `null`) | no | no | no |
-| 8 | Reconnect mechanism | `onConnection('connected')` → `transport-error` **and** `isConnected` effect rerun — both fire per reconnect | same double path, `onConnection` half guarded by `activeSubIdRef` | same as PRJ | **no `onConnection`** — reconnect rides the `isConnected` dep alone: full teardown, fresh subscriptionId, fresh machine (pinned, #2788) |
+| 8 | Reconnect mechanism | `onConnection('connected')` → `transport-error` handler **plus** the `isConnected` dep rerun — on an observed disconnect sequence the rerun's cleanup unregisters the handler before `connected` arrives, so both paths exercise mainly in tests (which drive the handler directly) | same pairing, `onConnection` half guarded by `activeSubIdRef` | same as PRJ | **no `onConnection`** — reconnect rides the `isConnected` dep alone: full teardown, fresh subscriptionId, fresh machine (pinned, #2788) |
 | 9 | Stale-closure guards | generation guard only (effect teardown unsubscribes listeners) | generation + `activeSubIdRef` | generation + `activeSubIdRef` | generation + `activeSubIdRef` (also guards the ladder timers) |
 | 10 | Pre-snapshot / mid-resubscribe deltas | dropped unless `live` (machine gating; end state restored by the resubscribe snapshot) | same (PR-4 drift rows 7–8) | same | same (PR-5 "window tightening") |
 | 11 | `settled-empty` | releases loading, no error | releases loading | releases loading | releases loading |
@@ -59,10 +59,14 @@ MIL = `useTaskMilestones` (#2756), GRP = `useGroupMessages` (#2788).
 | 13 | Row store | two `useState` row arrays | `useState` | `useState` | `useReducer` pagination (cutoff/hidden counts) — the adjacent machinery the pilot deliberately did not touch |
 
 Rows 4–8 are the behavior-relevant drift; rows 2/3/11 are pure config; rows 9–13
-are structural. All 13 are pinned: machine contract suite
+are structural. Rows 1–12 are pinned: machine contract suite
 (`live-query-lifecycle.test.ts`, 22 tests incl. the full status×event table) plus
 four `.lifecycle.test.ts` characterization files (584/352/272/414 lines) written
-green against the pre-migration hooks and unchanged since.
+green against the pre-migration hooks and unchanged since. Row 13's pagination
+*behavior* is pinned by the separate `useGroupMessages.test.ts` suite (the
+lifecycle file asserts no `pageSize`/`hasOlder`/`loadEarlier` semantics), and the
+store-shape column (`useState` vs `useReducer`) is structure, not an observable
+contract.
 
 ## PR-5 store-variant assessment (consolidated)
 
@@ -77,8 +81,16 @@ stores: `app-mcp-store`, `global-store`, `session-store`, `skills-store`,
 | `app-mcp-store` | **Fits as-is** | Single fixed subscription, imperative `subscribe()`/`unsubscribe()`, snapshot/delta/error listeners, `onConnection` resubscribe, real error+loading signals. Maps 1:1 with `snapshotRetryEnabled: false`; settle-with-error ≈ its `error.value` + `loading=false`. Best first store consumer. |
 | `global-store` | Fits with one small machine extension — or legitimately stays hand-rolled | `sessions.list` has dynamic params (`showArchived` toggles re-subscribe under a stable id); the machine has no params-changed event. Also swallows all errors and has no loading surface, so `error-retry`/`settled-empty` carry no UI meaning. |
 | `space-store` | Fits with machine extensions + a store adapter; highest payoff | Four near-identical blocks (`spaceTaskActivity.byTask`, `spaceTaskMessages.byTask.compact`, `nodeExecutions.byRun`, `spaceSessions.bySpace`). Caveats: no `liveQuery.error` listeners anywhere (migration would *add* an error path needing a policy decision); `subscribeTaskActivity`/`subscribeTaskMessageActivity` are awaited and throw on initial failure (needs an async bridge — the machine settles via emissions); reconnect resubscribe is fire-and-forget with no retry/settle. **Correction from #2788 review:** `nodeExecutions.byRun` is single-active in practice — `ensureNodeExecutions` unsubscribes every run subscription before subscribing to a new run — so one machine instance at a time suffices; the N-concurrent concern was overstated. |
-| `space-mcp-store` (inventoried here) | Fits, same caveats as `app-mcp-store` | Singleton `mcpEnablement.bySpace` subscription with snapshot/delta listeners, `onConnection` resubscribe, awaited subscribe that throws to the caller, loading+error signals, no `liveQuery.error` listener. Needs the async bridge and a fresh-machine-per-`subscribe()` adapter (`disposed` is terminal). |
-| `skills-store` (inventoried here) | Fits, same shape as `space-mcp-store` | Same subscribe/unsubscribe skeleton with snapshot/delta listeners and `onConnection` resubscribe. |
+| `space-mcp-store` (inventoried here) | Fits, same caveats as `app-mcp-store` | Singleton `mcpEnablement.bySpace` subscription with snapshot/delta listeners, `onConnection` resubscribe, awaited subscribe that throws to the caller, loading+error signals, no `liveQuery.error` listener. Needs the async bridge and a fresh machine per actual subscription lifecycle (`disposed` is terminal). |
+| `skills-store` (inventoried here) | Fits, same shape as `space-mcp-store` | Same subscribe/unsubscribe skeleton with snapshot/delta listeners and `onConnection` resubscribe — but `subscribe()` is **ref-counted** (`useSkills`, `ToolsModal`, `AppMcpServersSettings` overlap; re-acquisition reuses the live subscription, teardown at zero), so machine creation must key to the 0→1 lifecycle, not to each acquisition call. |
+
+One caveat shared by every "fits" verdict above: these stores currently apply
+matching deltas **unconditionally**, while the machine emits deltas only from
+`live` (drift row 10). After a resubscribe whose snapshot is lost or delayed, a
+migrated store with `snapshotRetryEnabled: false` would sit frozen in
+`awaiting-snapshot` and drop deltas that today's stores apply. The U4 migration
+must either keep the watchdog armed for stores or explicitly accept and record
+the gating change.
 | `session-store` `messages.bySession` (inventoried here) | **Does not fit today** | The subscription is wrapped in a recovery protocol: `MESSAGE_TOO_LARGE` handling, a hand-rolled `awaitingSnapshot` delta gate (its own version of the machine's `live` gating), `beginRecovery`/`performRecovery` on disconnect/reconnect, and optimistic-message preservation in the apply path (`mergeSnapshotIntoTranscript`'s prefix preservation plus uuid-keyed dedup in `mergeSdkMessagesWithDedup`). All of it lives above the subscription lifecycle; candidate only after recovery orchestration is itself extracted. |
 
 ## Proposed unification PRs — NOT applied, owner decides
@@ -95,29 +107,35 @@ Flip PRJ/MIL/GRP to default config (drop `snapshotRetryEnabled: false`).
   3 collapse (row 4 needs U3 — the machine has no request-failure event either
   way).
 - **Risk:** observable behavior change on three surfaces — up to 5 extra
-  subscribe/snapshot exchanges per dead query (daemon-side load if a query name
-  is misconfigured), and "loading forever" becomes "empty after ~10s", a product
-  call for MIL/GRP panels. Pins that must move: PR-4 rows 1–2 pins (no-watchdog,
-  messageless-settle), PR-5's no-watchdog and ladder-settle pins. GRP's ladder is
-  unaffected: it retries only *rejected* subscribe requests while the machine
-  sits in `subscribing`, whereas the watchdog arms only after `subscribed`
-  dispatches — disjoint phases, no precedence decision, so U1 stands alone for
-  GRP without U3.
+  subscribe/snapshot exchanges per query whose subscribe RPC succeeds but whose
+  snapshot never arrives (lost or slow push; a *rejected* subscribe — e.g. an
+  unknown query name — settles immediately via the messageless `snapshot-failed`
+  in `subscribing` and never arms the watchdog), and "loading forever" becomes
+  "empty after ~10s", a product call for MIL/GRP panels. Pins that must move:
+  PR-4 rows 1–2 pins (no-watchdog, messageless-settle), PR-5's no-watchdog and
+  ladder-settle pins. GRP's ladder is unaffected: it retries only *rejected*
+  subscribe requests while the machine sits in `subscribing`, whereas the
+  watchdog arms only after `subscribed` dispatches — disjoint phases, no
+  precedence decision, so U1 stands alone for GRP without U3.
 
 ### U2. One reconnect mechanism (kill row 8 drift)
 
 Standardize on the `isConnected` rerun (GRP's path): drop the `onConnection`
 half from STM/PRJ/MIL.
 - **Value:** one reconnect story (fresh subscriptionId + fresh machine, server
-  re-pushes the snapshot); removes the double-path churn (each reconnect
-  currently costs a same-id resubscribe *and* a full teardown) and three
-  divergent `activeSubIdRef` guards.
-- **Risk:** same-id resubscribe (transport-error) is cheaper than full teardown
-  when the socket survives — standardizing on rerun trades a rare wasted
-  subscribe for simplicity; STM's active-turn side channel is currently
-  re-established by both paths, so the rerun-only path must keep covering it (it
-  does — the effect re-runs both subscriptions). Pins that must move: the
-  reconnect pins in all three `.lifecycle.test.ts` files.
+  re-pushes the snapshot) and three fewer divergent `activeSubIdRef` guards.
+  This is mechanism simplification, not request reduction: on an observed
+  disconnect sequence the `isConnected` rerun's cleanup already unregisters the
+  `onConnection` handler before `connected` arrives, so the same-id resubscribe
+  half is live only when a `connected` event lands without a preceding
+  disconnect-driven rerun (and in the lifecycle tests, which drive the handler
+  directly — the 12→14 pin).
+- **Risk:** the same-id path covers `connected`-without-disconnect cases that
+  the rerun cannot; dropping it must be shown inert for the hub's actual
+  reconnect event sequence, not assumed. STM's active-turn side channel is
+  currently re-established by both paths, so the rerun-only path must keep
+  covering it (it does — the effect re-runs both subscriptions). Pins that must
+  move: the reconnect pins in all three `.lifecycle.test.ts` files.
 
 ### U3. Shared executor for the four facades (the `reduceRun` precursor)
 
@@ -136,15 +154,21 @@ structurally identical) into one executor; per-hook config becomes declarative
 
 ### U4. Adopt the machine in `app-mcp-store` (+ `space-mcp-store`, `skills-store`)
 
-First store consumers; fresh machine per `subscribe()` call, async bridge for
-awaited-and-throwing subscribes, `snapshotRetryEnabled: false`.
+First store consumers; a fresh machine per actual subscription lifecycle
+(0→1), async bridge for awaited-and-throwing subscribes,
+`snapshotRetryEnabled: false` — or the watchdog armed (see below).
 - **Value:** three more copies of the same skeleton collapse; proves the
   non-hook adapter shape (singleton stores, imperative lifecycle) that
   `space-store` (highest payoff, four blocks) then reuses.
 - **Risk:** stores surface subscribe failures by throwing — the machine settles
   via emissions, so the bridge must reject the `subscribe()` promise on an
   `error`/`settled-empty` emission (a policy choice: settle-empty currently
-  means "release loading, no error"). The three singleton stores already carry
+  means "release loading, no error"). `skills-store`'s `subscribe()` is
+  ref-counted across overlapping consumers (`useSkills`, `ToolsModal`,
+  `AppMcpServersSettings`) — acquisition reuses the live subscription — so the
+  adapter keys machine creation to the 0→1 transition, never to each
+  acquisition call. The delta-gating caveat above applies: pick the watchdog or
+  accept the row-10 policy change. The three singleton stores already carry
   direct lifecycle pins (`lib/__tests__/app-mcp-store.test.ts`,
   `lib/__tests__/space-mcp-store.test.ts`, `lib/skills-store.test.ts` — subscribe
   failures, loading/snapshot, deltas, stale events, reconnect, unsubscribe): the

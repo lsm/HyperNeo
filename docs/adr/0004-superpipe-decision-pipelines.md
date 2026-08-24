@@ -1883,8 +1883,10 @@ not speculative: the pilot-12 closing report's store assessment finds
 `app-mcp-store`, `space-mcp-store`, and `skills-store` fit the machine as-is
 (single fixed subscription, snapshot/delta listeners, reconnect resubscribe;
 needs `snapshotRetryEnabled: false`, an async bridge for awaited-and-throwing
-subscribes, and a fresh-machine-per-subscribe adapter since `disposed` is
-terminal), with `space-store` (four near-identical blocks, highest payoff) and
+subscribes, and a fresh machine per actual subscription lifecycle since
+`disposed` is terminal — `skills-store`'s ref-counted `subscribe()` must key
+machine creation to the 0→1 transition, not to each acquisition), with
+`space-store` (four near-identical blocks, highest payoff) and
 `global-store` (dynamic params) behind small decisions. What blocks promotion
 is not the count but drift: the four executors differ in config and policy —
 snapshot watchdog on/off, subscribe-rejection retry ladder, error surfacing,
