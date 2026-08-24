@@ -1,11 +1,11 @@
 import type { Session, MessageContent } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Logger } from '../logger';
-import { Logger as LoggerClass } from '../logger';
-import type { ModelSwitchHandler } from './model-switch-handler';
-import type { InterruptHandler } from './interrupt-handler';
-import type { QueryModeHandler } from './query-mode-handler';
-import { isMessageDeliveryV2Enabled } from './message-delivery';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Logger } from '../logger.ts';
+import { Logger as LoggerClass } from '../logger.ts';
+import type { ModelSwitchHandler } from './model-switch-handler.ts';
+import type { InterruptHandler } from './interrupt-handler.ts';
+import type { QueryModeHandler } from './query-mode-handler.ts';
+import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
 
 export interface EventSubscriptionSetupContext {
   readonly session: Session;

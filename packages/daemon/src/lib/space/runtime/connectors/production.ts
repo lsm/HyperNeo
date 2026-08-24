@@ -1,7 +1,7 @@
 import type { WorkflowHookValidatorId } from '@hyperneo/shared';
-import { spawnProcess, type SpawnFn } from '../../../runtime-spawn';
-import { registerConnector } from './connector';
-import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { registerConnector } from './connector.ts';
+import { createGithubConnector, GITHUB_CONNECTOR_ID } from './github-connector.ts';
 
 const BUILT_IN_CONNECTOR_DEPS = new Map<WorkflowHookValidatorId, readonly string[]>([]);
 

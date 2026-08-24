@@ -1,4 +1,4 @@
-import { getDataDir } from '../data-dir';
+import { getDataDir } from '../data-dir.ts';
 import {
   access,
   copyFile,

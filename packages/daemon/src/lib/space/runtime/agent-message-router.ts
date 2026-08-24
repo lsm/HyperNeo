@@ -1,14 +1,14 @@
 import type { WorkflowChannel } from '@hyperneo/shared';
-import { parseAddress } from '../../../../../messaging/src/address';
-import type { ActorResolver } from '../../../../../messaging/src/contracts';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { parseAddress } from '../../../../../messaging/src/address.ts';
+import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type {
   EnqueueResult,
   PendingAgentMessageRepository,
-} from '../../../storage/repositories/pending-agent-message-repository';
-import { formatAgentMessage } from '../agent-message-envelope';
-import { SpaceDeliveryFacade } from '../messaging-adapter';
+} from '../../../storage/repositories/pending-agent-message-repository.ts';
+import { formatAgentMessage } from '../agent-message-envelope.ts';
+import { SpaceDeliveryFacade } from '../messaging-adapter.ts';
 import {
   type AgentMessageResult,
   buildNodeNameResolver,
@@ -17,10 +17,10 @@ import {
   decideNodeTargetDelivery,
   foldAgentMessageResult,
   resolveNodeAgentTargets,
-} from './agent-message-routing-gates';
-import { decideAgentMessageRouting } from './agent-message-routing-pipeline';
-import { ChannelResolver } from './channel-resolver';
-import { ActivationError, type ChannelRouter } from './channel-router';
+} from './agent-message-routing-gates.ts';
+import { decideAgentMessageRouting } from './agent-message-routing-pipeline.ts';
+import { ChannelResolver } from './channel-resolver.ts';
+import { ActivationError, type ChannelRouter } from './channel-router.ts';
 
 export type { AgentMessageResult };
 
@@ -69,7 +69,7 @@ export interface AgentMessageParams {
   data?: Record<string, unknown>;
 }
 
-import { Logger } from '../../logger';
+import { Logger } from '../../logger.ts';
 
 const log = new Logger('agent-message-router');
 

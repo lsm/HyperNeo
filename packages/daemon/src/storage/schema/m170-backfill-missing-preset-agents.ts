@@ -1,8 +1,8 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
-import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
-import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
-import { Logger } from '../../lib/logger';
+import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
+import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
+import { Logger } from '../../lib/logger.ts';
 
 const log = new Logger('migration-170');
 

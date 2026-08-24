@@ -7,7 +7,7 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
 } else {
   const [{ getConfig }, { parseArgs, getHelpText }] = await Promise.all([
     import('@hyperneo/daemon/config'),
-    import('./src/cli-utils'),
+    import('./src/cli-utils.ts'),
   ]);
   const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 
@@ -42,10 +42,10 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
   console.log(`   Database: ${config.dbPath}\n`);
 
   if (isDev) {
-    const { startDevServer } = await import('./src/dev-server');
+    const { startDevServer } = await import('./src/dev-server.ts');
     await startDevServer(config);
   } else {
-    const { startProdServer } = await import('./src/prod-server');
+    const { startProdServer } = await import('./src/prod-server.ts');
     await startProdServer(config);
   }
 }

@@ -1,6 +1,6 @@
 import { generateUUID } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../sqlite-compat';
-import type { SQLiteValue } from '../types';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { SQLiteValue } from '../types.ts';
 
 export interface SpaceAgentInactivityConfig {
   id: string;

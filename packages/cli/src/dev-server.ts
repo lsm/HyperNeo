@@ -12,8 +12,8 @@ import {
   isWebSocketPath,
   createJsonErrorResponse,
   printServerUrls,
-} from './cli-utils';
-import { ensureBuiltinSkills } from './skill-utils';
+} from './cli-utils.ts';
+import { ensureBuiltinSkills } from './skill-utils.ts';
 
 const log = createLogger('hyperneo:cli:dev-server');
 

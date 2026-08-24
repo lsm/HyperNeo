@@ -1,4 +1,4 @@
-import { getDataDir } from '../../lib/data-dir';
+import { getDataDir } from '../../lib/data-dir.ts';
 import { createRequire } from 'node:module';
 import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
@@ -6,8 +6,8 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { withoutAuthorization } from './agent-memory-fetch-options';
-import type { AgentMemoryEmbedder } from './agent-memory-repository';
+import { withoutAuthorization } from './agent-memory-fetch-options.ts';
+import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 
 const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const GITHUB_RELEASE_BASE = 'https://github.com/lsm/neokai/releases/download/embedding-models-v1';

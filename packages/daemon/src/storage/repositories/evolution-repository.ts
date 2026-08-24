@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateEvidenceRefParams,
@@ -28,7 +28,7 @@ import type {
   UpdateEvolutionScopeParams,
   UpdateTaskProposalParams,
 } from '@hyperneo/shared';
-import type { SQLiteValue } from '../types';
+import type { SQLiteValue } from '../types.ts';
 
 const MAX_LIST_LIMIT = 200;
 

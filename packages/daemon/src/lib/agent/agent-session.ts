@@ -27,11 +27,11 @@ import type {
 } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import type { Database } from '../../storage/database';
-import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import { SettingsManager } from '../settings-manager';
+import type { Database } from '../../storage/database.ts';
+import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { SettingsManager } from '../settings-manager.ts';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -128,24 +128,24 @@ import {
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
-import { AcpQueryRunner } from '../acp/acp-query-runner';
-import { resolveModelAlias } from '../model-service';
+import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
+import { resolveModelAlias } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
-import { getProviderService } from '../provider-service';
+import { getProviderService } from '../provider-service.ts';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
-} from './ask-user-question-handler';
-import { ContextTracker } from './context-tracker';
-import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog';
+} from './ask-user-question-handler.ts';
+import { ContextTracker } from './context-tracker.ts';
+import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
 import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
-} from './event-subscription-setup';
-import { resolveFallbackChain } from './fallback-recovery';
-import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
-import type { LimitRetryHint } from './limit-error-classifier';
-import { LimitErrorLlmClassifier } from './limit-error-llm-classifier';
+} from './event-subscription-setup.ts';
+import { resolveFallbackChain } from './fallback-recovery.ts';
+import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
+import type { LimitRetryHint } from './limit-error-classifier.ts';
+import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
@@ -165,48 +165,51 @@ import {
   waitForDeliveryAbort,
   withSessionLock,
   withSessionResetCoordination,
-} from './message-delivery';
+} from './message-delivery.ts';
 import {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
-} from './message-delivery-pipeline';
-import { deliveryMetrics } from './message-delivery-metrics';
-import { MessageQueue } from './message-queue';
-import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
-import { ProcessingStateManager } from './processing-state-manager';
+} from './message-delivery-pipeline.ts';
+import { deliveryMetrics } from './message-delivery-metrics.ts';
+import { MessageQueue } from './message-queue.ts';
+import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
+import { ProcessingStateManager } from './processing-state-manager.ts';
 import {
   type EnsureQueryStartedResult,
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
-} from './query-lifecycle-manager';
-import type { QueryLike } from './query-like';
-import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
+} from './query-lifecycle-manager.ts';
+import type { QueryLike } from './query-like.ts';
+import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
+import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
   QueryRunner,
   type QueryRunnerContext,
   type TrackedAgentProcess,
-} from './query-runner';
-import { RateLimitWatchdog } from './rate-limit-watchdog';
-import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
+} from './query-runner.ts';
+import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
+import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
   type SuppressedResultOutcome,
-} from './sdk-message-handler';
-import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
-import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
-import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
+} from './sdk-message-handler.ts';
+import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config.ts';
+import {
+  SessionConfigHandler,
+  type SessionConfigHandlerContext,
+} from './session-config-handler.ts';
+import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
   resolveTaskNotificationRequery,
   taskNotificationRequeryDelayMs,
-} from './task-notification-requery';
+} from './task-notification-requery.ts';
 
 export class AgentSession
   implements
@@ -334,7 +337,7 @@ export class AgentSession
 
   slotResetsContext?: () => boolean;
 
-  get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository').McpEnablementRepository {
+  get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;
   }
 
@@ -344,8 +347,8 @@ export class AgentSession
     readonly messageHub: MessageHub,
     readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>,
     private getApiKey: () => Promise<string | null>,
-    readonly skillsManager?: import('../skills-manager').SkillsManager,
-    readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+    readonly skillsManager?: import('../skills-manager.ts').SkillsManager,
+    readonly appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository.ts').AppMcpServerRepository,
     public skillOverrides?: SkillEnablementOverride[],
     public toolGuards?: DeclarativeToolGuard[],
     private readonly runtimeOptions: AgentSessionRuntimeOptions = {}
@@ -533,8 +536,8 @@ export class AgentSession
     internalEventBus: InternalEventBus<DaemonInternalEventMap>,
     getApiKey: () => Promise<string | null>,
     defaultModel: string,
-    skillsManager?: import('../skills-manager').SkillsManager,
-    appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository
+    skillsManager?: import('../skills-manager.ts').SkillsManager,
+    appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository.ts').AppMcpServerRepository
   ): AgentSession {
     let session = db.getSession(init.sessionId);
 
@@ -644,8 +647,8 @@ export class AgentSession
     messageHub: MessageHub,
     internalEventBus: InternalEventBus<DaemonInternalEventMap>,
     getApiKey: () => Promise<string | null>,
-    skillsManager?: import('../skills-manager').SkillsManager,
-    appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository').AppMcpServerRepository,
+    skillsManager?: import('../skills-manager.ts').SkillsManager,
+    appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository.ts').AppMcpServerRepository,
     options?: AgentSessionRuntimeOptions
   ): AgentSession | null {
     const session = db.getSession(sessionId);
@@ -1852,13 +1855,13 @@ export class AgentSession
       `task-notification requery budget exhausted after ${attempts} attempt(s); needs attention: ` +
         `session=${this.session.id} run=${event.runId} task=${event.taskId}`
     );
-    let payload: (typeof event & import('../internal-event-bus').InternalEventPayload) | null =
+    let payload: (typeof event & import('../internal-event-bus.ts').InternalEventPayload) | null =
       null;
     try {
       payload = {
         ...event,
         handledBySpaceService: false,
-      } as typeof event & import('../internal-event-bus').InternalEventPayload;
+      } as typeof event & import('../internal-event-bus.ts').InternalEventPayload;
       await this.internalEventBus.publish('space.workflowRun.needsAttention', payload);
       if (episodeToken !== this.taskNotificationRequeryEpisodeToken) return;
       if (!payload.handledBySpaceService) {
@@ -1925,7 +1928,7 @@ export class AgentSession
   async onModelsFetched(): Promise<void> {
     if (!this.queryObject) return;
     try {
-      const { getSupportedModelsFromQuery } = await import('../model-service');
+      const { getSupportedModelsFromQuery } = await import('../model-service.ts');
       await getSupportedModelsFromQuery(this.queryObject, this.session.id);
     } catch (error) {
       this.logger.warn('Failed to fetch models from SDK:', error);
@@ -3036,7 +3039,7 @@ export class AgentSession
   }
 
   async clearModelsCache(): Promise<void> {
-    const { clearModelsCache } = await import('../model-service');
+    const { clearModelsCache } = await import('../model-service.ts');
     clearModelsCache(this.session.id);
   }
 

@@ -7,15 +7,15 @@ import type {
   Session,
 } from '@hyperneo/shared';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import type { Database } from '../../storage/database';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Logger } from '../logger';
+import type { Database } from '../../storage/database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Logger } from '../logger.ts';
 import {
   messageUuidExistsInSessionFile,
   truncateSessionFileAtMessage,
-} from '../sdk-session-file-manager';
-import type { QueryLifecycleManager } from './query-lifecycle-manager';
-import type { QueryLike } from './query-like';
+} from '../sdk-session-file-manager.ts';
+import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
+import type { QueryLike } from './query-like.ts';
 
 export interface RewindPoint {
   uuid: string;

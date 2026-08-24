@@ -1,12 +1,12 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkerAgent,
   CreateSpaceWorkerAgentParams,
   UpdateSpaceWorkerAgentParams,
 } from '@hyperneo/shared';
-import type { SQLiteValue } from '../types';
+import type { SQLiteValue } from '../types.ts';
 
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}

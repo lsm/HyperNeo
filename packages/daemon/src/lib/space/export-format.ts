@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validateGlobPattern } from '../external-events/topic-validator';
+import { validateGlobPattern } from '../external-events/topic-validator.ts';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import type {
   SpaceWorkerAgent,
@@ -12,7 +12,7 @@ import type {
   ExportedHandoffTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
-import { validateSlug } from './slug';
+import { validateSlug } from './slug.ts';
 
 const _workflowConditionSchema = z
   .object({

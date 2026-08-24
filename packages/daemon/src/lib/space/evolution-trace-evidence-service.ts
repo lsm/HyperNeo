@@ -1,12 +1,12 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   CreateEvidenceRefParams,
   EvidenceKind,
   EvidenceRef,
   SpaceTask,
 } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 
 const TRACE_CAPTURE_VERSION = 1;
 const TRACE_EVIDENCE_KINDS: EvidenceKind[] = [

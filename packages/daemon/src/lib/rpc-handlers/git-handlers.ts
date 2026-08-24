@@ -1,6 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
-import type { WorktreeManager } from '../worktree-manager';
+import type { SessionManager } from '../session-manager.ts';
+import type { WorktreeManager } from '../worktree-manager.ts';
 
 export function setupGitHandlers(
   messageHub: MessageHub,

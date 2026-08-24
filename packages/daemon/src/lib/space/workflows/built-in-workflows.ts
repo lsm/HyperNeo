@@ -29,9 +29,9 @@ import type {
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
-import { Logger } from '../../logger';
+import { Logger } from '../../logger.ts';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 
 export {
   CODER_EXTERNAL_GATE_BLOCK,

@@ -1,9 +1,9 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   ExternalEventExtensionConfig,
   ExternalEventExtensionConfigStore as ExternalEventExtensionConfigStoreContract,
   SpaceExternalEventSourceConfig,
-} from './types';
+} from './types.ts';
 
 interface GlobalConfigRow {
   source: string;
@@ -20,7 +20,7 @@ interface SpaceConfigRow {
   settings_json: string;
 }
 
-export type { ExternalEventExtensionConfig, SpaceExternalEventSourceConfig } from './types';
+export type { ExternalEventExtensionConfig, SpaceExternalEventSourceConfig } from './types.ts';
 
 export class ExternalEventExtensionConfigStore
   implements ExternalEventExtensionConfigStoreContract

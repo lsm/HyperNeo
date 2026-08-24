@@ -1,7 +1,7 @@
-import { Database as BunDatabase } from './sqlite-compat';
-import { Logger } from '../lib/logger';
-import { hashString32 } from '../lib/runtime-hash';
-import type { ReactiveDatabase, TableChangeScope } from './reactive-database';
+import { Database as BunDatabase } from './sqlite-compat.ts';
+import { Logger } from '../lib/logger.ts';
+import { hashString32 } from '../lib/runtime-hash.ts';
+import type { ReactiveDatabase, TableChangeScope } from './reactive-database.ts';
 
 const log = new Logger('live-query');
 

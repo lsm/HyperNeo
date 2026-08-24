@@ -1,6 +1,6 @@
 import { getSdkResultOriginKind, type SDKMessage } from '@hyperneo/shared/sdk';
-import type { SpaceWorkflowRunNeedsAttentionEvent } from '../internal-event-bus';
-import { isHollowTaskNotificationResult } from '../space/runtime/last-message-classifier';
+import type { SpaceWorkflowRunNeedsAttentionEvent } from '../internal-event-bus.ts';
+import { isHollowTaskNotificationResult } from '../space/runtime/last-message-classifier.ts';
 
 export const TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS = 5;
 

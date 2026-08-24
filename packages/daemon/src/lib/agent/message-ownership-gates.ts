@@ -1,4 +1,4 @@
-import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery';
+import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery.ts';
 
 export type MessageOwnership = 'job_queue' | 'memory_queue' | 'unowned';
 

@@ -1,11 +1,11 @@
-import { AcpClient } from './acp-client';
-import { buildAcpSafeEnv, parseAcpCommand } from './acp-command';
-import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree';
+import { AcpClient } from './acp-client.ts';
+import { buildAcpSafeEnv, parseAcpCommand } from './acp-command.ts';
+import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
 import {
   flattenModelChoices,
   type AcpConfiguredModel,
   type AcpProvider,
-} from '../providers/acp-provider';
+} from '../providers/acp-provider.ts';
 
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
 const FETCH_OVERALL_TIMEOUT_MS = 9000;

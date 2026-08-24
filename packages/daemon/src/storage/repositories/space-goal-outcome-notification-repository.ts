@@ -4,7 +4,7 @@ import type {
   SpaceGoalOutcomeNotificationPayload,
   SpaceGoalOutcomeNotificationStatus,
 } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export interface CreateGoalOutcomeNotificationParams {
   spaceId: string;

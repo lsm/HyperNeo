@@ -1,7 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
-import { Logger } from './logger';
-import { isTerminalTurnError } from './agent/message-delivery';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
+import { Logger } from './logger.ts';
+import { isTerminalTurnError } from './agent/message-delivery.ts';
 
 export enum ErrorCategory {
   AUTHENTICATION = 'authentication',

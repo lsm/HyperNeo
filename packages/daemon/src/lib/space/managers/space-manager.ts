@@ -1,10 +1,10 @@
 import { promises as fs } from 'node:fs';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import { SpaceRepository } from '../../../storage/repositories/space-repository';
-import { Logger } from '../../logger';
-import { slugify, validateSlug } from '../slug';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { Logger } from '../../logger.ts';
+import { slugify, validateSlug } from '../slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
 
 const execAsync = promisify(exec);

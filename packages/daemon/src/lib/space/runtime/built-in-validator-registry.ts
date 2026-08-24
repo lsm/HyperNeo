@@ -1,4 +1,4 @@
-import type { BuiltInValidatorFn } from './hook-executor';
+import type { BuiltInValidatorFn } from './hook-executor.ts';
 
 const builtInValidators = new Map<string, BuiltInValidatorFn>();
 

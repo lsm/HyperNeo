@@ -1,4 +1,4 @@
-import { decisionRun } from '../runtime/decision-pipeline';
+import { decisionRun } from '../runtime/decision-pipeline.ts';
 
 export const INACTIVITY_WATCHDOG_PREDICATE_VERSION = 1;
 

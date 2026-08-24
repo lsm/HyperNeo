@@ -1,5 +1,5 @@
 import type { Session } from '@hyperneo/shared';
-import type { AgentSession } from '../agent/agent-session';
+import type { AgentSession } from '../agent/agent-session.ts';
 
 export type AgentSessionFactory = (session: Session) => AgentSession;
 

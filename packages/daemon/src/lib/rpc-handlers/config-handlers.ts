@@ -25,9 +25,9 @@ import type {
   GetAllConfigRequest,
   UpdateBulkConfigRequest,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import type { SessionManager } from '../session-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import type { SessionManager } from '../session-manager.ts';
 import {
   validateSystemPromptConfig,
   validateToolsConfig,
@@ -38,7 +38,7 @@ import {
   validateOutputFormat,
   validateBetasConfig,
   validateEnvConfig,
-} from '../config-validators';
+} from '../config-validators.ts';
 
 const log = new Logger('config-handlers');
 

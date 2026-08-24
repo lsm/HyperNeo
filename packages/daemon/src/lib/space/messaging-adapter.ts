@@ -1,25 +1,25 @@
-import { parseAddress } from '../../../../messaging/src/address';
-import type { ParsedAddress, WorkerAddress } from '../../../../messaging/src/address';
+import { parseAddress } from '../../../../messaging/src/address.ts';
+import type { ParsedAddress, WorkerAddress } from '../../../../messaging/src/address.ts';
 import type {
   ActorRef,
   DeliveryRecord,
   DeliveryState,
   MessageRecord,
-} from '../../../../messaging/src/types';
+} from '../../../../messaging/src/types.ts';
 import type {
   ActorResolver,
   ResolvedTarget,
   ResolveTargetsResult,
   RouteMessageResult,
   UnresolvedTarget,
-} from '../../../../messaging/src/contracts';
-import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository';
+} from '../../../../messaging/src/contracts.ts';
+import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository.ts';
 import type { NodeExecution } from '@hyperneo/shared';
-import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
+import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
-import { ChannelResolver } from './runtime/channel-resolver';
-import type { SpaceActorRegistryAdapter } from './actor-registry';
+import { ChannelResolver } from './runtime/channel-resolver.ts';
+import type { SpaceActorRegistryAdapter } from './actor-registry.ts';
 
 export interface SpaceMessageResolverContext {
   spaceId: string;
