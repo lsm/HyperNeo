@@ -145,6 +145,29 @@ function createDb() {
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_tasks (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL DEFAULT 1,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			priority TEXT NOT NULL DEFAULT 'normal',
+			assigned_agent TEXT,
+			custom_agent_id TEXT,
+			agent_name TEXT,
+			completion_summary TEXT,
+			workflow_run_id TEXT,
+			workflow_node_id TEXT,
+			task_agent_session_id TEXT,
+			post_approval_session_id TEXT,
+			depends_on TEXT NOT NULL DEFAULT '[]',
+			current_step TEXT,
+			error TEXT,
+			result TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)
 	`);
   return db;

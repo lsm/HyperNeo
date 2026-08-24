@@ -173,6 +173,67 @@ describe('useSpaceTaskMessages', () => {
     });
   });
 
+  it('expandMessage loads the full message and clears truncation', async () => {
+    const { result } = renderHook(() => useSpaceTaskMessages('task-abc'));
+    const subId = lastMessageSubscribeSubId();
+    act(() => {
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview…',
+            contentTruncated: true,
+          },
+        ],
+        version: 1,
+      });
+    });
+
+    mockRequest.mockResolvedValueOnce({ sdkMessage: '{"type":"assistant","full":true}' });
+    await act(async () => {
+      await result.current.expandMessage('m1');
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith('spaceTaskMessage.get', {
+      taskId: 'task-abc',
+      messageId: 'm1',
+    });
+    expect(result.current.rows[0]).toMatchObject({
+      content: '{"type":"assistant","full":true}',
+      contentTruncated: false,
+    });
+  });
+
+  it('expandMessage keeps the truncated row when the RPC fails', async () => {
+    const { result } = renderHook(() => useSpaceTaskMessages('task-abc'));
+    const subId = lastMessageSubscribeSubId();
+    act(() => {
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview…',
+            contentTruncated: true,
+          },
+        ],
+        version: 1,
+      });
+    });
+
+    mockRequest.mockRejectedValueOnce(new Error('exceeds the expansion size limit'));
+    await act(async () => {
+      await result.current.expandMessage('m1');
+    });
+
+    expect(result.current.rows[0]).toMatchObject({ content: 'preview…', contentTruncated: true });
+  });
+
   it('does not subscribe when taskId is null', () => {
     renderHook(() => useSpaceTaskMessages(null));
 

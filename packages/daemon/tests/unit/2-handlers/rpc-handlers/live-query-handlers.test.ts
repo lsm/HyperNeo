@@ -4908,50 +4908,73 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
       for (let i = 0; i < 5; i += 1) {
-        insertSdkMessageAt(
-          `u-${i}`,
-          sessionId,
-          now + 1000 + i * 100,
-          { type: 'user', uuid: `u-${i}`, message: { role: 'user', content: `go ${i}` } },
-          'user'
-        );
-        insertSdkMessageAt(
-          `a-${i}`,
-          sessionId,
-          now + 1000 + i * 100 + 50,
-          {
-            type: 'assistant',
-            uuid: `a-${i}`,
-            message: { role: 'assistant', content: [{ type: 'text', text: `done ${i}` }] },
-          },
-          'assistant'
-        );
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
       }
 
-      const rows = queryCompact(taskId, 3);
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
       expect(rows.length).toBe(3);
       const ids = rows.map((r) => r.id);
       expect(ids).toContain('a-4');
+    });
+
+    test('compact window keeps hyperneo_action rows even when they age out', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      insertSdkMessageAt(
+        'action-old',
+        sessionId,
+        now,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-old',
+          action: { kind: 'sdk_resume_choice' },
+        }
+      );
+      for (let i = 0; i < 5; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
+      }
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      expect(rows.map((r) => r.id)).toContain('action-old');
+      expect(rows.length).toBe(4);
     });
 
     test('compact rows expose contentBytes and contentTruncated for oversized messages', () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-      const longText = 'x'.repeat(5000);
       insertSdkMessageAt(
         'big-assistant',
         sessionId,
         now + 1000,
+        'assistant',
+        'consumed',
+        'system',
+        null,
         {
           type: 'assistant',
           uuid: 'big-assistant',
-          message: { role: 'assistant', content: [{ type: 'text', text: longText }] },
-        },
-        'assistant'
+          message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(5000) }] },
+        }
       );
 
-      const rows = queryCompact(taskId, 5);
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 5) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
       const big = rows.find((r) => r.id === 'big-assistant');
       expect(big).toBeDefined();
       expect(big!.contentBytes).toBeGreaterThan(5000);
@@ -4970,24 +4993,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
       for (let i = 0; i < 5; i += 1) {
-        insertSdkMessageAt(
-          `u-${i}`,
-          sessionId,
-          now + 1000 + i * 100,
-          { type: 'user', uuid: `u-${i}`, message: { role: 'user', content: `go ${i}` } },
-          'user'
-        );
-        insertSdkMessageAt(
-          `a-${i}`,
-          sessionId,
-          now + 1000 + i * 100 + 50,
-          {
-            type: 'assistant',
-            uuid: `a-${i}`,
-            message: { role: 'assistant', content: [{ type: 'text', text: `done ${i}` }] },
-          },
-          'assistant'
-        );
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
       }
 
       const reactiveDb: ReactiveDatabase = {
@@ -5020,7 +5027,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const handle = engine.subscribe(entry.sql, [taskId, 3], (diff) => diffs.push(diff), {
         debounceMs: 0,
         scopeFilter: entry.buildScopeFilter?.([taskId], db),
-        rowFingerprint: entry.rowFingerprint,
       });
 
       await Promise.resolve();
@@ -5030,24 +5036,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(diffs[0].type).toBe('snapshot');
 
       for (let i = 5; i < 8; i += 1) {
-        insertSdkMessageAt(
-          `u-${i}`,
-          sessionId,
-          now + 2000 + i * 100,
-          { type: 'user', uuid: `u-${i}`, message: { role: 'user', content: `go ${i}` } },
-          'user'
-        );
-        insertSdkMessageAt(
-          `a-${i}`,
-          sessionId,
-          now + 2000 + i * 100 + 50,
-          {
-            type: 'assistant',
-            uuid: `a-${i}`,
-            message: { role: 'assistant', content: [{ type: 'text', text: `done ${i}` }] },
-          },
-          'assistant'
-        );
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 2000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 2000 + i * 100 + 50, 'assistant');
       }
 
       backfillConversationTurns();

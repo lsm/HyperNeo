@@ -63,6 +63,7 @@ const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD = 2048;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX = 1200;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX = 20;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS = '…';
+const MAX_SPACE_TASK_MESSAGE_EXPANSION_CHARS = 16 * 1024 * 1024;
 
 function compactPreviewValue(value: unknown, path: string[]): unknown {
   if (value === null || typeof value === 'boolean' || typeof value === 'number') {
@@ -2470,6 +2471,56 @@ selected_ids AS (
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
 )
+-- Visible window: the newest N selected rows, oldest-first for rendering.
+-- hyperneo_action rows (e.g. sdk_resume_choice unblock cards) are pinned OUTSIDE
+-- the limit — the task pane renders them as resolution controls, so letting the
+-- tail limit evict them would strand a blocked agent's card (#2900 review).
+windowed_rows AS (
+  SELECT
+    j.id,
+    j.sessionId,
+    j.kind,
+    j.role,
+    j.label,
+    j.nodeExecutionId,
+    j.taskId,
+    j.taskTitle,
+    j.messageType,
+    j.content,
+    j.origin,
+    j.deliveryState,
+    j.createdAt,
+    j.turnIndex,
+    j.parentToolUseId,
+    j.insOrder
+  FROM joined j
+  JOIN selected_ids s ON s.id = j.id
+  WHERE j.messageType != 'hyperneo_action'
+  ORDER BY j.createdAt DESC, j.insOrder DESC
+  LIMIT ?
+),
+pinned_action_rows AS (
+  SELECT
+    j.id,
+    j.sessionId,
+    j.kind,
+    j.role,
+    j.label,
+    j.nodeExecutionId,
+    j.taskId,
+    j.taskTitle,
+    j.messageType,
+    j.content,
+    j.origin,
+    j.deliveryState,
+    j.createdAt,
+    j.turnIndex,
+    j.parentToolUseId,
+    j.insOrder
+  FROM joined j
+  JOIN selected_ids s ON s.id = j.id
+  WHERE j.messageType = 'hyperneo_action'
+)
 SELECT
   id,
   sessionId,
@@ -2488,27 +2539,9 @@ SELECT
   parentToolUseId,
   insOrder
 FROM (
-  SELECT
-    j.id,
-    j.sessionId,
-    j.kind,
-    j.role,
-    j.label,
-    j.nodeExecutionId,
-    j.taskId,
-    j.taskTitle,
-    j.messageType,
-    j.content,
-    j.origin,
-    j.deliveryState,
-    j.createdAt,
-    j.turnIndex,
-    j.parentToolUseId,
-    j.insOrder AS insOrder
-  FROM joined j
-  JOIN selected_ids s ON s.id = j.id
-  ORDER BY j.createdAt DESC, j.insOrder DESC
-  LIMIT ?
+  SELECT * FROM windowed_rows
+  UNION ALL
+  SELECT * FROM pinned_action_rows
 )
 ORDER BY createdAt ASC, insOrder ASC
 `.trim();
@@ -3514,11 +3547,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
       mapRow: mapSpaceTaskMessageCompactRow,
       buildScopeFilter: buildTaskScopeFilter,
-      rowFingerprint: (row) => ({
-        id: row.id,
-        deliveryState: row.deliveryState,
-        content: typeof row.content === 'string' ? row.content.length : row.content,
-      }),
     },
   ],
   [
@@ -4034,6 +4062,11 @@ export function setupLiveQueryHandlers(
     const row = stmtSpaceTaskMessage.get(messageId, taskId) as { sdk_message: string } | undefined;
     if (!row) {
       throw new Error('Message not found');
+    }
+    if (row.sdk_message.length > MAX_SPACE_TASK_MESSAGE_EXPANSION_CHARS) {
+      throw new Error(
+        `spaceTaskMessage.get: message "${messageId}" exceeds the expansion size limit`
+      );
     }
     return { sdkMessage: row.sdk_message };
   });

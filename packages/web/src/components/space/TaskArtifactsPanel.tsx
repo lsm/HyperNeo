@@ -288,8 +288,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
 
   const { rows: messageRows, error: messageRowsError } = useSpaceTaskMessages(
     taskId ?? null,
-    'compact',
-    100
+    'full'
   );
 
   const fileOps = useMemo<FileOperation[]>(() => {

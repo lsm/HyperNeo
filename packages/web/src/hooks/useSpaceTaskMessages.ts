@@ -351,22 +351,24 @@ export function useSpaceTaskMessages(
       if (!taskId) return;
       const hub = getHub();
       if (!hub) return;
-      const { sdkMessage } = await hub.request<{ sdkMessage: string }>('spaceTaskMessage.get', {
-        taskId,
-        messageId: String(messageId),
-      });
-      setRows((prev) =>
-        prev.map((row) =>
-          String(row.id) === String(messageId)
-            ? {
-                ...row,
-                content: sdkMessage,
-                contentTruncated: false,
-                contentBytes: sdkMessage.length,
-              }
-            : row
-        )
-      );
+      try {
+        const { sdkMessage } = await hub.request<{ sdkMessage: string }>('spaceTaskMessage.get', {
+          taskId,
+          messageId: String(messageId),
+        });
+        setRows((prev) =>
+          prev.map((row) =>
+            String(row.id) === String(messageId)
+              ? {
+                  ...row,
+                  content: sdkMessage,
+                  contentTruncated: false,
+                  contentBytes: sdkMessage.length,
+                }
+              : row
+          )
+        );
+      } catch {}
     },
     [taskId, getHub]
   );

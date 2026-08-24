@@ -24,6 +24,8 @@ interface Props {
   emptyMessageLabel?: string;
   widthClass?: string;
   showActions?: boolean;
+  isTruncated?: boolean;
+  onExpand?: () => void;
 }
 
 const PREVIEW_LINE_COUNT = 12;
@@ -60,6 +62,8 @@ export function SyntheticMessageBlock({
   emptyMessageLabel = '(empty message)',
   widthClass = 'max-w-[85%] md:max-w-[70%]',
   showActions = true,
+  isTruncated,
+  onExpand,
 }: Props) {
   const contentBlocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
 
@@ -286,6 +290,8 @@ export function SyntheticMessageBlock({
           onOpenSession={onOpenSession}
           openSessionTitle={openSessionTitle}
           sessionInit={sessionInit}
+          isTruncated={isTruncated}
+          onExpand={onExpand}
         />
       </div>
     </div>

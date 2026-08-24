@@ -2229,10 +2229,12 @@ function SyntheticMessageTurn({
   turn,
   overlayTaskId,
   overlayTaskReadonly,
+  onExpandMessage,
 }: {
   turn: MessageFeedTurn;
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
+  onExpandMessage?: (messageId: string | number) => void;
 }) {
   const fromColor = getAgentColor(turn.fromLabel);
   const toColor = getAgentColor(turn.toLabel);
@@ -2257,6 +2259,8 @@ function SyntheticMessageTurn({
       renderAsPlainText={turn.bodyIsFallback}
       sessionInit={turn.sessionInit}
       widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
+      isTruncated={turn.isTruncated}
+      onExpand={onExpandMessage ? () => onExpandMessage(turn.messageId) : undefined}
       openSessionTitle={
         overlayTaskReadonly && turn.sessionId
           ? 'Opens read-only — resume the task to chat'
@@ -2340,6 +2344,7 @@ function MinimalTurnRow({
         turn={turn}
         overlayTaskId={overlayTaskId}
         overlayTaskReadonly={overlayTaskReadonly}
+        onExpandMessage={onExpandMessage}
       />
     ) : (
       <HumanMessageTurn turn={turn} onExpandMessage={onExpandMessage} />
