@@ -813,11 +813,12 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    it('tears down dynamic models, client, and server caches when the token changes', async () => {
+    it('rebuilds the embedded runtime and swaps out the old caches when the token changes', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       const runtime = fakeRuntime();
-      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
-        'http://127.0.0.1:9999' as never
+      const replacement = fakeRuntime();
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        async () => ({ server: replacement.server, client: replacement.client }) as never
       );
       (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
       (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
@@ -827,15 +828,16 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
       p.setCredentials({ type: 'oauth', accessToken: 'gho_replacement_token' });
       await settle();
+      await settle();
 
       const state = p as unknown as Record<string, unknown>;
       expect(runtime.stops).toEqual(['server', 'client']);
-      expect(state['serverCache']).toBeUndefined();
-      expect(state['clientCache']).toBeUndefined();
+      expect(replacement.stops).toEqual([]);
+      expect(state['serverCache']).toBe(replacement.server);
+      expect(state['clientCache']).toBe(replacement.client);
       expect(state['dynamicModelsCache']).toBeNull();
       expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
       expect(state['storedCredentialToken']).toBe('gho_replacement_token');
-      expect(ensureSpy).toHaveBeenCalledTimes(1);
     });
 
     it('keeps runtime caches when the same token is re-applied', async () => {
@@ -858,34 +860,32 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['dynamicModelsCache']).toEqual([fakeModel()]);
     });
 
-    it('stops a server that is still starting when credentials change', async () => {
+    it('stops a runtime that is still starting when credentials change', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
-        'http://127.0.0.1:9999' as never
+      const stale = fakeRuntime();
+      const replacement = fakeRuntime();
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        async () => ({ server: replacement.server, client: replacement.client }) as never
       );
-      const stops: string[] = [];
-      let resolveStart: ((server: unknown) => void) | undefined;
-      const starting = new Promise<unknown>((resolve) => {
-        resolveStart = resolve;
+      let resolveStart: (() => void) | undefined;
+      const starting = new Promise<{ server: unknown; client: unknown }>((resolve) => {
+        resolveStart = () => resolve({ server: stale.server, client: stale.client });
       });
       (p as unknown as Record<string, unknown>)['serverStarting'] = starting;
 
       p.setCredentials({ type: 'oauth', accessToken: 'gho_replacement_token' });
       await settle();
-      expect((p as unknown as Record<string, unknown>)['serverStarting']).toBeUndefined();
+      expect((p as unknown as Record<string, unknown>)['serverCache']).toBe(replacement.server);
 
-      resolveStart?.({
-        url: 'http://127.0.0.1:45679',
-        stop: async () => {
-          stops.push('server');
-        },
-      });
+      resolveStart?.();
       await settle();
       await settle();
 
-      expect(stops).toEqual(['server']);
-      expect((p as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
-      expect(ensureSpy).toHaveBeenCalledTimes(1);
+      const state = p as unknown as Record<string, unknown>;
+      expect(stale.stops).toEqual(['server', 'client']);
+      expect(replacement.stops).toEqual([]);
+      expect(state['serverCache']).toBe(replacement.server);
+      expect(state['clientCache']).toBe(replacement.client);
     });
 
     it('clears dynamic model caches through clearModelCache()', () => {
@@ -901,12 +901,13 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
     });
 
-    it('tears down the embedded runtime on logout', async () => {
+    it('tears down the embedded runtime on logout without rebuilding it', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       const runtime = fakeRuntime();
-      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
-        'http://127.0.0.1:9999' as never
-      );
+      const createSpy = spyOn(
+        p as unknown as Record<string, unknown>,
+        'createRuntime' as never
+      ).mockImplementation(async () => ({ server: fakeRuntime().server }) as never);
       (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
       (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
       (p as unknown as Record<string, unknown>)['storedCredentialToken'] = 'gho_logged_out';
@@ -921,27 +922,19 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       expect(state['clientCache']).toBeUndefined();
       expect(state['dynamicModelsCache']).toBeNull();
       expect(state['storedCredentialToken']).toBeNull();
-      expect(ensureSpy).not.toHaveBeenCalled();
+      expect(createSpy).not.toHaveBeenCalled();
     });
 
-    it('resets the credential-bound runtime when the OAuth flow completes', async () => {
+    it('rebuilds the credential-bound runtime when the OAuth flow completes', async () => {
       const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-oauth-reset-'));
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
-      const stops: string[] = [];
-      const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
-        'http://127.0.0.1:9999' as never
+      const runtime = fakeRuntime();
+      const replacement = fakeRuntime();
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
+        async () => ({ server: replacement.server, client: replacement.client }) as never
       );
-      (p as unknown as Record<string, unknown>)['serverCache'] = {
-        url: 'http://127.0.0.1:45680',
-        stop: async () => {
-          stops.push('server');
-        },
-      };
-      (p as unknown as Record<string, unknown>)['clientCache'] = {
-        stop: async () => {
-          stops.push('client');
-        },
-      };
+      (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
+      (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
       (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
       const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
         const url = String(input);
@@ -964,18 +957,17 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
       try {
         await p.startOAuthFlow();
-        for (let i = 0; i < 20 && stops.length < 2; i++) {
+        for (let i = 0; i < 20 && runtime.stops.length < 2; i++) {
           await new Promise((resolve) => setTimeout(resolve, 1));
         }
 
         const state = p as unknown as Record<string, unknown>;
-        expect(stops).toEqual(['server', 'client']);
-        expect(state['serverCache']).toBeUndefined();
-        expect(state['clientCache']).toBeUndefined();
+        expect(runtime.stops).toEqual(['server', 'client']);
+        expect(state['serverCache']).toBe(replacement.server);
+        expect(state['clientCache']).toBe(replacement.client);
         expect(state['dynamicModelsCache']).toBeNull();
         expect(state['storedCredentialToken']).toBeNull();
         expect(state['tokenCache']).toBeNull();
-        expect(ensureSpy).toHaveBeenCalledTimes(1);
       } finally {
         fetchSpy.mockRestore();
         fs.rmSync(authDir, { recursive: true, force: true });
@@ -987,11 +979,14 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     it('clears serverStarting on rejection so the next call can retry', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       let callCount = 0;
-      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
         async () => {
           callCount++;
           if (callCount === 1) throw new Error('transient failure');
-          return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+          return {
+            server: { url: 'http://127.0.0.1:9999', stop: async () => {} },
+            client: { stop: async () => {} },
+          };
         }
       );
 
@@ -1005,10 +1000,13 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     it('creates only one server when called concurrently', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
       let createCount = 0;
-      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      spyOn(p as unknown as Record<string, unknown>, 'createRuntime' as never).mockImplementation(
         async () => {
           createCount++;
-          return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+          return {
+            server: { url: 'http://127.0.0.1:9999', stop: async () => {} },
+            client: { stop: async () => {} },
+          };
         }
       );
 
