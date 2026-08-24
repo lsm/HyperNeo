@@ -375,7 +375,7 @@ function persistLastGoodDiscoveredModels(
   return lastGood.truncated === true;
 }
 
-function stripPersistedDiscovery(configJson: string | undefined): string | undefined {
+export function stripPersistedDiscovery(configJson: string | undefined): string | undefined {
   if (!configJson) return configJson;
   let parsed: Record<string, unknown>;
   try {
