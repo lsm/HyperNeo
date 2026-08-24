@@ -337,6 +337,7 @@ describe('KimiProvider', () => {
         { data: [{ id: 'kimi-for-coding', object: 'model' }] },
         { data: [{ id: 'kimi-for-coding', object: 'model' }] },
         { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
+        { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
       ]);
       provider = new KimiProvider();
       provider.setDefaultRegion('global');
@@ -344,11 +345,13 @@ describe('KimiProvider', () => {
       await provider.listRemoteModels();
       await provider.listRemoteModels({ baseUrl: 'https://api.kimi.com/coding' });
       await provider.listRemoteModels({ baseUrl: 'https://api.moonshot.ai/anthropic' });
+      await provider.listRemoteModels({ baseUrl: 'https://api.moonshot.cn/anthropic' });
 
       expect(calls.map((call) => call[0])).toEqual([
         'https://api.kimi.com/coding/v1/models',
         'https://api.kimi.com/coding/v1/models',
         'https://api.moonshot.ai/v1/models',
+        'https://api.moonshot.cn/v1/models',
       ]);
       expect(provider.getDefaultRegion()).toBe('global');
     });

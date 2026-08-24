@@ -504,6 +504,9 @@ export class KimiProvider implements Provider {
   private resolveModelListBaseUrl(baseUrl?: string): string {
     if (baseUrl) {
       const normalizedBaseUrl = normalizeBaseUrl(baseUrl).toLowerCase();
+      if (normalizedBaseUrl === 'https://api.moonshot.cn/anthropic') {
+        return 'https://api.moonshot.cn/v1';
+      }
       for (const region of VALID_REGIONS) {
         if (
           normalizedBaseUrl === KimiProvider.getBaseUrlForRegion(region).toLowerCase() ||
