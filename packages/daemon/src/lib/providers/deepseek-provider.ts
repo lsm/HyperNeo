@@ -63,6 +63,7 @@ export class DeepSeekProvider implements Provider {
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
   private readonly modelListCache = new Map<string, RemoteModelListEntry>();
   private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly DISCOVERED_MODEL_CONTEXT_WINDOW = 128_000;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -158,7 +159,7 @@ export class DeepSeekProvider implements Provider {
       alias: model.id,
       family: 'deepseek',
       provider: this.id,
-      contextWindow: this.capabilities.maxContextWindow,
+      contextWindow: DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
       preferContextWindowMetadata: true,
       thinkingModes: this.capabilities.thinkingModes,
       description: `${model.name ?? model.id} via DeepSeek`,
@@ -190,6 +191,9 @@ export class DeepSeekProvider implements Provider {
 
     const routingModelId =
       DeepSeekProvider.resolveModelId(modelId) ?? DeepSeekProvider.DEFAULT_MODEL;
+    const staticModel = DeepSeekProvider.MODELS.find((model) => model.id === routingModelId);
+    const contextWindow =
+      staticModel?.contextWindow ?? DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
     return {
       envVars: {
         ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || DeepSeekProvider.BASE_URL,
@@ -197,7 +201,7 @@ export class DeepSeekProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,

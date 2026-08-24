@@ -120,7 +120,7 @@ describe('DeepSeekProvider', () => {
           alias: 'deepseek-v5',
           family: 'deepseek',
           provider: 'deepseek',
-          contextWindow: 1_000_000,
+          contextWindow: 128_000,
           preferContextWindowMetadata: true,
           thinkingModes: 'granular',
           description: 'deepseek-v5 via DeepSeek',
@@ -129,9 +129,9 @@ describe('DeepSeekProvider', () => {
         },
       ]);
       expect(provider.ownsModel('deepseek-v5')).toBe(true);
-      expect(provider.buildSdkConfig('deepseek-v5').envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
-        'deepseek-v5'
-      );
+      const config = provider.buildSdkConfig('deepseek-v5');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v5');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
       expect(provider.translateModelIdForSdk('deepseek-v5')).toBe('deepseek-v5');
     });
 
