@@ -163,7 +163,6 @@
 43	packages/daemon/tests/unit/1-core/session/settings-manager.test.ts
 33	packages/daemon/tests/unit/1-core/session/state-projection-service.test.ts
 8	packages/daemon/tests/unit/1-core/session/tools-config.test.ts
-68771	packages/daemon/tests/unit/1-core/validate-test-matrix.test.ts
 69	packages/daemon/tests/unit/5-space/actor-registry.test.ts
 6	packages/daemon/tests/unit/5-space/agent-handle.test.ts
 10	packages/daemon/tests/unit/5-space/agent/agent-config.test.ts
