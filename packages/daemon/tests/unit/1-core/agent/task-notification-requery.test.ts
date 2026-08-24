@@ -257,6 +257,79 @@ describe('task-notification requery policy', () => {
   });
 });
 
+describe('SpaceAgentNotificationService needs-attention acknowledgement', () => {
+  const EVENT = {
+    sessionId: 'coord-session',
+    spaceId: 'space-1',
+    runId: 'run-1',
+    taskId: 'task-1',
+    reason: 'budget exhausted',
+    retriesExhausted: 5,
+    timestamp: '2026-08-24T00:00:00.000Z',
+  };
+
+  function buildService(
+    injectMessage: ReturnType<typeof mock>
+  ): (event: unknown) => Promise<void> | void {
+    type Handler = (event: unknown) => Promise<void> | void;
+    let captured: Handler = () => {};
+    const bus = {
+      subscribe: (_event: string, handler: Handler) => {
+        if (_event === 'space.workflowRun.needsAttention') captured = handler;
+        return () => {};
+      },
+    };
+    const { SpaceAgentNotificationService } =
+      require('../../../../src/lib/space/runtime/space-agent-notification-service') as {
+        SpaceAgentNotificationService: new (config: {
+          internalEventBus: unknown;
+          sessionFactory: unknown;
+          sessionId: string;
+          spaceId: string;
+        }) => { subscribe: () => () => void };
+      };
+    const service = new SpaceAgentNotificationService({
+      internalEventBus: bus,
+      sessionFactory: { injectMessage },
+      sessionId: 'coord-session',
+      spaceId: 'space-1',
+    });
+    service.subscribe();
+    return captured;
+  }
+
+  it('acknowledges only after the message is injected', async () => {
+    const injectMessage = mock(async () => {});
+    const handler = buildService(injectMessage);
+    const payload = { ...EVENT, handledBySpaceService: false } as typeof EVENT & {
+      handledBySpaceService?: boolean;
+    };
+    await handler(payload);
+    expect(injectMessage.mock.calls.length).toBe(1);
+    expect(payload.handledBySpaceService).toBe(true);
+  });
+
+  it('leaves the acknowledgement unset and rejects when injection fails', async () => {
+    const injectMessage = mock(async () => {
+      throw new Error('coordinator unavailable');
+    });
+    const handler = buildService(injectMessage);
+    const payload = { ...EVENT, handledBySpaceService: false } as typeof EVENT & {
+      handledBySpaceService?: boolean;
+    };
+    await expect(handler(payload)).rejects.toThrow('coordinator unavailable');
+    expect(payload.handledBySpaceService).toBe(false);
+  });
+
+  it('ignores events for other spaces', async () => {
+    const injectMessage = mock(async () => {});
+    const handler = buildService(injectMessage);
+    const payload = { ...EVENT, spaceId: 'space-other' };
+    await handler(payload);
+    expect(injectMessage.mock.calls.length).toBe(0);
+  });
+});
+
 describe('AgentSession task-notification requery (incident replay)', () => {
   let agentSession: AgentSession;
   let enqueueSpy: ReturnType<typeof mock>;
@@ -1256,6 +1329,34 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(publishSpy.mock.calls.find(([event]: [string]) => event === 'session.error')).toBe(
       undefined
     );
+  });
+
+  it('releases protocol latches when the owning query settles before delivery', async () => {
+    process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
+    const ensureQueryStarted = mock(async () => 'started' as const);
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = 1;
+    const holder: { resolve?: () => void } = {};
+    agentSession.queryPromise = new Promise<void>((resolve) => {
+      holder.resolve = resolve;
+    });
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    holder.resolve?.();
+    agentSession.queryPromise = null;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(continueCalls()).toBe(1);
+    expect(needsAttentionPublishes()).toBe(0);
   });
 
   it('clears a pending re-query timer when the user interrupts', async () => {

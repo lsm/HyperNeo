@@ -1506,6 +1506,8 @@ export class AgentSession
 
   private scheduleTaskNotificationRequery(delayMs: number): void {
     this.clearTaskNotificationRequeryTimer();
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
+    const owningQuery = this.queryPromise;
     const timer = setTimeout(() => {
       this.taskNotificationRequeryTimer = null;
       void this.runTaskNotificationRequeryContinue();
@@ -1514,6 +1516,23 @@ export class AgentSession
       timer.unref();
     }
     this.taskNotificationRequeryTimer = timer;
+    if (owningQuery) {
+      const onSettled = () => this.releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken);
+      void owningQuery.then(onSettled, onSettled);
+    }
+  }
+
+  private releaseTaskNotificationRequeryProtocolOnSettlement(episodeToken: number): void {
+    if (
+      this._isCleaningUp ||
+      episodeToken !== this.taskNotificationRequeryEpisodeToken ||
+      (!this.taskNotificationRequeryAwaitingSdkIdle && !this.taskNotificationRequeryPending)
+    ) {
+      return;
+    }
+    this.taskNotificationRequeryAwaitingSdkIdle = false;
+    this.taskNotificationRequeryBusyInterruptGeneration = null;
+    this.flushPendingTaskNotificationRequery();
   }
 
   private clearTaskNotificationRequeryTimer(): void {

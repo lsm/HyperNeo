@@ -98,10 +98,10 @@ export class SpaceAgentNotificationService {
       ),
       this.internalEventBus.subscribe(
         'space.workflowRun.needsAttention',
-        (event) => {
+        async (event) => {
           if (event.spaceId !== this.spaceId) return;
+          await this.notifyStrict(formatWorkflowRunNeedsAttention(event, this.autonomyLevel));
           event.handledBySpaceService = true;
-          void this.notify(formatWorkflowRunNeedsAttention(event, this.autonomyLevel));
         },
         {
           subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.needsAttention`,
