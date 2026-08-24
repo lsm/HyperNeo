@@ -503,7 +503,13 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
 
   it('hydrates sparse rate-limit fold entries from the external-event store before classifying', async () => {
     const harness = makeHarness();
-    harness.eventPayloads.set('sparse-rc-1', { actor: 'codex[bot]' });
+    harness.eventPayloads.set('sparse-rc-1', {
+      actor: 'codex[bot]',
+      body: 'Sparse folded comment body.',
+      path: 'packages/daemon/src/lib/space/runtime/task-agent-manager.ts',
+      line: 3600,
+      commentId: 'c-sparse-rc-1',
+    });
     harness.eventPayloads.set('sparse-rc-2', { actor: 'codex[bot]' });
     const essences = [
       {
@@ -521,8 +527,46 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
 
     const steers = steerRows(harness.rows);
     expect(steers).toHaveLength(1);
-    expect(rowText(steers[0]!.message)).toContain('codex[bot]');
+    const steerText = rowText(steers[0]!.message);
+    expect(steerText).toContain('codex[bot]');
+    expect(steerText).toContain('packages/daemon/src/lib');
     expect(steerJobs(harness.jobs)).toHaveLength(1);
+  });
+
+  it('splits a mixed fold so only budgeted classes steer while cooled classes stay deferred', async () => {
+    const harness = makeHarness();
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'warm-review'));
+    await sleep(DEBOUNCE_MS + 40);
+    expect(steerRows(harness.rows)).toHaveLength(1);
+
+    const essences = [
+      {
+        eventId: 'mixed-review',
+        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+        actor: 'codex[bot]',
+        commentId: 'c-mixed-review',
+      },
+      {
+        eventId: 'mixed-check',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+        conclusion: 'failure',
+        checkName: 'Daemon Tests',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(2);
+    const splitSteerText = rowText(steers[1]!.message);
+    expect(splitSteerText).toContain('Daemon Tests');
+    expect(splitSteerText).not.toContain('mixed-review');
+
+    const remainderRow = harness.rows.find(
+      (row) => row.status === 'deferred' && rowText(row.message).includes('mixed-review')
+    );
+    expect(remainderRow).toBeDefined();
   });
 
   it('arms cooldowns for every direct class represented in a steered fold', async () => {

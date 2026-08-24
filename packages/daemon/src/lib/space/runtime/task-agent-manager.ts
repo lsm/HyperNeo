@@ -28,6 +28,7 @@ import {
 } from '../../../lib/agent/message-delivery';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
 import {
+  buildDeferredEventDigestEnvelopeText,
   buildExternalEventDigestMessage,
   buildSyntheticExternalEventMessage,
   DEFERRED_EXTERNAL_EVENT_ROW_CAP,
@@ -265,6 +266,26 @@ export const DIRECT_STEER_COOLDOWN_MAP_CAP = 1_000;
 function directSteerBufferKey(sessionId: string, eventClass: DirectSteerEventClass): string {
   return `${sessionId}\u0000${eventClass}`;
 }
+
+const DIRECT_STEER_HYDRATABLE_FIELDS = [
+  'eventType',
+  'action',
+  'actor',
+  'body',
+  'title',
+  'state',
+  'checkName',
+  'conclusion',
+  'commentId',
+  'inReplyToId',
+  'path',
+  'line',
+  'reviewId',
+  'threadId',
+  'context',
+  'environment',
+  'description',
+] as const;
 
 function directSteerClasses(essences: ExternalEventEssenceEntry[]): DirectSteerEventClass[] {
   const classes = new Set<DirectSteerEventClass>();
@@ -3644,10 +3665,26 @@ export class TaskAgentManager {
       );
       return;
     }
+    const budgetedSet = new Set(budgetedClasses);
+    let bufferEssences = essences;
+    let bufferMessageId = args.messageId;
+    let bufferDbId = args.deferredDbId;
+    if (budgetedClasses.length < representedClasses.length) {
+      const split = this.splitPartiallyCooledFold(
+        args.sessionId,
+        essences,
+        budgetedSet,
+        args.deferredDbId
+      );
+      if (!split) return;
+      bufferEssences = split.steeringEssences;
+      bufferMessageId = split.steeringMessageId;
+      bufferDbId = split.steeringDbId;
+    }
     const key = directSteerBufferKey(args.sessionId, budgetedClasses[0]!);
     const buffer = this.directSteerBuffers.get(key) ?? [];
     const bufferedEventCount = buffer.reduce((sum, item) => sum + item.essences.length, 0);
-    if (bufferedEventCount + essences.length > DIRECT_STEER_BUFFER_MAX_ENTRIES) {
+    if (bufferedEventCount + bufferEssences.length > DIRECT_STEER_BUFFER_MAX_ENTRIES) {
       this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByBufferCap();
       log.warn(
         `TaskAgentManager: direct steer buffer for session ${args.sessionId} at its ` +
@@ -3656,9 +3693,9 @@ export class TaskAgentManager {
       return;
     }
     buffer.push({
-      essences,
-      messageId: args.messageId,
-      dbId: args.deferredDbId,
+      essences: bufferEssences,
+      messageId: bufferMessageId,
+      dbId: bufferDbId,
       receivedAt: now,
     });
     this.directSteerBuffers.set(key, buffer);
@@ -3666,30 +3703,89 @@ export class TaskAgentManager {
     this.armDirectSteerTimer(key);
   }
 
+  private splitPartiallyCooledFold(
+    sessionId: string,
+    essences: ExternalEventEssenceEntry[],
+    budgetedSet: Set<DirectSteerEventClass>,
+    sourceDbId: string
+  ): {
+    steeringEssences: ExternalEventEssenceEntry[];
+    steeringMessageId: string;
+    steeringDbId: string;
+  } | null {
+    const steering = essences.filter((essence) => {
+      const eventClass = classifyExternalEventDirectSteer(essence);
+      return eventClass !== null && budgetedSet.has(eventClass);
+    });
+    const remaining = essences.filter((essence) => !steering.includes(essence));
+    if (steering.length === 0) return null;
+    const steeringRow = buildSyntheticExternalEventMessage(
+      sessionId,
+      buildDeferredEventDigestEnvelopeText(steering)
+    );
+    let steeringDbId: string;
+    let remainderDbId: string | null = null;
+    try {
+      steeringDbId = this.config.db.saveUserMessage(sessionId, steeringRow, 'deferred');
+      if (remaining.length > 0) {
+        const remainderRow = buildSyntheticExternalEventMessage(
+          sessionId,
+          buildDeferredEventDigestEnvelopeText(remaining)
+        );
+        remainderDbId = this.config.db.saveUserMessage(sessionId, remainderRow, 'deferred');
+      }
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager: failed to partition a partially cooled fold for session ` +
+          `${sessionId}: ${err instanceof Error ? err.message : String(err)}; row stays deferred`
+      );
+      return null;
+    }
+    this.config.db.updateMessageStatus([sourceDbId], 'consumed');
+    log.debug(
+      `TaskAgentManager: partitioned a mixed fold for session ${sessionId} — ` +
+        `${steering.length} event(s) steer, ${remaining.length} stay deferred for the digest`
+    );
+    void this.config.internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId,
+        messageIds: remainderDbId ? [steeringDbId, remainderDbId] : [steeringDbId],
+        status: 'deferred',
+      })
+      .catch(() => {});
+    return {
+      steeringEssences: steering,
+      steeringMessageId: String(steeringRow.uuid),
+      steeringDbId,
+    };
+  }
+
   private hydrateDirectSteerEssence(essence: ExternalEventEssenceEntry): ExternalEventEssenceEntry {
-    if (
-      (essence.actor !== undefined &&
-        essence.state !== undefined &&
-        essence.conclusion !== undefined) ||
-      !this.config.externalEventStore
-    ) {
+    if (this.directSteerEssenceHydrated(essence) || !this.config.externalEventStore) {
       return essence;
     }
     const record = this.config.externalEventStore.getById(essence.eventId);
     const payload = record?.event.payload;
     if (!payload) return essence;
-    return {
-      ...essence,
-      ...(essence.actor === undefined && typeof payload.actor === 'string'
-        ? { actor: payload.actor }
-        : {}),
-      ...(essence.state === undefined && typeof payload.state === 'string'
-        ? { state: payload.state }
-        : {}),
-      ...(essence.conclusion === undefined && typeof payload.conclusion === 'string'
-        ? { conclusion: payload.conclusion }
-        : {}),
-    };
+    const hydrated: Record<string, unknown> = { ...essence };
+    let changed = false;
+    for (const field of DIRECT_STEER_HYDRATABLE_FIELDS) {
+      if (hydrated[field] !== undefined) continue;
+      const value = payload[field];
+      if (
+        (typeof value === 'string' && value.length > 0) ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      ) {
+        hydrated[field] = value;
+        changed = true;
+      }
+    }
+    return changed ? (hydrated as unknown as ExternalEventEssenceEntry) : essence;
+  }
+
+  private directSteerEssenceHydrated(essence: ExternalEventEssenceEntry): boolean {
+    return DIRECT_STEER_HYDRATABLE_FIELDS.every((field) => essence[field] !== undefined);
   }
 
   private isDirectSteerCoolingDown(key: string, now: number): boolean {

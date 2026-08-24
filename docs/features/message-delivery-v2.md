@@ -623,9 +623,13 @@ path unchanged.
   Upstream rate-limit fold rows (the `external_event_digest` envelopes
   SpaceRuntime emits past its 10/min delivery budget) participate too: a fold
   containing any direct-class event joins the burst with all of its events,
-  sparse fold entries are re-hydrated from the external-event store before
-  classification, and cooldowns are armed for every direct class the fold
-  represents. The flush runs under `withSessionResetCoordination` — the same
+  sparse fold entries are re-hydrated from the external-event store (render
+  fields included, not just classification fields) before classification, and
+  cooldowns are armed for every direct class the fold represents. A fold that
+  spans cooling and budgeted classes is partitioned: the budgeted events are
+  re-enveloped for the steer while the cooling events stay deferred for the
+  turn-end digest, so a mixed fold cannot ride a budgeted class past another
+  class's rate cap. The flush runs under `withSessionResetCoordination` — the same
   lock the turn-end fold holds — and only folds rows that are still `deferred`;
   if the turn ended first (turn-end flush already consumed them), no steer is
   emitted and nothing is delivered twice.
