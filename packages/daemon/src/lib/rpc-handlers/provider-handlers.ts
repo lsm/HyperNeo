@@ -1,7 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers';
-import type { CreateProviderParams, UpdateProviderParams } from '@hyperneo/shared';
-import type { ProviderCredentials } from '@hyperneo/shared/provider';
+import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
+import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
 import {
@@ -26,6 +26,7 @@ const log = new Logger('provider-handlers');
 
 const VALID_PROVIDER_KINDS = new Set(['built_in', 'custom_endpoint']);
 const VALID_AUTH_TYPES = new Set(['api_key', 'oauth', 'none']);
+const VALID_REMOTE_MODEL_OPTIONS = new Set(['force', 'command', 'baseUrl']);
 
 const MAX_PROVIDER_ID_LEN = 128;
 const MAX_DISPLAY_NAME_LEN = 256;
@@ -166,6 +167,84 @@ function validateAcpConfigCommand(configJson: string | undefined): void {
   parseAcpCommand(parsed.command);
 }
 
+function normalizeRemoteModelOptions(value: unknown): ListRemoteModelsOptions {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Remote model options must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  const unknown = Object.keys(input).find((key) => !VALID_REMOTE_MODEL_OPTIONS.has(key));
+  if (unknown) throw new Error(`Unknown remote model option: ${unknown}`);
+  const options: ListRemoteModelsOptions = {};
+  if (input.force !== undefined) {
+    if (typeof input.force !== 'boolean') throw new Error('force must be a boolean');
+    options.force = input.force;
+  }
+  if (input.command !== undefined) {
+    if (typeof input.command !== 'string') throw new Error('ACP command must be a string');
+    if (!input.command.trim() && input.command !== '') throw new Error('ACP command is required');
+    const command = input.command.trim();
+    if (command.length > MAX_JSON_FIELD_LEN) {
+      throw new Error(`ACP command must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
+    }
+    options.command = command;
+  }
+  if (input.baseUrl !== undefined) {
+    if (typeof input.baseUrl !== 'string') throw new Error('baseUrl must be a string');
+    const baseUrl = input.baseUrl.trim();
+    if (baseUrl.length > MAX_BASE_URL_LEN) {
+      throw new Error(`baseUrl must be ≤ ${MAX_BASE_URL_LEN} chars`);
+    }
+    let url: URL;
+    try {
+      url = new URL(baseUrl);
+    } catch {
+      throw new Error('Invalid baseUrl');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('baseUrl must use http:// or https://');
+    }
+    options.baseUrl = baseUrl;
+  }
+  return options;
+}
+
+type RemoteModel = { id: string; name?: string };
+type RemoteModelRequest = { id: string; options: unknown };
+
+function validateRemoteModelRequest(data: unknown): RemoteModelRequest {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Invalid remote model request');
+  }
+  const input = data as Record<string, unknown>;
+  const unknown = Object.keys(input).find((key) => key !== 'id' && key !== 'options');
+  if (unknown) throw new Error(`Unknown remote model request field: ${unknown}`);
+  if (typeof input.id !== 'string' || !input.id.trim()) {
+    throw new Error('Provider id is required');
+  }
+  return { id: input.id, options: input.options };
+}
+
+async function listAcpRemoteModels(
+  record: ProviderRecord,
+  options: ListRemoteModelsOptions
+): Promise<RemoteModel[]> {
+  if (record.providerId !== 'acp') {
+    throw new Error(`Provider ${record.id} is not an ACP provider`);
+  }
+  if (options.baseUrl !== undefined) {
+    throw new Error('baseUrl is not supported for ACP providers');
+  }
+  const useEnvCommand = options.command === '';
+  const registered = getProviderRegistry().get('acp');
+  const provider =
+    registered instanceof AcpProvider && !useEnvCommand ? registered : new AcpProvider();
+  if (!(registered instanceof AcpProvider) && !useEnvCommand) {
+    provider.setAcpCommand(parseProviderConfig(record.configJson).command);
+  }
+  return fetchAcpModels(provider, { command: options.command || undefined });
+}
+
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
@@ -210,31 +289,40 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     return { provider: { ...record, available } };
   });
 
+  messageHub.onRequest('providers.listRemoteModels', async (data: unknown) => {
+    const request = validateRemoteModelRequest(data);
+    const record = providerRepo.getProvider(request.id);
+    if (!record) throw new Error(`Provider ${request.id} not found`);
+    const options = normalizeRemoteModelOptions(request.options);
+    let models: RemoteModel[];
+    if (record.providerId === 'acp') {
+      models = await listAcpRemoteModels(record, options);
+    } else {
+      if (options.command !== undefined) {
+        throw new Error('command is only supported for ACP providers');
+      }
+      const provider = getProviderRegistry().get(record.providerId);
+      if (!provider) throw new Error(`Provider ${record.providerId} is not registered`);
+      if (!provider.listRemoteModels) {
+        throw new Error(`Provider ${record.providerId} does not support remote model listing`);
+      }
+      models = await provider.listRemoteModels(options);
+    }
+    return {
+      models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
+    };
+  });
+
   messageHub.onRequest(
     'providers.fetchAcpModels',
     async (data: { id: string; command?: string }) => {
       const record = providerRepo.getProvider(data.id);
       if (!record) throw new Error(`Provider ${data.id} not found`);
-      if (record.providerId !== 'acp')
+      if (record.providerId !== 'acp') {
         throw new Error(`Provider ${data.id} is not an ACP provider`);
-      if (data.command !== undefined && typeof data.command !== 'string')
-        throw new Error('ACP command must be a string');
-      if (typeof data.command === 'string' && !data.command.trim() && data.command !== '')
-        throw new Error('ACP command is required');
-      const commandOverride = typeof data.command === 'string' ? data.command.trim() : undefined;
-      if (commandOverride && commandOverride.length > MAX_JSON_FIELD_LEN)
-        throw new Error(`ACP command must be ≤ ${MAX_JSON_FIELD_LEN} chars`);
-      const useEnvCommand = data.command === '';
-      const registered = getProviderRegistry().get('acp');
-      const provider =
-        registered instanceof AcpProvider && !useEnvCommand ? registered : new AcpProvider();
-      if (!(registered instanceof AcpProvider) && !useEnvCommand) {
-        provider.setAcpCommand(parseProviderConfig(record.configJson).command);
       }
-      const models = await fetchAcpModels(provider, {
-        command: commandOverride ? commandOverride : undefined,
-      });
-      return { models };
+      const options = normalizeRemoteModelOptions({ command: data.command });
+      return { models: await listAcpRemoteModels(record, options) };
     }
   );
 
