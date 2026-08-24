@@ -99,6 +99,10 @@ export class SpaceAgentInactivityWatchdogService {
     if (lastActivityAt === null) return;
     const space = await this.deps.spaceManager.getSpace(spaceId);
     let claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
+    if (claim !== null && claim.degraded && claim.windowAnchoredAt < lastActivityAt) {
+      this.deps.claimRepo.clearDegraded(spaceId, agentId);
+      claim = null;
+    }
     if (claim !== null && claim.degraded && claim.configRevision !== config.configRevision) {
       this.deps.claimRepo.applyReset(
         spaceId,
