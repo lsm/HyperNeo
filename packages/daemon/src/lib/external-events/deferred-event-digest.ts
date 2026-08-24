@@ -27,6 +27,8 @@ export interface ExternalEventEssenceEntry {
   inReplyToId?: string;
   path?: string;
   line?: number;
+  reviewId?: string;
+  context?: string;
 }
 
 export type DeferredExternalEventEntry =
@@ -58,6 +60,8 @@ const ESSENCE_ENTRY_FIELDS = [
   'merged',
   'mergedAt',
   'draft',
+  'reviewId',
+  'context',
 ] as const;
 
 function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
@@ -248,7 +252,9 @@ function essenceTime(entry: ExternalEventEssenceEntry): number {
 function digestTimestamp(entry: ExternalEventEssenceEntry, includeDate = false): string {
   const ms = essenceTime(entry);
   if (!Number.isFinite(ms)) return 'unknown time';
-  const iso = new Date(ms).toISOString();
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return 'unknown time';
+  const iso = date.toISOString();
   return `${includeDate ? `${iso.slice(5, 10)} ` : ''}${iso.slice(11, 16)} UTC`;
 }
 
@@ -262,7 +268,8 @@ function digestSnippet(body: string | undefined): string | null {
 }
 
 function digestLinkSuffix(entry: ExternalEventEssenceEntry): string {
-  return entry.externalUrl ? ` — ${entry.externalUrl}` : '';
+  const url = entry.externalUrl ?? entry.prUrl;
+  return url ? ` — ${url}` : '';
 }
 
 function digestDetailSuffix(entry: ExternalEventEssenceEntry): string {
@@ -305,7 +312,7 @@ function digestGroupKey(entry: ExternalEventEssenceEntry, kind: DigestGroupKind)
   const scope = `${entry.repo ?? ''}|${entry.prNumber ?? entry.prUrl ?? ''}`;
   switch (kind) {
     case 'check':
-      return `check|${scope}|${entry.checkName ?? 'unknown check'}`;
+      return `check|${scope}|${entry.checkName ?? `event ${entry.eventId}`}`;
     case 'review':
       return `review|${scope}|${entry.inReplyToId ?? entry.commentId ?? entry.eventId}`;
     case 'pr_comment':
@@ -315,7 +322,7 @@ function digestGroupKey(entry: ExternalEventEssenceEntry, kind: DigestGroupKind)
     case 'reaction':
       return `reaction|${scope}`;
     case 'other':
-      return `other|${entry.topic}`;
+      return `other|${entry.topic}|${entry.reviewId ?? entry.context ?? ''}`;
   }
 }
 
@@ -330,6 +337,21 @@ const DIGEST_GROUP_ORDER: DigestGroupKind[] = [
 
 function cancelledConclusion(conclusion: string | undefined): boolean {
   return conclusion === 'canceled' || conclusion === 'cancelled';
+}
+
+function digestStateMarkers(entry: ExternalEventEssenceEntry): string {
+  return [
+    entry.merged === true ? 'merged' : '',
+    entry.merged === false && entry.state === 'closed' ? 'not merged' : '',
+    entry.draft === true ? 'draft' : '',
+  ]
+    .filter((marker) => marker.length > 0)
+    .join(', ');
+}
+
+function digestActionLabel(entry: ExternalEventEssenceEntry): string {
+  if (!entry.action || entry.action === 'polled' || entry.action === 'created') return '';
+  return ` (${entry.action})`;
 }
 
 function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
@@ -366,7 +388,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
         : '';
       const snippet = digestSnippet(latest.body);
       return (
-        `- Review comment${count > 1 ? 's' : ''}${location}: ×${count}, ` +
+        `- Review comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}${location}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
         `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
@@ -374,19 +396,13 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
     case 'pr_comment': {
       const snippet = digestSnippet(latest.body);
       return (
-        `- PR comment${count > 1 ? 's' : ''}: ×${count}, ` +
+        `- PR comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
         `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
       );
     }
     case 'state': {
-      const markers = [
-        latest.merged === true ? 'merged' : '',
-        latest.merged === false && latest.state === 'closed' ? 'not merged' : '',
-        latest.draft === true ? 'draft' : '',
-      ]
-        .filter((marker) => marker.length > 0)
-        .join(', ');
+      const markers = digestStateMarkers(latest);
       return (
         `- ${essenceScopeLabel(latest)} state: ${latest.state ?? 'updated'}` +
         `${markers ? ` (${markers})` : ''} ` +
@@ -405,11 +421,15 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       if (latest.action && latest.action !== 'polled') {
         parts.push(`${latest.action} by ${latest.actor ?? 'unknown'}`);
       }
-      if (latest.state) parts.push(`state: ${latest.state}`);
+      if (latest.state) {
+        const markers = digestStateMarkers(latest);
+        parts.push(`state: ${latest.state}${markers ? ` (${markers})` : ''}`);
+      }
       if (latest.environment) parts.push(`environment: ${latest.environment}`);
       const snippet = digestSnippet(latest.description ?? latest.body);
       if (snippet) parts.push(`"${snippet}"`);
-      if (latest.externalUrl) parts.push(latest.externalUrl);
+      const url = latest.externalUrl ?? latest.prUrl;
+      if (url) parts.push(url);
       return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
     }
   }
@@ -453,7 +473,7 @@ export function buildExternalEventDigestMessage(
     new Set(
       ordered
         .map((entry) => essenceTime(entry))
-        .filter((ms) => Number.isFinite(ms))
+        .filter((ms) => Number.isFinite(ms) && !Number.isNaN(new Date(ms).getTime()))
         .map((ms) => new Date(ms).toISOString().slice(0, 10))
     ).size > 1;
   const groups = new Map<string, DigestGroup>();

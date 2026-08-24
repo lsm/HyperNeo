@@ -433,6 +433,130 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).not.toContain('PR #7 state: open');
   });
 
+  it('keeps merged markers on closed PR webhooks routed through the other renderer', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'pr-closed',
+        topic: 'github/o/r/pull_request/7.closed',
+        eventType: 'pull_request',
+        action: 'closed',
+        actor: 'marcliu',
+        prNumber: 7,
+        state: 'closed',
+        merged: true,
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('closed by marcliu');
+    expect(digest).toContain('state: closed (merged)');
+  });
+
+  it('labels deleted comment actions instead of presenting them as current comments', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'del-1',
+        topic: 'github/o/r/pull_request/7.comment_deleted',
+        eventType: 'issue_comment',
+        action: 'deleted',
+        actor: 'marcliu',
+        prNumber: 7,
+        body: 'outdated comment',
+        commentId: 'del-1',
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('PR comment (deleted): ×1');
+  });
+
+  it('keeps payload-free reconstructed checks separate by event', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'rl-check-1',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        prNumber: 7,
+      },
+      {
+        eventId: 'rl-check-2',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        prNumber: 7,
+      },
+    ]);
+    expect(digest).toContain('latest eventId: rl-check-1');
+    expect(digest).toContain('latest eventId: rl-check-2');
+  });
+
+  it('separates submitted reviews by reviewId and statuses by context', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'rev-1',
+        topic: 'github/o/r/pull_request/7.review_submitted',
+        eventType: 'pull_request_review',
+        action: 'submitted',
+        actor: 'reviewer-a',
+        prNumber: 7,
+        reviewId: 'rv-1',
+        occurredAt: at(15),
+      },
+      {
+        eventId: 'rev-2',
+        topic: 'github/o/r/pull_request/7.review_submitted',
+        eventType: 'pull_request_review',
+        action: 'submitted',
+        actor: 'reviewer-b',
+        prNumber: 7,
+        reviewId: 'rv-2',
+        occurredAt: at(16),
+      },
+      {
+        eventId: 'st-ctx-1',
+        topic: 'github/o/r/pull_request/7.status_failure',
+        eventType: 'status',
+        action: 'failure',
+        actor: 'github-actions[bot]',
+        prNumber: 7,
+        context: 'lint',
+        occurredAt: at(15, 30),
+      },
+      {
+        eventId: 'st-ctx-2',
+        topic: 'github/o/r/pull_request/7.status_failure',
+        eventType: 'status',
+        action: 'failure',
+        actor: 'github-actions[bot]',
+        prNumber: 7,
+        context: 'deploy',
+        occurredAt: at(15, 40),
+      },
+    ]);
+    expect(digest).toContain('submitted by reviewer-a');
+    expect(digest).toContain('submitted by reviewer-b');
+    expect(digest).toContain('latest eventId: rev-1');
+    expect(digest).toContain('latest eventId: rev-2');
+    expect(digest).toContain('latest eventId: st-ctx-1');
+    expect(digest).toContain('latest eventId: st-ctx-2');
+  });
+
+  it('treats out-of-range occurredAt values as unknown time instead of throwing', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'bad-1',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        checkName: 'lint',
+        conclusion: 'failure',
+        occurredAt: 8.7e15,
+      },
+      {
+        eventId: 'bad-2',
+        topic: 'github/o/r/pull_request/7.check_failed',
+        checkName: 'lint',
+        conclusion: 'failure',
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('failure ×2');
+    expect(digest).toContain('unknown time');
+  });
+
   it('derives per-PR scope for rate-limited events from their annotated topics', () => {
     const annotated =
       '2 events received for topics: github/o/r/pull_request/7.polled, github/o/r/pull_request/8.polled ' +
