@@ -272,6 +272,35 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     expect(outcomes).toHaveLength(1);
   });
 
+  it('does not deliver when the config is disabled during the admission recheck', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    let getSpaceCalls = 0;
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: {
+        getSpace: mock(async () => {
+          getSpaceCalls += 1;
+          if (getSpaceCalls === 3) {
+            configRepo.setEnabled(spaceId, 'agent-1', false);
+          }
+          return { status: 'active', paused: false, stopped: false };
+        }),
+      },
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
+    expect(outcomes).toHaveLength(0);
+    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+  });
+
   it('does not deliver or reset a claim replaced by a newer scan revision', async () => {
     configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
     let getSpaceCalls = 0;

@@ -153,9 +153,11 @@ export class SpaceAgentInactivityWatchdogService {
     acquiredConfigRevision: number | null,
     prompt: string
   ): Promise<void> {
+    const space = await this.deps.spaceManager.getSpace(spaceId);
     const recheckAgent = this.deps.agentRepo.getById(agentId);
     const recheckConfig = this.deps.configRepo.getByAgent(spaceId, agentId);
     const recheckSession = this.deps.getSessionSnapshot(spaceId, agentId);
+    const currentClaim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     if (
       recheckAgent === null ||
       recheckAgent.spaceId !== spaceId ||
@@ -173,13 +175,6 @@ export class SpaceAgentInactivityWatchdogService {
       );
       return;
     }
-    const lastActivityAt = resolveLastActivityAt({
-      latestConsumedMessageAt: recheckSession.latestConsumedMessageAt,
-      sessionCreatedAt: recheckSession.sessionCreatedAt,
-      agentCreatedAt: recheckAgent.createdAt,
-    });
-    const space = await this.deps.spaceManager.getSpace(spaceId);
-    const currentClaim = this.deps.claimRepo.getByAgent(spaceId, agentId);
     if (
       currentClaim === null ||
       currentClaim.id !== claimId ||
@@ -189,6 +184,11 @@ export class SpaceAgentInactivityWatchdogService {
     ) {
       return;
     }
+    const lastActivityAt = resolveLastActivityAt({
+      latestConsumedMessageAt: recheckSession.latestConsumedMessageAt,
+      sessionCreatedAt: recheckSession.sessionCreatedAt,
+      agentCreatedAt: recheckAgent.createdAt,
+    });
     const recheck = decideInactivityNag({
       now: this.deps.now?.() ?? Date.now(),
       enabled: recheckConfig.enabled,
@@ -258,37 +258,58 @@ export class SpaceAgentInactivityWatchdogService {
         new Promise<InactivityNagDeliveryOutcome | 'pending'>((resolve) => {
           timer = setTimeout(() => {
             resolve('pending');
-            delivery.then(
-              (outcome) =>
-                this.applyOutcome(
-                  args.spaceId,
-                  args.agentId,
-                  args.claimId,
-                  args.idempotencyKey,
-                  args.acquiredConfigRevision,
-                  outcome
-                ),
-              (err) => {
-                log.warn(
-                  `Inactivity nag delivery for agent "${args.agentId}" in space "${args.spaceId}" failed after timing out: ${
-                    err instanceof Error ? err.message : String(err)
-                  }`
-                );
-                this.applyOutcome(
-                  args.spaceId,
-                  args.agentId,
-                  args.claimId,
-                  args.idempotencyKey,
-                  args.acquiredConfigRevision,
-                  'terminal_failure'
-                );
-              }
-            );
+            delivery
+              .then(
+                (outcome) =>
+                  this.applyLateOutcome(
+                    args.spaceId,
+                    args.agentId,
+                    args.claimId,
+                    args.idempotencyKey,
+                    args.acquiredConfigRevision,
+                    outcome
+                  ),
+                (err) => {
+                  log.warn(
+                    `Inactivity nag delivery for agent "${args.agentId}" in space "${args.spaceId}" failed after timing out: ${
+                      err instanceof Error ? err.message : String(err)
+                    }`
+                  );
+                  this.applyLateOutcome(
+                    args.spaceId,
+                    args.agentId,
+                    args.claimId,
+                    args.idempotencyKey,
+                    args.acquiredConfigRevision,
+                    'terminal_failure'
+                  );
+                }
+              )
+              .catch(() => {});
           }, timeoutMs);
         }),
       ]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  private applyLateOutcome(
+    spaceId: string,
+    agentId: string,
+    claimId: string,
+    claimKey: string,
+    acquiredConfigRevision: number | null,
+    outcome: InactivityNagDeliveryOutcome
+  ): void {
+    try {
+      this.applyOutcome(spaceId, agentId, claimId, claimKey, acquiredConfigRevision, outcome);
+    } catch (err) {
+      log.warn(
+        `Inactivity nag late outcome for agent "${agentId}" in space "${spaceId}" could not be applied: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
     }
   }
 
