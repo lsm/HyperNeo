@@ -444,14 +444,21 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async loadStoredGitHubToken(): Promise<string | undefined> {
+    let content: string;
     try {
-      const content = await fs.readFile(this.authPath, 'utf-8');
-      const data = JSON.parse(content) as Record<string, unknown>;
-      const creds = data['github-copilot'] as StoredCopilotCredentials | undefined;
-      if (creds?.refresh && typeof creds.refresh === 'string') {
-        return creds.refresh;
+      content = await fs.readFile(this.authPath, 'utf-8');
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        return undefined;
       }
-    } catch {}
+      throw error;
+    }
+
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const creds = data['github-copilot'] as StoredCopilotCredentials | undefined;
+    if (creds?.refresh && typeof creds.refresh === 'string') {
+      return creds.refresh;
+    }
     return undefined;
   }
 
