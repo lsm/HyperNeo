@@ -335,6 +335,34 @@ describe('GlmProvider', () => {
     it('requires credentials', async () => {
       await expect(provider.listRemoteModels()).rejects.toThrow('Z.ai API key not configured');
     });
+
+    it('getModels merges cached discovered models after the static list', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = mock(async (url: RequestInfo | URL) =>
+        String(url).endsWith('/models')
+          ? new Response(
+              JSON.stringify({
+                data: [
+                  { id: 'glm-5-turbo', object: 'model' },
+                  { id: 'glm-new', object: 'model' },
+                ],
+              }),
+              { status: 200 }
+            )
+          : new Response('{}', { status: 200 })
+      );
+      global.fetch = fetchImpl as unknown as typeof fetch;
+      provider = new GlmProvider(process.env, fetchImpl as unknown as typeof fetch);
+
+      await provider.listRemoteModels();
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual([
+        ...GlmProvider.MODELS.map((model) => model.id),
+        'glm-new',
+      ]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('ownsModel', () => {

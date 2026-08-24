@@ -11,11 +11,12 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { buildModelListUrl, fetchRemoteModelList } from './shared/model-list.js';
 import {
-  buildModelListUrl,
-  fetchRemoteModelList,
-  type RemoteModelListEntry,
-} from './shared/model-list.js';
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 export class MinimaxProvider implements Provider {
   readonly id = 'minimax';
@@ -83,7 +84,7 @@ export class MinimaxProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
-  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
 
   constructor(
@@ -94,7 +95,11 @@ export class MinimaxProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
-    this.modelListCache.clear();
+    this.discoveryCache.clear();
+  }
+
+  clearModelCache(): void {
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -148,12 +153,28 @@ export class MinimaxProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(MinimaxProvider.BASE_URL, apiKey);
-    return MinimaxProvider.MODELS;
+    const discovered = this.discoveryCache.get(this.discoveryFingerprint());
+    return discovered
+      ? mergeDiscoveredModels(MinimaxProvider.MODELS, discovered)
+      : MinimaxProvider.MODELS;
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      baseUrl: MinimaxProvider.MODEL_LIST_BASE_URL,
+      credentialKey: this.getApiKey(),
+    });
   }
 
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
     const apiKey = this.getApiKey();
     if (!apiKey) throw new Error('MiniMax API key not configured');
+    const cacheable = options.baseUrl === undefined;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force && cacheable) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
     const configuredBaseUrl = options.baseUrl?.trim().replace(/\/+$/, '');
     const baseUrl =
       configuredBaseUrl?.toLowerCase() === MinimaxProvider.BASE_URL.toLowerCase()
@@ -162,13 +183,15 @@ export class MinimaxProvider implements Provider {
     const models = await fetchRemoteModelList({
       url: buildModelListUrl(baseUrl, 'openai-chat'),
       headers: { Authorization: `Bearer ${apiKey}` },
-      force: options.force,
-      cache: options.baseUrl === undefined ? this.modelListCache : undefined,
       fetchImpl: this.fetchImpl,
     });
-    return models
+    const discovered = models
       .filter((model) => this.ownsModel(model.id))
       .map((model) => this.toRemoteModelInfo(model));
+    if (cacheable) {
+      this.discoveryCache.set(fingerprint, discovered);
+    }
+    return discovered;
   }
 
   ownsModel(modelId: string): boolean {

@@ -438,6 +438,69 @@ describe('KimiProvider', () => {
 
       await expect(provider.listRemoteModels()).rejects.toThrow('Kimi API key not configured');
     });
+
+    it('refetches against the new endpoint when the default region changes', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock, calls } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-k2.7-code', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels();
+      provider.setDefaultRegion('global');
+      const models = await provider.listRemoteModels();
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(calls[0]?.[0]).toBe('https://api.kimi.com/coding/v1/models');
+      expect(calls[1]?.[0]).toBe('https://api.moonshot.ai/v1/models');
+      expect(models).toEqual([KimiProvider.MODELS[3]]);
+    });
+
+    it('serves the cached list again when the region does not change', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels();
+      provider.setDefaultRegion('china');
+      const models = await provider.listRemoteModels();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(models).toEqual([KimiProvider.MODELS[3]]);
+    });
+
+    it('keeps baseUrl override probes out of the discovery cache', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        { data: [{ id: 'kimi-k3', object: 'model' }] },
+      ]);
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels({ baseUrl: 'https://proxy.example.com/kimi' });
+      const models = await provider.listRemoteModels();
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(models[0]?.id).toBe('kimi-k3[1m]');
+    });
+
+    it('getModels merges the cached discovered list without an extra list fetch', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      const { fetchMock } = installModelListFetch([
+        { data: [{ id: 'kimi-for-coding', object: 'model' }] },
+        {},
+      ]);
+      provider = new KimiProvider();
+
+      await provider.listRemoteModels();
+      const models = await provider.getModels();
+
+      expect(models).toEqual(KimiProvider.MODELS);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('ownsModel', () => {
