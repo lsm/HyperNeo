@@ -329,8 +329,12 @@ gate never sees. Re-flagging and admission are two separate rules:
   (`crypto.randomUUID()`, github-normalizer.ts:1094), so a crash before the
   200 response would let GitHub's retry of the *same delivery* land as an
   unrelated key and bypass the delivery-record dedupe — and for **polled**
-  events the replay key is the stable upstream tuple (repo + issue/PR
-  number + upstream `updated_at`): a crash after the inbox commit but
+  events the replay key is the stable upstream tuple (**eventType + repo +
+  upstream row id + `updated_at`** — the normalizer distinguishes pulls,
+  issue comments, and review comments by `eventType` plus the row's own
+  `id`, github-normalizer.ts:386-408, and second-resolution `updated_at`
+  alone would collide two comments on one PR, permanently suppressing one):
+  a crash after the inbox commit but
   before `lastPollTime` persists (polling-service.ts:132) re-polls the same
   object and normalization mints yet another fresh UUID
   (event-normalizer.ts:10-11), so anything less stable than the upstream
@@ -588,7 +592,16 @@ one credential shares one key:
   the provider + account identifier; for static keys: the key itself) — a
   routine refresh keeps the key, keeping active saturation/closure on the
   account it belongs to; only a genuine credential *change* (different
-  account identity) re-keys.
+  account identity) re-keys. **When no account identifier exists** (the
+  generic OAuth shape carries only `accessToken`/`refreshToken`/`expiresAt`/
+  `raw`, shared/src/provider/types.ts:23-31, and env migration stores a bare
+  token), the digest falls back to `hash(refreshToken ?? accessToken)` —
+  stable across access-token refreshes by construction (the refresh token
+  identifies the grant) — and where only an access token exists, the first
+  observed value pins the key and a later changed value is treated as a
+  rotation (the imprecision is recorded: a token refresh that rotates the
+  refresh token itself re-keys; the account-identifier field is the durable
+  fix and lands with the credential schema, not this design).
 - **Session overrides** (`providerConfig.apiKey`): the override digest keys
   the session — two built-in-provider sessions with different API keys are
   different accounts; neither queues behind the other.
@@ -612,7 +625,8 @@ equal, so the common case shares one key.
 | `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query) | admission facts, wake timer |
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}`; chat-first priority: background admits only when the chat lane is empty), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
-| `probeGrant` | `{ identity: GrantIdentity (typed union — see queuedMessages), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time** (never by the first admitting consult); consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints and re-binds | downstream consults (same delivery passes), probe resolution |
+| `probeGrant` | `{ identity: GrantIdentity (typed union — see queuedMessages), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) |
+| `closureProbeGrant` | `{ holder, leaseUntilMs } \| null` per provider — the atomic reservation behind `holdsClosureProbeGrant`; **acquired** by manual Retry / the health-probe timer through a compare-and-set (the loser queues on its own trigger); **released** by the holder's outcome (success → closure clears, drain registrations; fresh billing-terminal → re-arm `closed`; other error → closure stays armed, the probe retries on its own schedule) or by lease expiry (the health timer re-acquires next tick); independent of `probeGrant` — closure probing never mints or consumes post-clear probes | minted **and bound to the selected FIFO identity at clear time** (never by the first admitting consult); consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints and re-binds | downstream consults (same delivery passes), probe resolution |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
@@ -663,9 +677,13 @@ not inherit):
   against the exhausted account). A caller denied the grant queues on its
   own trigger and consults again. The holder's outcome resolves the grant:
   success clears closure and drains registrations, a fresh billing-terminal
-  response re-arms `closed`, any other error leaves it armed (the probe
-  retries on its own schedule). Ordinary deliveries can never set the fact
-  nor hold the grant. This reconciles the
+  response re-arms `closed`, **a classified non-billing limit transitions to
+  normal timed saturation** (the renewed-but-rate-limited case — the probe's
+  classification flows through `reportLimitError`, whose parsed reset arms
+  the authoritative deadline instead of leaving the account indefinitely
+  closed waiting for the next probe), and any other error leaves it armed
+  (the probe retries on its own schedule). Ordinary deliveries can never set
+  the fact nor hold the grant. This reconciles the
   old "do not arm" exception with the provider-wide admission objective.
 - `resetAtMs` present (bounded by `MAX_RESET_HORIZON_MS`, the same check
   `decideRateLimitTrip` makes) → `untilMs = cooldownFromReset(resetAtMs).retryAtMs`
@@ -823,11 +841,15 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   append stamps a
   **monotonic queue sequence** alongside the `queue_reason` marker (same
   migration) — the durable order key for message rows. **Background waiters
-  persist their own sequence**: parked jobs stamp `provider_park_seq` beside
-  `provider_park` on the job-queue row, and inbox items carry their ingest
-  sequence — neither has a message row, so each lane reconstructs from its
-  own durable order and the lanes merge only at selection time
-  (chat-first). In-memory order can diverge from row
+  persist their own sequence — **stamped from one shared monotonic
+  allocator** (a single daemon-wide counter persisted alongside; jobs and
+  inbox entries occupy the same background lane, so independently generated
+  per-table sequences are not comparable and would leave their cross-type
+  order ambiguous after restart): parked jobs stamp `provider_park_seq`
+  beside `provider_park` on the job-queue row, and inbox items carry their
+  ingest sequence from that same allocator — neither has a message row, so
+  each lane reconstructs from its own durable order and the lanes merge
+  only at selection time (chat-first). In-memory order can diverge from row
   age (an older preexisting row P3-parks after a newer message registered),
   and neither row id nor message timestamp reconstructs registration order,
   so restart reconstruction orders the scan by the persisted sequence; without
@@ -984,8 +1006,11 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   its prompt yield or the row otherwise exits — a daemon restart between
   promotion and yield must still find the row in the marker scan, or its
   ordinary job would claim alongside the single reconstructed probe. The exits
-  that clear both, atomically with their status flip, are: grant consumption at
-  prompt yield, terminal `'consumed'` / `'failed'`,
+  that clear both, atomically with their status flip, are: **prompt yield
+  itself** (the turn started — a migrated delivery on an already-open account
+  holds no grant, so keying the exit to "grant consumption" would leave its
+  marker reconstructable after a crash mid-turn), terminal `'consumed'` /
+  `'failed'`,
   **and an explicit user defer of a P3-parked `'enqueued'` row**
   (`session.messages.deferPending` → `deferEnqueuedUserMessage`): leaving the
   marker there would let a later provider wake auto-promote a row the user just
@@ -1027,7 +1052,14 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   deregister the Space's marked background jobs (and reconstruction skips
   archived/deleted Spaces), preventing a grant-funded analysis run for a
   Space that no longer exists.
-  **Logout closes, it does not re-admit**: the
+  **Credential rotation re-admits every waiter under the key, sessionless
+  ones included**: typed Space jobs and inbox entries have no session index,
+  but they live under the same credential key — the rotation hook
+  deregisters and re-admits the whole key's registrations (both lanes,
+  by key lookup, not by session enumeration) so a closed default
+  credential's parked background work follows the replacement credential
+  instead of waiting forever; recreating the GitHub agents is the separate
+  snapshot fix above. **Logout closes, it does not re-admit**: the
   re-admission hook re-runs admission against the *new* key — and
   `ProviderAdmissionFacts` gains an `accountAvailable: boolean` fact (usable
   credentials present); `auth.logout` removing a provider's only credential
@@ -1112,7 +1144,7 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
 | --- | --- | --- |
 | **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
 | **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
-| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, synthetic identity, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP), `reportRefinedReset`; the `queue_reason` migration with clearing-on-exit and startup reconstruction of marker rows in both states (deferred + P3-parked enqueued); per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
 | **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
 
 Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
@@ -1333,11 +1365,12 @@ by pre-existing suites):
    in its own cooldown defers with today's reason and is not wake-registered; its
    own watchdog owns recovery. Recorded so the gate list is not read as a complete
    saturation policy — same caveat class as pilot 7's parked-task asymmetry.
-5. **The account key is still coarser than endpoint- or model-level.** The
-   fingerprint distinguishes `providerConfig` apiKey/baseUrl overrides — the
-   case where one provider id fronts independent accounts — but custom
-   endpoints sharing one configured key and per-model caps under one account
-   still share a saturation record. Every registry method takes the same
+5. **The account key is still coarser than model-level, and coarser than
+   endpoints by design.** The fingerprint distinguishes **effective
+   credentials only** (an `apiKey` override is a different account;
+   `baseUrl`/region overrides are NOT — the same credential through X and Y
+   is one pool per the keying contract), and per-model caps under one
+   account share a saturation record. Every registry method takes the same
    effective account key (computed once per query beside `resolvedProviderId`),
    so no caller can mix bare-provider and account-scoped records.
 6. **`inFlight` is bookkeeping until caps exist.** v1 never gates on it
