@@ -332,7 +332,7 @@ describe('SpaceAgentInactivity repositories', () => {
         ownerToken: 'scanner-b',
         configRevision: 1,
       });
-      const result = claimRepo.applyReset(spaceId, 'agent-1', 'old', {
+      const result = claimRepo.applyReset(spaceId, 'agent-1', 'old', 'scanner-a', {
         releaseClaim: true,
         markDegraded: false,
         advanceAttemptGeneration: false,
