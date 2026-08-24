@@ -62,8 +62,9 @@ const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD = 2048;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX = 1200;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX = 20;
+const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_OBJECT_MAX = 25;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS = '…';
-const MAX_SPACE_TASK_MESSAGE_EXPANSION_CHARS = 16 * 1024 * 1024;
+const MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES = 16 * 1024 * 1024;
 
 function compactPreviewValue(value: unknown, path: string[]): unknown {
   if (value === null || typeof value === 'boolean' || typeof value === 'number') {
@@ -75,11 +76,11 @@ function compactPreviewValue(value: unknown, path: string[]): unknown {
     }
     return `${value.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`;
   }
+  const key = path[path.length - 1] ?? '';
+  const parent = path.length >= 2 ? path[path.length - 2] : '';
   if (Array.isArray(value)) {
-    const key = path[path.length - 1] ?? '';
-    const parent = path.length >= 2 ? path[path.length - 2] : '';
-    const isContentArray = key === 'content' && parent === 'message';
-    const limit = isContentArray
+    const isSemanticLength = (key === 'content' && parent === 'message') || key === 'commands';
+    const limit = isSemanticLength
       ? value.length
       : Math.min(value.length, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ARRAY_MAX);
     const out: unknown[] = [];
@@ -89,9 +90,12 @@ function compactPreviewValue(value: unknown, path: string[]): unknown {
     return out;
   }
   if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const limit = Math.min(entries.length, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_OBJECT_MAX);
     const out: Record<string, unknown> = {};
-    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = compactPreviewValue(v, [...path, key]);
+    for (let i = 0; i < limit; i += 1) {
+      const [k, v] = entries[i];
+      out[k] = compactPreviewValue(v, [...path, k]);
     }
     return out;
   }
@@ -2472,9 +2476,10 @@ selected_ids AS (
   SELECT id FROM seg_summary
 ),
 -- Visible window: the newest N selected rows, oldest-first for rendering.
--- hyperneo_action rows (e.g. sdk_resume_choice unblock cards) are pinned OUTSIDE
--- the limit — the task pane renders them as resolution controls, so letting the
--- tail limit evict them would strand a blocked agent's card (#2900 review).
+-- Rows whose UI state must survive regardless of age are pinned OUTSIDE the
+-- limit (#2900 review): unresolved hyperneo_action cards (the task pane's
+-- resolution controls) and user deliveries still in flight (queued/processing/
+-- retrying badges), which sdk_rows deliberately admits beyond the turn cutoff.
 windowed_rows AS (
   SELECT
     j.id,
@@ -2495,11 +2500,18 @@ windowed_rows AS (
     j.insOrder
   FROM joined j
   JOIN selected_ids s ON s.id = j.id
-  WHERE j.messageType != 'hyperneo_action'
+  WHERE NOT (
+    j.messageType = 'hyperneo_action'
+    AND COALESCE(
+      CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
+      1
+    ) = 0
+  )
+    AND NOT (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
   ORDER BY j.createdAt DESC, j.insOrder DESC
   LIMIT ?
 ),
-pinned_action_rows AS (
+pinned_rows AS (
   SELECT
     j.id,
     j.sessionId,
@@ -2519,7 +2531,14 @@ pinned_action_rows AS (
     j.insOrder
   FROM joined j
   JOIN selected_ids s ON s.id = j.id
-  WHERE j.messageType = 'hyperneo_action'
+  WHERE (
+    j.messageType = 'hyperneo_action'
+    AND COALESCE(
+      CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
+      1
+    ) = 0
+  )
+    OR (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
 )
 SELECT
   id,
@@ -2541,7 +2560,7 @@ SELECT
 FROM (
   SELECT * FROM windowed_rows
   UNION ALL
-  SELECT * FROM pinned_action_rows
+  SELECT * FROM pinned_rows
 )
 ORDER BY createdAt ASC, insOrder ASC
 `.trim();
@@ -4063,7 +4082,7 @@ export function setupLiveQueryHandlers(
     if (!row) {
       throw new Error('Message not found');
     }
-    if (row.sdk_message.length > MAX_SPACE_TASK_MESSAGE_EXPANSION_CHARS) {
+    if (Buffer.byteLength(row.sdk_message, 'utf8') > MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES) {
       throw new Error(
         `spaceTaskMessage.get: message "${messageId}" exceeds the expansion size limit`
       );

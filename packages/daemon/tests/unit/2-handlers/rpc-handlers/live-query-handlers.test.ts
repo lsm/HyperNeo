@@ -4921,12 +4921,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(ids).toContain('a-4');
     });
 
-    test('compact window keeps hyperneo_action rows even when they age out', () => {
+    test('compact window keeps unresolved action rows and in-flight deliveries when they age out', () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
       insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
       insertSdkMessageAt(
-        'action-old',
+        'action-old-unresolved',
         sessionId,
         now,
         'hyperneo_action',
@@ -4935,10 +4935,27 @@ describe('NAMED_QUERY_REGISTRY', () => {
         null,
         {
           type: 'hyperneo_action',
-          uuid: 'action-old',
-          action: { kind: 'sdk_resume_choice' },
+          uuid: 'action-old-unresolved',
+          action: 'sdk_resume_choice',
+          resolved: false,
         }
       );
+      insertSdkMessageAt(
+        'action-old-resolved',
+        sessionId,
+        now + 10,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-old-resolved',
+          action: 'sdk_resume_choice',
+          resolved: true,
+        }
+      );
+      insertSdkMessageAt('queued-old', sessionId, now + 20, 'user', 'enqueued', 'human');
       for (let i = 0; i < 5; i += 1) {
         insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
         insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
@@ -4948,8 +4965,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
       const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
-      expect(rows.map((r) => r.id)).toContain('action-old');
-      expect(rows.length).toBe(4);
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain('action-old-unresolved');
+      expect(ids).toContain('queued-old');
+      expect(ids).not.toContain('action-old-resolved');
+      expect(rows.length).toBe(5);
     });
 
     test('compact rows expose contentBytes and contentTruncated for oversized messages', () => {
