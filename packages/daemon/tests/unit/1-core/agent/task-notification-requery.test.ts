@@ -669,6 +669,108 @@ describe('AgentSession task-notification requery (incident replay)', () => {
     expect(needsAttentionPublishes()).toBe(0);
   });
 
+  it('defers autonomous-turn continuations to the trailing SDK idle', async () => {
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('busy'));
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('re-validates guards when a follow-up lands during the dead-query restart', async () => {
+    let addedFollowUp = false;
+    const ensureQueryStarted = mock(async () => {
+      if (!addedFollowUp) {
+        addedFollowUp = true;
+        activeDeliveryUuids.add('mid-restart-follow-up');
+      }
+      return 'started' as const;
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+
+    activeDeliveryUuids.clear();
+    await agentSession.onSDKMessage(buildSessionStateChangedMessage('idle'));
+    await settleRequery();
+    expect(continueCalls()).toBe(1);
+  });
+
+  it('stands down when the episode is reset during the dead-query restart', async () => {
+    const ensureQueryStarted = mock(async () => {
+      agentSession.resetTaskNotificationRequery();
+      return 'started' as const;
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(0);
+  });
+
+  it('removes a queued continuation when the episode resets', async () => {
+    const slowEnqueue = mock(() => new Promise<void>(() => {}));
+    (agentSession.messageQueue as unknown as { enqueueWithId: typeof slowEnqueue }).enqueueWithId =
+      slowEnqueue;
+    const removeSpy = mock(() => false);
+    (agentSession.messageQueue as unknown as { remove: typeof removeSpy }).remove = removeSpy;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    agentSession.resetTaskNotificationRequery();
+    expect(removeSpy.mock.calls[0]?.[0]).toBe(slowEnqueue.mock.calls[0]?.[0]);
+  });
+
+  it('escalates at the budget when a held episode meets a dead query', async () => {
+    const ensureQueryStarted = mock(async () => {
+      throw new Error('restart boom');
+    });
+    (
+      agentSession as unknown as {
+        lifecycleManager: { ensureQueryStarted: typeof ensureQueryStarted };
+      }
+    ).lifecycleManager = { ensureQueryStarted };
+    agentSession.queryPromise = null;
+    agentSession.messageQueue.stop();
+    (
+      agentSession as unknown as { taskNotificationRequeryAttempts: number }
+    ).taskNotificationRequeryAttempts = TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS;
+
+    await agentSession.onSDKMessage(buildHollowTaskNotificationResult());
+    await settleRequery();
+    expect(ensureQueryStarted.mock.calls.length).toBe(0);
+    expect(continueCalls()).toBe(0);
+    expect(needsAttentionPublishes()).toBe(1);
+    expect(
+      publishSpy.mock.calls.find(
+        ([event]: [string]) => event === 'space.workflowRun.needsAttention'
+      )
+    ).toEqual([
+      'space.workflowRun.needsAttention',
+      expect.objectContaining({
+        retriesExhausted: TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
+      }),
+    ]);
+  });
+
   it('clears a pending re-query timer when the user interrupts', async () => {
     process.env.HYPERNEO_TASK_NOTIFICATION_REQUERY_BASE_DELAY_MS = '500';
     await agentSession.onSDKMessage(buildHollowTaskNotificationResult());

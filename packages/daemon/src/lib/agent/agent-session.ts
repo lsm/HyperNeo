@@ -266,6 +266,8 @@ export class AgentSession
   private taskNotificationRequeryInterruptionGeneration: number | null = null;
   private taskNotificationRequerySuppressedGeneration: number | null = null;
   private taskNotificationRequeryContinueMessageId: string | null = null;
+  private taskNotificationRequeryEpisodeToken = 0;
+  private taskNotificationRequeryAwaitingSdkIdle = false;
 
   private outstandingToolUseIds = new Set<string>();
 
@@ -788,10 +790,6 @@ export class AgentSession
     const status = this.stateManager.getState().status;
     if (status !== 'idle' && status !== 'interrupted') {
       this.taskNotificationRequerySuppressedGeneration = this.getQueryGeneration();
-    }
-    const continueMessageId = this.taskNotificationRequeryContinueMessageId;
-    if (continueMessageId) {
-      this.messageQueue.remove(continueMessageId);
     }
     this.resetTaskNotificationRequery();
   }
@@ -1402,7 +1400,10 @@ export class AgentSession
     if (this.session.config.provider === 'acp') return;
     if (isSDKSessionStateChangedMessage(message)) {
       if (message.state === 'idle') {
+        this.taskNotificationRequeryAwaitingSdkIdle = false;
         this.flushPendingTaskNotificationRequery();
+      } else {
+        this.taskNotificationRequeryAwaitingSdkIdle = true;
       }
       return;
     }
@@ -1425,6 +1426,7 @@ export class AgentSession
     }
     if (decision.action === 'hold') {
       if (!this.taskNotificationRequeryExhausted && this.hasQueuedFollowUpDelivery()) {
+        this.taskNotificationRequeryEpisodeToken += 1;
         this.clearTaskNotificationRequeryTimer();
         this.taskNotificationRequeryPending = true;
         this.taskNotificationRequeryPendingDelayMs = taskNotificationRequeryDelayMs(
@@ -1441,8 +1443,12 @@ export class AgentSession
       return;
     }
     if (this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()) return;
+    this.taskNotificationRequeryEpisodeToken += 1;
     this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
-    if (this.stateManager.getState().status === 'idle') {
+    if (
+      !this.taskNotificationRequeryAwaitingSdkIdle &&
+      this.stateManager.getState().status === 'idle'
+    ) {
       this.scheduleTaskNotificationRequery(decision.delayMs);
     } else {
       this.clearTaskNotificationRequeryTimer();
@@ -1487,12 +1493,17 @@ export class AgentSession
 
   resetTaskNotificationRequery(): void {
     this.clearTaskNotificationRequeryTimer();
+    const continueMessageId = this.taskNotificationRequeryContinueMessageId;
+    if (continueMessageId) {
+      this.messageQueue.remove(continueMessageId);
+    }
     this.taskNotificationRequeryAttempts = 0;
     this.taskNotificationRequeryExhausted = false;
     this.taskNotificationRequeryPending = false;
     this.taskNotificationRequeryPendingDelayMs = null;
     this.taskNotificationRequeryInterruptionGeneration = null;
     this.taskNotificationRequeryContinueMessageId = null;
+    this.taskNotificationRequeryEpisodeToken += 1;
   }
 
   private flushPendingTaskNotificationRequery(): void {
@@ -1531,6 +1542,7 @@ export class AgentSession
   private async runTaskNotificationRequeryContinue(): Promise<void> {
     if (this._isCleaningUp) return;
     if (this.db.getSession(this.session.id)?.status === 'archived') return;
+    const episodeToken = this.taskNotificationRequeryEpisodeToken;
     if (
       this.taskNotificationRequeryInterruptionGeneration !== null &&
       this.taskNotificationRequeryInterruptionGeneration !== this.getQueryGeneration()
@@ -1554,6 +1566,12 @@ export class AgentSession
       return;
     }
     if (this.isLimitRecoveryPending()) return;
+    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
+      this.clearTaskNotificationRequeryTimer();
+      this.taskNotificationRequeryExhausted = true;
+      void this.escalateTaskNotificationRequeryExhaustion();
+      return;
+    }
     if (!this.messageQueue.isRunning() || !this.queryPromise) {
       if (this.session.config.queryMode === 'manual') {
         this.logger.warn(
@@ -1567,6 +1585,22 @@ export class AgentSession
         if (started === 'blocked') {
           throw new Error('SDK transcript recovery prompt emitted');
         }
+        if (
+          this._isCleaningUp ||
+          episodeToken !== this.taskNotificationRequeryEpisodeToken ||
+          this.taskNotificationRequerySuppressedGeneration === this.getQueryGeneration()
+        ) {
+          return;
+        }
+        if (this.hasQueuedFollowUpDelivery()) {
+          this.taskNotificationRequeryPending = true;
+          this.taskNotificationRequeryPendingDelayMs = 0;
+          return;
+        }
+        if (this.stateManager.getState().status !== 'idle') {
+          this.taskNotificationRequeryPending = true;
+          return;
+        }
         this.taskNotificationRequeryInterruptionGeneration = this.getQueryGeneration();
       } catch (error) {
         this.logger.warn(
@@ -1577,12 +1611,6 @@ export class AgentSession
         this.handleTaskNotificationRequeryFailure();
         return;
       }
-    }
-    if (this.taskNotificationRequeryAttempts >= TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS) {
-      this.clearTaskNotificationRequeryTimer();
-      this.taskNotificationRequeryExhausted = true;
-      void this.escalateTaskNotificationRequeryExhaustion();
-      return;
     }
     this.taskNotificationRequeryAttempts += 1;
     const attempt = this.taskNotificationRequeryAttempts;
