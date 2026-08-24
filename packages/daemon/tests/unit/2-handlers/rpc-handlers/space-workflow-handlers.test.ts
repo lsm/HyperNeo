@@ -1704,6 +1704,42 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     }
   });
 
+  it('bounds individually oversized workflow names in the drift summary', async () => {
+    const [template] = getBuiltInWorkflows();
+    const longName = `X`.repeat(1200);
+    const space: Space = { ...mockSpace, id: 'sp-long', name: 'Long Space' };
+    const workflow: SpaceWorkflow = {
+      ...mockWorkflow,
+      id: 'wf-long',
+      spaceId: 'sp-long',
+      name: longName,
+      templateName: template.name,
+      templateHash: 'stale-long',
+    };
+    const sm = makeSpaceManager([space]);
+    const wm = makeWorkflowManager({ 'sp-long': [workflow] });
+
+    const warnings: string[] = [];
+    configureLogger({ level: LogLevel.WARN });
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:space-workflow-handlers' && event.level === 'warn') {
+        warnings.push(event.message);
+      }
+    });
+    try {
+      await checkBuiltInWorkflowDriftOnStartup(wm, sm);
+    } finally {
+      unsubscribe();
+      configureLogger({ level: LogLevel.SILENT });
+    }
+
+    expect(warnings.length).toBeGreaterThan(0);
+    for (const message of warnings) {
+      expect(message.length).toBeLessThanOrEqual(1000);
+    }
+    expect(warnings.some((message) => message.includes('X'.repeat(100)))).toBe(true);
+  });
+
   it('resolves without throwing when spaceManager.listSpaces rejects (non-fatal)', async () => {
     const sm = {
       listSpaces: mock(async () => {

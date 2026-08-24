@@ -94,6 +94,8 @@ export class EvolutionLogEvidenceService {
   }
 
   private async drainBuffer(): Promise<void> {
+    const budget = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
+    let writes = 0;
     while (true) {
       if (this.drainItem === null) {
         const event = this.buffer.shift();
@@ -104,14 +106,16 @@ export class EvolutionLogEvidenceService {
             matchesSubscription(candidate, event)
           );
         } catch (error) {
-          this.buffer.unshift(event);
-          if (isSqliteBusyError(error)) {
-            this.busyRetryCount += 1;
-            this.retryDelayMs = Math.min(
-              BUSY_RETRY_BASE_MS * 2 ** (this.busyRetryCount - 1),
-              MAX_BUSY_RETRY_MS
-            );
+          if (!isSqliteBusyError(error)) {
+            await yieldToEventLoop();
+            continue;
           }
+          this.buffer.unshift(event);
+          this.busyRetryCount += 1;
+          this.retryDelayMs = Math.min(
+            BUSY_RETRY_BASE_MS * 2 ** (this.busyRetryCount - 1),
+            MAX_BUSY_RETRY_MS
+          );
           return;
         }
         if (subscriptions.length === 0) {
@@ -122,8 +126,13 @@ export class EvolutionLogEvidenceService {
       }
       const item = this.drainItem;
       while (item.offset < item.subscriptions.length) {
+        if (writes >= budget) {
+          await yieldToEventLoop();
+          return;
+        }
         try {
           await this.writeEvidenceInterleaved(item, item.subscriptions[item.offset]);
+          writes += 1;
         } catch (error) {
           if (this.drainItem !== item) return;
           if (!isSqliteBusyError(error)) {
@@ -151,12 +160,23 @@ export class EvolutionLogEvidenceService {
   flush(): void {
     this.cancelScheduledDrain();
     let busyHit = false;
+    const budget = this.deps.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
+    let writes = 0;
     const interrupted = this.drainItem;
     if (interrupted !== null) {
       this.drainItem = null;
       for (let i = interrupted.offset; i < interrupted.subscriptions.length; i++) {
+        if (writes >= budget) {
+          this.drainItem = {
+            event: interrupted.event,
+            subscriptions: interrupted.subscriptions,
+            offset: i,
+          };
+          break;
+        }
         try {
           this.writeEvidence(interrupted.event, interrupted.subscriptions[i]);
+          writes += 1;
         } catch (error) {
           if (!isSqliteBusyError(error)) continue;
           busyHit = true;
@@ -177,13 +197,19 @@ export class EvolutionLogEvidenceService {
     } else if (batch.length > 0) {
       try {
         const subscriptions = this.getSubscriptions();
-        for (let index = 0; index < batch.length; index++) {
+        let stopped = false;
+        for (let index = 0; index < batch.length && !stopped; index++) {
           const event = batch[index];
           let eventBusy = false;
           for (const subscription of subscriptions) {
+            if (writes >= budget) {
+              stopped = true;
+              break;
+            }
             if (!matchesSubscription(subscription, event)) continue;
             try {
               this.writeEvidence(event, subscription);
+              writes += 1;
             } catch (error) {
               if (isSqliteBusyError(error)) {
                 busyHit = true;
@@ -192,16 +218,18 @@ export class EvolutionLogEvidenceService {
               }
             }
           }
-          if (eventBusy) {
+          if (stopped || eventBusy) {
             for (let remain = batch.length - 1; remain >= index; remain--) {
               this.buffer.unshift(batch[remain]);
             }
-            break;
           }
         }
-      } catch {
-        for (let remain = batch.length - 1; remain >= 0; remain--) {
-          this.buffer.unshift(batch[remain]);
+      } catch (error) {
+        if (isSqliteBusyError(error)) {
+          busyHit = true;
+          for (let remain = batch.length - 1; remain >= 0; remain--) {
+            this.buffer.unshift(batch[remain]);
+          }
         }
       }
     }

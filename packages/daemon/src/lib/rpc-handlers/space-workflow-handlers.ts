@@ -214,9 +214,14 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     if (updatesAvailable.length === 0 && customizedOnlyCount === 0) return;
 
     if (updatesAvailable.length > 0) {
-      const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) =>
-        customized ? `${spaceName}/${workflowName} (customized)` : `${spaceName}/${workflowName}`
-      );
+      const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) => {
+        const entry = customized
+          ? `${spaceName}/${workflowName} (customized)`
+          : `${spaceName}/${workflowName}`;
+        return entry.length > DRIFT_SUMMARY_MAX_CHARS
+          ? `${entry.slice(0, DRIFT_SUMMARY_MAX_CHARS - 3)}...`
+          : entry;
+      });
       const header =
         `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +
         `(open the Workflow List in the UI and click "Sync" to apply)`;

@@ -630,6 +630,46 @@ describe('EvolutionLogEvidenceService', () => {
     expect(singleEvidence[0].metadata.count).toBe(1);
   });
 
+  it('bounds drain writes per pass after subscription fan-out', async () => {
+    const scope2 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'fanout-2',
+      objective: 'fanout scope 2',
+    }).id;
+    const scope3 = evolutionRepo.createScope({
+      spaceId,
+      kind: 'project',
+      name: 'fanout-3',
+      objective: 'fanout scope 3',
+    }).id;
+    const totalEvidence = () =>
+      evolutionRepo.listEvidence(scopeId).length +
+      evolutionRepo.listEvidence(scope2).length +
+      evolutionRepo.listEvidence(scope3).length;
+    const service = new EvolutionLogEvidenceService({
+      evolutionRepo,
+      subscriptions: [
+        { scopeId, levels: ['warn'] },
+        { scopeId: scope2, levels: ['warn'] },
+        { scopeId: scope3, levels: ['warn'] },
+      ],
+      maxBufferedEvents: 2,
+      flushDelayMs: 60_000,
+    });
+
+    service.capture(createEvent({ level: 'warn', message: 'fanout one' }));
+    service.capture(createEvent({ level: 'warn', message: 'fanout two' }));
+
+    await service.flushAsync();
+    expect(totalEvidence()).toBe(2);
+
+    await service.flushAsync();
+    await service.flushAsync();
+
+    expect(totalEvidence()).toBe(6);
+  });
+
   it('does not double-write evidence when flush interrupts an active drain', async () => {
     const sleepSync = (ms: number): void => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
