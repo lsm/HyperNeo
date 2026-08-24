@@ -181,6 +181,51 @@ describe('parseDeferredExternalEventText', () => {
     });
   });
 
+  it('parses the JSON-structural rate-limit format and round-trips arbitrary IDs', () => {
+    const ids = [
+      { id: 'plain-id', topic: 'github/o/r/pull_request/7.check_failed' },
+      { id: 'deploy event, 1', topic: 'github/o/r/pull_request/7.check_failed' },
+    ];
+    const structured =
+      '2 events received for topics: github/o/r/pull_request/7.check_failed ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      `Event IDs: ${JSON.stringify(ids)}. ` +
+      'Use get_external_event(eventId) for full details.';
+    const entry = parseDeferredExternalEventText(structured);
+    expect(entry?.kind).toBe('fold');
+    if (entry?.kind !== 'fold') return;
+    expect(entry.events.map((event) => event.eventId)).toEqual(['plain-id', 'deploy event, 1']);
+    expect(entry.events[1]).toMatchObject({
+      topic: 'github/o/r/pull_request/7.check_failed',
+      prNumber: 7,
+    });
+  });
+
+  it('bounds events flattened from a single rate-limit burst row', () => {
+    const ids = Array.from({ length: 250 }, (_, i) => ({
+      id: `burst-${i}`,
+      topic: 'github/o/r/pull_request/7.check_failed',
+    }));
+    const burst =
+      '250 events received for topics: github/o/r/pull_request/7.check_failed ' +
+      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
+      `Event IDs: ${JSON.stringify(ids)}. ` +
+      'Use get_external_event(eventId) for full details.';
+    const partition = partitionDeferredExternalEventRows([row('db-burst', 'u-burst', burst)]);
+    expect(partition.digestEvents).toHaveLength(200);
+    expect(partition.droppedCount).toBe(50);
+    expect(partition.digestEvents[0]).toMatchObject({ eventId: 'burst-50' });
+    const digest = buildExternalEventDigestMessage(partition.digestEvents, {
+      droppedEventCount: partition.droppedCount,
+    });
+    expect(digest.split('\n')[0]).toBe(
+      'External events while you were working (250 events, PR #7):'
+    );
+    expect(digest).toContain(
+      '50 older events were folded out of earlier batches and are superseded.'
+    );
+  });
+
   it('returns null for non-external-event text', () => {
     expect(parseDeferredExternalEventText('a human follow-up')).toBeNull();
     expect(parseDeferredExternalEventText('{"type":"chat","topic":"x"}')).toBeNull();
@@ -372,7 +417,7 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('latest eventId: th-2');
   });
 
-  it('collapses same-value reaction duplicates but splits distinct reactions', () => {
+  it('collapses same-value reaction duplicates but keeps actors distinct', () => {
     const digest = buildExternalEventDigestMessage([
       {
         eventId: 'ra-1',
@@ -389,7 +434,7 @@ describe('buildExternalEventDigestMessage', () => {
         topic: 'github/o/r/pull_request/7.reaction_added',
         eventType: 'reaction',
         action: 'added',
-        actor: 'marcliu',
+        actor: 'codex[bot]',
         prNumber: 7,
         body: '👍',
         occurredAt: at(16),
@@ -401,13 +446,40 @@ describe('buildExternalEventDigestMessage', () => {
         action: 'added',
         actor: 'marcliu',
         prNumber: 7,
-        body: '🚀',
+        body: '👍',
         occurredAt: at(17),
       },
+      {
+        eventId: 'ra-4',
+        topic: 'github/o/r/pull_request/7.reaction_added',
+        eventType: 'reaction',
+        action: 'added',
+        actor: 'marcliu',
+        prNumber: 7,
+        body: '🚀',
+        occurredAt: at(18),
+      },
     ]);
-    expect(digest).toContain('Reactions on PR #7: ×2, latest 👍 by marcliu at 16:00 UTC');
-    expect(digest).toContain('Reactions on PR #7: ×1, latest 🚀 by marcliu at 17:00 UTC');
-    expect(digest).toContain('latest eventId: ra-3');
+    expect(digest).toContain('Reactions on PR #7: ×2, latest 👍 by codex[bot] at 16:00 UTC');
+    expect(digest).toContain('Reactions on PR #7: ×1, latest 👍 by marcliu at 17:00 UTC');
+    expect(digest).toContain('Reactions on PR #7: ×1, latest 🚀 by marcliu at 18:00 UTC');
+    expect(digest).toContain('latest eventId: ra-4');
+  });
+
+  it('renders structured branch-protection payload fields on other-tier lines', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'bp-1',
+        topic: 'github/o/r/repo/42.branch_protection_edited',
+        eventType: 'branch_protection_rule',
+        action: 'edited',
+        actor: 'marcliu',
+        changedFields: { requireConversationResolution: true },
+        occurredAt: at(16),
+      },
+    ]);
+    expect(digest).toContain('edited by marcliu');
+    expect(digest).toContain('{"requireConversationResolution":true}');
   });
 
   it('renders date-inclusive timestamps when the backlog spans multiple UTC days', () => {
@@ -454,7 +526,7 @@ describe('buildExternalEventDigestMessage', () => {
     });
     expect(digest.split('\n')[0]).toBe('External events while you were working (205 events):');
     expect(digest).toContain(
-      '5 older events were folded out of earlier overflow envelopes and are superseded.'
+      '5 older events were folded out of earlier batches and are superseded.'
     );
   });
 

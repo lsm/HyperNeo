@@ -30,6 +30,8 @@ export interface ExternalEventEssenceEntry {
   reviewId?: string;
   context?: string;
   threadId?: string;
+  requiredStatusChecks?: unknown;
+  changedFields?: unknown;
 }
 
 export type DeferredExternalEventEntry =
@@ -66,6 +68,8 @@ const ESSENCE_ENTRY_FIELDS = [
   'threadId',
 ] as const;
 
+const ESSENCE_STRUCTURED_FIELDS = ['requiredStatusChecks', 'changedFields'] as const;
+
 function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
@@ -77,6 +81,10 @@ function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
     if (typeof raw === 'string' && raw.length > 0) entry[field] = raw;
     else if (typeof raw === 'number' && Number.isFinite(raw)) entry[field] = raw;
     else if (typeof raw === 'boolean') entry[field] = raw;
+  }
+  for (const field of ESSENCE_STRUCTURED_FIELDS) {
+    const raw = record[field];
+    if (raw !== null && typeof raw === 'object') entry[field] = raw;
   }
   return entry as unknown as ExternalEventEssenceEntry;
 }
@@ -139,19 +147,9 @@ function parseRateLimitDigestText(text: string): DeferredExternalEventEntry | nu
     .map((topic) => topic.trim())
     .filter((topic) => topic.length > 0);
   const newestMs = Date.parse(match[4]!);
-  const idEntries = match[5]!
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  const idEntries = parseRateLimitIdEntries(match[5]!, topics);
   if (idEntries.length === 0) return null;
-  const events = idEntries.map((entry) => {
-    const annotated = /^(\S+)\s+\((.+)\)$/.exec(entry);
-    const eventId = (annotated ? annotated[1] : entry).trim();
-    const topic = annotated
-      ? annotated[2]!
-      : topics.length === 1
-        ? topics[0]!
-        : RATE_LIMIT_DIGEST_TOPIC;
+  const events = idEntries.map(({ eventId, topic }) => {
     const occurredAt = idEntries.length === 1 && Number.isFinite(newestMs) ? newestMs : undefined;
     return {
       eventId,
@@ -161,6 +159,46 @@ function parseRateLimitDigestText(text: string): DeferredExternalEventEntry | nu
     };
   });
   return { kind: 'fold', events };
+}
+
+function parseRateLimitIdEntries(
+  raw: string,
+  topics: string[]
+): Array<{ eventId: string; topic: string }> {
+  if (raw.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const entries = parsed
+          .map((item): { eventId: string; topic: string } | null => {
+            if (!item || typeof item !== 'object') return null;
+            const record = item as Record<string, unknown>;
+            if (typeof record.id !== 'string' || record.id.length === 0) return null;
+            if (typeof record.topic !== 'string' || record.topic.length === 0) return null;
+            return { eventId: record.id, topic: record.topic };
+          })
+          .filter((entry): entry is { eventId: string; topic: string } => entry !== null);
+        if (entries.length > 0) return entries;
+      }
+    } catch {
+      return [];
+    }
+  }
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const annotated = /^(\S+)\s+\((.+)\)$/.exec(entry);
+      return {
+        eventId: (annotated ? annotated[1] : entry).trim(),
+        topic: annotated
+          ? annotated[2]!
+          : topics.length === 1
+            ? topics[0]!
+            : RATE_LIMIT_DIGEST_TOPIC,
+      };
+    });
 }
 
 export function deferredExternalEventEntryEvents(
@@ -219,7 +257,14 @@ export function partitionDeferredExternalEventRows(
       continue;
     }
     digestRows.push(row);
-    digestEvents.push(...deferredExternalEventEntryEvents(entry));
+    const flattened = deferredExternalEventEntryEvents(entry);
+    if (flattened.length > DEFERRED_EVENT_ENVELOPE_MAX_EVENTS) {
+      const overflow = flattened.length - DEFERRED_EVENT_ENVELOPE_MAX_EVENTS;
+      digestEvents.push(...flattened.slice(overflow));
+      droppedCount += overflow;
+    } else {
+      digestEvents.push(...flattened);
+    }
     if (entry.kind === 'fold') droppedCount += entry.droppedCount ?? 0;
   }
   return { digestRows, digestEvents, droppedCount, remainder };
@@ -318,7 +363,7 @@ function digestGroupKey(entry: ExternalEventEssenceEntry, kind: DigestGroupKind)
     case 'state':
       return `state|${scope}`;
     case 'reaction':
-      return `reaction|${scope}|${entry.body ?? ''}`;
+      return `reaction|${scope}|${entry.body ?? ''}|${entry.actor ?? ''}`;
     case 'other':
       return `other|${entry.topic}|${
         entry.reviewId ?? entry.context ?? entry.threadId ?? `event ${entry.eventId}`
@@ -428,6 +473,12 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       if (latest.environment) parts.push(`environment: ${latest.environment}`);
       const snippet = digestSnippet(latest.description ?? latest.body);
       if (snippet) parts.push(`"${snippet}"`);
+      const structured = [latest.changedFields, latest.requiredStatusChecks]
+        .filter((field): field is object => !!field)
+        .map((field) => digestSnippet(JSON.stringify(field)));
+      for (const field of structured) {
+        if (field) parts.push(field);
+      }
       const url = latest.externalUrl ?? latest.prUrl;
       if (url) parts.push(url);
       return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
@@ -492,9 +543,7 @@ export function buildExternalEventDigestMessage(
   }
   const footer =
     droppedEventCount > 0
-      ? [
-          `${droppedEventCount} older events were folded out of earlier overflow envelopes and are superseded.`,
-        ]
+      ? [`${droppedEventCount} older events were folded out of earlier batches and are superseded.`]
       : [];
   return [digestHeader(ordered, droppedEventCount), ...lines, ...footer].join('\n');
 }
