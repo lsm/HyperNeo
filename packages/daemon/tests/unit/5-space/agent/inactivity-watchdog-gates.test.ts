@@ -238,6 +238,69 @@ describe('decideInactivityNag', () => {
       });
     });
 
+    test('rejects a stale-revision claim even for its owner, re-deciding under the new revision', () => {
+      const decision = decideInactivityNag(
+        input({
+          configRevision: 8,
+          claim: makeClaim({ state: 'in_flight' }),
+        })
+      );
+      expect(decision).toEqual({
+        action: 'nag',
+        predicateVersion: INACTIVITY_WATCHDOG_PREDICATE_VERSION,
+        windowAnchoredAt: NOW - THRESHOLD_MS - 1,
+        attemptGeneration: 0,
+        claimKey: buildInactivityNagClaimKey({
+          agentId: 'agent-1',
+          windowAnchoredAt: NOW - THRESHOLD_MS - 1,
+          attemptGeneration: 0,
+        }),
+        ownerToken: 'scanner-a',
+        configRevision: 8,
+        idleForMs: THRESHOLD_MS + 1,
+      });
+    });
+
+    test('excludes the claimant own in-flight delivery from the busy-state gate', () => {
+      const decision = decideInactivityNag(
+        input({
+          actor: makeActor({ sessionIdle: false }),
+          claim: makeClaim({ state: 'in_flight' }),
+        })
+      );
+      expect(decision.action).toBe('nag');
+    });
+
+    test('excludes the claimant own accepted-unconsumed delivery from the pending gate', () => {
+      const decision = decideInactivityNag(
+        input({
+          actor: makeActor({ pendingAcceptedDelivery: true }),
+          claim: makeClaim({ state: 'in_flight' }),
+        })
+      );
+      expect(decision.action).toBe('nag');
+    });
+
+    test('still blocks another claimant behind a busy session or pending delivery', () => {
+      expect(
+        decideInactivityNag(
+          input({
+            actor: makeActor({ sessionIdle: false }),
+            claim: makeClaim({ ownerToken: 'scanner-b' }),
+          })
+        )
+      ).toEqual({ action: 'none', reason: 'session_busy' });
+    });
+
+    test('stops blocking on a degraded tombstone once activity advances past its window', () => {
+      const decision = decideInactivityNag(
+        input({
+          claim: makeClaim({ degraded: true, windowAnchoredAt: NOW - THRESHOLD_MS - 501 }),
+        })
+      );
+      expect(decision.action).toBe('nag');
+    });
+
     test('carries the current attempt generation into the nag claim key', () => {
       const decision = decideInactivityNag(
         input({

@@ -20,7 +20,7 @@ export type InactivityNagDecision =
       windowAnchoredAt: number;
       attemptGeneration: number;
       claimKey: string;
-      ownerToken: string | null;
+      ownerToken: string;
       configRevision: number | null;
       idleForMs: number;
     };
@@ -48,7 +48,7 @@ export interface InactivityWatchdogCtx {
   thresholdMs: number | null;
   configRevision: number | null;
   agentId: string;
-  callerToken: string | null;
+  callerToken: string;
   actor: InactivityWatchdogActorSnapshot | null;
   claim: InactivityWatchdogClaimSnapshot | null;
   decision: InactivityNagDecision | null;
@@ -92,8 +92,31 @@ export function applyWatchdogUnconfiguredGate(ctx: InactivityWatchdogCtx): Inact
     : decided(ctx, { action: 'none', reason: 'unconfigured' });
 }
 
+function claimAnchoredToCurrentWindow(ctx: InactivityWatchdogCtx): boolean {
+  const claim = ctx.claim;
+  if (claim === null) return false;
+  const currentWindow = ctx.actor?.lastActivityAt ?? null;
+  return currentWindow !== null && claim.windowAnchoredAt === currentWindow;
+}
+
+function claimRevisionMatches(ctx: InactivityWatchdogCtx): boolean {
+  const claim = ctx.claim;
+  if (claim === null) return true;
+  if (claim.configRevision === null || ctx.configRevision === null) return true;
+  return claim.configRevision === ctx.configRevision;
+}
+
+function claimOwnedByCaller(ctx: InactivityWatchdogCtx): boolean {
+  const claim = ctx.claim;
+  if (claim === null || claim.state === 'none') return false;
+  if (!claimAnchoredToCurrentWindow(ctx)) return false;
+  if (!claimRevisionMatches(ctx)) return false;
+  return claim.ownerToken === ctx.callerToken;
+}
+
 export function applyDegradedGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
-  return ctx.claim?.degraded ? decided(ctx, { action: 'none', reason: 'degraded' }) : ctx;
+  const blocked = ctx.claim?.degraded === true && claimAnchoredToCurrentWindow(ctx);
+  return blocked ? decided(ctx, { action: 'none', reason: 'degraded' }) : ctx;
 }
 
 export function applyActorInactiveGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
@@ -107,10 +130,12 @@ export function applyActorInactiveGate(ctx: InactivityWatchdogCtx): InactivityWa
 }
 
 export function applyBusySessionGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
+  if (claimOwnedByCaller(ctx)) return ctx;
   return ctx.actor?.sessionIdle ? ctx : decided(ctx, { action: 'none', reason: 'session_busy' });
 }
 
 export function applyPendingDeliveryGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
+  if (claimOwnedByCaller(ctx)) return ctx;
   return ctx.actor?.pendingAcceptedDelivery
     ? decided(ctx, { action: 'none', reason: 'delivery_pending' })
     : ctx;
@@ -119,16 +144,9 @@ export function applyPendingDeliveryGate(ctx: InactivityWatchdogCtx): Inactivity
 export function applyClaimHeldGate(ctx: InactivityWatchdogCtx): InactivityWatchdogCtx {
   const claim = ctx.claim;
   if (claim === null || claim.state === 'none') return ctx;
-  const currentWindow = ctx.actor?.lastActivityAt ?? null;
-  if (currentWindow !== null && claim.windowAnchoredAt !== currentWindow) return ctx;
-  if (claim.ownerToken !== null && claim.ownerToken === ctx.callerToken) return ctx;
-  if (
-    claim.configRevision !== null &&
-    ctx.configRevision !== null &&
-    claim.configRevision !== ctx.configRevision
-  ) {
-    return ctx;
-  }
+  if (!claimAnchoredToCurrentWindow(ctx)) return ctx;
+  if (!claimRevisionMatches(ctx)) return ctx;
+  if (claim.ownerToken === ctx.callerToken) return ctx;
   return decided(ctx, { action: 'none', reason: 'claim_held' });
 }
 
