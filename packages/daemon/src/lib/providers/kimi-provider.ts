@@ -11,11 +11,12 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { buildModelListUrl, fetchRemoteModelList } from './shared/model-list.js';
 import {
-  buildModelListUrl,
-  fetchRemoteModelList,
-  type RemoteModelListEntry,
-} from './shared/model-list.js';
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -137,7 +138,7 @@ export class KimiProvider implements Provider {
   private defaultRegion: KimiRegion = 'china';
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
-  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
 
   constructor(
@@ -151,7 +152,7 @@ export class KimiProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
-    this.modelListCache.clear();
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -159,7 +160,14 @@ export class KimiProvider implements Provider {
   }
 
   setDefaultRegion(region: KimiRegion): void {
+    if (region !== this.defaultRegion) {
+      this.discoveryCache.clear();
+    }
     this.defaultRegion = region;
+  }
+
+  clearModelCache(): void {
+    this.discoveryCache.clear();
   }
 
   getDefaultRegion(): KimiRegion {
@@ -340,7 +348,20 @@ export class KimiProvider implements Provider {
       type: 'enabled',
       budget_tokens: 16_000,
     });
-    return KimiProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      return mergeDiscoveredModels(KimiProvider.MODELS, discovered);
+    } catch {
+      return KimiProvider.MODELS;
+    }
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      region: this.env.KIMI_REGION ?? this.defaultRegion,
+      baseUrl: this.resolveModelListBaseUrl(),
+      credentialKey: this.getApiKey(),
+    });
   }
 
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
@@ -348,18 +369,26 @@ export class KimiProvider implements Provider {
     if (!apiKey) {
       throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
     }
+    const cacheable = options.baseUrl === undefined;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force && cacheable) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
     const baseUrl = this.resolveModelListBaseUrl(options.baseUrl);
     const models = await fetchRemoteModelList({
       url: buildModelListUrl(baseUrl, 'openai-chat'),
       headers: { Authorization: `Bearer ${apiKey}` },
-      force: options.force,
-      cache: options.baseUrl === undefined ? this.modelListCache : undefined,
       fetchImpl: this.fetchImpl,
     });
     const knownModels = models
       .map((model) => this.toRemoteModelInfo(model))
       .filter((model): model is ModelInfo => model !== null);
-    return Array.from(new Map(knownModels.map((model) => [model.id, model])).values());
+    const discovered = Array.from(new Map(knownModels.map((model) => [model.id, model])).values());
+    if (cacheable) {
+      this.discoveryCache.set(fingerprint, discovered);
+    }
+    return discovered;
   }
 
   ownsModel(modelId: string): boolean {
