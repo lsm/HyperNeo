@@ -712,7 +712,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
                 status !== 'processing' &&
                 status !== 'queued' &&
                 status !== 'running' &&
-                status !== 'waiting_for_input'
+                status !== 'waiting_for_input' &&
+                status !== 'rate_limit_cooldown'
               ) {
                 break;
               }

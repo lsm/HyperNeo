@@ -1036,6 +1036,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
     let inactivityScan: Promise<void> | null = null;
+    let inactivityShutdownStarted = false;
     if (process.env.NODE_ENV !== 'test') {
       const scanInactivityWatchdog = (): Promise<void> => {
         if (inactivityScan !== null) return inactivityScan;
@@ -1056,7 +1057,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return run;
       };
       void spaceRuntimeReadyPromise.then(() => {
-        void scanInactivityWatchdog();
+        if (!inactivityShutdownStarted) {
+          void scanInactivityWatchdog();
+        }
       });
       const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
       inactivityWatchdogTimer = setInterval(() => {
@@ -1083,6 +1086,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         clearInterval(inactivityWatchdogTimer);
         inactivityWatchdogTimer = null;
       }
+      inactivityShutdownStarted = true;
       if (inactivityScan !== null) {
         await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
       }
