@@ -372,7 +372,8 @@ export class SpaceRuntimeService {
     const isCoordinator =
       agent.id === coordinatorLongHorizonAgentId(args.spaceId) || coordinator?.id === agent.id;
     const session = isCoordinator
-      ? await this.resolveCoordinatorSession(args.spaceId)
+      ? ((await this.resolveCoordinatorSession(args.spaceId)) ??
+        (await this.ensureCoordinatorSession(args.spaceId, agent)))
       : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
     if (!session) return 'terminal_failure';
     const spaceAfter = await this.config.spaceManager.getSpace(args.spaceId);
@@ -825,6 +826,65 @@ export class SpaceRuntimeService {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return null;
     return sessionManager.getSessionAsync(coordinatorSessionId(spaceId));
+  }
+
+  private async ensureCoordinatorSession(spaceId: string, coordinator: SpaceLongHorizonAgent) {
+    const sessionManager = this.config.sessionManager;
+    const repo = this.config.longHorizonAgentRepo;
+    if (!sessionManager || !repo) return null;
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    if (!space) return null;
+    const sessionId = coordinatorSessionId(spaceId);
+    let session = await sessionManager.getSessionAsync(sessionId);
+    const currentConfig = session?.getSessionData().config;
+    const config = await this.buildLongHorizonAgentSessionConfig(
+      space,
+      coordinator,
+      currentConfig?.provider,
+      currentConfig?.model
+    );
+    if (!session) {
+      try {
+        await sessionManager.createSession({
+          sessionId,
+          workspacePath: space.workspacePath,
+          title: coordinator.displayName,
+          spaceId: space.id,
+          worktreeMode: 'direct',
+          config,
+        });
+      } catch (err) {
+        session = await sessionManager.getSessionAsync(sessionId);
+        if (!session) throw err;
+      }
+      session = session ?? (await sessionManager.getSessionAsync(sessionId));
+      if (!session) return null;
+    } else {
+      await this.refreshLongHorizonAgentSessionConfig(session, config);
+    }
+    if (coordinator.sessionId !== sessionId) repo.update(coordinator.id, { sessionId });
+    const currentMetadata = session.getSessionData().metadata;
+    this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+      metadata: {
+        ...currentMetadata,
+        promptProvenance: {
+          source: coordinator.templateKey ?? 'long_horizon_agent',
+          hash: coordinator.id,
+          agentId: coordinator.id,
+          agentName: coordinator.displayName,
+        },
+      },
+    });
+    this.attachLongTermAgentMcpServers(
+      session,
+      space,
+      coordinator.displayName,
+      sessionId,
+      null,
+      coordinator.id,
+      [`@${coordinator.handle}`]
+    );
+    return session;
   }
 
   private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
