@@ -343,12 +343,17 @@ gate never sees. Re-flagging and admission are two separate rules:
   agents on **any** clear of their account key (normal timer/probe clears
   included, via the same wake that drains the background queue), not only by
   the credential-change hook (which covers the billing-closed case).
-  **Drain is idempotent across crashes**: each entry stamps a per-event
-  delivery record before routing and completes it after, and routing dedupes
-  on that delivery key — the crash window between route and mark-complete
-  replays into the dedupe instead of duplicating room messages (which
-  `processEvent` alone cannot prevent); without that store, saturated-period
-  events in these supported configurations are silently lost. This is the
+  **Drain is idempotent across crashes**: the replay's room delivery goes
+  through a **keyed upsert at the sink** — the derived room message is
+  persisted as a durable row keyed by the delivery key (insert-if-absent),
+  and the live `room.message` emission fires only on a fresh insert;
+  `deliverToRoom`'s current fire-and-forget `emitEvent`
+  (github-service.ts:425-436) has no idempotent sink, so record-stamping
+  alone cannot close the window (a crash after routing but before
+  mark-complete would replay-and-duplicate). The upsert IS the atomic step:
+  a crash at any point replays into the same key, inserts nothing, emits
+  nothing; without it, saturated-period events in these supported
+  configurations are silently lost or duplicated. This is the
 manual-mode code path today
 (`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
 reach it.
@@ -625,15 +630,20 @@ equal, so the common case shares one key.
 | `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query) | admission facts, wake timer |
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}`; chat-first priority: background admits only when the chat lane is empty), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
-| `probeGrant` | `{ identity: GrantIdentity (typed union — see queuedMessages), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) |
-| `closureProbeGrant` | `{ holder, leaseUntilMs } \| null` per provider — the atomic reservation behind `holdsClosureProbeGrant`; **acquired** by manual Retry / the health-probe timer through a compare-and-set (the loser queues on its own trigger); **released** by the holder's outcome (success → closure clears, drain registrations; fresh billing-terminal → re-arm `closed`; other error → closure stays armed, the probe retries on its own schedule) or by lease expiry (the health timer re-acquires next tick); independent of `probeGrant` — closure probing never mints or consumes post-clear probes | minted **and bound to the selected FIFO identity at clear time** (never by the first admitting consult); consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints and re-binds | downstream consults (same delivery passes), probe resolution |
+| `probeGrant` | `{ identity: GrantIdentity (typed union — see queuedMessages), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time** (never by the first admitting consult); consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints and re-binds | downstream consults (same delivery passes), probe resolution |
+| `closureProbeGrant` | `{ holder, leaseUntilMs } \| null` per provider — the atomic reservation behind `holdsClosureProbeGrant`, independent of `probeGrant` (closure probing never mints or consumes post-clear probes) | **CAS-acquired** by manual Retry / the health-probe timer (the loser queues on its own trigger) | `holdsClosureProbeGrant` (the core's closed arm); **released** by the holder's outcome (success → closure clears and registrations drain; fresh billing-terminal → re-arm `closed`; classified non-billing limit → timed saturation; other error → closure stays armed) or by lease expiry (the health timer re-acquires next tick) |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
-Registry state is in-memory; the durable additions are the `queue_reason`
-column **and the monotonic queue-sequence column** on `sdk_messages` (one
-migration) — linkage and FIFO order both restart-safe; reconstruction sorts
-by the sequence (pinned).
+Registry state is in-memory; the durable additions — one migration family
+in C5-PR3 — are: the `queue_reason` and monotonic queue-sequence columns on
+`sdk_messages` (linkage and FIFO order restart-safe; reconstruction sorts by
+the sequence, pinned); `provider_park`/`provider_park_seq` on the
+job-queue rows (background-waiter linkage and ordering); the raw-event
+inbox table (payload + stable replay key + ingest sequence + per-event
+delivery-record state); and the persisted shared sequence allocator's
+counter row. None of these exist in the current schema — the PR3 plan's
+migration scope names all of them.
 
 ### Saturation derivation — consuming the classifier and the ladder
 
@@ -668,7 +678,14 @@ not inherit):
   the closed account key**, so the credential-change re-admission hook
   (which already re-admits registrations on `providers.update` /
   `auth.login` / `auth.logout`) requeues it to `now` the moment the account
-  re-opens; no tick-retry loop ever hits the provider. **Closure probes are
+  re-opens; no tick-retry loop ever hits the provider. **The daily health
+  probe's operation is the provider's `isAvailable()`** — the same
+  credential-bearing check `providers.healthCheck` already performs
+  (provider-handlers.ts:458-499); `getModels()` is deliberately NOT used
+  (its 429 handling is chain C1's scope), and a no-op timer firing with no
+  provider call could never "succeed". Manual Retry needs no separate
+  operation — it executes the retried message itself as its probe turn.
+  **Closure probes are
   the one admitted lane while closed — exactly one at a time**: a bypass
   requires holding the account's **closure-probe grant**, a single atomic
   reservation (concurrent Retry Now clicks or a manual retry overlapping
@@ -828,7 +845,14 @@ exception applies whenever **that clear never leaves an outstanding probe** —
 initially empty backlog *or* a drain whose registrations all exit non-cleanly
 (interrupts/non-limit errors mint successors, but the final exit leaves no
 probe identity either); otherwise the next independent episode inherits the
-advanced charge and starts at a longer ladder step for no reason. Mirrors the watchdog's
+advanced charge and starts at a longer ladder step for no reason. **Such a
+clear does not fully open the account**: it enters `probing` with a grant
+bound to the first *newly arriving* identity (the registration path mints it
+atomically on first append — no wake needed, the sender is already in
+flight), so post-clear sends serialize exactly as backlog drains do; fully
+open requires a probe to have resolved cleanly. Without this, several
+sessions sending right after the clear all admit concurrently — the exact
+post-reset herd the gate exists to prevent. Mirrors the watchdog's
 `retryCount` / `freeWait` distinction at provider scope.
 
 ### Queue and wake
@@ -895,7 +919,15 @@ advanced charge and starts at a longer ladder step for no reason. Mirrors the wa
   the **message** wake publishes
   `provider.concurrency.open {sessionId, providerId, messageUuid}` through
   `event-subscription-setup.ts` (the wiring that binds `query.trigger` at
-  `:103-110`) and re-runs the **full P1 admission for the bound uuid only** —
+  `:103-110`) and re-runs the **full admission of the arm that queued it**:
+  every `{kind: 'message'}` registration records its origin — P1 (chat) or
+  P2 (Space inject) — at registration time, and the wake re-runs that
+  pipeline's own gates for the bound uuid (an injected row re-runs the
+  inject pipeline: parent-task-limited, session cooldown, and the
+  context-reset arms are P2 facts P1 never evaluates, and P1's manual-mode
+  semantics do not apply to an injection; routing an injected row through
+  P1 could promote it straight into delivery past every one of those
+  gates) —
   manual-mode gate included: if the bound row's session has switched to
   manual, the row is retained and the grant re-binds to the next eligible
   identity (scan-past, same as drain selection) — then promotes through the
