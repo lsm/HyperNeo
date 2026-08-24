@@ -345,8 +345,11 @@ describe('delivery retry livelock convergence (task #1256 incident)', () => {
     const failure = (await drive.catch((error: unknown) => error)) as Error;
     expect(failure).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
     expect(seams.messageQueue.hasPendingOrClaimed(WEDGE_UUID)).toBe(true);
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, WEDGE_UUID)).toMatchObject({
+      sendStatus: 'enqueued',
+    });
 
-    expect(await runHappyAttempt(agentSession, WEDGE_UUID, true)).toEqual({ outcome: 'completed' });
+    expect(await runHappyAttempt(agentSession, WEDGE_UUID)).toEqual({ outcome: 'completed' });
   });
 
   it('never spends the zero-progress budget on already-consumed turn reclaims', async () => {

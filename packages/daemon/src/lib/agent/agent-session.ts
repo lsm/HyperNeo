@@ -1721,9 +1721,10 @@ export class AgentSession
           this.logger.warn(
             `delivery-turn: query ended before the SDK consumed the kickoff ` +
               `(uuid=${messageUuid}, generation=${started.generation}); requeueing the ` +
-              `kickoff and classifying the turn outcome`
+              `kickoff, reopening it for retry, and classifying the turn outcome`
           );
           this.messageQueue.requeueYielded(messageUuid);
+          this.reopenDeliveryForRetry(messageUuid);
           kickoffDiedBeforeConsumption = true;
         }
         if (!kickoffDiedBeforeConsumption) {
@@ -1918,15 +1919,30 @@ export class AgentSession
         `resetting the session and terminalizing the delivery`
     );
     deliveryMetrics.recordZeroProgressWedge();
-    try {
-      const resetResult = await this.resetQuery({ restartQuery: false });
-      if (!resetResult.success) {
+    const teardownOk = await withSessionLock(this.session.id, async () => {
+      try {
+        const resetResult = await this.resetQuery({ restartQuery: false });
+        if (resetResult.success) return true;
         this.logger.warn(
           `delivery-turn: wedge recovery reset reported failure: ${resetResult.error ?? 'unknown'}`
         );
+      } catch (resetError) {
+        this.logger.warn('delivery-turn: wedge recovery reset failed:', resetError);
       }
-    } catch (resetError) {
-      this.logger.warn('delivery-turn: wedge recovery reset failed:', resetError);
+      try {
+        await this.lifecycleManager.stop({ catchQueryErrors: true });
+        return true;
+      } catch (stopError) {
+        this.logger.warn('delivery-turn: wedge recovery forced stop failed:', stopError);
+        return false;
+      }
+    });
+    if (!teardownOk) {
+      this.logger.warn(
+        `delivery-turn: cannot prove teardown for ${messageUuid}; keeping the delivery ` +
+          `retryable instead of terminalizing`
+      );
+      return null;
     }
     return new MessageDeliveryTerminalTurnError(detail, 'delivery_zero_progress');
   }
@@ -2040,6 +2056,7 @@ export class AgentSession
     }
     if (steerWinner === 'query_ended') {
       this.messageQueue.requeueYielded(messageUuid);
+      this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
     deliveryMetrics.recordFeed(messageUuid);
