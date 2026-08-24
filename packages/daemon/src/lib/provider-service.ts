@@ -1,4 +1,4 @@
-import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
+import type { ModelInfo, Provider, ProviderInfo, Session } from '@hyperneo/shared';
 import type {
   ProviderInfo as NewProviderInfo,
   ProviderSdkConfig,
@@ -218,6 +218,14 @@ export class ProviderService {
     return models[0]?.id || 'default';
   }
 
+  private async getProviderCatalogModels(provider: RegisteredProvider): Promise<ModelInfo[]> {
+    try {
+      return await provider.getModels();
+    } catch {
+      return provider.getCachedModels?.() ?? [];
+    }
+  }
+
   private async preferVisibleCuratedModel(
     providerId: string,
     provider: RegisteredProvider,
@@ -226,7 +234,9 @@ export class ProviderService {
     if (this.getRegistry().getCuratedModels(providerId) === undefined) {
       return candidates.find((candidate) => candidate !== undefined);
     }
-    const catalogIds = new Set((await provider.getModels()).map((model) => model.id));
+    const catalogIds = new Set(
+      (await this.getProviderCatalogModels(provider)).map((model) => model.id)
+    );
     for (const candidate of candidates) {
       if (!candidate) continue;
       const canonicalId =
@@ -246,7 +256,7 @@ export class ProviderService {
     providerId: string,
     provider: RegisteredProvider
   ): Promise<string | undefined> {
-    const models = await provider.getModels();
+    const models = await this.getProviderCatalogModels(provider);
     const curated = this.getRegistry().getCuratedModels(providerId);
     if (curated !== undefined) {
       const catalogIds = new Set(models.map((model) => model.id));

@@ -782,6 +782,55 @@ describe('ProviderService', () => {
       expect(config).toBeNull();
     });
 
+    it('uses the provider cached catalog when model discovery fails', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          throw new Error('probe route missing');
+        },
+        getCachedModels: () => [
+          {
+            id: 'custom-turbo',
+            name: 'Custom Turbo',
+            alias: 'custom-turbo',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Turbo',
+            releaseDate: '',
+            available: true,
+          },
+          {
+            id: 'custom-1',
+            name: 'Custom Model 1',
+            alias: 'custom1',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model 1',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-turbo');
+    });
+
     it('re-reads curation after catalog discovery', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

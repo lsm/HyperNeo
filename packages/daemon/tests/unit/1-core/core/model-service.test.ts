@@ -1914,6 +1914,43 @@ describe('Model Service', () => {
 
       await expect(pending).resolves.toBe(true);
     });
+
+    it('falls back to the provider cached catalog when discovery fails', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          throw new Error('probe route missing');
+        },
+        getCachedModels: () => [
+          {
+            id: 'custom-model',
+            name: 'Custom Model',
+            alias: 'custom',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('custom-endpoint', [{ id: 'custom-model' }]);
+      setModelsCache(new Map());
+
+      await expect(isModelExcludedByCuration('custom-model', 'custom-endpoint')).resolves.toBe(
+        false
+      );
+      await expect(isModelExcludedByCuration('custom-ghost', 'custom-endpoint')).resolves.toBe(
+        true
+      );
+    });
   });
 
   describe('getAvailableModels', () => {

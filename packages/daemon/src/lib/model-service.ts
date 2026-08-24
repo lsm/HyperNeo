@@ -1080,7 +1080,7 @@ export async function resolveVisibleCanonicalModelId(
         liveModels = await provider.getModels();
       }
     } catch {
-      liveModels = null;
+      liveModels = provider.getCachedModels?.() ?? null;
     }
   }
 

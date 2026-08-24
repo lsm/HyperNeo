@@ -327,6 +327,7 @@ export class QueryOptionsBuilder {
     }
 
     const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
+    const configuredPrimaryModel = config.model;
     this.effectiveFallbackCaptured = true;
     this.effectiveFallbackModel = configuredFallbackModel;
 
@@ -415,7 +416,8 @@ export class QueryOptionsBuilder {
         const configAfter = this.ctx.session.config;
         if (
           (configAfter.provider ?? 'anthropic') !== providerId ||
-          configAfter.fallbackModel !== fallbackAtRequest
+          configAfter.fallbackModel !== fallbackAtRequest ||
+          configAfter.model !== configuredPrimaryModel
         ) {
           return { behavior: 'cancelled' };
         }

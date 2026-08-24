@@ -210,6 +210,19 @@ describe('QueryOptionsBuilder', () => {
         expect(response).toEqual({ behavior: 'cancelled' });
       });
 
+      it('declines the refusal dialog when the primary model changes after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        mockSession.config.model = 'sonnet';
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
       it('validates a session-scoped provider fallback against the curated set only', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
         try {

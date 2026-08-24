@@ -1358,7 +1358,7 @@ export class SDKMessageHandler {
     const fallbackSdkModel = getProviderContextManager()
       .createContext(fallbackSession)
       .getSdkModelId();
-    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
+    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : undefined;
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
