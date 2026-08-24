@@ -1885,12 +1885,15 @@ facade/executor that interprets its effects — without promoting the combinator
 four times today, once per facade, ~30–40 structurally identical lines each:
 4 real uses, at the promotion threshold. The next consumer is already scouted,
 not speculative: the pilot-12 closing report's store assessment finds
-`app-mcp-store`, `space-mcp-store`, and `skills-store` fit the machine as-is
+`app-mcp-store`, `space-mcp-store`, and `skills-store` fit the machine
 (single fixed subscription, snapshot/delta listeners, reconnect resubscribe;
 needs `snapshotRetryEnabled: false`, an async bridge for awaited-and-throwing
-subscribes, and a fresh machine per actual subscription lifecycle since
+subscribes, a fresh machine per actual subscription lifecycle since
 `disposed` is terminal — `skills-store`'s ref-counted `subscribe()` must key
-machine creation to the 0→1 transition, not to each acquisition), with
+machine creation to the 0→1 transition, not to each acquisition — and a
+delta-gating adapter or explicit behavior-change decision, since these stores
+apply matching deltas unconditionally while the machine emits them only from
+`live`), with
 `space-store` (four near-identical blocks, highest payoff) and
 `global-store` (dynamic params) behind small decisions. What blocks promotion
 is not the count but drift: the four executors differ in config and policy —

@@ -167,9 +167,9 @@ First store consumers; a fresh machine per actual subscription lifecycle
   non-hook adapter shape (singleton stores, imperative lifecycle) that
   `space-store` (highest payoff, four blocks) then reuses.
 - **Risk:** stores surface subscribe failures by throwing — the machine settles
-  via emissions, so the bridge must reject the `subscribe()` promise on an
-  `error`/`settled-empty` emission (a policy choice: settle-empty currently
-  means "release loading, no error"). `skills-store`'s `subscribe()` is
+  via emissions, so the bridge must reject the `subscribe()` promise directly
+  from the request effect's failure (settle-empty currently means "release
+  loading, no error"). `skills-store`'s `subscribe()` is
   ref-counted across overlapping consumers (`useSkills`, `ToolsModal`,
   `AppMcpServersSettings`) — acquisition reuses the live subscription — so the
   adapter keys machine creation to the 0→1 transition, never to each
