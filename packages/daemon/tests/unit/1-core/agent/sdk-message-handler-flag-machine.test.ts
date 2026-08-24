@@ -321,6 +321,9 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
         expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(row.expectedFence);
         expect(setIdleSpy).toHaveBeenCalledTimes(row.expectedSetIdle);
+        expect(setIdleSpy.mock.calls).toEqual(
+          Array.from({ length: row.expectedSetIdle }, () => [])
+        );
         expect(replayCount()).toBe(row.expectedReplay);
         expect(readFlags(handler)).toEqual(row.expectedFlags);
         if (row.expectedWait !== undefined && wait !== null) {
@@ -347,6 +350,25 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: false });
+    });
+
+    it('a nested result during an armed clear leaves suppression and the waiter untouched', async () => {
+      handler.suppressIdleForNextResult();
+      const wait = handler.waitForSuppressedResult(5_000);
+      let settled: string | null = null;
+      void wait.then((outcome) => {
+        settled = outcome;
+      });
+
+      await handler.handleMessage(
+        successResult('suppressed-nested', { parent_tool_use_id: 'toolu-1' })
+      );
+      expect(settled).toBe(null);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnNextResult: true });
+
+      await handler.handleMessage(successResult('suppressed-nested-top-level'));
+      expect(await wait).toBe('confirmed');
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
     });
   });
 
@@ -803,6 +825,8 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     it('sdk.message publication rejection without an armed clear leaves the intermediate flag state', async () => {
       const duringPublish: FlagView[] = [];
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('reject-plain-prime'));
       emitSpy.mockImplementation(async (topic: string) => {
         if (topic === 'sdk.message') {
           duringPublish.push(readFlags(handler));
@@ -816,6 +840,8 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
       expect(duringPublish).toHaveLength(1);
       expect(duringPublish[0].lastResultWasSuccess).toBe(true);
+      expect(duringPublish[0].currentThinkingTokensEstimate).toBe(null);
+      expect(duringPublish[0].lastStampedThinkingTokensEstimate).toBe(0);
       expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
@@ -956,6 +982,98 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a legacy error result whose publication rejects keeps the false verdict and never idles', async () => {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(errorResult('legacy-error-reject'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: false });
+    });
+
+    it('a state-mode error result whose publication rejects keeps the false verdict and blocks replay on idle', async () => {
+      await handler.handleMessage(sessionState('busy'));
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(errorResult('state-error-reject'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        lastResultWasSuccess: false,
+      });
+
+      emitSpy.mockImplementation(async () => {});
+      await handler.handleMessage(sessionState('idle'));
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy.mock.calls[0]).toEqual([]);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual(resetFlags);
+    });
+
+    it('a rejected publication of the idle event itself keeps every flag and both thinking counters', async () => {
+      await handler.handleMessage(sessionState('busy'));
+      await handler.handleMessage(successResult('idle-reject-preceding'));
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('idle-reject-prime'));
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        lastResultWasSuccess: true,
+        currentThinkingTokensEstimate: 120,
+        lastStampedThinkingTokensEstimate: 120,
+      });
+    });
+
+    it('a failing setIdle during the idle event keeps the mode flags while the thinking reset already ran', async () => {
+      await handler.handleMessage(sessionState('busy'));
+      await handler.handleMessage(successResult('setidle-fail-preceding'));
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('setidle-fail-prime'));
+      setIdleSpy.mockImplementation(async () => {
+        throw new Error('setIdle transition failed');
+      });
+
+      await expect(handler.handleMessage(sessionState('idle'))).rejects.toThrow(
+        'setIdle transition failed'
+      );
+
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        usesSessionStateChangedTurnEnd: true,
+        expectsSessionStateIdleAfterResult: true,
+        lastResultWasSuccess: true,
+      });
     });
   });
 
