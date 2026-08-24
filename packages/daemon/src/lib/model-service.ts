@@ -971,29 +971,6 @@ export async function getSessionModelInfo(
     : fromStatic;
 }
 
-export function isModelCuratedOut(
-  idOrAlias: string,
-  providerId: string,
-  cacheKey: string = 'global'
-): boolean {
-  const curatedIds = getCuratedModelIds(providerId);
-  if (curatedIds === undefined) return false;
-  const rawModels = readCachedModels(cacheKey);
-  const resolved =
-    (rawModels
-      ? findInModels(
-          rawModels.filter((model) => model.provider === providerId),
-          idOrAlias
-        )
-      : undefined) ??
-    findInModels(
-      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
-      idOrAlias
-    );
-  if (resolved) return !curatedIds.has(resolved.id);
-  return !curatedIds.has(idOrAlias);
-}
-
 export async function getModelInfoUnfiltered(
   idOrAlias: string,
   cacheKey: string = 'global'
@@ -1036,6 +1013,37 @@ export async function isValidModel(
   } catch {
     return false;
   }
+}
+
+export function isCuratedOutModel(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) {
+    return false;
+  }
+
+  const curatedIds = new Set(curatedModels.map((model) => model.id));
+
+  const rawModels = readCachedModels(cacheKey);
+  const knownModel =
+    (rawModels &&
+      findInModels(
+        rawModels.filter((model) => model.provider === providerId),
+        idOrAlias
+      )) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+
+  if (knownModel) {
+    return !curatedIds.has(knownModel.id);
+  }
+
+  return !curatedIds.has(idOrAlias);
 }
 
 export async function resolveModelAlias(

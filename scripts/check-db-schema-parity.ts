@@ -72,6 +72,8 @@ export const HELPER_SCHEMA_TABLES = [
   'space_agent_memory_fts_data',
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
+  'space_agent_inactivity_claims',
+  'space_agent_inactivity_config',
   'space_agent_reminders',
   'space_agents',
   'space_external_event_deliveries',

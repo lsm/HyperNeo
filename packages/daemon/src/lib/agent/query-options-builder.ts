@@ -36,7 +36,7 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers';
 import { Logger } from '../logger';
-import { getSessionModelInfo, isModelCuratedOut } from '../model-service';
+import { getSessionModelInfo, isCuratedOutModel } from '../model-service';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -299,7 +299,7 @@ export class QueryOptionsBuilder {
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
     if (config.fallbackModel) {
-      if (isModelCuratedOut(config.fallbackModel, providerId)) {
+      if (isCuratedOutModel(config.fallbackModel, providerId)) {
         this.logger.warn(
           `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
         );
@@ -549,7 +549,7 @@ export class QueryOptionsBuilder {
       }
 
       const fallbackModel = this.ctx.session.config.fallbackModel;
-      if (fallbackModel && !isModelCuratedOut(fallbackModel, providerId)) {
+      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);

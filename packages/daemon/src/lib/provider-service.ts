@@ -5,7 +5,7 @@ import type {
   Provider as RegisteredProvider,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
-import { isModelCuratedOut } from './model-service.js';
+import { isCuratedOutModel } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
@@ -28,7 +28,7 @@ function preferUncuratedModel(
   ...candidates: Array<string | undefined>
 ): string | undefined {
   for (const candidate of candidates) {
-    if (candidate && !isModelCuratedOut(candidate, providerId)) return candidate;
+    if (candidate && !isCuratedOutModel(candidate, providerId)) return candidate;
   }
   return undefined;
 }
@@ -244,7 +244,7 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     let providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
-    if (provider && isModelCuratedOut(providerModelId, providerId)) {
+    if (provider && isCuratedOutModel(providerModelId, providerId)) {
       providerModelId =
         (await this.getVisibleProviderDefaultModelId(providerId, provider)) ?? sessionModelId;
     }
