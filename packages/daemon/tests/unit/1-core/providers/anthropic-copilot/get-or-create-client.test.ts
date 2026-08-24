@@ -112,6 +112,27 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     expect(stopCalls).toHaveLength(1);
   });
 
+  it('stops the client and leaves it uncached when logout lands during start()', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+    const state = provider as unknown as Record<string, unknown>;
+    const version = state['credentialsVersion'] as number;
+
+    const clientPromise = getOrCreate('gho_test_token');
+    expect(startCalls).toHaveLength(1);
+
+    state['loggedOut'] = true;
+    startCalls[0].resolve();
+
+    await expect(clientPromise).rejects.toThrow('superseded');
+    expect(state['clientCache']).toBeUndefined();
+    expect(stopCalls).toHaveLength(1);
+    expect(state['credentialsVersion']).toBe(version);
+  });
+
   it('propagates start() failure through ensureServerStarted()', async () => {
     (provider as unknown as Record<string, unknown>)['tokenCache'] = {
       token: 'gho_test',

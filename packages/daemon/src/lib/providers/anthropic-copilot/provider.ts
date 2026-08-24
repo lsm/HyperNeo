@@ -883,7 +883,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         env: buildCopilotEnv(env),
       });
       await client.start();
-      if (credentialsVersion !== this.credentialsVersion || this.shuttingDown) {
+      if (credentialsVersion !== this.credentialsVersion || this.shuttingDown || this.loggedOut) {
         await client.stop().catch(() => {});
         throw new Error('GitHub Copilot client startup was superseded');
       }
