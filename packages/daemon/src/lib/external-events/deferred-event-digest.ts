@@ -110,8 +110,9 @@ function parseEssenceEntry(value: unknown): ExternalEventEssenceEntry | null {
     const raw = record[field];
     if (raw !== null && typeof raw === 'object') entry[field] = raw;
   }
-  if (entry.repo === undefined && entry.prNumber === undefined && entry.prUrl === undefined) {
-    Object.assign(entry, scopeFromTopic(record.topic));
+  const topicScope = scopeFromTopic(record.topic);
+  for (const [field, value] of Object.entries(topicScope)) {
+    if (entry[field] === undefined) entry[field] = value;
   }
   return entry as unknown as ExternalEventEssenceEntry;
 }
@@ -285,9 +286,7 @@ export function partitionDeferredExternalEventRows(
     }
     digestRows.push(row);
     const stamped = deferredExternalEventEntryEvents(entry).map((event) =>
-      Number.isNaN(essenceTime(event)) && Number.isFinite(row.timestamp)
-        ? { ...event, receivedAt: row.timestamp }
-        : event
+      Number.isNaN(essenceTime(event)) ? withReceiptHint(event, row.timestamp) : event
     );
     for (const event of stamped) {
       digestEvents.push(event);
@@ -331,6 +330,16 @@ function orderTime(entry: ExternalEventEssenceEntry): number {
   const eventTime = essenceTime(entry);
   if (!Number.isNaN(eventTime)) return eventTime;
   return typeof entry.receivedAt === 'number' ? validEpochMs(entry.receivedAt) : Number.NaN;
+}
+
+function withReceiptHint(
+  event: ExternalEventEssenceEntry,
+  rowTimestamp: number
+): ExternalEventEssenceEntry {
+  if (typeof event.receivedAt === 'number' && !Number.isNaN(validEpochMs(event.receivedAt))) {
+    return event;
+  }
+  return Number.isFinite(rowTimestamp) ? { ...event, receivedAt: rowTimestamp } : event;
 }
 
 function digestTimestamp(entry: ExternalEventEssenceEntry, includeDate = false): string {
@@ -727,9 +736,7 @@ export function planDeferredExternalEventOverflow(
     events: dedupeEventsByEventId(
       overflow.flatMap((item) =>
         deferredExternalEventEntryEvents(item.entry).map((event) =>
-          Number.isNaN(essenceTime(event)) && Number.isFinite(item.row.timestamp)
-            ? { ...event, receivedAt: item.row.timestamp }
-            : event
+          Number.isNaN(essenceTime(event)) ? withReceiptHint(event, item.row.timestamp) : event
         )
       )
     ),

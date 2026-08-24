@@ -949,6 +949,52 @@ describe('partitionDeferredExternalEventRows', () => {
     expect(partition.digestEvents).toHaveLength(2);
   });
 
+  it('backfills each missing scope component from the topic', () => {
+    const envelope = row(
+      'db-scope',
+      'u-scope',
+      buildDeferredEventDigestEnvelopeText([
+        {
+          eventId: 'sc-1',
+          topic: 'github/one/r/pull_request/7.polled',
+          prNumber: 7,
+          state: 'open',
+          occurredAt: at(15),
+        },
+        {
+          eventId: 'sc-2',
+          topic: 'github/two/r/pull_request/7.polled',
+          prNumber: 7,
+          state: 'closed',
+          occurredAt: at(16),
+        },
+      ])
+    );
+    const partition = partitionDeferredExternalEventRows([envelope]);
+    expect(partition.digestEvents[0]).toMatchObject({ repo: 'one/r' });
+    expect(partition.digestEvents[1]).toMatchObject({ repo: 'two/r' });
+    const digest = buildExternalEventDigestMessage(partition.digestEvents);
+    expect(digest).toContain('latest eventId: sc-1');
+    expect(digest).toContain('latest eventId: sc-2');
+  });
+
+  it('keeps a carried receipt time when flattening an envelope row', () => {
+    const envelope = row(
+      'db-envelope',
+      'u-envelope',
+      buildDeferredEventDigestEnvelopeText([
+        {
+          eventId: 'carried-1',
+          topic: 'github/o/r/pull_request/7.polled',
+          receivedAt: 1000,
+        },
+      ])
+    );
+    envelope.timestamp = 9000;
+    const partition = partitionDeferredExternalEventRows([envelope]);
+    expect(partition.digestEvents[0]?.receivedAt).toBe(1000);
+  });
+
   it('stamps receipt time so later unknown-time events outrank older known-time events', () => {
     const older = row(
       'db-old',
