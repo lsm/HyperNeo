@@ -19,6 +19,10 @@ export interface EventSubscriptionSetupContext {
     restartQuery?: boolean;
     hardReset?: boolean;
   }): Promise<{ success: boolean; error?: string }>;
+  handleInterrupt?(opts?: {
+    preserveDeliveryJobs?: boolean;
+    skipDeferredReplay?: boolean;
+  }): Promise<void>;
   startQueryAndEnqueue(messageId: string, messageContent: string | MessageContent[]): Promise<void>;
   deliverChatMessage?(messageId: string): Promise<void>;
 }
@@ -58,7 +62,11 @@ export class EventSubscriptionSetup {
     const unsubInterrupt = internalEventBus.subscribe(
       'agent.interruptRequest',
       async ({ sessionId: sid }) => {
-        await interruptHandler.handleInterrupt();
+        if (this.ctx.handleInterrupt) {
+          await this.ctx.handleInterrupt();
+        } else {
+          await interruptHandler.handleInterrupt();
+        }
         await internalEventBus.publish('agent.interrupted', { sessionId: sid });
       },
       { sessionId, subscriberName: 'EventSubscriptionSetup.agentInterruptRequest' }

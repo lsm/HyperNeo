@@ -32,6 +32,8 @@ export interface InterruptHandlerContext {
   processExitedPromise: Promise<void> | null;
 
   getSdkCapabilities?(): ReadonlySet<string>;
+
+  onInterruptRequested?(): void;
 }
 
 export class InterruptHandler {
@@ -50,6 +52,8 @@ export class InterruptHandler {
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
+
+    this.ctx.onInterruptRequested?.();
 
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
 
