@@ -48,8 +48,14 @@ or test-pinned).
 - **Configured per-provider concurrency caps** (proactive admission against a known
   N). v1 is reactive: saturation is armed by observed limit errors only. The
   in-flight counter the registry maintains is the seam a later cap plugs into.
-- **Persisting saturation across restarts.** Registry state is in-memory; recovery
-  from a restart during saturation is one re-armed 429 (bounded, see caveats).
+- **Persisting the fine-grained registry across restarts.** The saturation
+  *episode* itself IS durable in v1 — one persisted marker row per account
+  (caveat 1, in the C5-PR3 migration family) so a restart re-enters
+  saturation or the closed state rather than re-admitting a herd. What
+  stays in-memory is the fine-grained state around it — grants,
+  registrations, in-flight counts — whose loss is bounded: reconstruction
+  re-registers from the durable markers, and the drain's first probe may
+  pay one re-armed 429 (bounded, see caveats).
 - **Provider-level UI surfacing** (a `providers.changed`-style status event, picker
   badges). Queued messages are visible as pending (deferred) rows in the existing UI.
 - **Falling back on provider queueing.** The per-session fallback ladder
@@ -418,23 +424,26 @@ gate never sees. Re-flagging and admission are two separate rules:
   lose the edit, since both actions share the resource timestamp and the
   first would consume their shared canonical key, and a same-second
   same-action webhook re-edit is a distinct delivery id the canonical key
-  must not absorb); a replay from the OTHER source is suppressed by a
-  **one-per-event pairing, not a global consumed latch**: each delivered
-  event opens exactly one suppression slot on its canonical tuple for a
-  subsequent opposite-source event, and consuming the slot records the
-  pairing (delivering identity → suppressed identity). A further
-  opposite-source event with a distinct per-source identity delivers —
-  the second same-second webhook after a poll observation must not be
-  suppressed by it: a global once-latch on the coarse tuple would drop
-  BOTH webhooks off one poll in that arrival order while the reverse
-  order delivers both and suppresses only the poll, making delivery
-  order-dependent and losing a transition that routes differently. The
-  recorded imprecision is confined to the timestamp's own resolution:
-  second-resolution `updated_at` cannot say WHICH opposite-source event
-  an arrival duplicates, so the pairing rule suppresses the first and
-  delivers the rest — never losing a distinct delivery, at most
-  re-delivering one, and the both-enabled common case (one change, one
-  webhook, one poll) still dedupes to exactly one delivery.
+  must not absorb); a replay from the OTHER source is suppressed only by a
+  **payload-correlated pairing, never by the tuple alone**: each delivered
+  event records its canonical tuple alongside the digest of its normalized
+  payload, and an arriving opposite-source event under the same tuple is
+  suppressed only when its payload digest matches a recorded one — the
+  tuple says the events may be the same change; the payload says they ARE.
+  Arrival order never decides: a poll observing the final state after two
+  same-second webhook transitions suppresses the webhook whose payload it
+  actually carries (the final one) and delivers the other (the earlier
+  transition it does not), in either arrival order, because suppression
+  follows payload equivalence, not first-arrival; the reverse order
+  (webhooks first, poll last) suppresses the poll against the matching
+  webhook by the same test. A global once-latch or a first-arrival slot on
+  the coarse tuple would instead drop BOTH webhooks off one poll (or the
+  earlier transition while re-delivering the final state twice) —
+  order-dependent loss of a transition that may route differently. A
+  payload mismatch always delivers (the tuple's second resolution cannot
+  prove duplication), at most re-delivering partial state; the
+  both-enabled common case (one change, one webhook, one poll, identical
+  payloads) still dedupes to exactly one delivery.
   **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
@@ -783,7 +792,7 @@ equal, so the common case shares one key.
 | State | Type | Written by | Read by |
 | --- | --- | --- | --- |
 | `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query) | admission facts, wake timer |
-| `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner) | admission facts (cap follow-up), probe evidence |
+| `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner **+ every direct SDK interpreter — title, the Space background jobs, the GitHub agents, the LLM classifier, the closure-health probe — the same complete lifecycle roster the feed-site contract below wires; a direct caller that skips the report leaves its consumed grant unresolved and strands the queue**) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}`; chat-first priority: background admits only when the chat lane is empty), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
 | `probeGrant` | `{ identity: GrantIdentity (typed union — see queuedMessages), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time** (never by the first admitting consult); consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints and re-binds | downstream consults (same delivery passes), probe resolution |
 | `closureProbeGrant` | `{ holder, leaseUntilMs, configRef } \| null` per provider — `configRef` is the resolvable configuration snapshot (provider id + effective providerConfig/credential reference captured when closure armed, kept current by the rotation hooks), without which the scheduled timer could not construct its probe request from a digest alone — the atomic reservation behind `holdsClosureProbeGrant`, independent of `probeGrant` (closure probing never mints or consumes post-clear probes) | **CAS-acquired** by manual Retry / the health-probe timer (the loser queues on its own trigger) | `holdsClosureProbeGrant` (the core's closed arm); **released** by the holder's outcome (success → closure clears and registrations drain; fresh billing-terminal → re-arm `closed`; classified non-billing limit → timed saturation; other error → closure stays armed) or by lease expiry — **which bounds only the unstarted grant** (acquire → probe start), exactly as `probeGrant`'s lease does: once the probe's request has started, only its termination releases, so a long-running Retry turn or health query cannot have its lane re-granted mid-flight |
@@ -832,7 +841,16 @@ not inherit):
   untouched, so closure also clears on (a) the session's manual Retry Now /
   Resume path (the existing RPC re-runs the consult; a closed account's
   manual retry is the one caller allowed to probe closure — success clears,
-  a fresh billing-terminal response re-arms), and (b) a bounded daily
+  a fresh billing-terminal response re-arms). **The origin must be carried,
+  not inferred**: `retryNow()` and the automatic timer both funnel through
+  the same `fireCooldownRetry()` callback, so the P4 interpreter cannot see
+  which fired — setting `closureProbe` for the shared callback would let
+  automatic retries bypass `closed`, leaving it false would park a manual
+  Retry forever. The retry callback/context therefore widens to carry a
+  `manual | automatic` origin (`retryNow()` passes `manual`, the cooldown
+  timer passes `automatic`), and only a `manual` origin sets the
+  `closureProbe` fact on the re-consult — an automatic retry consults
+  ordinary admission (closed → deny), and (b) a bounded daily
   health probe per closed account (one unref'd timer; a successful probe
   turn clears, a limit re-arms) so a renewal while the daemon idles is not
   stuck until restart. **Durable parking under closure**: the job
@@ -1035,9 +1053,15 @@ initially empty backlog *or* a drain whose registrations all exit non-cleanly
 probe identity either); otherwise the next independent episode inherits the
 advanced charge and starts at a longer ladder step for no reason. **Such a
 clear does not fully open the account**: it enters `probing` with a grant
-bound to the first *newly arriving* identity (the registration path mints it
-atomically on first append — no wake needed, the sender is already in
-flight), so post-clear sends serialize exactly as backlog drains do; fully
+bound by the **first admission consult of any kind — the sole binding
+rule**. The registration append is itself such a consult: a P1 sender has
+already returned with `queue_until` before it persists and registers its
+deferred row, so the append immediately re-runs admission under the same
+CAS every consult uses — an unbound pending grant binds to the
+just-registered identity and the row is admitted directly (its promotion
+runs at once), never parked behind a grant only lease expiry could
+recover; durable first arrivals behave exactly like ephemeral ones, and
+post-clear sends serialize exactly as backlog drains do; fully
 open requires a probe to have resolved cleanly. **Ephemeral callers can
 claim it too**: the pending grant binds to the first arriving admission
 consult of ANY kind — including the never-registered ephemeral callers
@@ -1080,8 +1104,11 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   `handleQueryTrigger`'s blanket deferred→enqueued flip
   (`D/src/lib/agent/query-mode-handler.ts:39-108`) is *not* the wake path. The
   queue arm also stamps the row with a **`queue_reason` marker** — a new nullable
-  `queue_reason` column on `sdk_messages` (`'provider_saturated'` when queued by
-  this gate, NULL otherwise), one migration — and **registration carries an
+  `queue_reason` column on `sdk_messages` (`'provider_saturated_p1'` when
+  queued by the P1 persist arm, `'provider_saturated_p2'` when queued by the
+  P2 inject arm — the origin-routing values the wake contract below
+  requires, so reconstruction re-runs the correct pipeline — NULL
+  otherwise), one migration — and **registration carries an
   admission generation: a counter covering every admission-state transition
   (arm, clear, probe mint, probe-resolution-to-open), not merely the
   saturation episode token**. Any transition landing between the consult and
@@ -1308,7 +1335,19 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   makes the key unavailable, unavailable admits as `queue_until` (reason
   `closed`, retained) rather than dispatching an unauthenticated call, and
   the backlog re-admits only when a later `auth.login`/credential resync
-  makes the account usable again. Otherwise queued rows wait on a wake for an
+  makes the account usable again. **The unavailable state has its own
+  stable key**: a credential-backed provider with no credentials has no
+  digest to compute, so an empty effective credential set keys the registry
+  under a provider-scoped sentinel — `digest('unavailable:' +
+  providerId)` — rather than an absent one. Logout migrates the removed
+  digest key's registrations to the sentinel; a message created AFTER
+  logout (no old fingerprint to retain) registers under the sentinel
+  directly, so it sits in a domain the login hook actually inspects — and
+  `auth.login`/credential resync migrates the sentinel's registrations to
+  the new digest key by the same recompute-and-re-admit rule and admits
+  them against the restored account. Without the sentinel, a post-logout
+  send has no key to retain under and an `auth.login` would find nothing
+  to re-admit. Otherwise queued rows wait on a wake for an
   account key the session no longer uses, while newer messages on the new key
   run ahead of them.
 - **Deregistering:** lazily — after a promotion that finds no deliverable
@@ -1429,9 +1468,10 @@ by pre-existing suites):
    deliveries (distinct `X-GitHub-Delivery` ids) both ingest, a
    created-then-edited same-second poll pair both ingest, a
    cross-source pair sharing the canonical tuple delivers exactly once,
-   and a poll followed by two distinct same-second webhooks suppresses at
-   most one webhook (the one-per-event pairing — the canonical tuple is
-   never a global once-latch, in either arrival order);
+   and a poll followed by two distinct same-second webhooks suppresses the
+   payload-matching one and delivers the other (payload-correlated
+   pairing — arrival order never decides, the canonical tuple is never a
+   global once-latch, and the earlier transition is never dropped);
    **one-event-one-grant boundary** — the security query's clean completion
    leaves the event grant held (no successor minted, event B stays parked)
    until `processEvent` terminates, a timed-out agent query's interrupt
@@ -1442,10 +1482,15 @@ by pre-existing suites):
    the in-process retries and answers non-2xx without any duplicate ingest
    when the caveat-9 sweep later re-ingests the same delivery id; GitHub
    agents recreated from new credentials before replay;
-   refinement-vs-running-probe (unconsumed grant revoked, consumed grant
-   recorded for next episode); batch split-on-park (all members stamped +
+   refinement-vs-running-probe (unconsumed grant revoked; a consumed-grant
+   refinement applies only when the running probe confirms the limit via its
+   429 and retires with the episode on the probe's clean completion — never
+   carried into a fresh episode); batch split-on-park (all members stamped +
    registered in FIFO order); post-logout unavailable-key retention (backlog
-   waits for usable credentials);
+   waits for usable credentials, under the provider-scoped
+   `digest('unavailable:' + providerId)` sentinel — a post-logout send
+   registers there and `auth.login` migrates the sentinel's registrations
+   to the new digest key and admits them);
    probe rule both-edges
    (completion before arm + floor timer; completion after floor; no clear before
    floor; no clear for reset-bearing saturation); `reportRefinedReset` replaces a
