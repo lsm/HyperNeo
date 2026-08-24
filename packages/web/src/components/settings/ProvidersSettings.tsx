@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
-import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
+import type { ProviderAuthStatus, CuratedModel } from '@hyperneo/shared/provider';
 import {
   listProviders,
   deleteProvider,
@@ -12,6 +12,7 @@ import {
   loginProvider,
   logoutProvider,
   refreshProvider,
+  listProviderRemoteModels,
 } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
@@ -75,7 +76,7 @@ function readAcpCommand(provider: EnrichedProvider): string {
   }
 }
 
-function readAcpModels(provider: EnrichedProvider): AcpConfiguredModel[] | undefined {
+function readCuratedModels(provider: EnrichedProvider): CuratedModel[] | undefined {
   if (!provider.configJson) return undefined;
   try {
     const parsed = JSON.parse(provider.configJson) as { models?: unknown };
@@ -99,6 +100,50 @@ const KIMI_REGION_LABELS: Record<'china' | 'global', string> = {
 };
 
 const CONNECTION_GATE_TIMEOUT_MS = 10000;
+
+interface VisibleModelsPanelState {
+  fetching: boolean;
+  error: string | null;
+  candidates: Array<{ id: string; name?: string }> | null;
+  fingerprint?: string;
+}
+
+const EMPTY_VISIBLE_MODELS_PANEL: VisibleModelsPanelState = {
+  fetching: false,
+  error: null,
+  candidates: null,
+};
+
+function getVisibleModelsFingerprint(provider: EnrichedProvider): string {
+  const tokens: Array<string | undefined> = [
+    provider.providerId,
+    readAcpCommand(provider),
+    provider.baseUrl,
+    provider.configJson,
+    String(provider.available),
+  ];
+  return tokens.map((t) => t ?? '').join('|');
+}
+
+function mergeVisibleModelCandidates(
+  lists: Array<Array<{ id: string; name?: string }> | undefined>
+): Array<{ id: string; name?: string }> {
+  const merged = new Map<string, { id: string; name?: string }>();
+  for (const list of lists) {
+    for (const model of list ?? []) {
+      const existing = merged.get(model.id);
+      if (!existing) {
+        merged.set(model.id, {
+          id: model.id,
+          ...(model.name !== undefined ? { name: model.name } : {}),
+        });
+      } else if (existing.name === undefined && model.name !== undefined) {
+        merged.set(model.id, { ...existing, name: model.name });
+      }
+    }
+  }
+  return [...merged.values()];
+}
 
 export function ProvidersSettings() {
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
@@ -132,6 +177,12 @@ export function ProvidersSettings() {
   const [editingCustomId, setEditingCustomId] = useState<string | null>(null);
   const [savingCustom, setSavingCustom] = useState(false);
   const [testingCustom, setTestingCustom] = useState(false);
+  const [visibleModelsPanels, setVisibleModelsPanels] = useState<
+    Record<string, VisibleModelsPanelState>
+  >({});
+  const visibleModelsGenRef = useRef<Record<string, number>>({});
+  const providersRef = useRef<EnrichedProvider[]>([]);
+  providersRef.current = providers;
   const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(
     credentialStoreStatus.value
   );
@@ -221,6 +272,28 @@ export function ProvidersSettings() {
       loadGenerationRef.current++;
     };
   }, []);
+
+  useEffect(() => {
+    setVisibleModelsPanels((prev) => {
+      let changed = false;
+      const next: Record<string, VisibleModelsPanelState> = {};
+      for (const [id, panel] of Object.entries(prev)) {
+        const provider = providers.find((p) => p.id === id);
+        if (!provider) {
+          changed = true;
+          continue;
+        }
+        const fingerprint = getVisibleModelsFingerprint(provider);
+        if (panel.fingerprint && panel.fingerprint !== fingerprint) {
+          next[id] = { ...panel, candidates: null, error: null, fingerprint: undefined };
+          changed = true;
+        } else {
+          next[id] = panel;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [providers]);
 
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
@@ -488,6 +561,57 @@ export function ProvidersSettings() {
     }
   };
 
+  const handleFetchVisibleModels = async (provider: EnrichedProvider) => {
+    const fingerprint = getVisibleModelsFingerprint(provider);
+    const generation = (visibleModelsGenRef.current[provider.id] ?? 0) + 1;
+    visibleModelsGenRef.current[provider.id] = generation;
+    setVisibleModelsPanels((prev) => ({
+      ...prev,
+      [provider.id]: { ...EMPTY_VISIBLE_MODELS_PANEL, fetching: true },
+    }));
+    const options =
+      provider.providerId === 'acp'
+        ? { command: readAcpCommand(provider) }
+        : provider.baseUrl
+          ? { baseUrl: provider.baseUrl }
+          : undefined;
+    const remote = await listProviderRemoteModels(provider.id, { ...options, force: true }).catch(
+      (err) => ({ models: [], error: err })
+    );
+    if (generation !== visibleModelsGenRef.current[provider.id]) return;
+    const currentProvider = providersRef.current.find((p) => p.id === provider.id);
+    if (!currentProvider || fingerprint !== getVisibleModelsFingerprint(currentProvider)) {
+      setVisibleModelsPanels((prev) => ({
+        ...prev,
+        [provider.id]: EMPTY_VISIBLE_MODELS_PANEL,
+      }));
+      return;
+    }
+    const curatedList = readCuratedModels(provider);
+    if ('error' in remote) {
+      setVisibleModelsPanels((prev) => ({
+        ...prev,
+        [provider.id]: {
+          fetching: false,
+          error:
+            remote.error instanceof Error ? remote.error.message : 'Failed to fetch remote models',
+          candidates: mergeVisibleModelCandidates([curatedList]),
+          fingerprint,
+        },
+      }));
+    } else {
+      setVisibleModelsPanels((prev) => ({
+        ...prev,
+        [provider.id]: {
+          fetching: false,
+          error: null,
+          candidates: mergeVisibleModelCandidates([remote.models, curatedList]),
+          fingerprint,
+        },
+      }));
+    }
+  };
+
   const healthDotClass = (status: string) => {
     switch (status) {
       case 'healthy':
@@ -613,6 +737,16 @@ export function ProvidersSettings() {
                 const auth = provider.authStatus;
                 const isAuthenticated = provider.available || auth?.isAuthenticated;
                 const needsRefresh = auth?.needsRefresh;
+                const visiblePanel = visibleModelsPanels[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
+                const curatedList = readCuratedModels(provider);
+                const curatedIds =
+                  curatedList !== undefined
+                    ? new Set(curatedList.map((model) => model.id))
+                    : undefined;
+                const visibleRows = visiblePanel.candidates ?? curatedList ?? [];
+                const visibleCheckedCount = curatedIds
+                  ? visibleRows.filter((model) => curatedIds.has(model.id)).length
+                  : visibleRows.length;
 
                 return (
                   <div
@@ -865,9 +999,9 @@ export function ProvidersSettings() {
                                       ? 'Using HYPERNEO_ACP_COMMAND'
                                       : 'No command set')}
                                 </div>
-                                {(readAcpModels(provider)?.length ?? 0) > 0 && (
+                                {(readCuratedModels(provider)?.length ?? 0) > 0 && (
                                   <div class="mt-1 flex flex-wrap gap-1">
-                                    {readAcpModels(provider)?.map((model) => (
+                                    {readCuratedModels(provider)?.map((model) => (
                                       <span
                                         key={model.id}
                                         class="text-[10px] px-1.5 py-0.5 rounded bg-dark-800 text-gray-300"
@@ -886,7 +1020,7 @@ export function ProvidersSettings() {
                                     providerId: provider.id,
                                     providerName: provider.displayName,
                                     command: readAcpCommand(provider),
-                                    models: readAcpModels(provider),
+                                    models: readCuratedModels(provider),
                                     envBacked: !readAcpCommand(provider),
                                     configJson: provider.configJson,
                                   })
@@ -896,6 +1030,72 @@ export function ProvidersSettings() {
                                 Edit
                               </Button>
                             </div>
+                          </div>
+                        )}
+
+                        {!isCustom && (
+                          <div data-testid="visible-models-panel">
+                            <div class="flex items-center justify-between gap-2">
+                              <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                                Visible models
+                              </h5>
+                              <Button
+                                size="xs"
+                                variant="secondary"
+                                onClick={() => handleFetchVisibleModels(provider)}
+                                loading={visiblePanel.fetching}
+                                disabled={visiblePanel.fetching || !provider.isEnabled}
+                                title={
+                                  provider.isEnabled
+                                    ? 'Fetch remote model candidates'
+                                    : 'Enable this provider to fetch model candidates'
+                                }
+                              >
+                                Fetch models
+                              </Button>
+                            </div>
+                            {visiblePanel.error && (
+                              <p class="text-xs text-red-400 mt-2">{visiblePanel.error}</p>
+                            )}
+                            {visibleRows.length === 0 ? (
+                              <p class="text-xs text-gray-500 italic mt-2">
+                                {curatedIds
+                                  ? 'No visible models curated.'
+                                  : visiblePanel.error
+                                    ? 'No stored curation to display.'
+                                    : 'No curation stored — every static and discovered model is visible.'}
+                              </p>
+                            ) : (
+                              <div>
+                                <p class="text-[11px] text-gray-500 mt-2">
+                                  {curatedIds
+                                    ? `${visibleCheckedCount} of ${visibleRows.length} visible.`
+                                    : `${visibleRows.length} model${visibleRows.length === 1 ? '' : 's'} — all visible (no curation stored).`}
+                                </p>
+                                <div class="max-h-48 overflow-y-auto space-y-1 mt-1">
+                                  {visibleRows.map((model) => (
+                                    <label
+                                      key={model.id}
+                                      class="flex items-center gap-2 text-xs text-gray-200 rounded px-1 py-0.5"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={curatedIds ? curatedIds.has(model.id) : true}
+                                        disabled
+                                        class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                                      />
+                                      <span class="font-mono break-all">{model.id}</span>
+                                      {model.name && model.name !== model.id && (
+                                        <span class="text-gray-500">{model.name}</span>
+                                      )}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <p class="text-[11px] text-gray-500 mt-1">
+                              Read-only preview — saving a selection arrives with curation editing.
+                            </p>
                           </div>
                         )}
 
