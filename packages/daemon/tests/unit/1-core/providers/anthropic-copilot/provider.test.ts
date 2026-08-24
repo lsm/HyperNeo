@@ -245,6 +245,25 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       }
     });
 
+    it('keeps availability resilient when stored credentials are malformed', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
+      fs.writeFileSync(path.join(authDir, 'auth.json'), '{invalid json');
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+
+      try {
+        await expect(p.isAvailable()).resolves.toBe(false);
+        await expect(p.getCredentials()).resolves.toBeNull();
+      } finally {
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+
     it('treats a missing stored credentials file as logged out', async () => {
       const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-auth-status-'));
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);

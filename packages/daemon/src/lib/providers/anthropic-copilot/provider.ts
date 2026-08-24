@@ -141,8 +141,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     const token = this.storedCredentialToken ?? this.tokenCache?.token;
     if (token) return { type: 'oauth', accessToken: token };
 
-    const fileToken = await this.loadStoredGitHubToken();
-    if (fileToken) return { type: 'oauth', accessToken: fileToken };
+    try {
+      const fileToken = await this.loadStoredGitHubToken();
+      if (fileToken) return { type: 'oauth', accessToken: fileToken };
+    } catch {}
 
     return null;
   }
@@ -261,7 +263,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     try {
-      const token = await this.resolveGitHubToken();
+      const token = await this.resolveGitHubToken(true);
       if (!token) {
         return {
           isAuthenticated: false,
@@ -413,7 +415,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     return this.serverCache.url;
   }
 
-  private async resolveGitHubToken(): Promise<string | undefined> {
+  private async resolveGitHubToken(
+    propagateStoredCredentialError = false
+  ): Promise<string | undefined> {
     if (this.storedCredentialToken) {
       return this.storedCredentialToken;
     }
@@ -422,13 +426,20 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       return this.tokenCache.token;
     }
 
-    const { token, source } = await this.discoverGitHubToken();
+    const { token, source } = await this.discoverGitHubToken(propagateStoredCredentialError);
     this.tokenCache = { token, expiresAt: Date.now() + TOKEN_CACHE_TTL_MS, source };
     return token;
   }
 
-  private async discoverGitHubToken(): Promise<{ token: string | undefined; source: TokenSource }> {
-    const stored = await this.loadStoredGitHubToken();
+  private async discoverGitHubToken(
+    propagateStoredCredentialError = false
+  ): Promise<{ token: string | undefined; source: TokenSource }> {
+    let stored: string | undefined;
+    try {
+      stored = await this.loadStoredGitHubToken();
+    } catch (error) {
+      if (propagateStoredCredentialError) throw error;
+    }
     if (stored) return { token: stored, source: 'auth-file' };
 
     if (this.env.COPILOT_GITHUB_TOKEN) {
