@@ -31,6 +31,7 @@ import {
   buildExternalEventDigestMessage,
   buildSyntheticExternalEventMessage,
   DEFERRED_EXTERNAL_EVENT_ROW_CAP,
+  deferredExternalEventEntryEvents,
   type ExternalEventEssenceEntry,
   foldDeferredExternalEventOverflow,
   parseDeferredExternalEventText,
@@ -266,7 +267,7 @@ function directSteerBufferKey(sessionId: string, eventClass: DirectSteerEventCla
 }
 
 interface DirectSteerBufferEntry {
-  essence: ExternalEventEssenceEntry;
+  essences: ExternalEventEssenceEntry[];
   messageId: string;
   dbId: string;
   receivedAt: number;
@@ -3456,7 +3457,7 @@ export class TaskAgentManager {
         messageId,
         deferredDbId,
         messageText: message,
-        isBusy,
+        processingStatus: state.status,
         inRateLimitCooldown,
         parentTaskLimited: parentLimited,
       });
@@ -3602,15 +3603,26 @@ export class TaskAgentManager {
     messageId: string;
     deferredDbId: string;
     messageText: string;
-    isBusy: boolean;
+    processingStatus: string;
     inRateLimitCooldown: boolean;
     parentTaskLimited: boolean;
   }): void {
     if (!isMessageDeliveryV2Enabled()) return;
-    if (!args.isBusy || args.inRateLimitCooldown || args.parentTaskLimited) return;
+    if (
+      args.processingStatus !== 'processing' ||
+      args.inRateLimitCooldown ||
+      args.parentTaskLimited
+    ) {
+      return;
+    }
     const entry = parseDeferredExternalEventText(args.messageText);
-    if (!entry || entry.kind !== 'event') return;
-    const eventClass = classifyExternalEventDirectSteer(entry.essence);
+    if (!entry) return;
+    const essences = deferredExternalEventEntryEvents(entry);
+    const directEssence = essences.find(
+      (essence) => classifyExternalEventDirectSteer(essence) !== null
+    );
+    if (!directEssence) return;
+    const eventClass = classifyExternalEventDirectSteer(directEssence);
     if (!eventClass) return;
     const key = directSteerBufferKey(args.sessionId, eventClass);
     const now = Date.now();
@@ -3625,7 +3637,7 @@ export class TaskAgentManager {
     }
     const buffer = this.directSteerBuffers.get(key) ?? [];
     if (buffer.length >= DIRECT_STEER_BUFFER_MAX_ENTRIES) {
-      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByCooldown();
+      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByBufferCap();
       log.warn(
         `TaskAgentManager: direct steer buffer for session ${args.sessionId} class ` +
           `${eventClass} at capacity (${DIRECT_STEER_BUFFER_MAX_ENTRIES}); event stays deferred`
@@ -3633,7 +3645,7 @@ export class TaskAgentManager {
       return;
     }
     buffer.push({
-      essence: entry.essence,
+      essences,
       messageId: args.messageId,
       dbId: args.deferredDbId,
       receivedAt: now,
@@ -3679,6 +3691,15 @@ export class TaskAgentManager {
       );
       return;
     }
+    const lastSteeredAt = this.directSteerCooldowns.get(key);
+    if (lastSteeredAt !== undefined && Date.now() - lastSteeredAt < this.directSteerCooldownMs) {
+      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByCooldown();
+      log.debug(
+        `TaskAgentManager: direct steer for session ${sessionId} class ${eventClass} dropped ` +
+          `at flush — cooldown armed while the burst was pending; rows stay deferred`
+      );
+      return;
+    }
     const { messages: deferredRows } = this.config.db.getUserMessagesByStatus(
       sessionId,
       'deferred'
@@ -3692,8 +3713,9 @@ export class TaskAgentManager {
       );
       return;
     }
+    const eventCount = steerable.reduce((sum, entry) => sum + entry.essences.length, 0);
     const steerText = buildExternalEventDigestMessage(
-      steerable.map((entry) => entry.essence),
+      steerable.flatMap((entry) => entry.essences),
       { title: 'Direct external events while you were working (injected mid-turn)' }
     );
     const message = buildSyntheticExternalEventMessage(sessionId, steerText);
@@ -3708,8 +3730,6 @@ export class TaskAgentManager {
       );
       return;
     }
-    await this.publishMessageStatusChanged(sessionId, steerDbId, 'enqueued');
-    const sourceDbIds = steerable.map((entry) => entry.dbId);
     try {
       deliverMessage(this.config.db.getJobQueueRepo(), sessionId, steerMessageId, {
         origin: 'space_inject',
@@ -3718,15 +3738,24 @@ export class TaskAgentManager {
     } catch (err) {
       log.warn(
         `TaskAgentManager: failed to enqueue direct steer delivery for session ${sessionId}: ` +
-          `${err instanceof Error ? err.message : String(err)}; folding steer row back to deferred`
+          `${err instanceof Error ? err.message : String(err)}; discarding the steer row — ` +
+          `source rows stay deferred as the single carrier`
       );
-      const flippedDbId = this.config.db
+      const failedDbId = this.config.db
         .getSDKMessageRepo()
-        .markDeliveryDeferredByUuid(sessionId, steerMessageId);
-      if (flippedDbId) await this.publishMessageStatusChanged(sessionId, flippedDbId, 'deferred');
+        .markDeliveryFailedByUuid(sessionId, steerMessageId);
+      if (failedDbId) await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
       return;
     }
+    const sourceDbIds = steerable.map((entry) => entry.dbId);
     this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
+    this.armDirectSteerCooldown(key);
+    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected(eventClass);
+    log.info(
+      `TaskAgentManager: injected direct steer for session ${sessionId} class ${eventClass} ` +
+        `covering ${eventCount} event(s) across ${steerable.length} row(s)`
+    );
+    await this.publishMessageStatusChanged(sessionId, steerDbId, 'enqueued');
     await this.config.internalEventBus
       .publish('messages.statusChanged', {
         sessionId,
@@ -3734,22 +3763,22 @@ export class TaskAgentManager {
         status: 'consumed',
       })
       .catch(() => {});
-    this.armDirectSteerCooldown(key);
-    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected(eventClass);
-    log.info(
-      `TaskAgentManager: injected direct steer for session ${sessionId} class ${eventClass} ` +
-        `covering ${steerable.length} event(s)`
-    );
   }
 
   private armDirectSteerCooldown(key: string): void {
     const map = this.directSteerCooldowns;
     map.set(key, Date.now());
-    if (map.size > DIRECT_STEER_COOLDOWN_MAP_CAP) {
-      const now = Date.now();
-      for (const [mapKey, steeredAt] of map) {
-        if (now - steeredAt >= this.directSteerCooldownMs) map.delete(mapKey);
-      }
+    if (map.size <= DIRECT_STEER_COOLDOWN_MAP_CAP) return;
+    const now = Date.now();
+    for (const [mapKey, steeredAt] of map) {
+      if (now - steeredAt >= this.directSteerCooldownMs) map.delete(mapKey);
+    }
+    let excess = map.size - DIRECT_STEER_COOLDOWN_MAP_CAP;
+    if (excess <= 0) return;
+    for (const mapKey of map.keys()) {
+      if (excess <= 0) break;
+      map.delete(mapKey);
+      excess -= 1;
     }
   }
 

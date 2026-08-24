@@ -610,14 +610,23 @@ path unchanged.
   actor; human review comments and human `comment_polled` stay digest), genuine
   CI failures (`check_failed`; `check_cancelled`/`check_skipped` stay digest),
   and `merge_conflict` (`merge_conflict_resolved` stays digest).
+- **Mid-turn only**: buffering requires the session state to be exactly
+  `processing` — the one state in which `feedDeliverySteer` admits interleaved
+  content into the live turn. `queued`/`waiting_for_input`/`interrupted`/
+  rate-limit sessions keep the plain defer path.
 - **Burst coalescing**: events buffer per `(session, event class)` and flush as
   ONE steer built by the digest renderer, so a 12-comment Codex pass becomes a
-  single steer, not twelve. The flush only folds rows that are still `deferred`;
-  if the turn ended first (turn-end flush already consumed them), no steer is
-  emitted and nothing is delivered twice.
+  single steer, not twelve. Upstream rate-limit fold rows (the
+  `external_event_digest` envelopes SpaceRuntime emits past its 10/min delivery
+  budget) participate too: a fold containing any direct-class event joins the
+  burst with all of its events. The flush only folds rows that are still
+  `deferred`; if the turn ended first (turn-end flush already consumed them), no
+  steer is emitted and nothing is delivered twice.
 - **Cooldown / backpressure**: after a steer fires for a class, further
   direct-class events for that (session, class) fall back to the digest tier
-  until the cooldown expires; overflow therefore still surfaces at turn end.
+  until the cooldown expires (re-checked both at buffer time and at flush time,
+  and armed synchronously before the flush's first await so an in-flight flush
+  counts against the cap); overflow therefore still surfaces at turn end.
 - **Tunables** (module constants in `task-agent-manager.ts`, overridable via
   `TaskAgentManagerConfig` for tests):
   `DIRECT_STEER_DEBOUNCE_MS = 20_000` (trailing-edge burst window),
@@ -630,7 +639,11 @@ path unchanged.
   logged and counted in the external-event queue-health snapshot
   (`directSteerInjected`, `directSteerInjectedByClass`,
   `directSteerSuppressedByCooldown`).
-- **Failure safety**: the steer row is persisted `enqueued` and its source rows
-  are only marked `consumed` after the steer delivery job is successfully
-  enqueued; on enqueue failure the steer row flips back to `deferred` so the
-  information still reaches the agent at turn end.
+- **Failure safety (single carrier)**: the steer row is persisted `enqueued`
+  and the source rows are claimed (`consumed`) only after the steer delivery job
+  is durably enqueued, with no await between reading and claiming them so the
+  turn-end fold cannot race the claim. If job enqueue fails, the synthetic steer
+  row is marked `failed` and discarded while the original rows stay `deferred` —
+  exactly one representation of the events survives to turn end. If the steer
+  job itself later dead-letters, the failed steer row retains the full rendered
+  content, matching how every other delivery failure surfaces.

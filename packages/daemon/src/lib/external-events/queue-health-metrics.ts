@@ -28,6 +28,7 @@ export interface QueueHealthCounters {
   cooldownSkips: number;
   directSteerInjected: number;
   directSteerSuppressedByCooldown: number;
+  directSteerSuppressedByBufferCap: number;
   directSteerInjectedByClass: Record<string, number>;
 }
 
@@ -153,6 +154,7 @@ export class ExternalEventQueueMetrics {
   private cooldownSkips = 0;
   private directSteerInjected = 0;
   private directSteerSuppressedByCooldown = 0;
+  private directSteerSuppressedByBufferCap = 0;
   private readonly directSteerInjectedByClass = new Map<string, number>();
 
   constructor(now: number = Date.now()) {
@@ -201,6 +203,10 @@ export class ExternalEventQueueMetrics {
     this.directSteerSuppressedByCooldown += 1;
   }
 
+  recordDirectSteerSuppressedByBufferCap(): void {
+    this.directSteerSuppressedByBufferCap += 1;
+  }
+
   recordDeliveryTerminal(event: DeliveryTerminalEvent): void {
     if (event.outcome === 'delivered') {
       this.delivered += 1;
@@ -241,6 +247,7 @@ export class ExternalEventQueueMetrics {
       cooldownSkips: this.cooldownSkips,
       directSteerInjected: this.directSteerInjected,
       directSteerSuppressedByCooldown: this.directSteerSuppressedByCooldown,
+      directSteerSuppressedByBufferCap: this.directSteerSuppressedByBufferCap,
       directSteerInjectedByClass: recordToObject(this.directSteerInjectedByClass),
     };
   }

@@ -5,6 +5,7 @@ import { formatExternalEventEssence } from '../../../../src/lib/external-events/
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
 import { classifyExternalEventDirectSteer } from '../../../../src/lib/external-events/event-tiers';
+import { buildDeferredEventDigestEnvelopeText } from '../../../../src/lib/external-events/deferred-event-digest';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 
@@ -133,6 +134,7 @@ interface Harness {
   jobs: EnqueuedJob[];
   metrics: ExternalEventQueueMetrics;
   memoryQueue: Array<{ messageId: string; content: unknown }>;
+  setFailJobEnqueue(value: boolean): void;
 }
 
 function makeHarness(processingStatusArg = 'processing'): Harness {
@@ -142,6 +144,7 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
   const metrics = new ExternalEventQueueMetrics();
   const memoryQueue: Array<{ messageId: string; content: unknown }> = [];
   let processingStatus = processingStatusArg;
+  let failJobEnqueue = false;
 
   const session = {
     session: { id: SESSION_ID },
@@ -179,15 +182,21 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
       getSDKMessageRepo: () => ({
         getDeliveryContent: () => null,
         reopenDeliveryByUuid: () => null,
-        markDeliveryFailedByUuid: () => null,
-        markDeliveryDeferredByUuid: (uuid: string) =>
+        markDeliveryDeferredByUuid: (_sessionId: string, uuid: string) =>
           rows.find((row) => row.message.uuid === uuid)?.dbId ?? null,
+        markDeliveryFailedByUuid: (_sessionId: string, uuid: string) => {
+          const row = rows.find((candidate) => candidate.message.uuid === uuid);
+          if (!row) return null;
+          row.status = 'failed';
+          return row.dbId;
+        },
         getMessageByStatusAndUuid: () => null,
       }),
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () => new Set<string>(),
         getActiveDeliveryRole: () => null,
         enqueue: (job: EnqueuedJob) => {
+          if (failJobEnqueue) throw new Error('job queue unavailable');
           jobs.push(job);
         },
       }),
@@ -216,7 +225,17 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     SESSION_ID,
     session
   );
-  return { manager, rows, statusUpdates, jobs, metrics, memoryQueue };
+  return {
+    manager,
+    rows,
+    statusUpdates,
+    jobs,
+    metrics,
+    memoryQueue,
+    setFailJobEnqueue: (value: boolean) => {
+      failJobEnqueue = value;
+    },
+  };
 }
 
 async function injectDefer(manager: TaskAgentManager, text: string): Promise<void> {
@@ -224,7 +243,9 @@ async function injectDefer(manager: TaskAgentManager, text: string): Promise<voi
 }
 
 function steerRows(rows: StoredRow[]): StoredRow[] {
-  return rows.filter((row) => rowText(row.message).includes('injected mid-turn'));
+  return rows.filter(
+    (row) => row.status === 'enqueued' && rowText(row.message).includes('injected mid-turn')
+  );
 }
 
 function steerJobs(jobs: EnqueuedJob[]): EnqueuedJob[] {
@@ -394,6 +415,64 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steerText).toContain('CI check "Daemon Tests"');
     expect(steerJobs(harness.jobs)).toHaveLength(1);
     expect(harness.metrics.getCounters().directSteerInjectedByClass.check).toBe(1);
+  });
+
+  it('expands an upstream rate-limit fold containing bot review comments into the steer', async () => {
+    const harness = makeHarness();
+    const essences = Array.from({ length: 12 }, (_, i) => ({
+      eventId: `fold-rc-${i}`,
+      topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
+      eventType: 'pull_request_review_comment',
+      actor: 'codex[bot]',
+      repo: 'lsm/HyperNeo',
+      prNumber: 2828,
+      prUrl: PR_URL,
+      body: 'Folded comment',
+      commentId: `fold-c-${i}`,
+      occurredAt: Date.UTC(2026, 7, 23, 16, 12),
+    }));
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    expect(harness.rows).toHaveLength(1);
+    expect(harness.rows[0]?.status).toBe('deferred');
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    expect(rowText(steers[0]!.message)).toContain('(12 events, PR #2828)');
+    expect(steerJobs(harness.jobs)).toHaveLength(1);
+    expect(harness.metrics.getCounters().directSteerInjectedByClass.review).toBe(1);
+    expect(harness.rows[0]?.status).toBe('consumed');
+  });
+
+  it('does not steer while the session is waiting_for_input', async () => {
+    const harness = makeHarness('waiting_for_input');
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED'));
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    expect(steerRows(harness.rows)).toHaveLength(0);
+    expect(steerJobs(harness.jobs)).toHaveLength(0);
+    expect(harness.rows[0]?.status).toBe('deferred');
+  });
+
+  it('discards the steer row on delivery-enqueue failure, keeping source rows as the single carrier', async () => {
+    const harness = makeHarness();
+    harness.setFailJobEnqueue(true);
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED'));
+
+    await sleep(DEBOUNCE_MS + 40);
+
+    expect(steerRows(harness.rows)).toHaveLength(0);
+    expect(steerJobs(harness.jobs)).toHaveLength(0);
+    const sourceRow = harness.rows.find((row) =>
+      rowText(row.message).includes('CHANGES_REQUESTED')
+    );
+    expect(sourceRow?.status).toBe('deferred');
+    const failedRow = harness.rows.find((row) => row.status === 'failed');
+    expect(failedRow).toBeDefined();
+    expect(rowText(failedRow!.message)).toContain('injected mid-turn');
   });
 
   it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
