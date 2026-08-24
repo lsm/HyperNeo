@@ -373,10 +373,15 @@ gate never sees. Re-flagging and admission are two separate rules:
   The **webhook path**
   reprocessed by the next poll either (dual owners would duplicate room
   messages); the inbox wake drains each persisted event exactly once once
-  the account reopens; the **webhook path**
-  (`github-service.ts:103-107` awaits `processEvent` directly in the HTTP
-  callback — no job, no `job.id`) processes the event **without** agent
-  analysis — and the **acknowledgment becomes conditional**: the 200 is
+  the account reopens; the **webhook path interpreter sits on the ACTIVE
+  route**: production requests to `/webhook/github/space` are dispatched to
+  `GitHubEventExtension`'s registered handler
+  (github-event-extension.ts:277-278 → `:663`), NOT to
+  `GitHubService.handleWebhook` (github-service.ts:203) — a repo-wide
+  search finds no caller for the service method, so specifying the
+  interpreter there would leave the live endpoint unprotected during
+  saturation. The extension's handler processes the event **without**
+  agent analysis — and the **acknowledgment becomes conditional**: the 200 is
   returned only after the durable inbox commit succeeds; if the inbox write
   throws, the handler **first retries the commit in-process within the
   callback window** (a short bounded backoff — transient SQLite contention
@@ -426,9 +431,10 @@ gate never sees. Re-flagging and admission are two separate rules:
   same-action webhook re-edit is a distinct delivery id the canonical key
   must not absorb); a replay from the OTHER source is suppressed only by a
   **payload-correlated pairing, never by the tuple alone**: each delivered
-  event records its canonical tuple alongside the digest of its normalized
-  payload, and an arriving opposite-source event under the same tuple is
-  suppressed only when its payload digest matches a recorded one — the
+  event records its canonical tuple alongside the digest of a **canonical
+  cross-source projection** of its payload, and an arriving opposite-source
+  event under the same tuple is
+  suppressed only when its projected digest matches a recorded one — the
   tuple says the events may be the same change; the payload says they ARE.
   Arrival order never decides: a poll observing the final state after two
   same-second webhook transitions suppresses the webhook whose payload it
@@ -443,7 +449,18 @@ gate never sees. Re-flagging and admission are two separate rules:
   payload mismatch always delivers (the tuple's second resolution cannot
   prove duplication), at most re-delivering partial state; the
   both-enabled common case (one change, one webhook, one poll, identical
-  payloads) still dedupes to exactly one delivery.
+  payloads) still dedupes to exactly one delivery. The projection is
+  defined, not the raw normalized payload: the two sources deliberately
+  differ in transport-specific fields — `action` (webhook
+  `opened`/`closed`/`synchronize` vs synthesized `updated`), `source`,
+  freshly generated `id`/`receivedAt`, and structurally different
+  `rawPayload` envelopes (webhook delivery wrapper vs API row) — so
+  hashing the normalized payload as-is would ALWAYS differ and both
+  copies would route. The projection strips every transport-specific
+  field and hashes only the harmonized resource subset: event type,
+  repo, upstream row id, actor, and the comparable content fields
+  (title/body/state/diff refs as the type provides), mapped to one
+  neutral shape per event type before digesting.
   **Webhook-only installations** (webhooks enabled
   without a GitHub token, or polling interval zero — `refreshPolling`
   disables polling entirely) have no next poll: the skipped analysis is
@@ -704,10 +721,21 @@ saturated → `queue_until` with the registry's deadline; else
 probing without the grant → `queue_until` (reason `probing`, until = the probe
 tick); else if `configuredCap !== null && inFlight >= configuredCap` →
 `queue_until` (reason `slot_pressure`, until = null-safe probe tick); else
-`admit`. **Grants are minted and bound by the registry at clear time, before
-any consult** (the core only reads `holdsProbeGrant`); the first-admitting-
+`admit`. **Grants are minted by the registry at clear time, before any
+consult** (the core only reads `holdsProbeGrant`); the first-admitting-
 consult-mints wording from earlier drafts is exactly the scheduling race the
-mint-bound contract removed. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
+mint-bound contract removed. The grant's identity has exactly two
+well-defined mint shapes: with a non-empty backlog the grant mints
+**bound** to the selected FIFO head (the mint-bound contract, no consult
+involved); a clear that drained to nothing has no head to bind, so it
+mints **pending — `identity: null`** — and the first admission consult of
+any kind binds it through `claimPendingGrant(identity)`, a REGISTRY-side
+compare-and-set the interpreter invokes around the consult (its atomic
+result is what populates the `holdsProbeGrant` fact the pure core reads;
+the core itself never mints, binds, or claims). "First consult wins" over
+an already-BINDABLE queue is the removed A2/B1 race; a CAS over an
+identity-null grant has no queue to steal from and no race window — one
+atomic transition. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
 shapes (`(ctx) => ctx`, pass-through identity per Decision item 6(b)).
 
 Hot-path check: this core runs once per message send / inject / job claim — the
@@ -794,7 +822,7 @@ equal, so the common case shares one key.
 | `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query) | admission facts, wake timer |
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner **+ every direct SDK interpreter — title, the Space background jobs, the GitHub agents, the LLM classifier, the closure-health probe — the same complete lifecycle roster the feed-site contract below wires; a direct caller that skips the report leaves its consumed grant unresolved and strands the queue**) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}`; chat-first priority: background admits only when the chat lane is empty), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
-| `probeGrant` | `{ identity: GrantIdentity (typed union — see queuedMessages), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time** (never by the first admitting consult); consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints and re-binds | downstream consults (same delivery passes), probe resolution |
+| `probeGrant` | `{ identity: GrantIdentity \| null (typed union — see queuedMessages; null ONLY in the post-empty-clear pending window), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time when the backlog is non-empty** (never by the first admitting consult); a clear that drained to nothing mints **pending (identity null)** — the first admission consult of any kind binds it via the registry's atomic `claimPendingGrant` CAS; consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield, or pending → claim) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints (bound again, or pending again for a still-empty backlog) and re-binds | downstream consults (same delivery passes), probe resolution |
 | `closureProbeGrant` | `{ holder, leaseUntilMs, configRef } \| null` per provider — `configRef` is the resolvable configuration snapshot (provider id + effective providerConfig/credential reference captured when closure armed, kept current by the rotation hooks), without which the scheduled timer could not construct its probe request from a digest alone — the atomic reservation behind `holdsClosureProbeGrant`, independent of `probeGrant` (closure probing never mints or consumes post-clear probes) | **CAS-acquired** by manual Retry / the health-probe timer (the loser queues on its own trigger) | `holdsClosureProbeGrant` (the core's closed arm); **released** by the holder's outcome (success → closure clears and registrations drain; fresh billing-terminal → re-arm `closed`; classified non-billing limit → timed saturation; other error → closure stays armed) or by lease expiry — **which bounds only the unstarted grant** (acquire → probe start), exactly as `probeGrant`'s lease does: once the probe's request has started, only its termination releases, so a long-running Retry turn or health query cannot have its lane re-granted mid-flight |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
@@ -850,7 +878,19 @@ not inherit):
   `manual | automatic` origin (`retryNow()` passes `manual`, the cooldown
   timer passes `automatic`), and only a `manual` origin sets the
   `closureProbe` fact on the re-consult — an automatic retry consults
-  ordinary admission (closed → deny), and (b) a bounded daily
+  ordinary admission (closed → deny). **The manual path must also be made
+  reachable**: today the first billing-terminal error with no usable
+  fallback trips `decideRateLimitTrip` to `surface-billing`, and
+  `RateLimitWatchdog.scheduleRetry` returns `false` immediately — no
+  cooldown armed, no banner, no `startupExhausted` — while `retryNow()`'s
+  `canRetryNow` check rejects the state, so even a direct
+  `session.retryNowAfterRateLimit` call cannot fire and the documented
+  manual probe is unreachable. PR3 therefore adds a **retryable
+  billing-closed pause**: the `surface-billing` trip arms an indefinite
+  pause that surfaces the closure banner AND satisfies `canRetryNow`
+  (no ladder, no timed cooldown), so Retry Now runs the manual-origin
+  callback and its `closureProbe` consult; without it, users stay closed
+  until the daily health check or a credential rotation. And (b) a bounded daily
   health probe per closed account (one unref'd timer; a successful probe
   turn clears, a limit re-arms) so a renewal while the daemon idles is not
   stuck until restart. **Durable parking under closure**: the job
@@ -1052,12 +1092,13 @@ initially empty backlog *or* a drain whose registrations all exit non-cleanly
 (interrupts/non-limit errors mint successors, but the final exit leaves no
 probe identity either); otherwise the next independent episode inherits the
 advanced charge and starts at a longer ladder step for no reason. **Such a
-clear does not fully open the account**: it enters `probing` with a grant
-bound by the **first admission consult of any kind — the sole binding
-rule**. The registration append is itself such a consult: a P1 sender has
+clear does not fully open the account**: it enters `probing` with a
+**pending grant (`identity: null`)** — and the **`claimPendingGrant` CAS at
+the first admission consult of any kind is the sole path out of pending**.
+The registration append is itself such a consult: a P1 sender has
 already returned with `queue_until` before it persists and registers its
-deferred row, so the append immediately re-runs admission under the same
-CAS every consult uses — an unbound pending grant binds to the
+deferred row, so the append immediately re-runs admission, and that
+consult claims the pending grant atomically for the
 just-registered identity and the row is admitted directly (its promotion
 runs at once), never parked behind a grant only lease expiry could
 recover; durable first arrivals behave exactly like ephemeral ones, and
@@ -1176,7 +1217,11 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   handler admits exactly the bound identity; an unbound delivery consulting
   while probing queues at the tick. Binding at mint is what makes the
   cross-session FIFO real — "first admitting consult wins" would let A2 steal
-  B1's turn whenever session A's handler happens to run first. Every downstream
+  B1's turn whenever session A's handler happens to run first; the one
+  exception is the empty-backlog clear, which has no head to steal and mints
+  the pending (`identity: null`) grant whose `claimPendingGrant` CAS is a
+  single atomic transition, not a scheduling race (defined with the core and
+  state table above). Every downstream
   consult for the *bound* delivery — the V2 claim, the V1 start, the retry —
   admits on the grant, so one logical delivery passes all backstops instead of
   deadlocking against its own probing state. **Batching is disabled while the
@@ -1467,7 +1512,11 @@ by pre-existing suites):
    **source-appropriate dedupe keys** — two same-second same-action webhook
    deliveries (distinct `X-GitHub-Delivery` ids) both ingest, a
    created-then-edited same-second poll pair both ingest, a
-   cross-source pair sharing the canonical tuple delivers exactly once,
+   cross-source pair sharing the canonical tuple delivers exactly once
+   (their digests computed over the canonical cross-source projection —
+   transport fields `action`/`source`/`id`/`receivedAt`/`rawPayload`
+   excluded and resource fields harmonized, so equivalent webhook and
+   poll observations hash equal),
    and a poll followed by two distinct same-second webhooks suppresses the
    payload-matching one and delivers the other (payload-correlated
    pairing — arrival order never decides, the canonical tuple is never a
@@ -1501,7 +1550,14 @@ by pre-existing suites):
    a manual-mode bound row retains and re-binds next eligible; **probe grant
    lifecycle** — **minted and bound during the clear, before any consult**
    (the old mint-at-first-admitting-consult wording re-opened the A2/B1
-   scheduling race and is removed everywhere), honored by downstream consults
+   scheduling race and is removed everywhere), with the one defined
+   exception pinned: an empty-backlog clear mints the pending
+   (`identity: null`) grant, the first admission consult of any kind
+   claims it via the atomic `claimPendingGrant` CAS (durable registration
+   append and ephemeral caller alike — the claimer is admitted directly),
+   the lease bounds the unclaimed pending grant, and a still-empty expiry
+   re-mints pending; the A2/B1 anti-steal pin applies only to a
+   non-empty backlog, honored by downstream consults
    for the same delivery (the end-to-end pass that prevents the
    self-deadlock), registration is
    admission-generation-conditional (any state transition landing between
@@ -1509,7 +1565,13 @@ by pre-existing suites):
    (manual-mode bound row → retain and re-bind next eligible), billing-terminal
    arms the non-timed closed state cleared by all three reopening paths
    (manual Retry probing closure, bounded daily health probe, credential
-   change),
+   change) — including that the `surface-billing` trip arms the
+   retryable billing-closed pause (banner surfaced, `canRetryNow`
+   satisfied, manual-origin callback firing the `closureProbe` consult —
+   the path is reachable, not just documented) and that the webhook
+   interpreter's conditional ack lives on the extension route
+   (`/webhook/github/space` via `GitHubEventExtension`, the legacy service
+   handler pinned caller-less),
    **bound at mint to
    the FIFO head** (an unbound A2 cannot steal B1's grant), batching disabled
    while saturated-or-probing (a granted delivery is single-identity),
