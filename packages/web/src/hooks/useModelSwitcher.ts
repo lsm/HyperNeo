@@ -274,7 +274,13 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
         useCache: true,
       })) as { models: RawModelEntry[] };
 
-      setAvailableModels(mapRawModelsToModelInfos(models));
+      const modelInfos = mapRawModelsToModelInfos(models);
+      setAvailableModels(modelInfos);
+
+      if (currentModel && !currentModelInfo) {
+        const matched = modelInfos.find((m) => m.id === currentModel);
+        if (matched) setCurrentModelInfo(matched);
+      }
     } catch {
     } finally {
       setLoading(false);

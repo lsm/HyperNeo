@@ -256,6 +256,29 @@ describe('Auth RPC Handlers', () => {
       expect(result.providers[0].errorKind).toBe('credential');
     });
 
+    it('overlays credential failure over an unauthenticated error', async () => {
+      const testRegistry = getProviderRegistry();
+      const mockProvider = createMockProvider({
+        getAuthStatus: mock(async () => ({ isAuthenticated: false, error: 'transient error' })),
+      });
+      testRegistry.register(mockProvider);
+      recordClassifiedProviderFailure('test-provider', {
+        errorKind: 'credential',
+        message: '(http 401) invalid key',
+      });
+
+      const handler = messageHubData.handlers.get('auth.providers');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({}, {})) as {
+        providers: Array<{ isAuthenticated: boolean; error?: string; errorKind?: string }>;
+      };
+
+      expect(result.providers[0].isAuthenticated).toBe(false);
+      expect(result.providers[0].error).toBe('(http 401) invalid key');
+      expect(result.providers[0].errorKind).toBe('credential');
+    });
+
     it('does not overlay transient failure when provider is unauthenticated', async () => {
       const testRegistry = getProviderRegistry();
       const mockProvider = createMockProvider({

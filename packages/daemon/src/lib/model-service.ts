@@ -287,8 +287,15 @@ async function loadModelsFromProviders(): Promise<ModelsLoadResult> {
     /* v8 ignore next 2 */
     if (result.status !== 'fulfilled') return;
     allModels.push(...result.value.models);
-    if (result.value.status === 'failed' && result.value.error !== undefined) {
-      failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+    if (result.value.status === 'failed') {
+      if (result.value.error !== undefined) {
+        failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+      } else {
+        failures.push({
+          providerId: provider.id,
+          ...classifyProviderFailure(new Error('Provider returned no models')),
+        });
+      }
     } else {
       succeededProviderIds.push(provider.id);
     }

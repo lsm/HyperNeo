@@ -35,7 +35,7 @@ function overlayProviderFailure(status: ProviderAuthStatus): ProviderAuthStatus 
     return { ...status, error: failure.message, errorKind: 'transient' };
   }
 
-  if (!status.isAuthenticated && status.error) return status;
+  if (status.isAuthenticated) return status;
   return { ...status, isAuthenticated: false, error: failure.message, errorKind: 'credential' };
 }
 
