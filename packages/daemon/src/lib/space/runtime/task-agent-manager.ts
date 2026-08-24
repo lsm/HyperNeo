@@ -3505,6 +3505,13 @@ export class TaskAgentManager {
       rows: messages,
       cap: DEFERRED_EXTERNAL_EVENT_ROW_CAP,
       ops: {
+        findByUuid: async (uuid) => {
+          const repo = this.config.db.getSDKMessageRepo();
+          return (
+            repo.getMessageByStatusAndUuid(sessionId, 'deferred', uuid) ??
+            repo.getMessageByStatusAndUuid(sessionId, 'enqueued', uuid)
+          );
+        },
         saveRow: async (message, sendStatus) => {
           const dbId = this.config.db.saveUserMessage(sessionId, message, sendStatus);
           await this.publishMessageStatusChanged(sessionId, dbId, sendStatus);

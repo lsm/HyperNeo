@@ -957,6 +957,7 @@ describe('deferred external event overflow cap', () => {
     const saved: Array<{ status: 'enqueued' | 'deferred'; text: string }> = [];
     const superseded: string[][] = [];
     const ops: DeferredEventDigestRowOps = {
+      findByUuid: async () => null,
       saveRow: async (message, sendStatus) => {
         opsCalls.push('save');
         const text = (message.message?.content as Array<{ type: string; text?: string }>)[0]?.text;
@@ -986,10 +987,44 @@ describe('deferred external event overflow cap', () => {
     expect(superseded).toEqual([['db-0', 'db-1']]);
   });
 
+  it('does not save a duplicate envelope when a prior overflow fold crashed', async () => {
+    let savedCount = 0;
+    let savedUuid = '';
+    const superseded: string[][] = [];
+    const ops: DeferredEventDigestRowOps = {
+      findByUuid: async (uuid) => (uuid === savedUuid ? { dbId: 'db-envelope-1' } : null),
+      saveRow: async (message) => {
+        savedCount += 1;
+        savedUuid = message.uuid ?? '';
+        return `db-envelope-${savedCount}`;
+      },
+      markSuperseded: async (dbIds) => {
+        superseded.push(dbIds);
+      },
+    };
+    const args = {
+      sessionId: 'session-1',
+      rows: externalRows(101),
+      cap: 100,
+      ops,
+    };
+
+    await foldDeferredExternalEventOverflow(args);
+    expect(savedCount).toBe(1);
+
+    await foldDeferredExternalEventOverflow(args);
+    expect(savedCount).toBe(1);
+    expect(superseded).toEqual([
+      ['db-0', 'db-1'],
+      ['db-0', 'db-1'],
+    ]);
+  });
+
   it('leaves a backlog under the cap untouched', async () => {
     let saveCalls = 0;
     let supersedeCalls = 0;
     const ops: DeferredEventDigestRowOps = {
+      findByUuid: async () => null,
       saveRow: async () => {
         saveCalls += 1;
         return 'db';
@@ -1018,6 +1053,7 @@ describe('foldDeferredExternalEventsAtFlush', () => {
     const savedTexts: string[] = [];
     return {
       savedTexts,
+      findByUuid: async () => null,
       saveRow: async (message, sendStatus) => {
         calls.push(`save:${sendStatus}`);
         const text = (message.message?.content as Array<{ type: string; text?: string }>)[0]?.text;
@@ -1064,6 +1100,38 @@ describe('foldDeferredExternalEventsAtFlush', () => {
     expect(result.digestRow?.uuid).toBeTruthy();
     expect(ops.savedTexts[0]).toContain('External events while you were working (2 events');
     expect(result.remainder.map((r) => r.dbId)).toEqual(['db-plain']);
+  });
+
+  it('reuses the existing digest row when a prior fold crashed before superseding', async () => {
+    const calls: string[] = [];
+    const superseded: string[][] = [];
+    const ops = recordingOps(calls, superseded);
+    const externalA = row('db-a', 'u-a', checkText('chk-a', at(16), 'failure'));
+    const externalB = row('db-b', 'u-b', checkText('chk-b', at(17), 'failure'));
+
+    const first = await foldDeferredExternalEventsAtFlush({
+      sessionId: 'session-1',
+      rows: [externalA, externalB],
+      ops,
+    });
+    expect(calls).toEqual(['save:enqueued', 'supersede']);
+
+    const crashUuid = first.digestRow?.uuid ?? '';
+    ops.findByUuid = async (uuid) => (uuid === crashUuid ? { dbId: first.digestRow!.dbId } : null);
+
+    const second = await foldDeferredExternalEventsAtFlush({
+      sessionId: 'session-1',
+      rows: [externalA, externalB],
+      ops,
+    });
+
+    expect(calls).toEqual(['save:enqueued', 'supersede', 'supersede']);
+    expect(second.digestRow?.dbId).toBe(first.digestRow?.dbId);
+    expect(second.digestRow?.uuid).toBe(crashUuid);
+    expect(superseded).toEqual([
+      ['db-a', 'db-b'],
+      ['db-a', 'db-b'],
+    ]);
   });
 
   it('returns rows untouched when no external events are deferred', async () => {

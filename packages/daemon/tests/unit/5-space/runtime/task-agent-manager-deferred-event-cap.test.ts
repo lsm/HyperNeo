@@ -102,6 +102,7 @@ function makeHarness(existingDeferredRows: Array<SDKUserMessage & { dbId: string
         reopenDeliveryByUuid: () => null,
         markDeliveryFailedByUuid: () => null,
         markDeliveryDeferredByUuid: () => null,
+        getMessageByStatusAndUuid: () => null,
       }),
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () => new Set<string>(),

@@ -118,6 +118,13 @@ export class QueryModeHandler {
       sessionId,
       rows,
       ops: {
+        findByUuid: async (uuid) => {
+          const repo = this.ctx.db.getSDKMessageRepo();
+          return (
+            repo.getMessageByStatusAndUuid(sessionId, 'enqueued', uuid) ??
+            repo.getMessageByStatusAndUuid(sessionId, 'deferred', uuid)
+          );
+        },
         saveRow: async (message, sendStatus) => {
           const dbId = this.ctx.db.saveUserMessage(sessionId, message, sendStatus);
           await this.ctx.internalEventBus

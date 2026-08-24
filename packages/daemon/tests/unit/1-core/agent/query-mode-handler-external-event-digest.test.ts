@@ -132,6 +132,9 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         savedRows.push({ message, sendStatus });
         return `db-digest-${savedRows.length}`;
       }),
+      getSDKMessageRepo: () => ({
+        getMessageByStatusAndUuid: () => null,
+      }),
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () => new Set<string>(),
         hasActiveTurnDeliveryJob: () => false,

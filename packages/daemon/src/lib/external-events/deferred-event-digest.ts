@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { classifyExternalEventTier, externalEventTopicSuffix } from './event-tiers';
@@ -579,8 +580,34 @@ export function buildSyntheticExternalEventMessage(
 }
 
 export interface DeferredEventDigestRowOps {
+  findByUuid(uuid: string): Promise<{ dbId: string } | null>;
   saveRow(message: SDKUserMessage, sendStatus: 'enqueued' | 'deferred'): Promise<string>;
   markSuperseded(dbIds: string[]): Promise<void>;
+}
+
+function deterministicFoldUuid(sourceDbIds: string[]): string {
+  const digest = createHash('sha256')
+    .update([...sourceDbIds].sort().join(' '))
+    .digest('hex');
+  return `fold-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(
+    16,
+    20
+  )}-${digest.slice(20, 32)}`;
+}
+
+async function saveFoldRowIdempotently(
+  ops: DeferredEventDigestRowOps,
+  sourceDbIds: string[],
+  message: SDKUserMessage,
+  sendStatus: 'enqueued' | 'deferred'
+): Promise<{ dbId: string; message: SDKUserMessage }> {
+  const uuid = deterministicFoldUuid(sourceDbIds);
+  const existing = await ops.findByUuid(uuid);
+  if (existing) {
+    return { dbId: existing.dbId, message: { ...message, uuid: uuid as SDKUserMessage['uuid'] } };
+  }
+  const withUuid = { ...message, uuid: uuid as SDKUserMessage['uuid'] };
+  return { dbId: await ops.saveRow(withUuid, sendStatus), message: withUuid };
 }
 
 export interface DeferredEventDigestFlushResult {
@@ -602,11 +629,12 @@ export async function foldDeferredExternalEventsAtFlush(args: {
     droppedEventCount: partition.droppedCount,
   });
   const message = buildSyntheticExternalEventMessage(args.sessionId, digestText);
-  const dbId = await args.ops.saveRow(message, 'enqueued');
-  await args.ops.markSuperseded(partition.digestRows.map((row) => row.dbId));
+  const sourceDbIds = partition.digestRows.map((row) => row.dbId);
+  const saved = await saveFoldRowIdempotently(args.ops, sourceDbIds, message, 'enqueued');
+  await args.ops.markSuperseded(sourceDbIds);
   const digestRow: DeferredDeliveryRow = {
-    ...message,
-    dbId,
+    ...saved.message,
+    dbId: saved.dbId,
     timestamp: Date.now(),
   } as DeferredDeliveryRow;
   return {
@@ -657,7 +685,8 @@ export async function foldDeferredExternalEventOverflow(args: {
     plan.droppedCount > 0 ? { carriedDroppedCount: plan.droppedCount } : undefined
   );
   const message = buildSyntheticExternalEventMessage(args.sessionId, envelopeText);
-  await args.ops.saveRow(message, 'deferred');
-  await args.ops.markSuperseded(plan.overflowRows.map((row) => row.dbId));
+  const sourceDbIds = plan.overflowRows.map((row) => row.dbId);
+  await saveFoldRowIdempotently(args.ops, sourceDbIds, message, 'deferred');
+  await args.ops.markSuperseded(sourceDbIds);
   return plan.overflowRows.length;
 }
