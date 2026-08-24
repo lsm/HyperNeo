@@ -1477,6 +1477,37 @@ describe('logout()', () => {
     expect(internals['clientCache']).toBeUndefined();
   });
 
+  it('rejects bridge restarts after a successful logout until new credentials arrive', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    let createCalls = 0;
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      async () => {
+        createCalls++;
+        return { url: 'http://127.0.0.1:10002', stop: async () => {} };
+      }
+    );
+
+    await p.logout();
+
+    await expect(p.ensureServerStarted()).rejects.toThrow('logged out');
+    expect(createCalls).toBe(0);
+    expect(internals['serverCache']).toBeUndefined();
+
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_new_login' });
+    internals['clientCache'] = { listModels: async () => [], stop: async () => {} };
+    internals['clientCredentialsVersion'] = internals['credentialsVersion'];
+    await expect(p.ensureServerStarted()).resolves.toBe('http://127.0.0.1:10002');
+    expect(createCalls).toBe(1);
+  });
+
   it('keeps the running bridge when logout is refused by an external source', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
     const internals = p as unknown as Record<string, unknown>;

@@ -102,6 +102,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverCache: EmbeddedServer | undefined = undefined;
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   private shuttingDown = false;
+  private loggedOut = false;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
   private credentialsVersion = 0;
@@ -137,6 +138,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         ? credentials.apiKey
         : (credentials.accessToken ?? credentials.refreshToken);
     if (!token) return;
+    this.loggedOut = false;
     if (token !== this.storedCredentialToken) {
       this.credentialsVersion++;
       this.clearModelCache();
@@ -443,6 +445,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
     await this.serverStarting?.catch(() => {});
     await this.stopServerAndClient();
+    this.loggedOut = true;
   }
 
   private freshCachedExternalSource(): string | undefined {
@@ -514,6 +517,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   async ensureServerStarted(): Promise<string> {
     if (this.shuttingDown) {
       throw new Error('GitHub Copilot provider is shutting down');
+    }
+    if (this.loggedOut) {
+      throw new Error('GitHub Copilot provider is logged out');
     }
     if (this.serverCache && this.clientCredentialsVersion === this.credentialsVersion) {
       return this.serverCache.url;
@@ -770,6 +776,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         this.credentialsVersion++;
         this.clearModelCache();
         this.invalidateRunningBridge();
+        this.loggedOut = false;
         this.notifyCredentialsChanged({ type: 'oauth', accessToken: data.access_token });
 
         logger.debug('GitHub Copilot OAuth login successful');
