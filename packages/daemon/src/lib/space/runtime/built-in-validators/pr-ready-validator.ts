@@ -1,5 +1,6 @@
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn';
 import { collectWithMaxBuffer, parseJsonStdout } from '../script-utils';
 import { buildGitHubLookupEnv, fetchRateLimitResetEpoch } from '../gh-lookup-helpers';
 import { parsePrUrl } from '../parse-pr-url';
@@ -54,8 +55,7 @@ function readSendReason(context: HookExecutorContext): string | undefined {
 }
 
 export function createPrReadyValidator(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
+  spawnImpl: SpawnFn = spawnProcess
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
     if (context.taskStatus === 'approved') {
@@ -219,7 +219,7 @@ export function createPrReadyValidator(
 
 async function resolvePrUrl(
   context: HookExecutorContext,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   deadlineMs: number
 ): Promise<
   | { success: true; prUrl: string; shouldPatchPrUrl: boolean }
@@ -268,7 +268,7 @@ function extractDataRecord(context: HookExecutorContext): Record<string, unknown
 
 async function inferGitHubHost(
   cwd: string,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   deadlineMs: number
 ): Promise<string | undefined> {
   if (process.env.GH_HOST) return process.env.GH_HOST;
@@ -302,7 +302,7 @@ async function runTextCommand(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  spawnImpl: typeof Bun.spawn
+  spawnImpl: SpawnFn
 ): Promise<string | undefined> {
   let proc;
   try {
@@ -358,7 +358,7 @@ function extractPrUrlFromParams(params: Record<string, unknown>): string | undef
 async function runReviewThreadsQuery(
   meta: { host: string; owner: string; repo: string; number: string },
   cwd: string,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   deadlineMs: number
 ): Promise<
   | { success: true; unresolvedUrls: string[] }
@@ -481,7 +481,7 @@ async function runCommandRaw<T>(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  spawnImpl: typeof Bun.spawn
+  spawnImpl: SpawnFn
 ): Promise<CommandOutcome<T>> {
   let proc;
   try {
@@ -525,7 +525,7 @@ async function runCommand<T>(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  spawnImpl: typeof Bun.spawn,
+  spawnImpl: SpawnFn,
   options?: { hostHint?: string; resourceHint?: 'core' | 'graphql' }
 ): Promise<CommandOutcome<T>> {
   const outcome = await runCommandRaw<T>(args, cwd, timeoutMs, spawnImpl);

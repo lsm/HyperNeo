@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createGithubConnector } from '../../../../../src/lib/space/runtime/connectors/github-connector';
+import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
 import type { ConnectorContext } from '../../../../../src/lib/space/runtime/connectors/connector';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
 
@@ -14,9 +15,7 @@ function streamFromString(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function mockSpawn(
-  results: Array<{ stdout: string; stderr: string; exitCode: number }>
-): typeof Bun.spawn {
+function mockSpawn(results: Array<{ stdout: string; stderr: string; exitCode: number }>): SpawnFn {
   let i = 0;
   return ((cmd: string[]) => {
     const result = results[i++] ?? { stdout: '', stderr: '', exitCode: 1 };
@@ -26,14 +25,14 @@ function mockSpawn(
       exited: Promise.resolve(result.exitCode),
       pid: 12345,
       kill() {},
-    } as unknown as ReturnType<typeof Bun.spawn>;
-  }) as unknown as typeof Bun.spawn;
+    } as unknown as SpawnProcess;
+  }) as unknown as SpawnFn;
 }
 
 function capturingMockSpawn(
   results: Array<{ stdout: string; stderr: string; exitCode: number }>,
   calls: string[][]
-): typeof Bun.spawn {
+): SpawnFn {
   let i = 0;
   return ((cmd: string[]) => {
     calls.push(cmd);
@@ -44,8 +43,8 @@ function capturingMockSpawn(
       exited: Promise.resolve(result.exitCode),
       pid: 12345,
       kill() {},
-    } as unknown as ReturnType<typeof Bun.spawn>;
-  }) as unknown as typeof Bun.spawn;
+    } as unknown as SpawnProcess;
+  }) as unknown as SpawnFn;
 }
 
 function ctx(): ConnectorContext {

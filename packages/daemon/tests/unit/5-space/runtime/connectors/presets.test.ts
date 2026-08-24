@@ -8,6 +8,7 @@ import {
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
 import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
+import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
 import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/script-utils';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
 
@@ -22,9 +23,7 @@ function streamFromString(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function mockSpawn(
-  results: Array<{ stdout: string; stderr: string; exitCode: number }>
-): typeof Bun.spawn {
+function mockSpawn(results: Array<{ stdout: string; stderr: string; exitCode: number }>): SpawnFn {
   let i = 0;
   return (() => {
     const result = results[i++] ?? { stdout: '', stderr: '', exitCode: 1 };
@@ -34,8 +33,8 @@ function mockSpawn(
       exited: Promise.resolve(result.exitCode),
       pid: 12345,
       kill() {},
-    } as unknown as ReturnType<typeof Bun.spawn>;
-  }) as unknown as typeof Bun.spawn;
+    } as unknown as SpawnProcess;
+  }) as unknown as SpawnFn;
 }
 
 function ctx(opts: {
@@ -898,7 +897,7 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   test('host allow-list: a non-github.com / non-GH_HOST pr_url is rejected with NO gh call', async () => {
     const validate = createReviewPostedValidator((() => {
       throw new Error('gh must not be called for a disallowed host');
-    }) as unknown as typeof Bun.spawn);
+    }) as unknown as SpawnFn);
     const result = await validate(
       ctx({
         prUrl: 'https://evil.example.com/acme/corp/pull/42',
@@ -912,7 +911,7 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   test('host allow-list: a URL parsePrUrl rejects (non-/pull/<digits>) is still host-checked', async () => {
     const validate = createReviewPostedValidator((() => {
       throw new Error('gh must not be called for a disallowed host');
-    }) as unknown as typeof Bun.spawn);
+    }) as unknown as SpawnFn);
     const result = await validate(
       ctx({
         prUrl: 'https://evil.example.com/acme/corp/pull/42abc',
@@ -989,7 +988,7 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
 });
 
 describe('runGhJson transient / timeout / truncation classification', () => {
-  function hangingSpawn(): typeof Bun.spawn {
+  function hangingSpawn(): SpawnFn {
     let killFn: () => void = () => {};
     const exited = new Promise<number>((resolve) => {
       killFn = () => resolve(137);
@@ -1003,7 +1002,7 @@ describe('runGhJson transient / timeout / truncation classification', () => {
         kill() {
           killFn();
         },
-      }) as unknown as ReturnType<typeof Bun.spawn>) as unknown as typeof Bun.spawn;
+      }) as unknown as SpawnProcess) as unknown as SpawnFn;
   }
 
   test('helper kill-timer (timeout) → retryable, not terminal', async () => {

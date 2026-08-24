@@ -1,4 +1,5 @@
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
+import { spawnProcess } from '../../runtime-spawn';
 
 type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
 
@@ -30,7 +31,7 @@ const DEFAULT_CONDITION_TIMEOUT_MS = 60_000;
 const MAX_CONDITION_TIMEOUT_MS = 300_000;
 
 const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
-  const proc = Bun.spawn(args, {
+  const proc = spawnProcess(args, {
     cwd,
     stdout: 'ignore',
     stderr: 'pipe',

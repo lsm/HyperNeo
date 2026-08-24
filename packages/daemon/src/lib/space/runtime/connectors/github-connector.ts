@@ -1,5 +1,6 @@
 import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers';
 import { parsePrUrl } from '../parse-pr-url';
+import { spawnProcess, type SpawnFn } from '../../../runtime-spawn';
 import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector';
 
 const GITHUB_CONNECTOR_ID = 'github';
@@ -13,10 +14,7 @@ const GITHUB_SANDBOX_ENV_KEYS: readonly string[] = [
   'GH_CONFIG_DIR',
 ];
 
-export function createGithubConnector(
-  spawnImpl: typeof Bun.spawn = ((...args: Parameters<typeof Bun.spawn>) =>
-    Bun.spawn(...args)) as typeof Bun.spawn
-): Connector {
+export function createGithubConnector(spawnImpl: SpawnFn = spawnProcess): Connector {
   return {
     id: GITHUB_CONNECTOR_ID,
     auth: {
@@ -60,7 +58,7 @@ function validatePrLookupHost(prUrl: string): ConnectorOutcome | null {
   return null;
 }
 
-function makeGetPrOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+function makeGetPrOp(spawnImpl: SpawnFn): ConnectorOp {
   return async (opParams, ctx): Promise<ConnectorOutcome> => {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
@@ -75,7 +73,7 @@ function makeGetPrOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   };
 }
 
-function makeGetPrReadinessOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+function makeGetPrReadinessOp(spawnImpl: SpawnFn): ConnectorOp {
   return async (opParams, ctx): Promise<ConnectorOutcome> => {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
@@ -112,7 +110,7 @@ function makeGetPrReadinessOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   };
 }
 
-function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+function makeGetReactionsOp(spawnImpl: SpawnFn): ConnectorOp {
   return async (opParams, ctx): Promise<ConnectorOutcome> => {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
@@ -153,7 +151,7 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   };
 }
 
-function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+function makeGetCodexApprovalOp(spawnImpl: SpawnFn): ConnectorOp {
   return async (_opParams, ctx): Promise<ConnectorOutcome> => {
     const wsOutcome = await runGhJson(
       ['gh', 'pr', 'view', '--json', 'url'],
@@ -281,7 +279,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   };
 }
 
-function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
+function makeGetReviewEvidenceOp(spawnImpl: SpawnFn): ConnectorOp {
   return async (opParams, ctx): Promise<ConnectorOutcome> => {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
@@ -396,7 +394,7 @@ interface ReviewThreadsPage {
 async function fetchUnresolvedReviewThreads(
   meta: { host: string; owner: string; repo: string; number: string },
   ctx: ConnectorContext,
-  spawnImpl: typeof Bun.spawn
+  spawnImpl: SpawnFn
 ): Promise<ConnectorOutcome> {
   const urls: string[] = [];
   let cursor: string | null = null;
