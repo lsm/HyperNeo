@@ -2470,7 +2470,7 @@ selected_ids AS (
   UNION ALL
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
-)
+),
 -- Visible window: the newest N selected rows, oldest-first for rendering.
 -- hyperneo_action rows (e.g. sdk_resume_choice unblock cards) are pinned OUTSIDE
 -- the limit — the task pane renders them as resolution controls, so letting the
