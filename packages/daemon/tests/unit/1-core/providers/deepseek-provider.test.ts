@@ -80,7 +80,6 @@ describe('DeepSeekProvider', () => {
       'deepseek-v4-pro',
       'deepseek-v4-flash',
       'deepseek-v5',
-      'deepseek-pro',
     ]);
     expect(models.find((m) => m.id === 'deepseek-v5')).toMatchObject({
       name: 'DeepSeek V5',
@@ -90,10 +89,10 @@ describe('DeepSeekProvider', () => {
       contextWindow: 128_000,
       available: true,
     });
-    expect(models.find((m) => m.id === 'deepseek-pro')).toMatchObject({
-      name: 'DeepSeek V4 Pro',
-      contextWindow: 1_000_000,
-    });
+    expect(provider.getCachedModels()?.map((m) => m.id)).toContain('deepseek-v5');
+
+    provider.setCuratedModels(undefined);
+    expect(provider.getCachedModels()).toBeNull();
 
     provider.setCuratedModels(undefined);
     expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);

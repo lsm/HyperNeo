@@ -132,7 +132,6 @@ describe('KimiProvider', () => {
         'kimi-k2.7-code-highspeed',
         'kimi-for-coding',
         'kimi-k4',
-        'kimi-k3',
       ]);
       const synthesized = models.find((m) => m.id === 'kimi-k4');
       expect(synthesized).toMatchObject({
@@ -144,13 +143,10 @@ describe('KimiProvider', () => {
         thinkingModes: 'on',
         available: true,
       });
-      expect(models.find((m) => m.id === 'kimi-k3')).toMatchObject({
-        name: 'Kimi K3',
-        contextWindow: 1_048_576,
-        thinkingModes: 'granular',
-      });
+      expect(provider.getCachedModels()?.map((m) => m.id)).toContain('kimi-k4');
 
       provider.setCuratedModels(undefined);
+      expect(provider.getCachedModels()).toBeNull();
       expect(await provider.getModels()).toEqual(KimiProvider.MODELS);
     });
 
@@ -664,6 +660,9 @@ describe('KimiProvider', () => {
       expect(config.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
       expect(suffixedForeign.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
       expect(suffixedColonTagged.envVars.ANTHROPIC_MODEL).toBe('kimi-for-coding');
+      expect(suffixedForeign.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('262144');
+      expect(KimiProvider.resolveContextWindow('gpt-4o[1m]')).toBe(262_144);
+      expect(KimiProvider.resolveContextWindow('moonshot-k4:latest[1m]')).toBe(262_144);
     });
   });
 

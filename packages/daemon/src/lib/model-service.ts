@@ -100,7 +100,17 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
 
 function getCuratedModelIds(providerId: string): Set<string> | undefined {
   const curatedModels = getProviderRegistry().getCuratedModels(providerId);
-  return curatedModels === undefined ? undefined : new Set(curatedModels.map((model) => model.id));
+  if (curatedModels === undefined) return undefined;
+  const curatedIds = new Set<string>();
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  for (const curated of curatedModels) {
+    curatedIds.add(curated.id);
+    const canonical = findInModels(staticProviderModels, curated.id)?.id;
+    if (canonical) curatedIds.add(canonical);
+  }
+  return curatedIds;
 }
 
 function filterProviderModels(providerId: string, models: ModelInfo[]): ModelInfo[] {

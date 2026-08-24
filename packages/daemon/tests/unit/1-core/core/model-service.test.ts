@@ -17,6 +17,7 @@ import {
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
+import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
@@ -1581,6 +1582,24 @@ describe('Model Service', () => {
       expect(await getModelInfo('sonnet', 'global', 'anthropic')).not.toBeNull();
       expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
       expect(await isValidModel('opus', 'global', 'anthropic')).toBe(false);
+    });
+
+    it('accepts curated aliases by keeping their canonical model visible', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3' }]);
+      setModelsCache(new Map([['global', [...mockModels, ...KimiProvider.MODELS]]]));
+
+      expect(
+        getAvailableModels('global')
+          .filter((model) => model.provider === 'kimi')
+          .map((model) => model.id)
+      ).toEqual(['kimi-k3[1m]']);
+      expect(await getModelInfo('kimi-k3', 'global', 'kimi')).toMatchObject({
+        id: 'kimi-k3[1m]',
+        contextWindow: 1_048_576,
+      });
+      expect(await isValidModel('kimi-k3', 'global', 'kimi')).toBe(true);
+      expect(await isValidModel('kimi-for-coding', 'global', 'kimi')).toBe(false);
     });
 
     it('treats an empty curation as no visible models', async () => {

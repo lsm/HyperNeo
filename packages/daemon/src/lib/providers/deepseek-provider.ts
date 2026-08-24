@@ -140,6 +140,11 @@ export class DeepSeekProvider implements Provider {
     this.curatedModels = models;
   }
 
+  getCachedModels(): ModelInfo[] | null {
+    if (!this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
+  }
+
   private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
     if (!this.curatedModels?.length) return models;
     const merged = [...models];
@@ -147,17 +152,9 @@ export class DeepSeekProvider implements Provider {
     for (const curated of this.curatedModels) {
       if (!this.ownsModel(curated.id)) continue;
       const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
-      if (!info) continue;
-      if (info.id === curated.id) {
-        if (!present.has(info.id)) {
-          merged.push(info);
-          present.add(info.id);
-        }
-        continue;
-      }
-      if (!present.has(curated.id)) {
-        merged.push({ ...info, id: curated.id, name: curated.name ?? info.name });
-        present.add(curated.id);
+      if (info && !present.has(info.id)) {
+        merged.push(info);
+        present.add(info.id);
       }
     }
     return merged;
