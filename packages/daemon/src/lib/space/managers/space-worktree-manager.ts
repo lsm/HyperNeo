@@ -142,7 +142,29 @@ export class SpaceWorktreeManager {
       );
     }
 
-    this.hydrateWorktreeLfs(worktreePath);
+    try {
+      this.hydrateWorktreeLfs(worktreePath);
+    } catch (err) {
+      try {
+        execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
+          cwd: space.workspacePath,
+          timeout: 30_000,
+          env: buildGitCommandEnv(),
+        });
+      } catch {
+        rmSync(worktreePath, { recursive: true, force: true });
+      }
+      try {
+        execFileSync('git', ['branch', '-D', branchName], {
+          cwd: space.workspacePath,
+          timeout: 30_000,
+          env: buildGitCommandEnv(),
+        });
+      } catch {}
+      throw new Error(
+        `Failed to hydrate Git LFS objects for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
 

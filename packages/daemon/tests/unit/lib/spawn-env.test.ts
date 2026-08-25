@@ -78,8 +78,11 @@ describe('buildDialogEnv', () => {
 });
 
 describe('buildGitCommandEnv', () => {
-  test('keeps safe git variables and excludes secret carriers, SSH/askpass, and proxy inputs', () => {
-    const env = buildGitCommandEnv(SOURCE);
+  test('keeps safe git variables and excludes secret carriers, SSH/askpass, config selectors, and proxy inputs', () => {
+    const env = buildGitCommandEnv({
+      ...SOURCE,
+      GIT_CONFIG_GLOBAL: '/tmp/gitconfig-global',
+    });
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
@@ -88,6 +91,7 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
   });
 });
 
@@ -112,14 +116,21 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
   });
 
-  test('carries proxy inputs and TLS client-certificate metadata', () => {
+  test('carries proxy inputs, TLS client-certificate metadata, and askpass activation inputs', () => {
     const env = buildGitSshEnv({
       ...SOURCE,
       GIT_SSL_CERT_TYPE: 'DER',
       GIT_SSL_KEY_TYPE: 'ENGINE',
       GIT_SSL_CERT_PASSWORD_PROTECTED: '1',
+      SSH_ASKPASS_REQUIRE: 'force',
+      SSH_ASKPASS: '/tmp/askpass.sh',
+      GIT_CONFIG_GLOBAL: '/tmp/gitconfig-global',
     });
     expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
+    expect(env.DISPLAY).toBe(SOURCE.DISPLAY);
+    expect(env.SSH_ASKPASS_REQUIRE).toBe('force');
+    expect(env.SSH_ASKPASS).toBe('/tmp/askpass.sh');
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/gitconfig-global');
     expect(env.GIT_SSL_CERT_TYPE).toBe('DER');
     expect(env.GIT_SSL_KEY_TYPE).toBe('ENGINE');
     expect(env.GIT_SSL_CERT_PASSWORD_PROTECTED).toBe('1');

@@ -120,14 +120,10 @@ export class AcpProvider implements Provider {
   private commandOverride: string | undefined;
   private curatedModels: AcpConfiguredModel[] | undefined;
 
-  private readonly env: NodeJS.ProcessEnv;
-
   constructor(
-    env: NodeJS.ProcessEnv = process.env,
+    private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly commandProbe: AcpCommandProbe = defaultAcpCommandProbe
-  ) {
-    this.env = Object.freeze({ ...env });
-  }
+  ) {}
 
   isAvailable(): boolean {
     return !!this.getAcpCommand();

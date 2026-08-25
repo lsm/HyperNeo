@@ -49,7 +49,7 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
-import { buildSdkRuntimeEnv, STARTUP_ENV_BASELINE } from '../spawn-env.ts';
+import { buildSdkRuntimeEnv, envValue, STARTUP_ENV_BASELINE } from '../spawn-env.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import {
@@ -872,15 +872,15 @@ CRITICAL RULES:
     const mergedEnv: Record<string, string> = buildSdkRuntimeEnv();
 
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
-      const authToken = STARTUP_ENV_BASELINE.ANTHROPIC_AUTH_TOKEN;
+      const authToken = envValue(STARTUP_ENV_BASELINE, 'ANTHROPIC_AUTH_TOKEN');
       if (authToken?.startsWith('sk-ant-oat')) {
         mergedEnv.ANTHROPIC_AUTH_TOKEN = authToken;
       }
-      const oauthToken = STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN;
+      const oauthToken = envValue(STARTUP_ENV_BASELINE, 'CLAUDE_CODE_OAUTH_TOKEN');
       if (oauthToken) {
         mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
       }
-      const apiKey = STARTUP_ENV_BASELINE.ANTHROPIC_API_KEY;
+      const apiKey = envValue(STARTUP_ENV_BASELINE, 'ANTHROPIC_API_KEY');
       if (apiKey) {
         mergedEnv.ANTHROPIC_API_KEY = apiKey;
       }
@@ -904,7 +904,7 @@ CRITICAL RULES:
         }
       }
       for (const key of providerVars) {
-        const value = STARTUP_ENV_BASELINE[key];
+        const value = envValue(STARTUP_ENV_BASELINE, key);
         if (value !== undefined && value !== '') {
           mergedEnv[key] = value;
         }
