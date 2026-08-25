@@ -1,6 +1,6 @@
 # Supported runtimes
 
-HyperNeo's daemon runs under two runtimes: **Bun** (the pinned release runtime) and **Deno** (a supported alternative). This is deliberate dual support, not a migration — every dev/prod default stays on Bun, and Deno is guarded by CI so the two never drift apart.
+HyperNeo's daemon runs under two runtimes: **Bun** (the pinned release runtime) and **Deno** (a supported alternative). This is deliberate dual support, not a migration — every dev/prod default stays on Bun, and CI watches Deno compatibility with a boot-smoke job on every trigger (non-blocking for now, see [CI coverage](#ci-coverage)) so drift surfaces early rather than at a runtime switch.
 
 ## Runtime matrix
 
@@ -23,7 +23,7 @@ DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db deno 
 ```
 
 - No unstable flags are needed: the PR3 codemod made every extensionless relative import an explicit `.ts` import, the `@hyperneo/shared` exports map is Deno-strict, and Deno remaps the remaining `.js`-suffixed relative imports inside `src/**` to their `.ts` files via the discovered `packages/daemon/tsconfig.json` (files outside its `include` — e.g. `tests/**` — do not get that remapping and must use explicit `.ts` specifiers).
-- The same DB isolation rule as Bun applies — the daemon DB has a PID lock, so always pass a unique `DB_PATH` (per worktree / per run).
+- The same DB isolation rule as Bun applies — the daemon DB has a PID lock, so always pass a `DB_PATH` unique to the checkout. The basename idiom above matches the repo's established Bun convention and covers this repo's worktree naming; if your checkouts share a final directory name, include more of the path. A second daemon pointed at a live DB is rejected by the lock rather than silently sharing it.
 - The port comes from `HYPERNEO_PORT` (default 9283).
 - There is no `/api/health` route; probe `GET /` (expect 200) or the `/ws` WebSocket handshake.
 - Convenience task, alongside the Bun one: `bun run dev:deno` in `packages/daemon` (runs `deno run -A --watch main.ts`). Stop it with Ctrl+C — a single SIGTERM shuts the daemon down gracefully but can leave the Deno watch supervisor process lingering, so scripted/probe use should prefer the plain `deno run -A main.ts` form (which is what `scripts/deno-smoke.sh` runs).
