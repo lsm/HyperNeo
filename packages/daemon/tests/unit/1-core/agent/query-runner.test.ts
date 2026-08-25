@@ -3373,6 +3373,39 @@ describe('QueryRunner', () => {
       expect(notices[0]?.text).toContain('connection was interrupted');
     });
 
+    it('transient arm skips re-enqueue entirely when no user message was consumed', async () => {
+      const { events, notices } = await runLiturgyRow({
+        errorMessage: 'TypeError: fetch failed',
+        consumedEntries: [{ uuid: 'u9', content: 'map-only prompt' }],
+      });
+
+      expect(events).toEqual([
+        'queue.start',
+        'firstMsg.reset',
+        'build#1',
+        'timer.clear',
+        'firstMsg.reset',
+        'idle:suppress',
+        'display',
+        'query.close',
+        'exit.reset',
+        'build#2',
+        'queue.clear',
+        'terminal.begin',
+        'error.handle',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'env.restore',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
+      ]);
+      expect(notices.length).toBe(1);
+      expect(notices[0]?.markAsError).toBe(false);
+    });
+
     it('provider-backoff arm never idles and re-enqueues after the backoff guard', async () => {
       process.env.HYPERNEO_PROVIDER_MAX_RETRIES = '1';
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '1';
@@ -3410,6 +3443,41 @@ describe('QueryRunner', () => {
       expect(notices[0]?.markAsError).toBe(false);
       expect(notices[0]?.text).toContain('provider is temporarily unavailable');
       expect(process.env.ANTHROPIC_API_KEY).toBe('sk-original-key');
+    });
+
+    it('provider-backoff arm skips re-enqueue when no user message was consumed', async () => {
+      process.env.HYPERNEO_PROVIDER_MAX_RETRIES = '1';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '1';
+
+      const { events, notices } = await runLiturgyRow({
+        errorMessage: '503 Service Unavailable',
+        consumedEntries: [{ uuid: 'u8', content: 'map-only prompt' }],
+      });
+
+      expect(events).toEqual([
+        'queue.start',
+        'firstMsg.reset',
+        'build#1',
+        'timer.clear',
+        'firstMsg.reset',
+        'display',
+        'query.close',
+        'exit.reset',
+        'env.restore',
+        'build#2',
+        'queue.clear',
+        'terminal.begin',
+        'error.handle',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
+      ]);
+      expect(notices.length).toBe(1);
+      expect(notices[0]?.markAsError).toBe(false);
     });
 
     it('unmatched AbortError arm clears only the queue', async () => {
