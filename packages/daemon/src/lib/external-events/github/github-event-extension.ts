@@ -3171,7 +3171,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (partialScan) break;
     }
 
-    const trackedPrSet = new Set(recentPullRequestNumbers);
+    const trackedPrSet = trackedPullRequestNumbers;
     for (const key of Object.keys(reactionEtags)) {
       if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
     }

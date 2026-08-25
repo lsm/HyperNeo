@@ -582,7 +582,7 @@ export class GitHubEventExtensionRepository {
           numbers.add(Number(parsed.number));
         }
       } catch {
-        // skip malformed artifact data
+        continue;
       }
     }
     const subRows = this.db
