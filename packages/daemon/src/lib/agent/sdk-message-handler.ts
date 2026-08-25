@@ -927,7 +927,7 @@ export class SDKMessageHandler {
         }
       }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
-      void this.refreshContextUsage('turn-end');
+      await this.refreshContextUsage('turn-end');
       return;
     }
 
@@ -981,7 +981,10 @@ export class SDKMessageHandler {
     }
 
     if (isSDKResultMessage(message)) {
-      void this.refreshContextUsage('turn-end');
+      if (this.ctx.stateManager.getIsCompacting()) {
+        await this.ctx.stateManager.setCompacting(false);
+      }
+      await this.refreshContextUsage('turn-end');
       if (settlesArmedClearError) {
         this.clearIdleSuppression();
       }
@@ -1507,10 +1510,15 @@ export class SDKMessageHandler {
         if (this.ctx.queryObject !== queryObject) return;
         if (!contextInfo) return;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
-        await internalEventBus.publish('context.updated', {
-          sessionId: session.id,
-          contextInfo,
-        });
+        try {
+          await internalEventBus.publish('context.updated', {
+            sessionId: session.id,
+            contextInfo,
+          });
+        } catch (error) {
+          this.logger.warn(`context.updated publication failed for session ${session.id}:`, error);
+        }
+        if (this.ctx.queryObject !== queryObject) return;
 
         const providerId = session.config.provider;
         if (!providerId || NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
@@ -1518,24 +1526,23 @@ export class SDKMessageHandler {
         }
         const effectiveWindow =
           contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
-        const effectivePercent = contextInfo.autoCompactPercent ?? modelInfo?.autoCompactPercent;
+        const effectivePercent = contextInfo.autoCompactPercent;
+        const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
         const decision = decideContextBudgetCompaction({
           totalUsed: contextInfo.totalUsed,
           configuredWindow: effectiveWindow,
           autoCompactPercent: effectivePercent,
           sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
           sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
-          cooldownActive: contextTracker.isCoolingDown(),
+          cooldownActive: contextTracker.isCoolingDown(budgetKey),
           compactingActive: this.ctx.stateManager.getIsCompacting(),
         });
         if (decision.action === 'compact') {
-          const configuredWindow = effectiveWindow ?? 0;
-          const threshold = contextBudgetThreshold(configuredWindow, effectivePercent);
-          contextTracker.markCompactionTriggered();
+          contextTracker.markCompactionTriggered(budgetKey);
           this.logger.info(
             `Daemon context-budget compaction for session ${session.id} ` +
               `(provider=${providerId}, reason=${decision.reason}, ` +
-              `${contextInfo.totalUsed} >= ${threshold} of ${configuredWindow} tokens)`
+              `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
           );
           void this.ctx.messageQueue.enqueue('/compact', true, { prepend: true }).catch((error) => {
             this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
