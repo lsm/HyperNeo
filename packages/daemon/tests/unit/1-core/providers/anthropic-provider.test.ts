@@ -82,6 +82,17 @@ describe('AnthropicProvider', () => {
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       expect(provider.getApiKey()).toBeUndefined();
     });
+
+    it.skipIf(process.platform !== 'win32')(
+      'should resolve casing-variant credentials from the captured snapshot on Windows',
+      () => {
+        const providerVariant = new AnthropicProvider({ Anthropic_Auth_Token: 'win-auth-token' });
+        expect(providerVariant.getApiKey()).toBe('win-auth-token');
+        expect(providerVariant.buildSdkConfig().envVars.ANTHROPIC_AUTH_TOKEN).toBe(
+          'win-auth-token'
+        );
+      }
+    );
   });
 
   describe('getModels without credentials', () => {

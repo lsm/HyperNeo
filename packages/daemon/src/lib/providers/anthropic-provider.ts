@@ -13,7 +13,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
-import { buildSdkRuntimeEnv } from '../spawn-env.ts';
+import { buildSdkRuntimeEnv, envValue } from '../spawn-env.ts';
 
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
 
@@ -116,9 +116,9 @@ export class AnthropicProvider implements Provider {
 
   getApiKey(): string | undefined {
     return (
-      this.env.ANTHROPIC_API_KEY ||
-      this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN ||
+      envValue(this.env, 'ANTHROPIC_API_KEY') ||
+      envValue(this.env, 'CLAUDE_CODE_OAUTH_TOKEN') ||
+      envValue(this.env, 'ANTHROPIC_AUTH_TOKEN') ||
       (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined) ||
       (this.credentials?.type === 'oauth' ? this.credentials.accessToken : undefined)
     );
@@ -329,20 +329,18 @@ export class AnthropicProvider implements Provider {
 
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
+    const apiKey = envValue(this.env, 'ANTHROPIC_API_KEY');
+    const oauthToken = envValue(this.env, 'CLAUDE_CODE_OAUTH_TOKEN');
+    const authToken = envValue(this.env, 'ANTHROPIC_AUTH_TOKEN');
     const hasEnvAuth =
-      !!this.env.ANTHROPIC_API_KEY ||
-      !!this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      (!!this.env.ANTHROPIC_AUTH_TOKEN &&
-        !this.env.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:'));
+      !!apiKey ||
+      !!oauthToken ||
+      (!!authToken && !authToken.startsWith('anthropic-copilot-proxy:'));
     if (hasEnvAuth) {
-      if (this.env.ANTHROPIC_API_KEY) envVars.ANTHROPIC_API_KEY = this.env.ANTHROPIC_API_KEY;
-      if (this.env.CLAUDE_CODE_OAUTH_TOKEN)
-        envVars.CLAUDE_CODE_OAUTH_TOKEN = this.env.CLAUDE_CODE_OAUTH_TOKEN;
-      if (
-        this.env.ANTHROPIC_AUTH_TOKEN &&
-        !this.env.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:')
-      ) {
-        envVars.ANTHROPIC_AUTH_TOKEN = this.env.ANTHROPIC_AUTH_TOKEN;
+      if (apiKey) envVars.ANTHROPIC_API_KEY = apiKey;
+      if (oauthToken) envVars.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      if (authToken && !authToken.startsWith('anthropic-copilot-proxy:')) {
+        envVars.ANTHROPIC_AUTH_TOKEN = authToken;
       }
     } else if (this.credentials?.type === 'api_key') {
       envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;

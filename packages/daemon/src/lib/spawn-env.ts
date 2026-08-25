@@ -68,6 +68,13 @@ const DIALOG_ENV_KEYS = [
 
 const GIT_COMMAND_ENV_KEYS = ['GIT_SSL_CAINFO', 'GIT_SSL_NO_VERIFY', 'GIT_EXEC_PATH'] as const;
 
+const GIT_IDENTITY_ENV_KEYS = [
+  'GIT_AUTHOR_NAME',
+  'GIT_AUTHOR_EMAIL',
+  'GIT_COMMITTER_NAME',
+  'GIT_COMMITTER_EMAIL',
+] as const;
+
 const GIT_SSH_ENV_KEYS = [
   'SSH_AUTH_SOCK',
   'SSH_AGENT_PID',
@@ -224,7 +231,10 @@ export function buildSdkRuntimeEnv(
 ): Record<string, string> {
   return {
     ...buildOsBaselineEnv(source),
-    ...pickKeys([...PROXY_TLS_ENV_KEYS, ...SDK_USER_CONFIG_ENV_KEYS], source),
+    ...pickKeys(
+      [...PROXY_TLS_ENV_KEYS, ...SDK_USER_CONFIG_ENV_KEYS, ...GIT_IDENTITY_ENV_KEYS],
+      source
+    ),
   };
 }
 

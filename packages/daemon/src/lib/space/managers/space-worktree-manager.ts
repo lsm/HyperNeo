@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -10,6 +11,8 @@ import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
+
+const execFileAsync = promisify(execFile);
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -143,7 +146,7 @@ export class SpaceWorktreeManager {
     }
 
     try {
-      this.hydrateWorktreeLfs(worktreePath);
+      await this.hydrateWorktreeLfs(worktreePath);
     } catch (err) {
       try {
         execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
@@ -219,15 +222,16 @@ export class SpaceWorktreeManager {
     this.worktreeRepo.markCompleted(spaceId, taskId);
   }
 
-  private hydrateWorktreeLfs(worktreePath: string): void {
+  private async hydrateWorktreeLfs(worktreePath: string): Promise<void> {
     let tracked: string;
     try {
-      tracked = execFileSync('git', ['lfs', 'ls-files'], {
+      const { stdout } = await execFileAsync('git', ['lfs', 'ls-files'], {
         cwd: worktreePath,
         encoding: 'utf8',
         timeout: 60_000,
         env: buildGitSshEnv(),
       });
+      tracked = stdout;
     } catch (err) {
       this.logger.warn(
         `Git LFS hydration skipped for ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`
@@ -235,7 +239,7 @@ export class SpaceWorktreeManager {
       return;
     }
     if (tracked.trim().length > 0) {
-      execFileSync('git', ['lfs', 'pull'], {
+      await execFileAsync('git', ['lfs', 'pull'], {
         cwd: worktreePath,
         encoding: 'utf8',
         timeout: 300_000,

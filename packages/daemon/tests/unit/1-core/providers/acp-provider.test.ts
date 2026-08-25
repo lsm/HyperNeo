@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import {
+  AcpProvider,
+  getAcpCredentialEnvBaseline,
+} from '../../../../src/lib/providers/acp-provider';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 import {
   recordProviderFailure,
   resetProviderFailureStore,
@@ -46,6 +50,38 @@ describe('AcpProvider', () => {
 
       expect(provider.capabilities.maxContextWindow).toBe(123456);
     });
+  });
+
+  describe('getAcpCredentialEnvBaseline', () => {
+    it('collects only known credential keys from the startup baseline', () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previous,
+        OPENAI_API_KEY: 'openai-key',
+        NOT_A_CREDENTIAL_KEY: 'nope',
+      });
+      try {
+        const baseline = getAcpCredentialEnvBaseline();
+        expect(baseline.OPENAI_API_KEY).toBe('openai-key');
+        expect(baseline.NOT_A_CREDENTIAL_KEY).toBeUndefined();
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
+    });
+
+    it.skipIf(process.platform !== 'win32')(
+      'resolves credential keys case-insensitively on Windows',
+      () => {
+        const previous: Record<string, string | undefined> = { ...process.env };
+        _setStartupEnvBaselineForTesting({ ...previous, Openai_Api_Key: 'openai-key' });
+        try {
+          const baseline = getAcpCredentialEnvBaseline();
+          expect(baseline.OPENAI_API_KEY).toBe('openai-key');
+        } finally {
+          _setStartupEnvBaselineForTesting(previous);
+        }
+      }
+    );
   });
 
   describe('isAvailable', () => {

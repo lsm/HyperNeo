@@ -71,7 +71,7 @@ const ACP_CREDENTIAL_ENV_KEYS = [
 export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
   const baseline: Record<string, string> = {};
   for (const key of ACP_CREDENTIAL_ENV_KEYS) {
-    const value = STARTUP_ENV_BASELINE[key];
+    const value = envValue(STARTUP_ENV_BASELINE, key);
     if (value !== undefined) baseline[key] = value;
   }
   return baseline;

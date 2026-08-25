@@ -166,6 +166,23 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
   });
+
+  test('carries git commit identity variables but no other GIT_ inputs', () => {
+    const env = buildSdkRuntimeEnv({
+      ...SOURCE,
+      GIT_AUTHOR_NAME: 'Agent Bot',
+      GIT_AUTHOR_EMAIL: 'agent@example.com',
+      GIT_COMMITTER_NAME: 'Agent Bot',
+      GIT_COMMITTER_EMAIL: 'agent@example.com',
+    });
+    expect(env.GIT_AUTHOR_NAME).toBe('Agent Bot');
+    expect(env.GIT_AUTHOR_EMAIL).toBe('agent@example.com');
+    expect(env.GIT_COMMITTER_NAME).toBe('Agent Bot');
+    expect(env.GIT_COMMITTER_EMAIL).toBe('agent@example.com');
+    expect(env.GIT_EXEC_PATH).toBeUndefined();
+    expect(env.GIT_SSH_COMMAND).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+  });
 });
 
 describe('buildWorkflowConditionEnv', () => {
