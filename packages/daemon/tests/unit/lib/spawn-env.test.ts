@@ -110,6 +110,19 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
     expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
   });
+
+  test('accepts URL-scoped http.<url>.extraHeader configuration keys', () => {
+    const urlScoped = 'http.https://github.com/.extraHeader';
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: urlScoped,
+      GIT_CONFIG_VALUE_0: 'Authorization: Bearer url-scoped-secret',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe(urlScoped);
+    expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Bearer url-scoped-secret');
+  });
 });
 
 describe('buildSdkRuntimeEnv', () => {

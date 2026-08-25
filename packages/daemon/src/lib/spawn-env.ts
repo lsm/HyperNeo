@@ -233,7 +233,7 @@ function collectExtraHeaderConfig(source: EnvSource): Record<string, string> {
     const key = sourceValue(source, `GIT_CONFIG_KEY_${index}`);
     const value = sourceValue(source, `GIT_CONFIG_VALUE_${index}`);
     if (key === undefined || value === undefined) continue;
-    if (!/^http\.extraHeader$/i.test(key)) continue;
+    if (!/^http(?:\..+)?\.extraHeader$/i.test(key)) continue;
     keys.push(key);
     values.push(value);
   }

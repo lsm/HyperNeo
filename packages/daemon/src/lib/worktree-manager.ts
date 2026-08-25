@@ -45,6 +45,15 @@ function literalPathspec(path: string): string {
   return `:(literal)${path}`;
 }
 
+async function hydrateLfsObjects(git: SimpleGit): Promise<void> {
+  try {
+    const tracked = await git.raw(['lfs', 'ls-files']);
+    if (tracked.trim().length > 0) {
+      await git.raw(['lfs', 'pull']);
+    }
+  } catch {}
+}
+
 const EMPTY_REVIEW: GitReviewSummary = {
   files: [],
   totalAdditions: 0,
@@ -752,6 +761,7 @@ export class WorktreeManager {
       try {
         const submoduleGit = simpleGit(worktreePath).env(buildGitSshEnv());
         await submoduleGit.raw(['submodule', 'update', '--init', '--recursive']);
+        await hydrateLfsObjects(submoduleGit);
         /* v8 ignore next 2 */
       } catch {}
 

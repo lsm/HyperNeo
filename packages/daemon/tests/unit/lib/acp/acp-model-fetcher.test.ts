@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AcpConfigOption } from '@hyperneo/shared';
 import type { AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 const calls: string[] = [];
 let clientOptions: AcpClientOptions | undefined;
@@ -175,6 +176,18 @@ describe('fetchAcpModels', () => {
     expect(clientOptions?.env).toBeDefined();
     expect(clientOptions?.replaceEnv).toBe(true);
     expect(clientOptions?.env?.HOME).toBe(process.env.HOME);
+  });
+
+  test('carries startup credentials for non-Anthropic ACP agents in the replacement env', async () => {
+    clientCanCloseSession = true;
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({ ...previousBaseline, OPENAI_API_KEY: 'openai-key' });
+    try {
+      await disposeAcpSessions('devin acp', ['session-a'], undefined);
+      expect(clientOptions?.env?.OPENAI_API_KEY).toBe('openai-key');
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
   });
 
   test('closes the disposal client when its signal aborts', async () => {

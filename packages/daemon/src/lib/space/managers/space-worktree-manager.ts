@@ -9,7 +9,7 @@ import { Logger } from '../../logger.ts';
 import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
-import { buildGitCommandEnv } from '../../spawn-env.ts';
+import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -144,6 +144,8 @@ export class SpaceWorktreeManager {
 
     this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
 
+    this.hydrateWorktreeLfs(worktreePath);
+
     this.logger.info(
       `Created worktree for task ${taskId} at ${worktreePath} (branch: ${branchName})`
     );
@@ -193,6 +195,29 @@ export class SpaceWorktreeManager {
 
   markTaskWorktreeCompleted(spaceId: string, taskId: string): void {
     this.worktreeRepo.markCompleted(spaceId, taskId);
+  }
+
+  private hydrateWorktreeLfs(worktreePath: string): void {
+    try {
+      const tracked = execFileSync('git', ['lfs', 'ls-files'], {
+        cwd: worktreePath,
+        encoding: 'utf8',
+        timeout: 60_000,
+        env: buildGitSshEnv(),
+      });
+      if (tracked.trim().length > 0) {
+        execFileSync('git', ['lfs', 'pull'], {
+          cwd: worktreePath,
+          encoding: 'utf8',
+          timeout: 300_000,
+          env: buildGitSshEnv(),
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Git LFS hydration skipped for ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   async reapExpiredWorktrees(ttlMs: number = 7 * 24 * 60 * 60 * 1000): Promise<void> {

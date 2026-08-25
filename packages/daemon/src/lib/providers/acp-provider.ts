@@ -50,18 +50,31 @@ function parseContextWindow(value: string | undefined): number {
   return Math.trunc(parsed);
 }
 
-export type AcpCredentialEnvBaseline = Readonly<{
-  ANTHROPIC_API_KEY?: string;
-  ANTHROPIC_AUTH_TOKEN?: string;
-  CLAUDE_CODE_OAUTH_TOKEN?: string;
-}>;
+export type AcpCredentialEnvBaseline = Readonly<Record<string, string>>;
+
+const ACP_CREDENTIAL_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENAI_API_KEY',
+  'GLM_API_KEY',
+  'ZHIPU_API_KEY',
+  'KIMI_API_KEY',
+  'MOONSHOT_API_KEY',
+  'MINIMAX_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'OPENROUTER_API_KEY',
+  'OLLAMA_API_KEY',
+  'OLLAMA_CLOUD_API_KEY',
+] as const;
 
 export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
-  return {
-    ANTHROPIC_API_KEY: STARTUP_ENV_BASELINE.ANTHROPIC_API_KEY,
-    ANTHROPIC_AUTH_TOKEN: STARTUP_ENV_BASELINE.ANTHROPIC_AUTH_TOKEN,
-    CLAUDE_CODE_OAUTH_TOKEN: STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN,
-  };
+  const baseline: Record<string, string> = {};
+  for (const key of ACP_CREDENTIAL_ENV_KEYS) {
+    const value = STARTUP_ENV_BASELINE[key];
+    if (value !== undefined) baseline[key] = value;
+  }
+  return baseline;
 }
 
 export class AcpProvider implements Provider {
