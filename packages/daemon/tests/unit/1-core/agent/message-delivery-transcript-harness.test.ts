@@ -1,9 +1,10 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, Provider, Session } from '@hyperneo/shared';
+import type { MessageContent, MessageHub, Provider, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   MESSAGE_DELIVERY,
+  MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -21,7 +22,14 @@ import {
 } from '../../../helpers/database';
 
 type DeliveryTranscriptEvent =
-  | { op: 'queue:admit'; messageId: string; durable?: boolean }
+  | {
+      op: 'queue:admit';
+      messageId: string;
+      content: string | MessageContent[];
+      internal: boolean;
+      durable?: boolean;
+      prepend?: boolean;
+    }
   | { op: 'queue:admitResolve'; messageId: string }
   | { op: 'queue:remove'; messageId: string; found: boolean }
   | { op: 'queue:requeueYielded'; messageId: string; found: boolean }
@@ -33,10 +41,10 @@ type DeliveryTranscriptEvent =
   | { op: 'db:markFailed'; uuid: string; dbId: string | null }
   | { op: 'db:recordTurnEnd'; uuid: string }
   | { op: 'db:clearTurnEnd'; uuid: string }
-  | { op: 'job:requeue'; jobId: string; runAt: number }
-  | { op: 'job:requeueParked'; jobId: string; runAt: number }
-  | { op: 'job:requeueAs'; jobId: string; role: string; runAt: number }
-  | { op: 'job:isClaimCurrent'; jobId: string; result: boolean }
+  | { op: 'job:requeue'; jobId: string; runAt: number; claimToken: string | null }
+  | { op: 'job:requeueParked'; jobId: string; runAt: number; claimToken: string | null }
+  | { op: 'job:requeueAs'; jobId: string; role: string; runAt: number; claimToken: string | null }
+  | { op: 'job:isClaimCurrent'; jobId: string; result: boolean; claimToken: string | null }
   | { op: 'job:getParkCount'; jobId: string; result: number }
   | { op: 'state:clearQueuedIfOwnedBy'; uuid: string }
   | { op: 'state:setQueuedIfIdle'; uuid: string; result: boolean }
@@ -61,12 +69,20 @@ function instrumentDeliveryTranscript(
 
   queue.admitWithId = (
     messageId: string,
-    content: string | unknown[],
+    content: string | MessageContent[],
     internal: boolean,
     options?: { durable?: boolean; prepend?: boolean }
   ): Promise<void> => {
-    transcript.push({ op: 'queue:admit', messageId, durable: options?.durable });
-    const promise = originalAdmit(messageId, content as string, internal, options);
+    const event: DeliveryTranscriptEvent = {
+      op: 'queue:admit',
+      messageId,
+      content,
+      internal,
+    };
+    if (options?.durable !== undefined) event.durable = options.durable;
+    if (options?.prepend !== undefined) event.prepend = options.prepend;
+    transcript.push(event);
+    const promise = originalAdmit(messageId, content, internal, options);
     promise.then(
       () => {
         transcript.push({ op: 'queue:admitResolve', messageId });
@@ -157,7 +173,7 @@ function instrumentDeliveryTranscript(
     runAt: number,
     claimToken?: string | null
   ): ReturnType<JobQueueRepository['requeue']> => {
-    transcript.push({ op: 'job:requeue', jobId, runAt });
+    transcript.push({ op: 'job:requeue', jobId, runAt, claimToken: claimToken ?? null });
     return jobOriginals.requeue(jobId, runAt, claimToken);
   };
   jobRepo.requeueParked = (
@@ -165,7 +181,7 @@ function instrumentDeliveryTranscript(
     runAt: number,
     claimToken?: string | null
   ): ReturnType<JobQueueRepository['requeueParked']> => {
-    transcript.push({ op: 'job:requeueParked', jobId, runAt });
+    transcript.push({ op: 'job:requeueParked', jobId, runAt, claimToken: claimToken ?? null });
     return jobOriginals.requeueParked(jobId, runAt, claimToken);
   };
   jobRepo.requeueAs = (
@@ -174,12 +190,12 @@ function instrumentDeliveryTranscript(
     runAt: number,
     claimToken?: string | null
   ): ReturnType<JobQueueRepository['requeueAs']> => {
-    transcript.push({ op: 'job:requeueAs', jobId, role, runAt });
+    transcript.push({ op: 'job:requeueAs', jobId, role, runAt, claimToken: claimToken ?? null });
     return jobOriginals.requeueAs(jobId, role, runAt, claimToken);
   };
   jobRepo.isClaimCurrent = (jobId: string, claimToken: string | null): boolean => {
     const result = jobOriginals.isClaimCurrent(jobId, claimToken);
-    transcript.push({ op: 'job:isClaimCurrent', jobId, result });
+    transcript.push({ op: 'job:isClaimCurrent', jobId, result, claimToken: claimToken ?? null });
     return result;
   };
   jobRepo.getParkCount = (jobId: string): number => {
@@ -302,14 +318,15 @@ function saveUserMessage(
   repo: SDKMessageRepository,
   sessionId: string,
   uuid: string,
-  status: 'enqueued' | 'consumed' = 'enqueued'
+  status: 'enqueued' | 'consumed' = 'enqueued',
+  content: string | MessageContent[] = 'hello'
 ): void {
   repo.saveUserMessage(
     sessionId,
     {
       type: 'user',
       uuid,
-      message: { role: 'user', content: 'hello' },
+      message: { role: 'user', content },
     } as unknown as SDKMessage,
     status
   );
@@ -324,7 +341,7 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession('sess-steer-consumed');
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, 'sess-steer-consumed', steerUuid);
+        saveUserMessage(repo, 'sess-steer-consumed', steerUuid, 'enqueued', steerContent);
         await agentSession.stateManager.setProcessing('active-msg');
         setNeverResolvingQuery(agentSession);
         harness.reset();
@@ -335,28 +352,28 @@ describe('delivery transcript parity harness (A1a)', () => {
           null,
           () => true
         );
-        for (let i = 0; i < 200; i++) {
-          const done = await Promise.race([
-            steerPromise.then(
-              () => true,
-              () => true
-            ),
-            Promise.resolve().then(() => agentSession.messageQueue.remove(steerUuid) || false),
-          ]);
-          if (done) break;
+        for (let i = 0; i < 100; i++) {
+          if (harness.transcript.some((e) => e.op === 'queue:admit' && e.messageId === steerUuid)) {
+            break;
+          }
+          await Promise.resolve();
         }
+        agentSession.messageQueue.remove(steerUuid);
 
         const outcome = await steerPromise;
         expect(outcome).toEqual({ outcome: 'consumed' });
-        expect(
-          harness.transcript.some((e) => e.op === 'queue:admit' && e.messageId === steerUuid)
-        ).toBe(true);
-        expect(
-          harness.transcript.some((e) => e.op === 'db:markConsumed' && e.uuid === steerUuid)
-        ).toBe(true);
-        expect(
-          harness.transcript.some((e) => e.op === 'queue:admitResolve' && e.messageId === steerUuid)
-        ).toBe(true);
+        expect(harness.transcript).toEqual([
+          {
+            op: 'queue:admit',
+            messageId: steerUuid,
+            content: steerContent,
+            internal: false,
+            durable: true,
+          },
+          { op: 'queue:remove', messageId: steerUuid, found: true },
+          { op: 'queue:admitResolve', messageId: steerUuid },
+          { op: 'db:markConsumed', uuid: steerUuid, dbId: expect.any(String) },
+        ]);
       } finally {
         db.close();
       }
@@ -366,7 +383,7 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession('sess-steer-park');
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, 'sess-steer-park', steerUuid);
+        saveUserMessage(repo, 'sess-steer-park', steerUuid, 'enqueued', steerContent);
         await agentSession.stateManager.setQueued('active-msg');
         harness.reset();
 
@@ -377,7 +394,7 @@ describe('delivery transcript parity harness (A1a)', () => {
           () => true
         );
         expect(outcome).toEqual({ outcome: 'park' });
-        expect(harness.transcript.length).toBe(0);
+        expect(harness.transcript).toEqual([]);
       } finally {
         db.close();
       }
@@ -387,7 +404,7 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession('sess-steer-promote');
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, 'sess-steer-promote', steerUuid);
+        saveUserMessage(repo, 'sess-steer-promote', steerUuid, 'enqueued', steerContent);
         harness.reset();
 
         const outcome = await agentSession.feedDeliverySteer(
@@ -397,7 +414,7 @@ describe('delivery transcript parity harness (A1a)', () => {
           () => true
         );
         expect(outcome).toEqual({ outcome: 'promote' });
-        expect(harness.transcript.length).toBe(0);
+        expect(harness.transcript).toEqual([]);
       } finally {
         db.close();
       }
@@ -407,7 +424,7 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession('sess-steer-abort');
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, 'sess-steer-abort', steerUuid);
+        saveUserMessage(repo, 'sess-steer-abort', steerUuid, 'enqueued', steerContent);
         await agentSession.stateManager.setProcessing('active-msg');
         setNeverResolvingQuery(agentSession);
         harness.reset();
@@ -419,7 +436,7 @@ describe('delivery transcript parity harness (A1a)', () => {
           () => false
         );
         expect(outcome).toEqual({ outcome: 'aborted' });
-        expect(harness.transcript.length).toBe(0);
+        expect(harness.transcript).toEqual([]);
       } finally {
         db.close();
       }
@@ -434,10 +451,11 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession('sess-turn-blocked');
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, 'sess-turn-blocked', turnUuid);
+        saveUserMessage(repo, 'sess-turn-blocked', turnUuid, 'enqueued', turnContent);
         stubLifecycleManager(agentSession, 'blocked');
         harness.reset();
 
+        const before = Date.now();
         const outcome = await agentSession.driveDeliveryTurn(
           turnUuid,
           turnContent,
@@ -445,10 +463,14 @@ describe('delivery transcript parity harness (A1a)', () => {
           false,
           () => true
         );
+        const after = Date.now();
+        if (outcome.outcome !== 'blocked') {
+          throw new Error(`expected blocked, got ${outcome.outcome}`);
+        }
         expect(outcome).toEqual({ outcome: 'blocked', retryAt: expect.any(Number) });
-        expect(
-          harness.transcript.some((e) => e.op === 'state:setQueued' && e.uuid === turnUuid)
-        ).toBe(true);
+        expect(outcome.retryAt).toBeGreaterThanOrEqual(before + MESSAGE_DELIVERY_PARK_MS);
+        expect(outcome.retryAt).toBeLessThanOrEqual(after + MESSAGE_DELIVERY_PARK_MS);
+        expect(harness.transcript).toEqual([{ op: 'state:setQueued', uuid: turnUuid }]);
       } finally {
         db.close();
       }
@@ -458,13 +480,12 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession('sess-turn-abort-remove');
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, 'sess-turn-abort-remove', turnUuid);
+        saveUserMessage(repo, 'sess-turn-abort-remove', turnUuid, 'enqueued', turnContent);
         agentSession.messageQueue.admitWithId(turnUuid, 'different content', false, {
           durable: true,
         });
         stubLifecycleManager(agentSession, 'started');
         agentSession.queryPromise = Promise.resolve();
-        harness.reset();
 
         const outcome = await agentSession.driveDeliveryTurn(
           turnUuid,
@@ -474,14 +495,17 @@ describe('delivery transcript parity harness (A1a)', () => {
           () => true
         );
         expect(outcome).toEqual({ outcome: 'aborted' });
-        expect(
-          harness.transcript.some(
-            (e) => e.op === 'queue:remove' && e.messageId === turnUuid && e.found === true
-          )
-        ).toBe(true);
-        expect(
-          harness.transcript.some((e) => e.op === 'queue:admitResolve' && e.messageId === turnUuid)
-        ).toBe(true);
+        expect(harness.transcript).toEqual([
+          {
+            op: 'queue:admit',
+            messageId: turnUuid,
+            content: 'different content',
+            internal: false,
+            durable: true,
+          },
+          { op: 'queue:remove', messageId: turnUuid, found: true },
+          { op: 'queue:admitResolve', messageId: turnUuid },
+        ]);
       } finally {
         db.close();
       }
@@ -492,7 +516,7 @@ describe('delivery transcript parity harness (A1a)', () => {
       const { db, agentSession, harness } = await makeTestSession(sessionId);
       try {
         const repo = db.getSDKMessageRepo();
-        saveUserMessage(repo, sessionId, turnUuid, 'enqueued');
+        saveUserMessage(repo, sessionId, turnUuid, 'enqueued', turnContent);
         repo.markDeliveryConsumedByUuid(sessionId, turnUuid);
         repo.saveSDKMessage(sessionId, {
           type: 'result',
@@ -515,7 +539,95 @@ describe('delivery transcript parity harness (A1a)', () => {
           () => true
         );
         expect(outcome).toEqual({ outcome: 'turn_terminated' });
-        expect(harness.transcript.length).toBe(0);
+        expect(harness.transcript).toEqual([]);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('completes a fresh turn by SDK consumption and a terminal result', async () => {
+      const sessionId = 'sess-turn-completed';
+      const { db, agentSession, harness } = await makeTestSession(sessionId);
+      try {
+        const repo = db.getSDKMessageRepo();
+        const jobRepo = db.getJobQueueRepo();
+        saveUserMessage(repo, sessionId, turnUuid, 'enqueued', turnContent);
+        jobRepo.enqueue({
+          queue: MESSAGE_DELIVERY,
+          payload: {
+            sessionId,
+            messageUuid: turnUuid,
+            role: 'turn',
+            origin: 'chat',
+            parentToolUseId: null,
+          },
+        });
+        const [job] = jobRepo.dequeue(MESSAGE_DELIVERY, 1) as [Job | undefined];
+        if (!job) throw new Error('job not claimed');
+
+        stubLifecycleManager(agentSession, 'started');
+        let resolveQuery = () => {};
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        harness.reset();
+
+        const turnPromise = agentSession.driveDeliveryTurn(
+          turnUuid,
+          turnContent,
+          null,
+          false,
+          () => true
+        );
+        for (let i = 0; i < 100; i++) {
+          if (harness.transcript.some((e) => e.op === 'queue:admit' && e.messageId === turnUuid)) {
+            break;
+          }
+          await Promise.resolve();
+        }
+        agentSession.messageQueue.remove(turnUuid);
+        for (let i = 0; i < 100; i++) {
+          if (
+            harness.transcript.some(
+              (e) =>
+                (e.op === 'db:markConsumed' && e.uuid === turnUuid) ||
+                (e.op === 'db:markConsumedBatch' && e.uuids.includes(turnUuid))
+            )
+          ) {
+            break;
+          }
+          await Promise.resolve();
+        }
+        repo.saveSDKMessage(sessionId, {
+          type: 'result',
+          uuid: `${turnUuid}-result`,
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          subtype: 'success',
+          is_error: false,
+        } as unknown as SDKMessage);
+        await agentSession.stateManager.setIdle();
+        resolveQuery();
+
+        const outcome = await turnPromise;
+        expect(outcome).toEqual({ outcome: 'completed' });
+        expect(harness.transcript).toEqual([
+          {
+            op: 'queue:admit',
+            messageId: turnUuid,
+            content: turnContent,
+            internal: false,
+            durable: true,
+          },
+          { op: 'queue:remove', messageId: turnUuid, found: true },
+          { op: 'queue:admitResolve', messageId: turnUuid },
+          {
+            op: 'db:markConsumedBatch',
+            uuids: [turnUuid],
+            dbIds: [expect.any(String)],
+          },
+          { op: 'db:recordTurnEnd', uuid: turnUuid },
+        ]);
       } finally {
         db.close();
       }
@@ -524,13 +636,14 @@ describe('delivery transcript parity harness (A1a)', () => {
 
   describe('message delivery handler', () => {
     const handlerUuid = 'msg-handler';
+    const handlerContent = 'handler content';
 
-    it('requeues a blocked turn and records the job requeue and settle', async () => {
-      const { db } = await makeTestSession('sess-handler-blocked');
+    it('requeues a blocked turn and records the job requeue without settling', async () => {
+      const { db, harness } = await makeTestSession('sess-handler-blocked');
       try {
         const repo = db.getSDKMessageRepo();
         const jobRepo = db.getJobQueueRepo();
-        saveUserMessage(repo, 'sess-handler-blocked', handlerUuid);
+        saveUserMessage(repo, 'sess-handler-blocked', handlerUuid, 'enqueued', handlerContent);
         jobRepo.enqueue({
           queue: MESSAGE_DELIVERY,
           payload: {
@@ -553,23 +666,29 @@ describe('delivery transcript parity harness (A1a)', () => {
         const handler = createMessageDeliveryHandler({
           jobQueue: jobRepo,
           getSession: () => sessionMock,
-          getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
+          getMessageContent: () => ({ content: handlerContent, sendStatus: 'enqueued' }),
         });
 
         const result = await handler(job);
-        expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 12345 });
+        expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 12345 });
         expect(jobRepo.getJob(job.id)?.status).toBe('pending');
+        expect(sessionMock.settleSkippedDelivery).not.toHaveBeenCalled();
+        expect(harness.transcript).toEqual([
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          { op: 'job:requeue', jobId: job.id, runAt: 12345, claimToken: job.claimToken },
+        ]);
       } finally {
         db.close();
       }
     });
 
     it('promotes a steer by requeueing as turn', async () => {
-      const { db } = await makeTestSession('sess-handler-promote');
+      const { db, harness } = await makeTestSession('sess-handler-promote');
       try {
         const repo = db.getSDKMessageRepo();
         const jobRepo = db.getJobQueueRepo();
-        saveUserMessage(repo, 'sess-handler-promote', handlerUuid);
+        saveUserMessage(repo, 'sess-handler-promote', handlerUuid, 'enqueued', handlerContent);
         jobRepo.enqueue({
           queue: MESSAGE_DELIVERY,
           payload: {
@@ -592,12 +711,79 @@ describe('delivery transcript parity harness (A1a)', () => {
         const handler = createMessageDeliveryHandler({
           jobQueue: jobRepo,
           getSession: () => sessionMock,
-          getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
+          getMessageContent: () => ({ content: handlerContent, sendStatus: 'enqueued' }),
+        });
+
+        const before = Date.now();
+        const result = await handler(job);
+        const after = Date.now();
+        expect(result).toEqual({ outcome: 'superseded', promoted: 'turn' });
+
+        const requeueAs = harness.transcript.find(
+          (e): e is Extract<DeliveryTranscriptEvent, { op: 'job:requeueAs' }> =>
+            e.op === 'job:requeueAs'
+        );
+        expect(requeueAs).toBeDefined();
+        const runAt = requeueAs!.runAt;
+        expect(runAt).toBeGreaterThanOrEqual(before);
+        expect(runAt).toBeLessThanOrEqual(after);
+        expect(jobRepo.getJob(job.id)?.payload).toMatchObject({ role: 'turn' });
+        expect(sessionMock.settleSkippedDelivery).not.toHaveBeenCalled();
+        expect(harness.transcript).toEqual([
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          {
+            op: 'job:requeueAs',
+            jobId: job.id,
+            role: 'turn',
+            runAt,
+            claimToken: job.claimToken,
+          },
+        ]);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('settles an aborted turn', async () => {
+      const { db, agentSession, harness } = await makeTestSession('sess-handler-aborted');
+      try {
+        const repo = db.getSDKMessageRepo();
+        const jobRepo = db.getJobQueueRepo();
+        saveUserMessage(repo, 'sess-handler-aborted', handlerUuid, 'enqueued', handlerContent);
+        jobRepo.enqueue({
+          queue: MESSAGE_DELIVERY,
+          payload: {
+            sessionId: 'sess-handler-aborted',
+            messageUuid: handlerUuid,
+            role: 'turn',
+            origin: 'chat',
+            parentToolUseId: null,
+          },
+        });
+        const [job] = jobRepo.dequeue(MESSAGE_DELIVERY, 1) as [Job | undefined];
+        if (!job) throw new Error('job not claimed');
+
+        const sessionMock: MessageDeliverySession = {
+          driveDeliveryTurn: mock(async () => ({ outcome: 'aborted' })),
+          feedDeliverySteer: mock(async () => ({ outcome: 'consumed' })),
+          settleSkippedDelivery: mock(agentSession.settleSkippedDelivery.bind(agentSession)),
+        };
+
+        const handler = createMessageDeliveryHandler({
+          jobQueue: jobRepo,
+          getSession: () => sessionMock,
+          getMessageContent: () => ({ content: handlerContent, sendStatus: 'enqueued' }),
         });
 
         const result = await handler(job);
-        expect(result).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
-        expect(jobRepo.getJob(job.id)?.status).toBe('pending');
+        expect(result).toEqual({ outcome: 'aborted' });
+        expect(sessionMock.settleSkippedDelivery).toHaveBeenCalledTimes(1);
+        expect(harness.transcript).toEqual([
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          { op: 'state:clearQueuedIfOwnedBy', uuid: handlerUuid },
+        ]);
       } finally {
         db.close();
       }
