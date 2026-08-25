@@ -158,22 +158,38 @@ describe('spaceGoal owner handlers', () => {
     await expect(
       handlers.get('spaceGoal.assignOwner')!(
         { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
-        makeContext('space:agent:session-1')
+        makeContext('space:agent:space-1:agent-1')
       )
     ).rejects.toThrow(/coordinator or explicit human authorization/);
     expect(repo.assignGoal).not.toHaveBeenCalled();
   });
 
-  it('denies owner mutation from a caller with an empty session id', async () => {
+  it('denies owner mutation from a coordinator chat session', async () => {
     const repo = makeRepoMock({ action: 'no_recipient' });
     const { handlers } = makeHarness(repo);
     await expect(
-      handlers.get('spaceGoal.assignOwner')!(
-        { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
-        makeContext('')
+      handlers.get('spaceGoal.unassignOwner')!(
+        { spaceId: SPACE_ID, goalId: GOAL_ID },
+        makeContext('space:chat:space-1')
       )
     ).rejects.toThrow(/coordinator or explicit human authorization/);
-    expect(repo.assignGoal).not.toHaveBeenCalled();
+    expect(repo.deleteGoalAssignmentByRelationship).not.toHaveBeenCalled();
+  });
+
+  it('allows owner mutation from a plain human room session and unbound callers', async () => {
+    const repo = makeRepoMock({ action: 'no_recipient' });
+    const { handlers } = makeHarness(repo);
+    const fromRoom = await handlers.get('spaceGoal.assignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
+      makeContext('b19d3aa0-64a7-4b20-9f3a-6f9c1a2b3c4d')
+    );
+    expect(fromRoom.owner.action).toBe('resolved');
+    const unbound = await handlers.get('spaceGoal.assignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-2' },
+      makeContext('')
+    );
+    expect(unbound.owner.action).toBe('resolved');
+    expect(repo.assignGoal).toHaveBeenCalledTimes(2);
   });
 
   it('unassigns the current owner and clears ownership', async () => {
