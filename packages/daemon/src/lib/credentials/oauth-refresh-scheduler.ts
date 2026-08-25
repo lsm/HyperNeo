@@ -19,6 +19,7 @@ export interface OAuthRefreshSchedulerOptions {
     outcome: 'refreshed' | 'exhausted'
   ) => void | Promise<void>;
   recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
+  onPreRecoveryInvalidate?: (providerId: string) => Promise<void> | void;
 }
 
 export class OAuthRefreshScheduler {
@@ -34,6 +35,9 @@ export class OAuthRefreshScheduler {
     providerId: string,
     outcome: 'refreshed' | 'exhausted'
   ) => void | Promise<void>;
+  private readonly onPreRecoveryInvalidate?:
+    | ((providerId: string) => Promise<void> | void)
+    | undefined;
   private readonly recoverDormantProvider?: (
     providerId: string
   ) => Promise<ProviderRecoveryOutcome>;
@@ -48,6 +52,7 @@ export class OAuthRefreshScheduler {
     this.registry = options.registry ?? getProviderRegistry();
     this.now = options.now ?? Date.now;
     this.onProviderChanged = options.onProviderChanged;
+    this.onPreRecoveryInvalidate = options.onPreRecoveryInvalidate;
     this.recoverDormantProvider = options.recoverDormantProvider;
   }
 
@@ -117,6 +122,12 @@ export class OAuthRefreshScheduler {
         }
       } catch {}
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
+      const onPreRecovery = this.onPreRecoveryInvalidate;
+      if (onPreRecovery) {
+        try {
+          await onPreRecovery(provider.id);
+        } catch {}
+      }
       await this.recoverDormant(provider.id);
       await this.onProviderChanged?.(provider.id, 'refreshed');
       return;
