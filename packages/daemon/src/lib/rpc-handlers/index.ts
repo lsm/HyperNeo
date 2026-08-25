@@ -701,6 +701,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             } | null)
           : null;
       const activityBaseline = toEpochMs(anchorRow?.last_active_at) ?? undefined;
+      const invokedAt = Date.now();
       let task: Promise<void>;
       const run = async () => {
         try {
@@ -736,7 +737,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           }
           if (!inactivityRunNowCancelled) {
             await spaceAgentInactivityWatchdog
-              .scanAgent(spaceId, agentId, activityBaseline)
+              .scanAgent(spaceId, agentId, activityBaseline, invokedAt)
               .catch(() => {});
           }
         } finally {
