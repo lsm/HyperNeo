@@ -925,6 +925,22 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
+    it('should retain startup subagent and tool-search configuration for native provider', async () => {
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        CLAUDE_CODE_SUBAGENT_MODEL: 'startup-subagent',
+        ENABLE_TOOL_SEARCH: 'true',
+      });
+      try {
+        const options = await builder.build();
+        expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('startup-subagent');
+        expect(options.env?.ENABLE_TOOL_SEARCH).toBe('true');
+      } finally {
+        _setStartupEnvBaselineForTesting(previousBaseline);
+      }
+    });
+
     it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
       'should filter provider-managed auto-compact env overrides for bridge providers',
       async () => {

@@ -869,8 +869,6 @@ CRITICAL RULES:
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     const processProviderEnvVars = new Set(providerEnvVars);
-    processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
-    processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
 
     const mergedEnv: Record<string, string> = buildSdkRuntimeEnv();
     for (const key of processProviderEnvVars) {
