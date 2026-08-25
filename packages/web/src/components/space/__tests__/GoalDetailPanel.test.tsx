@@ -427,6 +427,61 @@ describe('GoalDetailPanel', () => {
     );
   });
 
+  it('keeps the assign picker open across agent status changes', async () => {
+    mockLongHorizonAgents.value = [
+      makeAgent(),
+      makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
+    ];
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
+    await chooseAssignee('agent-2');
+    expect(screen.getByRole('combobox', { name: 'New goal owner' })).toBeTruthy();
+
+    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
+      const owner: SpaceGoalOwnerResolution = {
+        action: 'degraded',
+        reason: 'paused',
+        owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
+        conflicts: [],
+      };
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return owner;
+    });
+    mockLongHorizonAgents.value = [
+      makeAgent({ status: 'paused' }),
+      makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
+    ];
+
+    await waitFor(() => expect(screen.getByText('Degraded')).toBeTruthy());
+    expect(screen.getByRole('combobox', { name: 'New goal owner' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Assign' }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
+  });
+
+  it('clears the owner error banner after a successful assignment', async () => {
+    mockLongHorizonAgents.value = [
+      makeAgent(),
+      makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
+    ];
+    mockFetchGoalOwner.mockRejectedValue(new Error('Not connected'));
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Owner unavailable — refresh to retry.')).toBeTruthy()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Assign owner' }));
+    await chooseAssignee('agent-2');
+    fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
+
+    await waitFor(() =>
+      expect(screen.queryByText('Owner unavailable — refresh to retry.')).toBeNull()
+    );
+    expect(screen.getByText('Watchman (@watchman)')).toBeTruthy();
+  });
+
   it('refreshes the owner resolution when the owning agent changes status', async () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
     await waitFor(() => expect(screen.getByText('Owned')).toBeTruthy());

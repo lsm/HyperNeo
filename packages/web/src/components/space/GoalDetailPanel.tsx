@@ -64,10 +64,13 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const agentsVersion = agents.map((item) => `${item.id}:${item.status}`).join('|');
 
   useEffect(() => {
-    let cancelled = false;
     setOwnerLoadFailed(false);
     setAssignOpen(false);
     setAssigneeId('');
+  }, [spaceId, goalId]);
+
+  useEffect(() => {
+    let cancelled = false;
     spaceStore
       .fetchGoalOwner(goalId)
       .then(() => {
@@ -147,6 +150,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
         await spaceStore.unassignGoalOwner(goal.id);
         toast.success('Owner cleared');
       }
+      setOwnerLoadFailed(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Owner update failed');
     } finally {
