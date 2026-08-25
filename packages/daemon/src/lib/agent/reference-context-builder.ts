@@ -1,6 +1,6 @@
 import type { ResolvedReference } from '@hyperneo/shared';
 import type { MissionMetric, NeoTask, RoomGoal } from '@hyperneo/shared/types/neo';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('reference-context-builder');
 

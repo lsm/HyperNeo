@@ -1,6 +1,6 @@
 import { generateUUID } from '@hyperneo/shared';
-import { createWorkflowEventSubscriptionTables } from '../schema/workflow-event-subscriptions';
-import type { Database as BunDatabase } from '../sqlite-compat';
+import { createWorkflowEventSubscriptionTables } from '../schema/workflow-event-subscriptions.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export type WorkflowSubscriptionKind = 'dynamic';
 

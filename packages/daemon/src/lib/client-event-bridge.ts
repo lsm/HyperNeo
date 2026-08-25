@@ -1,7 +1,7 @@
 import type { IClientEventGateway, EventChannel } from '@hyperneo/shared';
 import { Channels } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
-import { Logger } from './logger';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
+import { Logger } from './logger.ts';
 
 type ClientBridgeEventName = keyof DaemonInternalEventMap & string;
 type ClientBridgePayload = DaemonInternalEventMap[keyof DaemonInternalEventMap];
@@ -126,6 +126,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'spaceLongHorizonAgent.deleted',
     channel: (p) =>
       Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.deleted']).spaceId),
+  },
+  {
+    event: 'spaceGoal.ownerChanged',
+    clientEvent: 'spaceGoal.ownerChanged',
+    channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceGoal.ownerChanged']).spaceId),
   },
   {
     event: 'spaceWorkflow.created',

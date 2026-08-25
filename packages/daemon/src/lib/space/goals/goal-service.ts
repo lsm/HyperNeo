@@ -16,19 +16,19 @@ import type {
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
-import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
-import type { ScheduleService } from '../schedule/schedule-service';
-import { Logger } from '../../logger';
-import type { GoalAutomationService } from './goal-automation-service';
-import { pauseScheduleStrict } from './goal-automation-schedule-sync';
-import { decideReportableTerminal } from './reportable-terminal-gates';
-import { decideClaimAdmission, type ClaimAdmissionDenyReason } from './claim-admission-gates';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
+import type { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { ScheduleService } from '../schedule/schedule-service.ts';
+import { Logger } from '../../logger.ts';
+import type { GoalAutomationService } from './goal-automation-service.ts';
+import { pauseScheduleStrict } from './goal-automation-schedule-sync.ts';
+import { decideReportableTerminal } from './reportable-terminal-gates.ts';
+import { decideClaimAdmission, type ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
 
 const log = new Logger('space-goal-service');
 
@@ -111,11 +111,11 @@ export interface SpaceGoalServiceDeps {
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   onOutcomeNotification?: (notification: SpaceGoalOutcomeNotification) => void;
   evolutionScopeService?: Pick<
-    import('../evolution-scope-service').EvolutionScopeService,
+    import('../evolution-scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
   reactiveDb?: Pick<
-    import('../../../storage/reactive-database').ReactiveDatabase,
+    import('../../../storage/reactive-database.ts').ReactiveDatabase,
     'beginTransaction' | 'commitTransaction' | 'abortTransaction'
   >;
 }
@@ -646,7 +646,10 @@ export class SpaceGoalService {
     const updates: UpdateSpaceGoalParams = {};
     if (params.summary !== undefined) updates.summary = params.summary;
     if (params.nextSteps !== undefined) updates.nextSteps = params.nextSteps;
-    if (params.progress !== undefined && goal.type !== 'recurring') {
+    if (params.progress !== undefined && goal.type === 'recurring') {
+      throw new Error('Recurring goals do not accept progress updates through outcome review');
+    }
+    if (params.progress !== undefined) {
       updates.progress = params.progress;
     }
     if (metrics !== null) updates.metrics = metrics;

@@ -1,14 +1,43 @@
-import type { MessageHub, SpaceGoalStatus } from '@hyperneo/shared';
-import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service';
-import type { SpaceManager } from '../space/managers/space-manager';
+import type {
+  CallContext,
+  MessageHub,
+  SpaceGoalOwnerResolution,
+  SpaceGoalStatus,
+} from '@hyperneo/shared';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { decideGoalOwnershipMutationAdmission } from '../space/goals/goal-ownership-gates.ts';
+import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
 
 export interface SpaceGoalHandlerDeps {
   goalService: SpaceGoalService;
   spaceManager: SpaceManager;
+  longHorizonAgentRepo: Pick<
+    SpaceLongHorizonAgentRepository,
+    'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
+  >;
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
 
 export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHandlerDeps): void {
-  const { goalService, spaceManager } = deps;
+  const { goalService, spaceManager, longHorizonAgentRepo, internalEventBus } = deps;
+
+  function publishOwnerChanged(sessionId: string, spaceId: string, goalId: string): void {
+    internalEventBus
+      ?.publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })
+      .catch(() => {});
+  }
+
+  function resolveOwner(goalId: string, spaceId: string): SpaceGoalOwnerResolution {
+    return longHorizonAgentRepo.getPrimaryGoalOwner(goalId, spaceId) as SpaceGoalOwnerResolution;
+  }
+
+  function assertOwnerMutationAuthorized(context: CallContext): void {
+    const hasSession = (context.sessionId ?? '').startsWith('space:');
+    const decision = decideGoalOwnershipMutationAdmission({ callerRole: undefined, hasSession });
+    if (decision.action === 'deny') throw new Error(decision.message);
+  }
 
   async function requireSpace(spaceId: string) {
     if (!spaceId) throw new Error('spaceId is required');
@@ -105,5 +134,39 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     await requireSpace(params.spaceId);
     requireGoalInSpace(params.goalId, params.spaceId);
     return { events: goalService.listGoalEvents(params.goalId, params) };
+  });
+
+  messageHub.onRequest('spaceGoal.getOwner', async (data) => {
+    const params = data as { spaceId: string; goalId: string };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    return { owner: resolveOwner(params.goalId, params.spaceId) };
+  });
+
+  messageHub.onRequest('spaceGoal.assignOwner', async (data, context) => {
+    const params = data as { spaceId: string; goalId: string; agentId: string };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    assertOwnerMutationAuthorized(context);
+    longHorizonAgentRepo.assignGoal(params.agentId, params.goalId);
+    publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
+    return { owner: resolveOwner(params.goalId, params.spaceId) };
+  });
+
+  messageHub.onRequest('spaceGoal.unassignOwner', async (data, context) => {
+    const params = data as { spaceId: string; goalId: string };
+    await requireSpace(params.spaceId);
+    requireGoalInSpace(params.goalId, params.spaceId);
+    assertOwnerMutationAuthorized(context);
+    const resolution = resolveOwner(params.goalId, params.spaceId);
+    if (resolution.action === 'resolved' || resolution.action === 'degraded') {
+      longHorizonAgentRepo.deleteGoalAssignmentByRelationship(
+        resolution.owner.agentId,
+        params.goalId,
+        'owner'
+      );
+      publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
+    }
+    return { owner: resolveOwner(params.goalId, params.spaceId) };
   });
 }

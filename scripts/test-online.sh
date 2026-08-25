@@ -53,43 +53,31 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 #
 # Split sizing (duration-weighted since task #1183 — every split opts into
 # scripts/shard-weights.tsv, regenerated from CI junit via
-# scripts/generate-shard-weights.ts --suite daemon-online; each job adds ~50s
-# fixed setup/coverage overhead, so the max-file duration floors each split):
-#   space    4 files  ~174s → 3-way (max file 77s floors it; a 4th bucket
-#                         would hold the 10s file alone — same max, worse
-#                         spread, one more runner)
-#   rpc     19 files  ~265s → 6-way (max file 49s floors it; packed buckets
-#                         land 40–49s, spread ~1.2×)
-#   rewind   2 files  ~159s → 2-way (max file 95s floors it)
-#   features 4 files  ~111s → 3-way (packed 41/36/35s)
-# Weights pack by measured duration, so a bucket holding one heavy file (e.g.
-# space's task-agent-lifecycle at 77s) is a file-granularity floor, not a
-# packing failure — splitting that FILE is the only fix. Re-check with the
-# next CI balance report + manifest regen.
-# Small dirs (agent-sdk/components/convo/coordinator/git/lifecycle/mcp/sdk/
-# websocket) stay whole — a split's fixed overhead dominates below ~120s of
-# test time. convo is the one dir that CANNOT hash-split: both of its files
-# hash to bucket 0 mod 2 (a 2-way split would leave bucket 1 empty), so it
-# stays whole.
+# scripts/generate-shard-weights.ts --suite daemon-online; measured junit
+# times from the 2026-08-24 task #1399 rebalance run; each job adds ~35s
+# fixed setup, so splits keep every leg under ~2min of test time):
+#   rpc     19 files  ~450s → 4-way (packed ~112s per bucket)
+#   space    4 files  ~168s → 2-way (packed ~84s per bucket)
+# The small directories are duration-merged into combined modules (measured
+# test time): rewind 125s, convo-lifecycle 118s, features-misc 111s,
+# agent-sdk 103s, git-websocket 63s — 11 legs total. Weights pack by measured
+# duration, so a bucket holding one heavy file (e.g. rpc's
+# rpc-config-handlers at 90s CI) is a file-granularity floor, not a packing
+# failure — splitting that FILE is the only fix. Re-check with the next CI
+# balance report + manifest regen.
 ONLINE_HASH_SPLIT_SPECS=(
-	"features|3|features/*.test.ts|scripts/shard-weights.tsv"
-	"rewind|2|rewind/*.test.ts|scripts/shard-weights.tsv"
-	"space|3|space/*.test.ts|scripts/shard-weights.tsv"
-	"rpc|6|rpc/*.test.ts|scripts/shard-weights.tsv"
+	"space|2|space/*.test.ts|scripts/shard-weights.tsv"
+	"rpc|4|rpc/*.test.ts|scripts/shard-weights.tsv"
 )
 
 ONLINE_MODULES=(
 	# Split modules (resolved via ONLINE_HASH_SPLIT_SPECS — do not list
-	# here): features-a…features-c, rewind-a/b, space-a…space-c, rpc-a…rpc-f.
-	"agent-sdk|agent/*.test.ts"
-	"components|components/*.test.ts"
-	"convo|convo/*.test.ts"
-	"coordinator|coordinator/*.test.ts"
-	"git|git/*.test.ts"
-	"lifecycle|lifecycle/*.test.ts"
-	"mcp|mcp/*.test.ts"
-	"sdk|sdk/*.test.ts"
-	"websocket|websocket/*.test.ts"
+	# here): rpc-a…rpc-d, space-a…space-b.
+	"agent-sdk|agent/*.test.ts;sdk/*.test.ts"
+	"convo-lifecycle|convo/*.test.ts;lifecycle/*.test.ts"
+	"features-misc|components/*.test.ts;coordinator/*.test.ts;features/*.test.ts;mcp/*.test.ts"
+	"git-websocket|git/*.test.ts;websocket/*.test.ts"
+	"rewind|rewind/*.test.ts"
 )
 
 # Online test directories intentionally NOT run by the mocked-online matrix.
@@ -101,7 +89,8 @@ ONLINE_MODULES=(
 #                    credential issue (commented out in main.yml)
 #   sandbox        : disabled — not wired to a CI matrix shard
 #   cross-provider : real-key shards, manual-only in real-api-tests.yml
-ONLINE_EXEMPT_DIRS="benchmark glm providers sandbox cross-provider"
+#   deno           : manual-only — requires Deno 2.9.x on PATH
+ONLINE_EXEMPT_DIRS="benchmark glm providers sandbox cross-provider deno"
 
 # Map a hash-split module's suffix letter to a 0-based bucket index (a→0 … z→25).
 online_suffix_to_index() {
@@ -351,6 +340,7 @@ verify_online_modules() {
 			!injob { next }
 			injob && /^[[:space:]]*module:[[:space:]]*$/ { inaxis=1; next }
 			injob && /^[[:space:]]*include:/ { inaxis=0 }
+			inaxis && !/^[[:space:]]*#/ && !/^[[:space:]]+- / && /^[[:space:]]{0,8}[^[:space:]]/ { inaxis=0 }
 			inaxis && !/^[[:space:]]*#/ && /^[[:space:]]+- [^[:space:]#]/ {
 				v=$0; sub(/^[[:space:]]+- [[:space:]]*/, "", v); sub(/[[:space:]].*/, "", v); gsub(/[^a-z0-9-]/, "", v)
 				if (v != "") print v

@@ -4,8 +4,9 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { readdir, readFile } from 'fs/promises';
-import path from 'path';
+import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 export interface MockApiServerOptions {
   port?: number;
@@ -56,7 +57,7 @@ function findRepoRoot(startDir: string): string | null {
   while (dir !== path.dirname(dir)) {
     const pkgPath = path.join(dir, 'package.json');
     try {
-      const pkg = require(pkgPath);
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
       if (pkg.workspaces) {
         return dir;
       }

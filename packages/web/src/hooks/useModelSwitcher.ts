@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
@@ -191,16 +191,23 @@ export function getProviderLabel(provider: string): string {
   return provider;
 }
 
+export function isDefinitiveAuthFailure(auth: ProviderAuthStatus): boolean {
+  return !auth.isAuthenticated && auth.errorKind !== 'transient';
+}
+
 export function filterModelsForPicker(
   models: ModelInfo[],
   providerAuthMap: Map<string, ProviderAuthStatus>,
-  currentProvider?: string
+  currentProvider?: string,
+  currentModelId?: string
 ): ModelInfo[] {
   return models.filter((m) => {
     const auth = providerAuthMap.get(m.provider);
     if (!auth) return true;
-    if (m.provider === currentProvider) return true;
-    return auth.isAuthenticated;
+    if (isDefinitiveAuthFailure(auth)) {
+      return m.provider === currentProvider && m.id === currentModelId;
+    }
+    return true;
   });
 }
 
@@ -223,12 +230,18 @@ export function useFilteredModelsForPicker(
   models: ModelInfo[],
   providerAuthMap: Map<string, ProviderAuthStatus>,
   currentProvider: string | undefined,
+  currentModelId: string | undefined,
   searchQuery: string
 ): ModelInfo[] {
   return useMemo(() => {
-    const authFilteredModels = filterModelsForPicker(models, providerAuthMap, currentProvider);
+    const authFilteredModels = filterModelsForPicker(
+      models,
+      providerAuthMap,
+      currentProvider,
+      currentModelId
+    );
     return filterModelsBySearch(authFilteredModels, searchQuery);
-  }, [models, providerAuthMap, currentProvider, searchQuery]);
+  }, [models, providerAuthMap, currentProvider, currentModelId, searchQuery]);
 }
 
 export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResult {
@@ -237,34 +250,58 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [switching, setSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
   const loadModelInfo = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
     try {
       setLoading(true);
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
+      let fetchedModelId = '';
+      let fetchedProvider = '';
+      let fetchedModelInfo: ModelInfo | null = null;
       if (sessionId) {
         try {
-          const { currentModel: modelId, modelInfo } = (await hub.request('session.model.get', {
-            sessionId,
-          })) as {
+          const {
+            currentModel: modelId,
+            currentProvider,
+            modelInfo,
+          } = (await hub.request('session.model.get', { sessionId })) as {
             currentModel: string;
+            currentProvider: string;
             modelInfo: ModelInfo | null;
           };
-          setCurrentModel(modelId);
-          setCurrentModelInfo(modelInfo);
+          fetchedModelId = modelId;
+          fetchedProvider = currentProvider;
+          fetchedModelInfo = modelInfo;
+          if (requestId === requestIdRef.current) {
+            setCurrentModel(modelId);
+            setCurrentModelInfo(modelInfo);
+          }
         } catch {}
       }
 
       const { models } = (await hub.request('models.list', {
         useCache: true,
       })) as { models: RawModelEntry[] };
+      if (requestId !== requestIdRef.current) return;
 
-      setAvailableModels(mapRawModelsToModelInfos(models));
+      const modelInfos = mapRawModelsToModelInfos(models);
+      setAvailableModels(modelInfos);
+
+      if (fetchedModelId && fetchedProvider && !fetchedModelInfo) {
+        const matched = modelInfos.find(
+          (m) =>
+            (m.id === fetchedModelId || m.alias === fetchedModelId) &&
+            m.provider === fetchedProvider
+        );
+        if (matched) setCurrentModelInfo(matched);
+      }
     } catch {
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [sessionId]);
 

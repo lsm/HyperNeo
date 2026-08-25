@@ -7,26 +7,26 @@ import type {
   WorkflowRunStatus,
   WorkflowHookStateSnapshot,
 } from '@hyperneo/shared';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import type { HookExecutor, HookExecutorContext } from './hook-executor';
-import { ChannelResolver } from './channel-resolver';
-import { isConnectorsLayerEnabled } from './connectors/connector';
-import { getBuiltInConnectorDeps } from './connectors/production';
-import { isRateLimitError } from './rate-limit-detector';
-import { Logger } from '../../logger';
-import { parseAddress } from '../../../../../messaging/src/address';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
+import type { HookExecutor, HookExecutorContext } from './hook-executor.ts';
+import { ChannelResolver } from './channel-resolver.ts';
+import { isConnectorsLayerEnabled } from './connectors/connector.ts';
+import { getBuiltInConnectorDeps } from './connectors/production.ts';
+import { isRateLimitError } from './rate-limit-detector.ts';
+import { Logger } from '../../logger.ts';
+import { parseAddress } from '../../../../../messaging/src/address.ts';
 import {
   SendMessageSchema,
   SaveArtifactSchema,
   CreateStandaloneTaskSchema,
-} from '../tools/node-agent-tool-schemas';
+} from '../tools/node-agent-tool-schemas.ts';
 import {
   ApproveTaskSchema,
   SubmitForApprovalSchema,
   MarkCompleteSchema,
-} from '../tools/task-agent-tool-schemas';
+} from '../tools/task-agent-tool-schemas.ts';
 
 export interface HookActionMeta {
   sessionId: string;
@@ -1123,11 +1123,11 @@ const RAW_HANDLER = Symbol('rawHandler');
 function hookResult(
   data: Record<string, unknown>,
   isError = false
-): import('../tools/tool-result').ToolResult {
+): import('../tools/tool-result.ts').ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }], isError };
 }
 
-type AnyToolResult = import('../tools/tool-result').ToolResult;
+type AnyToolResult = import('../tools/tool-result.ts').ToolResult;
 
 type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<AnyToolResult>) & {
   [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;

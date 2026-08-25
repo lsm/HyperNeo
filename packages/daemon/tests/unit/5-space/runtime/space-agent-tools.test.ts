@@ -16,6 +16,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -423,6 +424,47 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).not.toContain('assign_agent_to_goal');
     expect(names).not.toContain('create_agent_reminder');
     expect(names).not.toContain('create_goal');
+  });
+
+  test('registers inactivity watchdog tools when the config repo is configured', () => {
+    const server = createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      db: ctx.db,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+      inactivityConfigRepo: new SpaceAgentInactivityConfigRepository(ctx.db),
+      myAgentId: 'lh-agent-1',
+      inactivityRunNow: mock(async () => {}),
+    });
+
+    const names = getRegisteredToolNames(server);
+    expect(names).toContain('inactivity_config_get');
+    expect(names).toContain('inactivity_config_set_enabled');
+    expect(names).toContain('inactivity_config_set');
+    expect(names).toContain('inactivity_run_now');
+  });
+
+  test('does not register inactivity watchdog tools without the config repo', () => {
+    const server = createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+    });
+
+    const names = getRegisteredToolNames(server);
+    expect(names).not.toContain('inactivity_config_get');
+    expect(names).not.toContain('inactivity_config_set');
+    expect(names).not.toContain('inactivity_run_now');
   });
 
   test('registers long-horizon agent tools when database is configured', () => {
@@ -2696,6 +2738,75 @@ describe('createSpaceAgentToolHandlers — review_goal_outcome', () => {
     );
     expect(out.success).toBe(false);
     expect(out.error).toContain('notification_id');
+  });
+
+  test('marketing dogfood loop: delegate, terminal report, discovery review, follow-up (MC5-B2)', async () => {
+    const owner = ctx.longHorizonAgentRepo.create({
+      id: 'lh-marketing',
+      spaceId: ctx.spaceId,
+      handle: '@marketing',
+      displayName: 'Marketing',
+    });
+    const goal = goalService.createGoal({
+      spaceId: ctx.spaceId,
+      title: 'Launch positioning refresh',
+      primaryOwnerAgentId: owner.id,
+    });
+    const handlers = makeHandlers(ctx, {
+      goalService,
+      callerRole: 'long_term_agent',
+      myAgentId: owner.id,
+    });
+
+    const delegated = JSON.parse(
+      (await handlers.trigger_goal_task({ goal_id: goal.id })).content[0].text
+    );
+    expect(delegated.success).toBe(true);
+    const delegatedTask = delegated.task as { id: string; goalId: string };
+    expect(delegatedTask.goalId).toBe(goal.id);
+
+    const terminal = goalService.handleTaskTerminal(delegatedTask.id, {
+      updates: {
+        status: 'done',
+        startedAt: Date.now(),
+        result: JSON.stringify({ summary: 'Drafted three positioning options' }),
+      },
+    });
+    expect(terminal?.notification).not.toBeNull();
+
+    const projected = JSON.parse(
+      (await handlers.list_goal_tasks({ goal_id: goal.id })).content[0].text
+    );
+    expect(projected.tasks.map((t: { id: string }) => t.id)).toContain(delegatedTask.id);
+
+    const discovery = JSON.parse((await handlers.review_goal_outcome({})).content[0].text);
+    expect(discovery.discovery).toBe(true);
+    expect(discovery.notifications.map((n: { id: string }) => n.id)).toEqual([
+      terminal?.notification?.id,
+    ]);
+
+    const reviewed = JSON.parse(
+      (
+        await handlers.review_goal_outcome({
+          notification_id: terminal?.notification?.id,
+          goal_id: goal.id,
+          task_id: delegatedTask.id,
+          summary: 'Positioning options drafted; picking direction next',
+          next_steps: ['Pick the lead positioning option'],
+          observations: [{ key: 'options_drafted', value: 3 }],
+        })
+      ).content[0].text
+    );
+    expect(reviewed.success).toBe(true);
+    expect(reviewed.goal.summary).toBe('Positioning options drafted; picking direction next');
+    expect(reviewed.goal.metrics.options_drafted).toBe(3);
+
+    const followUp = JSON.parse(
+      (await handlers.trigger_goal_task({ goal_id: goal.id })).content[0].text
+    );
+    expect(followUp.success).toBe(true);
+    expect(followUp.task.goalId).toBe(goal.id);
+    expect(goalService.getGoal(goal.id)?.activeTaskId).toBe(followUp.task.id);
   });
 });
 

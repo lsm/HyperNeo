@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateSpaceGoalParams,
@@ -8,8 +8,8 @@ import type {
   SpaceGoalStatus,
   UpdateSpaceGoalParams,
 } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
-import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { SQLiteValue } from '../types.ts';
 
 export class SpaceGoalRepository {
   constructor(

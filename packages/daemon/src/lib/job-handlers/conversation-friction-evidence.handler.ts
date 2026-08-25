@@ -1,5 +1,5 @@
-import type { Job } from '../../storage/repositories/job-queue-repository';
-import type { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service';
+import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import type { EvolutionConversationAnalysisService } from '../space/evolution-conversation-analysis-service.ts';
 
 export interface ConversationFrictionEvidenceJobPayload {
   scopeId: string;

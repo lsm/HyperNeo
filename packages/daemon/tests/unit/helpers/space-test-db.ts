@@ -514,6 +514,48 @@ export function createSpaceTables(db: BunDatabase): void {
     ON space_goal_outcome_notifications(goal_id, status, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_task
     ON space_goal_outcome_notifications(task_id, terminal_generation)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_pending_created
+    ON space_goal_outcome_notifications(status, created_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_outcome_notifications_space_pending
+    ON space_goal_outcome_notifications(space_id, status, created_at)`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_agent_inactivity_config (
+      id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      threshold_ms INTEGER,
+      prompt TEXT,
+      config_revision INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(space_id, agent_id),
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_agent_inactivity_claims (
+      id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      claim_key TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'accepted'
+        CHECK(state IN ('none', 'accepted', 'in_flight')),
+      window_anchored_at INTEGER NOT NULL,
+      attempt_generation INTEGER NOT NULL DEFAULT 0,
+      owner_token TEXT,
+      config_revision INTEGER,
+      degraded INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(space_id, agent_id),
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agent_inactivity_claims_space
+    ON space_agent_inactivity_claims(space_id, agent_id)`);
   createWorkflowEventSubscriptionTables(db);
 
   db.exec(`
@@ -555,7 +597,8 @@ export function createSpaceTables(db: BunDatabase): void {
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
-			id TEXT PRIMARY KEY,
+			seq INTEGER PRIMARY KEY,
+			id TEXT NOT NULL UNIQUE,
 			session_id TEXT NOT NULL,
 			message_type TEXT NOT NULL,
 			message_subtype TEXT,
@@ -607,8 +650,6 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(session_id, send_status, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
 		ON sdk_messages(task_id, timestamp)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session
-		ON sdk_messages(task_id, session_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
 		ON sdk_messages(task_id, conversation_turn_index)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
@@ -728,8 +769,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			delivered_session_id TEXT,
 			expires_at INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (target_agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
   db.exec(

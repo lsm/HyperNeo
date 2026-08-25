@@ -1,9 +1,9 @@
-import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository';
+import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import {
   type AgentMessageLevel,
   formatAgentMessage,
   REPLY_PROTOCOL,
-} from '../agent-message-envelope';
+} from '../agent-message-envelope.ts';
 
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
 const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = `\n\n─── Reply ───\n${REPLY_PROTOCOL}\nTo reply, use: `;

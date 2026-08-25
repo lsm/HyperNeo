@@ -21,6 +21,7 @@ describe('Migration 157: archive terminal Space task worker sessions', () => {
         task_agent_session_id TEXT
       );
       CREATE TABLE message_search_content (
+        id INTEGER PRIMARY KEY,
         kind TEXT NOT NULL,
         source_id TEXT NOT NULL,
         session_id TEXT

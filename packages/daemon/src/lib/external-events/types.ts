@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared/message-hub/message-hub.ts';
-import type { ExternalEventPublisher } from './external-event-service';
+import type { ExternalEventPublisher } from './external-event-service.ts';
 
 export interface ExternalEvent {
   id: string;

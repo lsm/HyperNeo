@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 
 export interface PollCursor {
@@ -17,6 +17,12 @@ export interface PollCursor {
   pullsSeedInProgress?: boolean;
   seenReactionIds?: Record<string, boolean>;
   reactionEtags?: Record<number, string>;
+  mergeConflictStates?: Record<number, boolean>;
+  mergeConflictSequences?: Record<number, number>;
+  mergeConflictEtags?: Record<number, string>;
+  seenReviewIds?: Record<string, boolean>;
+  reviewEtags?: Record<number, string>;
+  reviewLastSeenAt?: Record<number, number>;
   endpointLastSeenAt?: Record<string, number>;
   endpointPendingLastSeenAt?: Record<string, number>;
   lastPollError?: string | null;

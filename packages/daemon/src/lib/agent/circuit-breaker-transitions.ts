@@ -1,5 +1,5 @@
 import { matchPromptTooLong, PROMPT_TOO_LONG_RE } from '@hyperneo/shared/provider/error-taxonomy';
-import { TRANSIENT_CONNECTION_ERROR_REGEXES } from './transient-error-patterns';
+import { TRANSIENT_CONNECTION_ERROR_REGEXES } from './transient-error-patterns.ts';
 
 export interface ErrorOccurrence {
   pattern: string;

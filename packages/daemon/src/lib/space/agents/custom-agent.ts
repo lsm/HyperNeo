@@ -1,5 +1,5 @@
 import { NON_DELEGATING_GENERAL_PROMPT } from '@hyperneo/prompts';
-import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
+import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session.ts';
 import type {
   AgentDefinition,
   DeclarativeToolGuard,
@@ -19,12 +19,12 @@ import { isScopedBashToolEntry } from '@hyperneo/shared';
 import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
-} from '../../../storage/repositories/agent-memory-repository';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import { inferProviderForModel } from '../../providers/registry';
-import { Logger } from '../../logger';
-import { SUB_SESSION_FEATURES } from './seed-agents';
-import { deriveWorkerDisallowedTools } from './tool-policy';
+} from '../../../storage/repositories/agent-memory-repository.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import { inferProviderForModel } from '../../providers/registry.ts';
+import { Logger } from '../../logger.ts';
+import { SUB_SESSION_FEATURES } from './seed-agents.ts';
+import { deriveWorkerDisallowedTools } from './tool-policy.ts';
 import { createHash } from 'node:crypto';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
@@ -207,9 +207,7 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
       for (const step of goal.nextSteps) sections.push(`- ${step}`);
     }
     sections.push(
-      goal.type === 'recurring'
-        ? 'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, metrics, and next steps.'
-        : 'When your work changes long-horizon state, update this goal via goal tools or mark_complete goal_update with a concise summary, progress, metrics, and next steps.'
+      'When this task finishes, record a concise outcome summary in its result. The goal owner reviews reported outcomes and applies goal updates — do not mutate the goal rolling state yourself.'
     );
   }
 

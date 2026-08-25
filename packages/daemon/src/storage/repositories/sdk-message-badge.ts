@@ -1,4 +1,4 @@
-import type { MessageAdmissionRecord } from './sdk-message-admission';
+import type { MessageAdmissionRecord } from './sdk-message-admission.ts';
 
 export type BadgeUpdateInstruction =
   | { kind: 'none' }

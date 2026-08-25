@@ -1,12 +1,12 @@
-import type { SafeFsBackendModule, SafeFsReadOptions } from './acp-safe-fs-backend';
+import type { SafeFsBackendModule, SafeFsReadOptions } from './acp-safe-fs-backend.ts';
 
 // knip-ignore-next-line
-export { decodeStatMode, isSafeFsSupported, locateStatModeOffset } from './acp-safe-fs-backend';
+export { decodeStatMode, isSafeFsSupported, locateStatModeOffset } from './acp-safe-fs-backend.ts';
 
 let backendPromise: Promise<SafeFsBackendModule> | undefined;
 
 function getSafeFsBackend(): Promise<SafeFsBackendModule> {
-  backendPromise ??= import('./acp-safe-fs-backend');
+  backendPromise ??= import('./acp-safe-fs-backend.ts');
   return backendPromise;
 }
 

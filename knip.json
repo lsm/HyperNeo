@@ -47,7 +47,12 @@
     "packages/daemon/src/lib/providers/acp-provider.ts"
   ],
   "ignoreIssues": {
+    "packages/daemon/src/lib/agent/ack-selection.ts": ["exports"],
+    "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
+    "packages/daemon/src/lib/agent/query-retry-routing.ts": ["exports"],
+    "packages/daemon/src/lib/agent/turn-end-pipeline.ts": ["exports"],
+    "packages/daemon/src/lib/agent/usage-accounting.ts": ["exports"],
     "packages/daemon/src/lib/db-query/scope-config.ts": ["exports"],
     "packages/daemon/src/lib/external-events/topic-trie.ts": ["exports"],
     "packages/daemon/src/lib/model-service.ts": ["exports"],
@@ -77,7 +82,6 @@
     "@floating-ui/dom",
     "@vitest/coverage-v8",
     "use-sync-external-store",
-    "lucide-preact",
-    "superpipe"
+    "lucide-preact"
   ]
 }

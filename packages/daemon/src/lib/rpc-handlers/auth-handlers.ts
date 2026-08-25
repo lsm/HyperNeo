@@ -10,16 +10,21 @@ import type {
   ListProviderAuthStatusResponse,
   ProviderCredentials,
 } from '@hyperneo/shared/provider';
-import type { AuthManager } from '../auth-manager';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager';
+import type { AuthManager } from '../auth-manager.ts';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import { getProviderRegistry } from '../providers/registry';
+import { getProviderRegistry } from '../providers/registry.ts';
+import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
+import {
+  applyRecordedFailureToAuthStatus,
+  classifyProviderFailure,
+} from '../providers/provider-failure-store.js';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
 async function clearCacheAndNotifyProvidersChanged(
@@ -81,6 +86,7 @@ export function setupAuthHandlers(
               needsRefresh: status.needsRefresh,
               user: status.user,
               error: status.error,
+              errorKind: status.errorKind,
             };
           } else {
             const available = await provider.isAvailable();
@@ -92,15 +98,20 @@ export function setupAuthHandlers(
           }
         } catch (error) {
           log.error(`Failed to get auth status for ${provider.id}:`, error);
+          const failure = classifyProviderFailure(error);
           authStatus = {
             id: provider.id,
             displayName: provider.displayName,
             isAuthenticated: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
+            error: failure.message,
+            errorKind: failure.errorKind,
           };
         }
 
-        return authStatus;
+        return {
+          ...authStatus,
+          ...applyRecordedFailureToAuthStatus(provider.id, authStatus),
+        };
       })
     );
 
@@ -179,8 +190,10 @@ export function setupAuthHandlers(
       }
 
       try {
-        const hasEnvironmentCredentials =
-          credentialManager?.hasEnvironmentCredentials(providerId) ?? false;
+        const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
+          'provider-credential-manager.hasEnvironmentCredentials',
+          () => credentialManager?.hasEnvironmentCredentials(providerId) ?? false
+        );
         if (!provider.logout && hasEnvironmentCredentials) {
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           return {
@@ -238,7 +251,12 @@ export function setupAuthHandlers(
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
           }
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        const refused =
+          error instanceof Error &&
+          (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
+        if (!refused) {
+          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,

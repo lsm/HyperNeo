@@ -454,11 +454,11 @@ describe('SpaceRepository', () => {
 
     it('deletes task search rows before task rows cascade', () => {
       db.exec(`
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
       const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });
@@ -475,7 +475,7 @@ describe('SpaceRepository', () => {
 
       const rows = db
         .prepare(
-          `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+          `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
         )
         .all('needle') as Array<{ source_id: string }>;
       expect(rows.map((row) => row.source_id)).toEqual(['task-2']);
@@ -483,12 +483,12 @@ describe('SpaceRepository', () => {
 
     it('purges pending message rows for the deleted space', () => {
       db.exec(`
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
 					CREATE TABLE message_search_pending (message_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       const deleted = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
       const kept = repo.createSpace({ workspacePath: '/workspace/b', slug: 'b', name: 'B' });

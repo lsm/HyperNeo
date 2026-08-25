@@ -1,4 +1,4 @@
-import { Logger } from './logger';
+import { Logger } from './logger.ts';
 
 const DEFAULT_MESSAGE_SEARCH_MERGE_TIMEOUT_MS = 30_000;
 

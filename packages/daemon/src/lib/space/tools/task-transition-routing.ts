@@ -1,7 +1,7 @@
 import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import type { AutonomyAdmissionDenyReason } from './tool-admission-gates';
-import { isAgentCeilingBinding } from './tool-admission-gates';
+import type { AutonomyAdmissionDenyReason } from './tool-admission-gates.ts';
+import { isAgentCeilingBinding } from './tool-admission-gates.ts';
 
 export interface TaskUpdateRoutingInput {
   hasChanges: boolean;

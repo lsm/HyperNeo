@@ -166,6 +166,171 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
   });
 
+  describe('deliverMessage — role-arbitration call-site characterization (A1b)', () => {
+    function seedActiveJob(uuid: string, role: 'turn' | 'steer'): void {
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: { sessionId: SESSION, messageUuid: uuid, role, origin: 'chat' },
+        maxRetries: 8,
+      });
+    }
+
+    function jobsForUuid(uuid: string): Job[] {
+      return jobsFor(repo, SESSION).filter(
+        (j) => (j.payload as { messageUuid?: string }).messageUuid === uuid
+      );
+    }
+
+    const reuseRows: Array<{
+      name: string;
+      existingRole: 'turn' | 'steer';
+      requested?: 'turn' | 'steer';
+    }> = [
+      {
+        name: 'an active same-UUID turn is reused under an implicit request',
+        existingRole: 'turn',
+      },
+      {
+        name: 'an active same-UUID turn wins over a requested turn (no new job, no throw)',
+        existingRole: 'turn',
+        requested: 'turn',
+      },
+      {
+        name: 'an active same-UUID turn wins over a requested steer',
+        existingRole: 'turn',
+        requested: 'steer',
+      },
+      {
+        name: 'an active same-UUID steer is reused under an implicit request',
+        existingRole: 'steer',
+      },
+      {
+        name: 'an active same-UUID steer wins over a requested turn',
+        existingRole: 'steer',
+        requested: 'turn',
+      },
+      {
+        name: 'an active same-UUID steer wins over a requested steer',
+        existingRole: 'steer',
+        requested: 'steer',
+      },
+    ];
+
+    for (const row of reuseRows) {
+      it(row.name, () => {
+        seedActiveJob('uuid', row.existingRole);
+        const role = deliverMessage(repo, SESSION, 'uuid', {
+          origin: 'chat',
+          role: row.requested,
+        });
+        expect(role).toBe(row.existingRole);
+        const jobs = jobsForUuid('uuid');
+        expect(jobs).toHaveLength(1);
+        expect((jobs[0].payload as { role: string }).role).toBe(row.existingRole);
+      });
+    }
+
+    it('a fresh implicit delivery takes the turn role', () => {
+      const role = deliverMessage(repo, SESSION, 'fresh', { origin: 'chat' });
+      expect(role).toBe('turn');
+      const jobs = jobsForUuid('fresh');
+      expect(jobs).toHaveLength(1);
+      expect((jobs[0].payload as { role: string }).role).toBe('turn');
+    });
+
+    it('an implicit turn collision under an active session turn converts to steer', () => {
+      seedActiveJob('blocker', 'turn');
+      const role = deliverMessage(repo, SESSION, 'collide', { origin: 'chat' });
+      expect(role).toBe('steer');
+      const jobs = jobsForUuid('collide');
+      expect(jobs).toHaveLength(1);
+      expect((jobs[0].payload as { role: string }).role).toBe('steer');
+    });
+
+    it('an explicit requested turn succeeds when the session has no active turn', () => {
+      const role = deliverMessage(repo, SESSION, 'explicit', { origin: 'chat', role: 'turn' });
+      expect(role).toBe('turn');
+      const jobs = jobsForUuid('explicit');
+      expect(jobs).toHaveLength(1);
+      expect((jobs[0].payload as { role: string }).role).toBe('turn');
+    });
+
+    it('an explicit requested turn under an active session turn PROPAGATES the UNIQUE failure (no steer fallback)', () => {
+      seedActiveJob('blocker', 'turn');
+      const before = jobsFor(repo, SESSION).length;
+      expect(() =>
+        deliverMessage(repo, SESSION, 'rejected', { origin: 'chat', role: 'turn' })
+      ).toThrow();
+      expect(jobsFor(repo, SESSION)).toHaveLength(before);
+      expect(jobsForUuid('rejected')).toHaveLength(0);
+    });
+
+    it('an explicit requested steer succeeds even under an active session turn (steer is unconstrained)', () => {
+      seedActiveJob('blocker', 'turn');
+      const role = deliverMessage(repo, SESSION, 'steer-explicit', {
+        origin: 'chat',
+        role: 'steer',
+      });
+      expect(role).toBe('steer');
+      const jobs = jobsForUuid('steer-explicit');
+      expect(jobs).toHaveLength(1);
+      expect((jobs[0].payload as { role: string }).role).toBe('steer');
+    });
+
+    it('an active batch membership is reused — a member uuid dedups to the batch turn', () => {
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'member-a'],
+        },
+        maxRetries: 8,
+      });
+      const role = deliverMessage(repo, SESSION, 'member-a', { origin: 'chat' });
+      expect(role).toBe('turn');
+      expect(jobsForUuid('member-a')).toHaveLength(0);
+      expect(jobsFor(repo, SESSION)).toHaveLength(1);
+    });
+  });
+
+  describe('deliverMessage — role-arbitration wiring (A3b)', () => {
+    it('propagates when the steer fallback enqueue fails too — exactly two attempts, no third', () => {
+      let calls = 0;
+      const stub = {
+        getActiveDeliveryRole: () => null,
+        enqueue: () => {
+          calls++;
+          throw new Error(
+            calls === 1 ? 'UNIQUE constraint failed: job_queue.queue' : 'steer insert exploded'
+          );
+        },
+      } as unknown as JobQueueRepository;
+      expect(() => deliverMessage(stub, SESSION, 'fallback-fail', { origin: 'chat' })).toThrow(
+        /steer insert exploded/
+      );
+      expect(calls).toBe(2);
+    });
+
+    it('rethrows a non-UNIQUE enqueue failure without attempting the steer fallback', () => {
+      let calls = 0;
+      const stub = {
+        getActiveDeliveryRole: () => null,
+        enqueue: () => {
+          calls++;
+          throw new Error('disk I/O error');
+        },
+      } as unknown as JobQueueRepository;
+      expect(() => deliverMessage(stub, SESSION, 'io-fail', { origin: 'chat' })).toThrow(
+        /disk I\/O error/
+      );
+      expect(calls).toBe(1);
+    });
+  });
+
   describe('deliverAndMarkQueued — role arbitration', () => {
     it('classifies as a turn when no active turn exists (idle session)', async () => {
       const { repo } = setupRepo();

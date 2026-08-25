@@ -1,14 +1,22 @@
 import type {
+  ListRemoteModelsOptions,
+  ModelTier,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderCredentials,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
+import { fetchRemoteModelList } from './shared/model-list.js';
+import {
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 export class GlmProvider implements Provider {
   readonly id = 'glm';
@@ -24,6 +32,7 @@ export class GlmProvider implements Provider {
   };
 
   static readonly BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
+  static readonly MODEL_LIST_URL = 'https://open.bigmodel.cn/api/paas/v4/models';
 
   static readonly MODELS: ModelInfo[] = [
     {
@@ -117,9 +126,13 @@ export class GlmProvider implements Provider {
   );
 
   private credentials: ProviderCredentials | null = null;
+  private credentialsVersion = 0;
+  private credentialSignature: string | undefined;
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly DISCOVERED_MODEL_CONTEXT_WINDOW = 128_000;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -127,8 +140,18 @@ export class GlmProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.credentialsVersion++;
+      this.probeCache.clear();
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
-    this.probeCache.clear();
+  }
+
+  clearModelCache(): void {
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -149,11 +172,11 @@ export class GlmProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: 'api_key',
       error: apiKey ? undefined : 'Set GLM_API_KEY or ZHIPU_API_KEY to enable GLM models.',
-    };
+    });
   }
 
   private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
@@ -183,7 +206,73 @@ export class GlmProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(GlmProvider.BASE_URL, apiKey);
-    return GlmProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      const staticBaseIds = new Set(GlmProvider.MODELS.map((m) => GlmProvider.baseModelId(m.id)));
+      const discoveredOnly = discovered.filter(
+        (m) => !staticBaseIds.has(GlmProvider.baseModelId(m.id))
+      );
+      return mergeDiscoveredModels(GlmProvider.MODELS, discoveredOnly);
+    } catch {
+      return GlmProvider.MODELS;
+    }
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      baseUrl: GlmProvider.MODEL_LIST_URL,
+      credentialKey: this.getApiKey(),
+    });
+  }
+
+  async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('Z.ai API key not configured');
+    const credentialsVersion = this.credentialsVersion;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
+    const models = await fetchRemoteModelList({
+      url: GlmProvider.MODEL_LIST_URL,
+      headers: { Authorization: `Bearer ${apiKey}` },
+      fetchImpl: this.fetchImpl,
+    });
+    if (credentialsVersion !== this.credentialsVersion) {
+      this.clearModelCache();
+      throw new Error('Z.ai credentials changed during model discovery');
+    }
+    const discovered = models
+      .filter((model) => this.ownsModel(model.id))
+      .map((model) => this.toRemoteModelInfo(model));
+    this.discoveryCache.set(fingerprint, discovered);
+    return discovered;
+  }
+
+  private static baseModelId(id: string): string {
+    return id.toLowerCase().replace(/(\[1m\])+$/, '');
+  }
+
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
+    const baseId = GlmProvider.baseModelId(model.id);
+    const staticModel = GlmProvider.MODELS.find(
+      (candidate) => GlmProvider.baseModelId(candidate.id) === baseId
+    );
+    if (staticModel) return { ...staticModel, id: model.id };
+    return {
+      id: model.id,
+      name: model.name ?? model.id,
+      alias: model.id,
+      family: 'glm',
+      provider: this.id,
+      contextWindow: GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
+      preferContextWindowMetadata: true,
+      thinkingModes: this.capabilities.thinkingModes,
+      description: `${model.name ?? model.id} via Z.ai`,
+      releaseDate: '',
+      available: true,
+    };
   }
 
   ownsModel(modelId: string): boolean {
@@ -212,7 +301,9 @@ export class GlmProvider implements Provider {
         ? baseModelId
         : 'glm-5-turbo';
 
-    const contextWindow = GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ?? 200_000;
+    const contextWindow =
+      GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ??
+      GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
 
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,

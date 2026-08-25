@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { Database } from './index';
+import { Database } from './index.ts';
 
 export interface TableChangeScope {
   sessionId?: string;

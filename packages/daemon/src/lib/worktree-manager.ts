@@ -16,9 +16,9 @@ import type {
   GitFileDiffResponse,
   Session,
 } from '@hyperneo/shared';
-import { Logger } from './logger';
-import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
-import { gitStatusKind, parseNumstatMap, parsePorcelainStatus } from './worktree-git-output';
+import { Logger } from './logger.ts';
+import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils.ts';
+import { gitStatusKind, parseNumstatMap, parsePorcelainStatus } from './worktree-git-output.ts';
 
 export interface WorktreeInfo {
   path: string;

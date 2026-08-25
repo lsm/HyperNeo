@@ -411,6 +411,7 @@ describe('SessionRepository session-rebuild search parity', () => {
 				updated_at INTEGER
 			);
 			CREATE TABLE message_search_content (
+					id INTEGER PRIMARY KEY,
 				kind TEXT,
 				source_id TEXT,
 				message_id TEXT,
@@ -423,10 +424,10 @@ describe('SessionRepository session-rebuild search parity', () => {
 				body TEXT,
 				timestamp INTEGER
 			);
-			CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-			CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-			CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-			CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+			CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+			CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+			CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+			CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 		`);
     repository = new SessionRepository(db as any);
   });

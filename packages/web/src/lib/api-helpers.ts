@@ -222,6 +222,18 @@ export async function fetchAcpModels(
   );
 }
 
+export async function listProviderRemoteModels(
+  id: string,
+  options?: { command?: string; baseUrl?: string; force?: boolean }
+): Promise<{ models: Array<{ id: string; name?: string }> }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ models: Array<{ id: string; name?: string }> }>(
+    'providers.listRemoteModels',
+    { id, options },
+    { timeout: 30000 }
+  );
+}
+
 export async function testProvider(id: string): Promise<{ healthy: boolean; error?: string }> {
   const hub = getHubOrThrow();
   return await hub.request<{ healthy: boolean; error?: string }>(
@@ -433,6 +445,7 @@ export async function listCustomEndpointModels(data: {
   type?: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  force?: boolean;
 }): Promise<{
   models: Array<{ id: string; name?: string }>;
   fromCache: boolean;

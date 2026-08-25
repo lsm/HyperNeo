@@ -1,4 +1,4 @@
-import type { ExternalEventPublishedPayload } from './external-event-service';
+import type { ExternalEventPublishedPayload } from './external-event-service.ts';
 
 export function formatExternalEventEssence(event: ExternalEventPublishedPayload): string {
   const payload = event.payload;
@@ -58,7 +58,7 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'originalStartLine',
     ]);
   } else if (eventType === 'pull_request_review') {
-    copyExternalEventFields(essence, payload, ['state', 'submittedAt']);
+    copyExternalEventFields(essence, payload, ['state', 'submittedAt', 'commitId', 'reviewerBot']);
   } else if (eventType === 'pull_request') {
     copyExternalEventFields(essence, payload, ['state', 'headSha', 'merged', 'mergedAt', 'draft']);
   } else if (eventType === 'check_run' || event.topic.endsWith('.check_failed')) {

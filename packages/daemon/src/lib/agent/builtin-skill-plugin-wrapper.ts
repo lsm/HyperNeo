@@ -1,4 +1,4 @@
-import { getDataDir } from '../data-dir';
+import { getDataDir } from '../data-dir.ts';
 import {
   access,
   copyFile,
@@ -15,7 +15,9 @@ import {
 import { dirname, join } from 'node:path';
 import { createLogger } from '@hyperneo/shared';
 
-const log = createLogger('hyperneo:daemon:builtin-skill-plugin-wrapper');
+const log = createLogger('hyperneo:daemon:builtin-skill-plugin-wrapper', {
+  consoleDeltas: true,
+});
 
 export function defaultBuiltinSkillPluginRoot(): string {
   return join(getDataDir(), 'skill-plugins');

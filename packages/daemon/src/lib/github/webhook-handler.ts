@@ -1,7 +1,7 @@
 import type { GitHubEvent } from '@hyperneo/shared';
-import { Logger } from '../logger';
-import { normalizeWebhookEvent } from './event-normalizer';
-import type { WebhookParseResult } from './types';
+import { Logger } from '../logger.ts';
+import { normalizeWebhookEvent } from './event-normalizer.ts';
+import type { WebhookParseResult } from './types.ts';
 
 const log = new Logger('github-webhook');
 

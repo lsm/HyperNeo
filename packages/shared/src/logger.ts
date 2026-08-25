@@ -32,6 +32,10 @@ export interface LoggerConfig {
   timestamps: boolean;
 }
 
+export interface LoggerOptions {
+  consoleDeltas?: boolean;
+}
+
 export type StructuredLogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 export type StructuredLogSource = 'logger' | 'console' | 'process';
 
@@ -165,6 +169,7 @@ let globalConfig: LoggerConfig = {
 };
 
 const structuredLogSubscribers = new Set<StructuredLogSubscriber>();
+let previousLoggerConsoleTime: number | null = null;
 let consoleCaptureRestore: (() => void) | null = null;
 let consoleCaptureRefCount = 0;
 let suppressConsoleCapture = false;
@@ -339,11 +344,13 @@ export function getLoggerConfig(): LoggerConfig {
 export class Logger {
   private readonly namespace: string;
   private readonly prefix: string;
+  private readonly consoleDeltas: boolean;
   private cachedEnabled: boolean | null = null;
 
-  constructor(namespace: string = 'kai') {
+  constructor(namespace: string = 'kai', options: LoggerOptions = {}) {
     this.namespace = namespace;
     this.prefix = namespace ? `[${namespace}]` : '';
+    this.consoleDeltas = options.consoleDeltas ?? false;
   }
 
   private isEnabled(): boolean {
@@ -395,6 +402,13 @@ export class Logger {
       metadata: { loggerLevel: LOG_LEVEL_NAMES[logLevel] },
     });
     const formatted = this.formatMessage(logLevel, args);
+    if (this.consoleDeltas) {
+      const consoleTime = performance.now();
+      const delta =
+        previousLoggerConsoleTime === null ? 0 : consoleTime - previousLoggerConsoleTime;
+      previousLoggerConsoleTime = consoleTime;
+      formatted.push(`+${Math.round(delta)}ms`);
+    }
     withConsoleLogCaptureSuppressed(() => {
       console[consoleMethod](...formatted);
     });
@@ -402,7 +416,7 @@ export class Logger {
 
   child(name: string): Logger {
     const childNamespace = this.namespace ? `${this.namespace}:${name}` : name;
-    return new Logger(childNamespace);
+    return new Logger(childNamespace, { consoleDeltas: this.consoleDeltas });
   }
 
   trace(...args: unknown[]): void {
@@ -444,6 +458,6 @@ export class Logger {
   }
 }
 
-export function createLogger(namespace: string): Logger {
-  return new Logger(namespace);
+export function createLogger(namespace: string, options?: LoggerOptions): Logger {
+  return new Logger(namespace, options);
 }

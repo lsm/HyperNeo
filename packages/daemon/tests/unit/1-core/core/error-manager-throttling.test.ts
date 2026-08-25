@@ -202,4 +202,33 @@ describe('ErrorManager - Error Throttling', () => {
 
     expect(broadcastedErrors.length).toBe(6);
   });
+
+  it('captures every structured error on session.errorObserved even when the UI broadcast is throttled (Codex P2)', async () => {
+    const sessionId = 'test-session';
+    const observed: Array<{ sessionId: string; details: unknown }> = [];
+    internalEventBus.subscribe(
+      'session.errorObserved',
+      (data) => {
+        observed.push({ sessionId: data.sessionId, details: data.details });
+      },
+      { subscriberName: 'error-observed-capture-test' }
+    );
+
+    for (let i = 0; i < 10; i++) {
+      await errorManager.handleError(
+        sessionId,
+        new Error('ENOTFOUND api.anthropic.com'),
+        ErrorCategory.CONNECTION
+      );
+    }
+
+    expect(broadcastedErrors.length).toBe(3);
+    expect(observed.length).toBe(10);
+    for (const entry of observed) {
+      expect(entry.sessionId).toBe(sessionId);
+      const details = entry.details as { category: string; recoverable: boolean };
+      expect(details.category).toBe('connection');
+      expect(details.recoverable).toBe(true);
+    }
+  });
 });

@@ -121,4 +121,29 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
       'db-flip',
     ]);
   });
+
+  it('resets a stuck processing state for the dead-lettered message before settling', async () => {
+    const { settlement, calls } = recordingSettlement();
+    settlement.resetStuckProcessingState = mock(async () => {
+      calls.push('resetStuck');
+    });
+    await settleMessageDeliveryDeadLetter(CHAT_PAYLOAD, settlement);
+
+    expect(settlement.resetStuckProcessingState).toHaveBeenCalledWith('sess-1', 'uuid-2');
+    const resetIndex = calls.indexOf('resetStuck');
+    const settleIndex = calls.indexOf('settle');
+    expect(resetIndex).toBeGreaterThanOrEqual(0);
+    expect(resetIndex).toBeLessThan(settleIndex);
+  });
+
+  it('still settles when the stuck-state reset hook throws', async () => {
+    const { settlement, calls } = recordingSettlement();
+    settlement.resetStuckProcessingState = mock(async () => {
+      calls.push('resetStuck');
+      throw new Error('reset exploded');
+    });
+    await settleMessageDeliveryDeadLetter(CHAT_PAYLOAD, settlement);
+
+    expect(calls).toEqual(['markFailed', 'statusChanged', 'resetStuck', 'settle']);
+  });
 });

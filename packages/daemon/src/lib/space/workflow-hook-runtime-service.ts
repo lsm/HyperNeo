@@ -3,7 +3,7 @@ import {
   isWorkflowHookCallerAuthorized,
   type WorkflowHookInvocationContext,
   validateWorkflowHookResult,
-} from './workflow-hook-validation';
+} from './workflow-hook-validation.ts';
 
 export class WorkflowHookRuntimeService {
   isCallerAuthorized(hook: WorkflowHook, context: WorkflowHookInvocationContext): boolean {

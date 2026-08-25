@@ -1,4 +1,4 @@
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 
 export interface CompletionOptions {
   workflowRunId: string;

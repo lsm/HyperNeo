@@ -14,7 +14,10 @@ Registration criteria per suite:
 
 - **daemon-unit / web**: registration acceptable for diagnosed
   intermittent defects while a fix is pending. Keep entries dated
-  (`addedAt`/`expiresAt`) and pointed at an issue.
+  (`addedAt`/`expiresAt`) and pointed at an issue. `expiresAt` is a
+  curation marker — `flaky-test-runner` does not enforce it yet, so
+  expired entries must be retired or re-dated by hand (enforcement
+  tracked in #2851).
 - **daemon-online**: **keep zero registered entries.** Online shards run
   mocked through Dev Proxy; their flakes are almost always load/timing
   sensitivity (SDK subprocess cold-start, runner scheduling), and the
@@ -58,3 +61,23 @@ fallback; it never sleeps for a fixed duration. Flakes come from the
 When an online shard flakes: pull the shard's junit + `daemon.jsonl`
 artifacts, read the actual claim→`first_sdk_response`→`settled` timeline,
 and fix the budget or the wait condition that raced — don't register it.
+
+## Known rerun-verified CI flakes
+
+Two flakes observed on PR #2722's CI, both passing on identical-code reruns:
+
+- **Daemon Unit Tests (4-space-storage)** — `space-goal-service.test.ts`
+  "records cadence changes in the audit diff even for paused goals" asserted
+  `eventType` `'updated'` but observed `'created'` (run 32585478879,
+  passed on rerun). Registered in `flaky-tests.json` as
+  `daemon-goal-service-cadence-audit` — daemon-unit registration is allowed
+  while the intermittent defect is diagnosed.
+- **Daemon Online (lifecycle)** — the `setup-devproxy` composite action
+  failed its startup wait with "Dev Proxy stub did not become ready within
+  15 seconds" (run 32587099409, passed on rerun). Documented here instead of
+  `flaky-tests.json` for both policy and mechanical reasons: daemon-online
+  keeps zero registered entries, and the failure happens in the setup step
+  before `flaky-test-runner` (and any junit results it matches against)
+  exists, so no registry entry could ever match it. The stub
+  (`scripts/dev-proxy-stub.ts`) is dependency-free and starts before
+  `bun install`; the miss was runner startup latency, not a stub defect.

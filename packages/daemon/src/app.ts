@@ -1,17 +1,17 @@
 import { homedir } from 'os';
-import { parsePositiveInt, type Config } from './config';
-import type { WebSocketData } from './types/websocket';
-import { createHttpWsServer, type ServerHandle } from './lib/runtime-server';
-import { Database } from './storage/database';
+import { parsePositiveInt, type Config } from './config.ts';
+import type { WebSocketData } from './types/websocket.ts';
+import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
+import { Database } from './storage/database.ts';
 import {
   prefetchAgentMemoryEmbeddingModel,
   abortAgentMemoryEmbeddingModelPrefetch,
-} from './storage/repositories/agent-memory-transformers';
-import { SessionManager } from './lib/session-manager';
-import { AuthManager } from './lib/auth-manager';
-import { SettingsManager } from './lib/settings-manager';
-import { StateProjectionService } from './lib/state-projection-service';
-import { createClientEventBridge } from './lib/client-event-bridge';
+} from './storage/repositories/agent-memory-transformers.ts';
+import { SessionManager } from './lib/session-manager.ts';
+import { AuthManager } from './lib/auth-manager.ts';
+import { SettingsManager } from './lib/settings-manager.ts';
+import { StateProjectionService } from './lib/state-projection-service.ts';
+import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
   MessageHub,
@@ -22,26 +22,26 @@ import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
   type InternalEventBus,
-} from './lib/internal-event-bus';
+} from './lib/internal-event-bus.ts';
 import {
   createInternalCommandBus,
   type DaemonCommandMap,
   type InternalCommandBus,
-} from './lib/internal-command-bus';
-import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus';
-import { setupRPCHandlers } from './lib/rpc-handlers';
-import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers';
-import { WebSocketServerTransport } from './lib/websocket-server-transport';
-import { createWebSocketHandlers } from './routes/setup-websocket';
-import { createGitHubService, type GitHubService } from './lib/github/github-service';
-import { ExternalEventService, ExternalEventStore } from './lib/external-events';
-import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store';
+} from './lib/internal-command-bus.ts';
+import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
+import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
+import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
+import { createWebSocketHandlers } from './routes/setup-websocket.ts';
+import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
+import { ExternalEventService, ExternalEventStore } from './lib/external-events/index.ts';
+import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
   ExternalEventExtensionManager,
   isHttpExtension,
   isRpcExtension,
-} from './lib/external-events/extension-manager';
-import { GitHubEventExtension } from './lib/external-events/github';
+} from './lib/external-events/extension-manager.ts';
+import { GitHubEventExtension } from './lib/external-events/github/index.ts';
 import {
   initializeProviders,
   waitForOptionalProviderRegistration,
@@ -53,30 +53,34 @@ import { ProviderCredentialManager } from './lib/credentials/provider-credential
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
 import {
+  clearProviderFailureRecords,
+  subscribeProviderFailureChanges,
+} from './lib/providers/provider-failure-store.js';
+import {
   backfillDeepSeekProvider,
   migrateProvidersIfNeeded,
   refreshGlmDisplayName,
-} from './lib/credential-discovery';
-import { createReactiveDatabase } from './storage/reactive-database';
-import { LiveQueryEngine } from './storage/live-query';
-import { SpaceAgentRepository } from './storage/repositories/space-agent-repository';
-import { installProcessFatalLogging } from './lib/process-fatal-logger';
-import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service';
-import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository';
-import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository';
-import { SpaceAgentManager } from './lib/space/managers/space-agent-manager';
-import { SpaceManager } from './lib/space/managers/space-manager';
-import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service';
-import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
-import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
-import { JobQueueRepository } from './storage/repositories/job-queue-repository';
-import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor';
-import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
+} from './lib/credential-discovery.ts';
+import { createReactiveDatabase } from './storage/reactive-database.ts';
+import { LiveQueryEngine } from './storage/live-query.ts';
+import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
+import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
+import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
+import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
+import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentManager } from './lib/space/managers/space-agent-manager.ts';
+import { SpaceManager } from './lib/space/managers/space-manager.ts';
+import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
+import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager.ts';
+import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
+import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
+import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
 import {
   createMemoryConsolidationHandler,
   enqueueMemoryConsolidationIfMissing,
-} from './lib/job-handlers/memory-consolidation.handler';
-import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler';
+} from './lib/job-handlers/memory-consolidation.handler.ts';
+import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler.ts';
 import {
   JOB_QUEUE_CLEANUP,
   LONG_HORIZON_AGENT_REMINDER_FIRE,
@@ -84,33 +88,38 @@ import {
   MESSAGE_DELIVERY,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
-} from './lib/job-queue-constants';
-import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
-import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
-import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
-import { deliveryMetrics } from './lib/agent/message-delivery-metrics';
-import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
+} from './lib/job-queue-constants.ts';
+import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
+import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
+import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
+import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
+import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler.ts';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
   enqueueLongHorizonAgentReminderScanIfMissing,
   handleLongHorizonAgentReminderFire,
-} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler';
-import { longTermAgentSessionId } from './lib/space/long-term-agent-session';
-import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository';
-import { SpaceRepository } from './storage/repositories/space-repository';
-import { SpaceTaskRepository } from './storage/repositories/space-task-repository';
-import { SpaceGoalRepository } from './storage/repositories/space-goal-repository';
-import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
-import { FileIndex } from './lib/file-index';
-import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger';
-import { StructuredLogFileSink } from './lib/structured-log-file-sink';
-import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
-import { SkillsManager } from './lib/skills-manager';
+} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
+import { longTermAgentSessionId } from './lib/space/long-term-agent-session.ts';
+import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
+import { SpaceRepository } from './storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from './storage/repositories/space-task-repository.ts';
+import { SpaceGoalRepository } from './storage/repositories/space-goal-repository.ts';
+import {
+  AppMcpLifecycleManager,
+  McpImportService,
+  seedDefaultMcpEntries,
+} from './lib/mcp/index.ts';
+import { FileIndex } from './lib/file-index.ts';
+import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
+import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
+import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
+import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service.ts';
+import { SkillsManager } from './lib/skills-manager.ts';
 import {
   cleanupSuspiciousProcesses,
   ProcessWatchdog,
   type ProcessSnapshot,
-} from './lib/process-watchdog';
+} from './lib/process-watchdog.ts';
 
 async function applyStoredProviderCredentials(
   providers: Provider[],
@@ -209,9 +218,18 @@ export interface DaemonAppContext {
   cleanup: () => Promise<void>;
 }
 
+async function invalidateInFlightModelLoads(): Promise<void> {
+  try {
+    const { clearModelsCache } = await import('./lib/model-service.ts');
+    clearModelsCache();
+    clearProviderFailureRecords();
+  } catch {}
+}
+
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  let unsubscribeProviderFailureChanges: (() => void) | null = null;
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -240,23 +258,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     disposeProcessFatalLogging?.();
     await structuredLogSink?.close();
   };
-  let __startupStep = 0;
-  let __startupStart = 0;
-  let __startupPrev = 0;
-  const startupPhase = (name: string) => {
-    const now = Date.now();
-    if (__startupStart === 0) {
-      __startupStart = now;
-      __startupPrev = now;
-    }
-    const delta = now - __startupPrev;
-    __startupPrev = now;
-    if (verbose) {
-      console.log(
-        `[startup ${++__startupStep}] ${name} (+${delta}ms, total ${now - __startupStart}ms)`
-      );
-    }
-  };
+  const startupTimer = createStartupPhaseTimer(verbose ? console.log : null);
 
   try {
     options.onStructuredLogSinkReady?.(() => structuredLogSink?.flush() ?? Promise.resolve());
@@ -272,9 +274,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       });
     }
 
-    const db = new Database(config.dbPath);
+    const db = new Database(
+      config.dbPath,
+      config.sqlQueryObservability
+        ? { queryObservability: config.sqlQueryObservability }
+        : undefined
+    );
     const reactiveDb = createReactiveDatabase(db);
-    startupPhase('database initialize (open + migrate)');
+    startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
@@ -284,7 +291,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
     const unsubscribeEarlyStructuredLogs = subscribeToStructuredLogs((event) => {
       earlyLogEvidenceService.capture(event);
-      if (event.level === 'warn' || event.level === 'error' || event.level === 'fatal') {
+      if (event.level === 'fatal') {
         earlyLogEvidenceService.flush();
       }
     });
@@ -369,16 +376,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       }
     }
 
-    startupPhase('providers (register + credentials)');
+    startupTimer.start('providers (register + credentials)');
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
     await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
-    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
-      registry: providerRegistry,
-    });
 
-    startupPhase('provider sync (migrate / custom endpoints / registry)');
+    startupTimer.start('provider sync (migrate / custom endpoints / registry)');
     try {
       await migrateProvidersIfNeeded(db, credentialManager);
       await backfillDeepSeekProvider(db, credentialManager);
@@ -409,8 +413,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       authStatus.isAuthenticated || (anthropicProvider?.isAvailable() ?? false);
 
     if (hasAnthropicAuth) {
-      startupPhase('model service init (background)');
-      void import('./lib/model-service')
+      void import('./lib/model-service.ts')
         .then(({ initializeModels }) => initializeModels())
         .catch((err) => {
           logError('[Daemon] Background model initialization failed (non-fatal):', err);
@@ -420,6 +423,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo('[Daemon] Model initialization skipped - no credentials available');
     }
 
+    startupTimer.start('message hub + MCP setup');
     const router = new MessageHubRouter({
       logger: console,
       debug: config.nodeEnv === 'development',
@@ -442,6 +446,23 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
+    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges((change) => {
+      credentialManager.markProviderHealth(
+        change.providerId,
+        change.record === null ? 'healthy' : 'unhealthy'
+      );
+      internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+    });
+    const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
+      registry: providerRegistry,
+      recoverDormantProvider: async (providerId) => {
+        const { recoverDormantProvider } = await import('./lib/model-service.ts');
+        return await recoverDormantProvider(providerId);
+      },
+      onProviderChanged: () => {
+        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
+      },
+    });
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
 
@@ -453,7 +474,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     seedDefaultMcpEntries(db);
 
     const mcpImportService = new McpImportService(db);
-    startupPhase('mcp import sweep (.mcp.json)');
+    startupTimer.start('mcp import sweep (.mcp.json)');
     if (process.env.NODE_ENV !== 'test') {
       try {
         const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
@@ -476,13 +497,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     skillsManager.initializeBuiltins();
 
     try {
-      startupPhase('skill plugin wrappers');
+      startupTimer.start('skill plugin wrappers');
       await skillsManager.ensureBuiltinPluginWrappers();
     } catch (err) {
       logError('[Daemon] Failed to ensure builtin skill plugin wrappers (non-fatal):', err);
     }
 
-    startupPhase('session manager');
+    startupTimer.start('session manager');
     sessionManager = new SessionManager(
       reactiveDb.db,
       messageHub,
@@ -502,7 +523,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     sessionManager.start();
 
-    startupPhase('state projection service');
+    startupTimer.start('state projection service');
     const stateManager = new StateProjectionService(
       messageHub,
       sessionManager,
@@ -529,7 +550,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
     });
 
-    startupPhase('github service');
+    startupTimer.start('github + external event setup');
     let gitHubService: GitHubService | null = null;
     const shouldEnableGitHub = config.githubWebhookSecret || getGitHubPollingIntervalSeconds() > 0;
 
@@ -634,7 +655,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'github-polling-settings' }
     );
 
-    startupPhase('external event extensions');
+    startupTimer.start('external event extensions');
     for (const extension of extensionManager.getAll()) {
       const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
       if (!globalConfig.globallyEnabled) continue;
@@ -650,7 +671,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       logInfo(`[Daemon] Started external event extension: ${extension.sourceId}`);
     }
 
-    startupPhase('rpc handlers + space runtime provision');
+    startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
       messageHub,
       sessionManager,
@@ -684,10 +705,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceWorktreeManager,
       spaceGoalService,
       goalAutomationService,
+      spaceAgentInactivityWatchdog,
+      cancelInactivityWatchdog,
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
-    startupPhase('space runtime ready (background MCP re-attach)');
+    startupTimer.start('space runtime ready kickoff + HTTP/WS server bind');
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
@@ -779,7 +802,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
     });
 
-    startupPhase('HTTP/WS server bound — createDaemonApp init complete');
+    startupTimer.start('post-bind jobs + background services');
+    const openMessageSearchMergeGate = (): void => db.startMessageSearchMerges();
+    void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
       logInfo('[Daemon] Space runtime startup provisioning complete');
     });
@@ -828,7 +853,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
           if (!sdkRepo) return;
-          const session = sessionManager?.getSession(payload.sessionId);
+          const session =
+            taskAgentManager?.getSubSession(payload.sessionId) ??
+            sessionManager?.getSession(payload.sessionId);
           void settleMessageDeliveryDeadLetter(payload, {
             markDeliveryFailedByUuid: (sid, uuid) =>
               sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
@@ -842,6 +869,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               internalEventBus.publish('session.error', { sessionId: sid, error }),
             settleSkippedDelivery: (uuid) =>
               session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
+            resetStuckProcessingState: (sid, uuid) =>
+              session?.clearStuckProcessingState(uuid) ?? Promise.resolve(),
           }).catch(() => {});
         },
       }
@@ -1014,6 +1043,44 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       reaperTimer.unref();
     }
 
+    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityScan: Promise<void> | null = null;
+    let inactivityShutdownStarted = false;
+    if (process.env.NODE_ENV !== 'test') {
+      const scanInactivityWatchdog = (): Promise<void> => {
+        if (inactivityScan !== null) return inactivityScan;
+        const run = (async () => {
+          try {
+            const spaces = await spaceManager.listSpaces(false);
+            for (const space of spaces) {
+              await spaceAgentInactivityWatchdog.scanSpace(space.id);
+            }
+          } catch (err) {
+            logError('[Daemon] Inactivity watchdog scan failed:', err);
+          }
+        })();
+        inactivityScan = run;
+        void run.finally(() => {
+          inactivityScan = null;
+        });
+        return run;
+      };
+      let inactivitySpaceRuntimeReady = false;
+      void spaceRuntimeReadyPromise.then(() => {
+        inactivitySpaceRuntimeReady = true;
+        if (!inactivityShutdownStarted) {
+          void scanInactivityWatchdog();
+        }
+      });
+      const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+      inactivityWatchdogTimer = setInterval(() => {
+        if (inactivitySpaceRuntimeReady) {
+          void scanInactivityWatchdog();
+        }
+      }, INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS);
+      inactivityWatchdogTimer.unref();
+    }
+
     let isCleanedUp = false;
     const cleanup = async () => {
       if (isCleanedUp) {
@@ -1027,6 +1094,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       if (reaperTimer !== null) {
         clearInterval(reaperTimer);
         reaperTimer = null;
+      }
+      if (inactivityWatchdogTimer !== null) {
+        clearInterval(inactivityWatchdogTimer);
+        inactivityWatchdogTimer = null;
+      }
+      inactivityShutdownStarted = true;
+      cancelInactivityWatchdog();
+      if (inactivityScan !== null) {
+        await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
       }
 
       try {
@@ -1070,7 +1146,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
-        oauthRefreshScheduler.stop();
+        await oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');
@@ -1120,6 +1196,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
+        unsubscribeProviderFailureChanges?.();
+        await invalidateInFlightModelLoads();
 
         db.close();
 
@@ -1128,11 +1206,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('Error during cleanup:', error);
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
+        unsubscribeProviderFailureChanges?.();
+        await invalidateInFlightModelLoads();
         throw error;
       } finally {
         await closeFileLogCapture();
       }
     };
+
+    startupTimer.finish();
 
     return {
       server,
@@ -1168,7 +1250,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       cleanup,
     };
   } catch (error) {
+    startupTimer.finish();
     startupLogCaptureCleanup?.();
+    unsubscribeProviderFailureChanges?.();
+    await invalidateInFlightModelLoads();
     abortAgentMemoryEmbeddingModelPrefetch();
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;

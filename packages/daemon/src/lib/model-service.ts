@@ -1,8 +1,16 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
-import type { QueryLike } from './agent/query-like';
+import type { QueryLike } from './agent/query-like.ts';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
-import type { Provider } from '@hyperneo/shared/provider';
+import {
+  clearProviderFailure,
+  classifyProviderFailure,
+  getAllProviderFailures,
+  getProviderFailure,
+  recordClassifiedProviderFailure,
+  removeProviderFailure,
+} from './providers/provider-failure-store.js';
+import type { Provider, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
@@ -90,12 +98,48 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
   },
 ];
 
-function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
+function getCuratedModelIds(providerId: string): Set<string> | undefined {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) return undefined;
+  const curatedIds = new Set<string>();
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  for (const curated of curatedModels) {
+    curatedIds.add(curated.id);
+    if (!KimiProvider.isCapacityTaggedModelId(curated.id)) {
+      const canonical = findInModels(staticProviderModels, curated.id)?.id;
+      if (canonical) curatedIds.add(canonical);
+    }
+  }
+  return curatedIds;
+}
+
+function filterProviderModels(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const curatedIds = getCuratedModelIds(providerId);
+  return curatedIds === undefined ? models : models.filter((model) => curatedIds.has(model.id));
+}
+
+function filterModelsByCuration(models: ModelInfo[]): ModelInfo[] {
+  const curatedIdsByProvider = new Map<string, Set<string> | undefined>();
+  return models.filter((model) => {
+    if (!curatedIdsByProvider.has(model.provider)) {
+      curatedIdsByProvider.set(model.provider, getCuratedModelIds(model.provider));
+    }
+    const curatedIds = curatedIdsByProvider.get(model.provider);
+    return curatedIds === undefined || curatedIds.has(model.id);
+  });
+}
+
+function mergeWithFallbackModels(
+  providerModels: ModelInfo[],
+  unavailableProviders?: ReadonlySet<string>
+): ModelInfo[] {
   const modelMap = new Map<string, ModelInfo>();
   const registry = getProviderRegistry();
 
   for (const model of FALLBACK_MODELS) {
-    if (registry.has(model.provider)) {
+    if (registry.has(model.provider) && !unavailableProviders?.has(model.provider)) {
       modelMap.set(`${model.provider}:${model.id}`, model);
     }
   }
@@ -111,7 +155,38 @@ const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
 
-const refreshedMissingProviders = new Set<string>();
+const PROVIDER_RETRY_BACKOFF_MS = 60_000;
+
+interface ProviderRetryEntry {
+  lastAttemptAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const providerRetryEntries = new Map<string, ProviderRetryEntry>();
+
+let providerRetryGeneration = 0;
+
+let modelLoadSequence = 0;
+
+const providerAppliedSeq = new Map<string, number>();
+
+const refreshModes = new Map<string, boolean>();
+
+const pendingProviderSlices = new Map<string, ModelInfo[]>();
+
+function pendingSliceKey(cacheKey: string, providerId: string): string {
+  return `${cacheKey}:${providerId}`;
+}
+
+function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
+  let merged = models;
+  for (const [key, slice] of pendingProviderSlices) {
+    if (!key.startsWith(`${cacheKey}:`)) continue;
+    const providerId = key.slice(cacheKey.length + 1);
+    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+  }
+  return merged;
+}
 
 export async function getSupportedModelsFromQuery(
   queryObject: QueryLike | null,
@@ -145,24 +220,35 @@ function getAvailableProviders(): Provider[] {
 function applyRefreshedModels(
   cacheKey: string,
   fetchedModels: ModelInfo[],
-  previousModels: ModelInfo[] | undefined
+  previousModels: ModelInfo[] | undefined,
+  supersededProviderIds: string[] = [],
+  preservePreviousOnShrink = true,
+  unavailableProviders?: ReadonlySet<string>
 ): void {
   if (fetchedModels.length > 0) {
-    const mergedModels = mergeWithFallbackModels(fetchedModels);
-    if (previousModels && previousModels.length > mergedModels.length) {
-      modelsCache.set(cacheKey, previousModels);
+    const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
+    if (preservePreviousOnShrink && previousModels && previousModels.length > mergedModels.length) {
+      const superseded = new Set(supersededProviderIds);
+      const retainedPrevious = previousModels.filter((m) => !superseded.has(m.provider));
+      const supersededSlices = mergedModels.filter((m) => superseded.has(m.provider));
+      const overlaid =
+        superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
+      modelsCache.set(cacheKey, overlaid);
     } else {
-      modelsCache.set(cacheKey, mergedModels);
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
     }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
   }
-  if (!previousModels || previousModels.length === 0) {
-    const registry = getProviderRegistry();
-    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, filteredFallbacks);
-    cacheTimestamps.set(cacheKey, Date.now());
+  if (preservePreviousOnShrink && previousModels && previousModels.length > 0) {
+    return;
   }
+  const registry = getProviderRegistry();
+  const filteredFallbacks = FALLBACK_MODELS.filter(
+    (m) => registry.has(m.provider) && !unavailableProviders?.has(m.provider)
+  );
+  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+  cacheTimestamps.set(cacheKey, Date.now());
 }
 
 async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
@@ -175,28 +261,157 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
 
   const refreshPromise = (async () => {
     try {
-      const models = await loadModelsFromProviders();
+      const result = await loadModelsFromProviders();
       if ((cacheGeneration.get(cacheKey) ?? 0) === generationAtStart) {
-        applyRefreshedModels(cacheKey, models, previousModels);
+        const current = pruneSupersededProviders(result);
+        applyProviderLoadOutcome(current);
+        applyRefreshedModels(
+          cacheKey,
+          current.models,
+          previousModels,
+          current.supersededProviderIds
+        );
       }
       /* v8 ignore next 2 */
-    } catch {
-    } finally {
-      refreshInProgress.delete(cacheKey);
-      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-        cacheGeneration.delete(cacheKey);
-      }
-    }
+    } catch {}
   })();
 
+  refreshModes.set(cacheKey, false);
   refreshInProgress.set(cacheKey, refreshPromise);
+  void refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
+}
+
+function releaseRefreshState(cacheKey: string, refreshPromise: Promise<void>): void {
+  if (refreshInProgress.get(cacheKey) !== refreshPromise) {
+    return;
+  }
+  refreshInProgress.delete(cacheKey);
+  refreshModes.delete(cacheKey);
+  if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
+    cacheGeneration.delete(cacheKey);
+  }
 }
 
 function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boolean {
   return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
 }
 
-async function loadModelsFromProviders(): Promise<ModelInfo[]> {
+interface ProviderLoadFailure {
+  readonly providerId: string;
+  readonly errorKind: ProviderFailureErrorKind;
+  readonly message: string;
+}
+
+interface ModelsLoadResult {
+  models: ModelInfo[];
+  succeededProviderIds: string[];
+  loadedProviderIds: string[];
+  supersededProviderIds: string[];
+  failures: ProviderLoadFailure[];
+  unavailableProviderIds: string[];
+  loadSeq: number;
+  providerIds: string[];
+  forcedDiscoveryError?: unknown;
+}
+
+function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
+  const superseded = new Set(result.supersededProviderIds);
+  const newlySuperseded = result.providerIds.filter(
+    (providerId) =>
+      (providerAppliedSeq.get(providerId) ?? 0) > result.loadSeq && !superseded.has(providerId)
+  );
+  if (newlySuperseded.length === 0) return result;
+  for (const providerId of newlySuperseded) superseded.add(providerId);
+  const models = result.models.filter((m) => !m.provider || !superseded.has(m.provider));
+  for (const providerId of superseded) {
+    models.push(...(modelsCache.get('global')?.filter((m) => m.provider === providerId) ?? []));
+  }
+  return {
+    ...result,
+    models,
+    succeededProviderIds: result.succeededProviderIds.filter((id) => !superseded.has(id)),
+    loadedProviderIds: result.loadedProviderIds.filter((id) => !superseded.has(id)),
+    failures: result.failures.filter((f) => !superseded.has(f.providerId)),
+    supersededProviderIds: Array.from(superseded),
+  };
+}
+
+type ProviderModelLoadResult =
+  | { status: 'loaded'; models: ModelInfo[] }
+  | { status: 'unavailable'; models: ModelInfo[] }
+  | { status: 'failed'; models: ModelInfo[]; error?: unknown };
+
+function fallbackModelsFor(provider: Provider): ModelInfo[] {
+  const cached = provider.getCachedModels?.();
+  if (cached && cached.length > 0) {
+    return cached;
+  }
+  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+}
+
+function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) return models;
+  const knownIds = new Set(models.map((model) => model.id));
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  const missing = curatedModels.flatMap((curated) => {
+    if (knownIds.has(curated.id)) return [];
+    const known = findInModels(staticProviderModels, curated.id);
+    if (known) return [{ ...known }];
+    return [
+      {
+        id: curated.id,
+        name: curated.name ?? curated.id,
+        alias: '',
+        family: providerId,
+        provider: providerId,
+        contextWindow: 128000,
+        description: `Curated model ${curated.name ?? curated.id}`,
+        releaseDate: '',
+        available: true,
+      },
+    ];
+  });
+  return missing.length === 0 ? models : [...models, ...missing];
+}
+
+async function loadProviderModels(
+  provider: Provider,
+  options?: { forceRemote?: boolean }
+): Promise<ProviderModelLoadResult> {
+  try {
+    if (!(await provider.isAvailable())) {
+      return { status: 'unavailable', models: [] };
+    }
+    const discovered =
+      options?.forceRemote && provider.listRemoteModels
+        ? await provider.listRemoteModels({ force: true })
+        : null;
+    const models = discovered
+      ? withCuratedEntries(provider.id, discovered)
+      : await provider.getModels();
+    if (
+      models.length > 0 ||
+      provider.hasCuratedModelList?.() ||
+      getCuratedModelIds(provider.id)?.size === 0
+    ) {
+      return { status: 'loaded', models };
+    }
+    return {
+      status: 'failed',
+      models: fallbackModelsFor(provider),
+      error: new Error('Provider returned no models'),
+    };
+  } catch (error) {
+    return { status: 'failed', models: fallbackModelsFor(provider), error };
+  }
+}
+
+async function loadModelsFromProviders(options?: {
+  forceRemote?: boolean;
+}): Promise<ModelsLoadResult> {
   const registry = getProviderRegistry();
   if (registry.size === 0) {
     initializeProviders();
@@ -205,22 +420,284 @@ async function loadModelsFromProviders(): Promise<ModelInfo[]> {
     await waitForOptionalProviderRegistration(registry);
   }
   const providers = getAvailableProviders();
+  const loadSeq = ++modelLoadSequence;
 
   const results = await Promise.allSettled(
-    providers.map(async (provider) => {
-      const available = await provider.isAvailable();
-      if (!available) return [];
-      return provider.getModels();
-    })
+    providers.map((provider) => loadProviderModels(provider, options))
   );
 
   const allModels: ModelInfo[] = [];
-  results.forEach((result) => {
+  const succeededProviderIds: string[] = [];
+  const loadedProviderIds: string[] = [];
+  const supersededProviderIds: string[] = [];
+  const failures: ProviderLoadFailure[] = [];
+  const unavailableProviderIds: string[] = [];
+  let forcedDiscoveryError: unknown;
+  results.forEach((result, index) => {
+    const provider = providers[index];
     /* v8 ignore next 2 */
-    if (result.status === 'fulfilled') allModels.push(...result.value);
+    if (result.status !== 'fulfilled') return;
+    if ((providerAppliedSeq.get(provider.id) ?? 0) > loadSeq) {
+      const cachedSlice =
+        modelsCache.get('global')?.filter((m) => m.provider === provider.id) ?? [];
+      allModels.push(...cachedSlice);
+      supersededProviderIds.push(provider.id);
+      return;
+    }
+    allModels.push(...result.value.models);
+    if (result.value.status === 'failed') {
+      if (result.value.error !== undefined) {
+        failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
+        if (
+          options?.forceRemote &&
+          provider.listRemoteModels &&
+          forcedDiscoveryError === undefined
+        ) {
+          forcedDiscoveryError = result.value.error;
+        }
+      }
+      return;
+    }
+    if (result.value.status === 'unavailable') {
+      unavailableProviderIds.push(provider.id);
+      return;
+    }
+    succeededProviderIds.push(provider.id);
+    if (result.value.status === 'loaded') {
+      loadedProviderIds.push(provider.id);
+    }
   });
 
-  return allModels;
+  return {
+    models: allModels,
+    succeededProviderIds,
+    loadedProviderIds,
+    supersededProviderIds,
+    failures,
+    unavailableProviderIds,
+    loadSeq,
+    providerIds: providers.map((provider) => provider.id),
+    forcedDiscoveryError,
+  };
+}
+
+function applyProviderLoadOutcome(result: ModelsLoadResult): void {
+  const registry = getProviderRegistry();
+  for (const failure of getAllProviderFailures()) {
+    if (!registry.has(failure.providerId)) {
+      removeProviderFailure(failure.providerId);
+      clearProviderRetry(failure.providerId);
+    }
+  }
+  for (const providerId of result.succeededProviderIds) {
+    providerAppliedSeq.set(providerId, result.loadSeq);
+  }
+  for (const providerId of result.loadedProviderIds) {
+    clearProviderFailure(providerId);
+    clearProviderRetry(providerId);
+  }
+  for (const providerId of result.succeededProviderIds) {
+    if (result.loadedProviderIds.includes(providerId)) continue;
+    if (getProviderFailure(providerId)?.errorKind === 'transient') {
+      armProviderRetryTimer(providerId);
+    }
+  }
+  for (const failure of result.failures) {
+    if (!registry.has(failure.providerId)) {
+      continue;
+    }
+    providerAppliedSeq.set(failure.providerId, result.loadSeq);
+    recordClassifiedProviderFailure(failure.providerId, failure);
+    if (failure.errorKind === 'transient') {
+      armProviderRetryTimer(failure.providerId);
+    } else {
+      cancelProviderRetryTimer(failure.providerId);
+    }
+  }
+}
+
+function getOrCreateProviderRetryEntry(providerId: string): ProviderRetryEntry {
+  let entry = providerRetryEntries.get(providerId);
+  if (!entry) {
+    entry = { lastAttemptAt: Date.now(), timer: null };
+    providerRetryEntries.set(providerId, entry);
+  }
+  return entry;
+}
+
+function cancelProviderRetryTimer(providerId: string): void {
+  const entry = providerRetryEntries.get(providerId);
+  if (!entry?.timer) return;
+  clearTimeout(entry.timer);
+  entry.timer = null;
+}
+
+function clearProviderRetry(providerId: string): void {
+  cancelProviderRetryTimer(providerId);
+  providerRetryEntries.delete(providerId);
+  providerProbesInFlight.delete(providerId);
+}
+
+function armProviderRetryTimer(providerId: string): void {
+  const entry = getOrCreateProviderRetryEntry(providerId);
+  if (entry.timer) return;
+  entry.lastAttemptAt = Date.now();
+  const timer = setTimeout(() => {
+    entry.timer = null;
+    entry.lastAttemptAt = Date.now();
+    void runScheduledProviderRetry(providerId);
+  }, PROVIDER_RETRY_BACKOFF_MS);
+  timer.unref?.();
+  entry.timer = timer;
+}
+
+function cancelAllProviderRetries(): void {
+  for (const entry of providerRetryEntries.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+  }
+  providerRetryEntries.clear();
+  providerAppliedSeq.clear();
+  providerProbesInFlight.clear();
+  providerRetryGeneration += 1;
+}
+
+function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
+  const cacheKey = 'global';
+  const pending = pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId));
+  const slice = pending ?? models;
+  const existing = modelsCache.get(cacheKey);
+  if (!existing || existing.length === 0) {
+    modelsCache.set(cacheKey, mergeWithFallbackModels(slice));
+    return;
+  }
+  modelsCache.set(cacheKey, [...existing.filter((m) => m.provider !== providerId), ...slice]);
+}
+
+const PROVIDER_RETRY_PROBE_TIMEOUT_MS = 30_000;
+
+function raceProviderProbe<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), ms);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+const providerProbesInFlight = new Map<string, Promise<ProviderModelLoadResult>>();
+
+async function runScheduledProviderRetry(providerId: string): Promise<void> {
+  const generationAtStart = providerRetryGeneration;
+  const probeSeq = ++modelLoadSequence;
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) {
+    providerRetryEntries.delete(providerId);
+    return;
+  }
+  if (providerProbesInFlight.has(providerId)) {
+    armProviderRetryTimer(providerId);
+    return;
+  }
+  const probe = loadProviderModels(provider);
+  providerProbesInFlight.set(providerId, probe);
+  void probe
+    .finally(() => {
+      if (providerProbesInFlight.get(providerId) === probe) {
+        providerProbesInFlight.delete(providerId);
+      }
+    })
+    .catch(() => {});
+  const result = await raceProviderProbe(probe, PROVIDER_RETRY_PROBE_TIMEOUT_MS);
+  if (
+    providerRetryGeneration !== generationAtStart ||
+    (providerAppliedSeq.get(providerId) ?? 0) > probeSeq
+  ) {
+    return;
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    armProviderRetryTimer(providerId);
+    return;
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      unavailableProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
+    return;
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+}
+
+export type ProviderRecoveryOutcome = 'no-op' | 'recovered' | 'failed';
+
+export async function recoverDormantProvider(providerId: string): Promise<ProviderRecoveryOutcome> {
+  if (getProviderFailure(providerId)?.errorKind !== 'credential') return 'no-op';
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) return 'no-op';
+
+  clearProviderRetry(providerId);
+  provider.clearModelCache?.();
+
+  const generationAtStart = providerRetryGeneration;
+  const failureAtStart = getProviderFailure(providerId);
+  const probeSeq = ++modelLoadSequence;
+  const result = await raceProviderProbe(
+    loadProviderModels(provider),
+    PROVIDER_RETRY_PROBE_TIMEOUT_MS
+  );
+  if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    if (providerRetryGeneration === generationAtStart) {
+      armProviderRetryTimer(providerId);
+      return 'failed';
+    }
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    if (providerRetryGeneration !== generationAtStart) {
+      return getProviderFailure(providerId) ? 'failed' : 'no-op';
+    }
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      unavailableProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
+    return 'failed';
+  }
+  const currentFailure = getProviderFailure(providerId);
+  if (providerRetryGeneration !== generationAtStart && currentFailure !== failureAtStart) {
+    return currentFailure ? 'failed' : 'no-op';
+  }
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+  if (providerRetryGeneration !== generationAtStart) {
+    return 'recovered';
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  return 'recovered';
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -229,18 +706,23 @@ function isCacheStale(cacheKey: string): boolean {
   return Date.now() - timestamp > CACHE_TTL;
 }
 
-export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
+function readCachedModels(cacheKey: string): ModelInfo[] | null {
   const cachedModels = modelsCache.get(cacheKey);
-
-  if (!cachedModels || cachedModels.length === 0) {
-    return [];
+  if (!cachedModels) {
+    return null;
   }
-
   if (isCacheStale(cacheKey)) {
     triggerBackgroundRefresh(cacheKey).catch(() => {});
   }
-
+  if (cachedModels.length === 0) {
+    return null;
+  }
   return cachedModels;
+}
+
+export function getAvailableModels(cacheKey: string = 'global'): ModelInfo[] {
+  const cachedModels = readCachedModels(cacheKey);
+  return cachedModels === null ? [] : filterModelsByCuration(cachedModels);
 }
 
 export async function initializeModels(): Promise<void> {
@@ -250,31 +732,65 @@ export async function initializeModels(): Promise<void> {
     return;
   }
 
-  initializeProviders();
-  await waitForOptionalProviderRegistration();
+  const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 
-  try {
-    const models = await loadModelsFromProviders();
-    if (models.length > 0) {
-      const mergedModels = mergeWithFallbackModels(models);
-      modelsCache.set(cacheKey, mergedModels);
-      cacheTimestamps.set(cacheKey, Date.now());
-    } else {
-      throw new Error('No models returned from providers');
+  const refreshPromise = (async () => {
+    initializeProviders();
+    await waitForOptionalProviderRegistration();
+    if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+      return;
     }
-  } catch {
-    const registry = getProviderRegistry();
-    const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
-    modelsCache.set(cacheKey, filteredFallbacks);
-    cacheTimestamps.set(cacheKey, Date.now());
+    try {
+      const result = await loadModelsFromProviders();
+      const isCurrentGeneration = (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart;
+      if (!isCurrentGeneration) {
+        return;
+      }
+      applyProviderLoadOutcome(pruneSupersededProviders(result));
+      if (result.models.length > 0) {
+        const mergedModels = mergePendingProviderSlices(
+          cacheKey,
+          mergeWithFallbackModels(result.models)
+        );
+        modelsCache.set(cacheKey, mergedModels);
+        cacheTimestamps.set(cacheKey, Date.now());
+      } else {
+        throw new Error('No models returned from providers');
+      }
+    } catch {
+      if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+        return;
+      }
+      const registry = getProviderRegistry();
+      const filteredFallbacks = FALLBACK_MODELS.filter((m) => registry.has(m.provider));
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+      cacheTimestamps.set(cacheKey, Date.now());
+    }
+  })();
+
+  refreshModes.set(cacheKey, false);
+  refreshInProgress.set(cacheKey, refreshPromise);
+  await refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
+}
+
+function clearProviderModelCaches(forceRemote = false): void {
+  const registry = getProviderRegistry();
+  for (const provider of registry.getAll()) {
+    if (forceRemote && provider.listRemoteModels) {
+      continue;
+    }
+    if (provider.clearModelCache) {
+      provider.clearModelCache();
+    }
   }
 }
 
-function clearProviderModelCaches(): void {
+function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
   const registry = getProviderRegistry();
-  for (const provider of registry.getAll()) {
-    if (provider.clearModelCache) {
-      provider.clearModelCache();
+  for (const failure of result.failures) {
+    const provider = registry.get(failure.providerId);
+    if (provider?.listRemoteModels && !provider.hasCuratedModelList?.()) {
+      provider.clearModelCache?.();
     }
   }
 }
@@ -285,6 +801,13 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.delete(cacheKey);
     cacheTimestamps.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
+    refreshModes.delete(cacheKey);
+    for (const key of pendingProviderSlices.keys()) {
+      if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
+    }
+    if (cacheKey === 'global') {
+      cancelAllProviderRetries();
+    }
     if (hadInFlight || cacheGeneration.has(cacheKey)) {
       cacheGeneration.set(cacheKey, (cacheGeneration.get(cacheKey) ?? 0) + 1);
     }
@@ -293,36 +816,57 @@ export function clearModelsCache(cacheKey?: string): void {
     modelsCache.clear();
     cacheTimestamps.clear();
     refreshInProgress.clear();
+    refreshModes.clear();
     clearProviderModelCaches();
+    pendingProviderSlices.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
-    refreshedMissingProviders.clear();
+    cancelAllProviderRetries();
   }
 }
 
 export function hasRefreshBeenAttemptedFor(providerId: string): boolean {
-  return refreshedMissingProviders.has(providerId);
+  const entry = providerRetryEntries.get(providerId);
+  if (entry && Date.now() - entry.lastAttemptAt < PROVIDER_RETRY_BACKOFF_MS) {
+    return true;
+  }
+  return getProviderFailure(providerId)?.errorKind === 'credential';
 }
 
 export function markRefreshAttemptedFor(providerIds: string[]): void {
-  for (const id of providerIds) refreshedMissingProviders.add(id);
+  const now = Date.now();
+  for (const id of providerIds) {
+    getOrCreateProviderRetryEntry(id).lastAttemptAt = now;
+  }
 }
 
-export async function refreshModels(signal?: AbortSignal): Promise<void> {
+export async function refreshModels(
+  signal?: AbortSignal,
+  options?: { forceRemote?: boolean }
+): Promise<void> {
   const cacheKey = 'global';
+  const forceRemote = options?.forceRemote ?? false;
 
-  const inProgress = refreshInProgress.get(cacheKey);
-  if (inProgress) {
-    await inProgress;
-    if (signal?.aborted) {
+  for (;;) {
+    const inProgress = refreshInProgress.get(cacheKey);
+    if (!inProgress) break;
+    const joinedForced = refreshModes.get(cacheKey) ?? false;
+    const generationAtJoin = cacheGeneration.get(cacheKey) ?? 0;
+    let joinError: unknown;
+    try {
+      await inProgress;
+    } catch (error) {
+      joinError = error;
+    }
+    if (!forceRemote || signal?.aborted) {
       return;
     }
-  }
-
-  if (refreshInProgress.has(cacheKey)) {
-    await refreshInProgress.get(cacheKey);
-    return;
+    const superseded = (cacheGeneration.get(cacheKey) ?? 0) !== generationAtJoin;
+    if (!superseded && joinedForced) {
+      if (joinError !== undefined) throw joinError;
+      return;
+    }
   }
   if (signal?.aborted) {
     return;
@@ -330,28 +874,45 @@ export async function refreshModels(signal?: AbortSignal): Promise<void> {
 
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
   const previousModels = modelsCache.get(cacheKey);
-  clearProviderModelCaches();
+  clearProviderModelCaches(forceRemote);
 
   const refreshPromise = (async () => {
-    try {
-      if (signal?.aborted) {
-        return;
-      }
-      const models = await loadModelsFromProviders();
-      if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
-        return;
-      }
-      applyRefreshedModels(cacheKey, models, previousModels);
-    } finally {
-      refreshInProgress.delete(cacheKey);
-      if (!modelsCache.has(cacheKey) && !cacheTimestamps.has(cacheKey)) {
-        cacheGeneration.delete(cacheKey);
-      }
+    if (signal?.aborted) {
+      return;
     }
+    const result = await loadModelsFromProviders({ forceRemote });
+    if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
+      return;
+    }
+    const current = pruneSupersededProviders(result);
+    applyProviderLoadOutcome(current);
+    if (current.forcedDiscoveryError !== undefined) {
+      clearFailedStrictProviderCaches(current);
+      if (current.loadedProviderIds.length > 0) {
+        applyRefreshedModels(
+          cacheKey,
+          current.models,
+          undefined,
+          current.supersededProviderIds,
+          false,
+          new Set(current.unavailableProviderIds)
+        );
+      }
+      throw current.forcedDiscoveryError;
+    }
+    applyRefreshedModels(
+      cacheKey,
+      current.models,
+      previousModels,
+      current.supersededProviderIds,
+      !forceRemote,
+      forceRemote ? new Set(current.unavailableProviderIds) : undefined
+    );
   })();
 
+  refreshModes.set(cacheKey, forceRemote);
   refreshInProgress.set(cacheKey, refreshPromise);
-  await refreshPromise;
+  await refreshPromise.finally(() => releaseRefreshState(cacheKey, refreshPromise));
 }
 
 /** @public */
@@ -368,6 +929,40 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
     modelsCache.set(key, models);
     cacheTimestamps.set(key, ts);
   }
+}
+
+export function updateProviderModelsInCache(
+  providerId: string,
+  models: ModelInfo[],
+  cacheKey: string = 'global'
+): boolean {
+  const cachedModels = modelsCache.get(cacheKey);
+  if (!cachedModels) {
+    pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+    return false;
+  }
+
+  pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+  modelsCache.set(cacheKey, [
+    ...cachedModels.filter((model) => model.provider !== providerId),
+    ...models,
+  ]);
+  const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
+  const inFlight = refreshInProgress.get(cacheKey);
+  if (inFlight) {
+    inFlight
+      .then(() => {
+        if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtUpdate) return;
+        const current = modelsCache.get(cacheKey);
+        if (!current) return;
+        modelsCache.set(cacheKey, [
+          ...current.filter((model) => model.provider !== providerId),
+          ...models,
+        ]);
+      })
+      .catch(() => {});
+  }
+  return true;
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
@@ -398,7 +993,11 @@ export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo 
     for (const model of models) {
       for (const rawPrefix of model.providerAliasPrefixes ?? []) {
         const prefix = rawPrefix.toLowerCase();
-        if (normalized.startsWith(prefix) && (!bestPrefix || prefix.length > bestPrefix.length)) {
+        const boundary =
+          normalized === prefix ||
+          normalized.startsWith(`${prefix}-`) ||
+          normalized.startsWith(`${prefix}[`);
+        if (boundary && (!bestPrefix || prefix.length > bestPrefix.length)) {
           bestPrefix = { model, length: prefix.length };
         }
       }
@@ -444,7 +1043,10 @@ export async function getModelInfo(
     return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromCache) : fromCache;
   }
 
-  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const staticProviderModels = filterProviderModels(
+    providerId,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
+  );
   const staticModel = findInModels(staticProviderModels, idOrAlias) ?? null;
   return providerId === 'anthropic-copilot' && staticModel
     ? overlayCodexStaticMetadata(staticModel)
@@ -457,15 +1059,29 @@ export async function getSessionModelInfo(
 ): Promise<ModelInfo | null> {
   const providerId = session.config.provider;
   if (!providerId) return null;
-  return getModelInfo(session.config.model, cacheKey, providerId);
+  const modelInfo = await getModelInfo(session.config.model, cacheKey, providerId);
+  if (modelInfo) return modelInfo;
+  const rawModels = readCachedModels(cacheKey);
+  if (rawModels) {
+    const providerModels = rawModels.filter((m) => m.provider === providerId);
+    const fromRaw = findInModels(providerModels, session.config.model);
+    if (fromRaw) {
+      return providerId === 'anthropic-copilot' ? overlayCodexStaticMetadata(fromRaw) : fromRaw;
+    }
+  }
+  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const fromStatic = findInModels(staticProviderModels, session.config.model) ?? null;
+  return providerId === 'anthropic-copilot' && fromStatic
+    ? overlayCodexStaticMetadata(fromStatic)
+    : fromStatic;
 }
 
 export async function getModelInfoUnfiltered(
   idOrAlias: string,
   cacheKey: string = 'global'
 ): Promise<ModelInfo | null> {
-  const availableModels = getAvailableModels(cacheKey);
-  return findInModels(availableModels, idOrAlias) ?? null;
+  const cachedModels = readCachedModels(cacheKey);
+  return cachedModels === null ? null : (findInModels(cachedModels, idOrAlias) ?? null);
 }
 
 export async function isValidModel(
@@ -480,7 +1096,10 @@ export async function isValidModel(
     return true;
   }
 
-  const staticProviderModels = STATIC_MODEL_METADATA.filter((m) => m.provider === providerId);
+  const staticProviderModels = filterProviderModels(
+    providerId,
+    STATIC_MODEL_METADATA.filter((model) => model.provider === providerId)
+  );
   if (!findInModels(staticProviderModels, idOrAlias)) {
     return false;
   }
@@ -499,6 +1118,35 @@ export async function isValidModel(
   } catch {
     return false;
   }
+}
+
+export function isCuratedOutModel(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
+  const curatedIds = getCuratedModelIds(providerId);
+  if (curatedIds === undefined) {
+    return false;
+  }
+
+  const rawModels = readCachedModels(cacheKey);
+  const knownModel =
+    (rawModels &&
+      findInModels(
+        rawModels.filter((model) => model.provider === providerId),
+        idOrAlias
+      )) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+
+  if (knownModel) {
+    return !curatedIds.has(knownModel.id);
+  }
+
+  return !curatedIds.has(idOrAlias);
 }
 
 export async function resolveModelAlias(

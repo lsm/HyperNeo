@@ -1,12 +1,12 @@
 import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
-import type { SessionManager } from './session-manager';
-import type { AuthManager } from './auth-manager';
-import type { SettingsManager } from './settings-manager';
-import type { ProviderCredentialManager } from './credentials/provider-credential-manager';
-import type { Config } from '../config';
-import type { Database } from '../storage/database';
-import type { ReactiveDatabase } from '../storage/reactive-database';
-import { Logger } from './logger';
+import type { SessionManager } from './session-manager.ts';
+import type { AuthManager } from './auth-manager.ts';
+import type { SettingsManager } from './settings-manager.ts';
+import type { ProviderCredentialManager } from './credentials/provider-credential-manager.ts';
+import type { Config } from '../config.ts';
+import type { Database } from '../storage/database.ts';
+import type { ReactiveDatabase } from '../storage/reactive-database.ts';
+import { Logger } from './logger.ts';
 import type {
   SessionsState,
   SystemState,
@@ -19,9 +19,9 @@ import type {
 } from '@hyperneo/shared';
 import type { Session } from '@hyperneo/shared';
 import { ClientEventGateway, STATE_CHANNELS } from '@hyperneo/shared';
-import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
-import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
-import { sanitizeGlobalSettings } from './rpc-handlers/settings-handlers';
+import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
+import { sanitizeGlobalSettings } from './rpc-handlers/settings-handlers.ts';
 
 const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';

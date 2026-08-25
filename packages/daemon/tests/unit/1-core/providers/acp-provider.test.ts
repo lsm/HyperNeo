@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('AcpProvider', () => {
   let provider: AcpProvider;
@@ -11,10 +15,12 @@ describe('AcpProvider', () => {
     originalEnv = { ...process.env };
     delete process.env.HYPERNEO_ACP_COMMAND;
     delete process.env.HYPERNEO_ACP_CONTEXT_WINDOW;
+    resetProviderFailureStore();
     provider = new AcpProvider(process.env, noopProbe);
   });
 
   afterEach(() => {
+    resetProviderFailureStore();
     process.env = originalEnv;
   });
 
@@ -55,6 +61,30 @@ describe('AcpProvider', () => {
     it('should return false when HYPERNEO_ACP_COMMAND is empty', () => {
       process.env.HYPERNEO_ACP_COMMAND = '';
       expect(provider.isAvailable()).toBe(false);
+    });
+  });
+
+  describe('getAuthStatus', () => {
+    it('should surface a recorded credential failure as unauthenticated', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'broken-agent';
+      recordProviderFailure('acp', new Error('ACP agent process error: spawn broken-agent ENOENT'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('ACP agent process error: spawn broken-agent ENOENT');
+    });
+
+    it('should stay authenticated but degraded for a recorded transient failure', async () => {
+      process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
+      recordProviderFailure('acp', new Error('Request timed out after 10000ms: initialize'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.errorKind).toBe('transient');
+      expect(status.error).toBe('Request timed out after 10000ms: initialize');
     });
   });
 
@@ -185,10 +215,13 @@ describe('AcpProvider', () => {
     });
   });
 
-  describe('setAcpModels', () => {
+  describe('setCuratedModels', () => {
     it('should expose curated models from getModels', async () => {
       provider.setAcpCommand('devin acp');
-      provider.setAcpModels([{ id: 'devin-model-a', name: 'Model A' }, { id: 'devin-model-b' }]);
+      provider.setCuratedModels([
+        { id: 'devin-model-a', name: 'Model A' },
+        { id: 'devin-model-b' },
+      ]);
 
       const models = await provider.getModels();
 
@@ -204,7 +237,7 @@ describe('AcpProvider', () => {
         calls++;
       });
       probed.setAcpCommand('devin acp');
-      probed.setAcpModels([{ id: 'devin-model-a' }]);
+      probed.setCuratedModels([{ id: 'devin-model-a' }]);
 
       await probed.verifyCommandAvailable();
 
@@ -216,7 +249,7 @@ describe('AcpProvider', () => {
         throw new Error('probe failed');
       });
       probed.setAcpCommand('broken acp');
-      probed.setAcpModels([{ id: 'devin-model-a' }]);
+      probed.setCuratedModels([{ id: 'devin-model-a' }]);
 
       await expect(probed.verifyCommandAvailable()).rejects.toThrow('probe failed');
       await expect(probed.getModels()).rejects.toThrow('probe failed');
@@ -224,17 +257,33 @@ describe('AcpProvider', () => {
 
     it('should fall back to defaults when curated list is cleared', async () => {
       process.env.HYPERNEO_ACP_COMMAND = 'claude --acp';
-      provider.setAcpModels([{ id: 'devin-model-a' }]);
-      provider.setAcpModels(undefined);
+      provider.setCuratedModels([{ id: 'devin-model-a' }]);
+      provider.setCuratedModels(undefined);
 
       const models = await provider.getModels();
 
       expect(models[0].id).toBe('acp-default');
     });
 
+    it('should hide all models when curation is an empty list', async () => {
+      provider.setAcpCommand('devin acp');
+      provider.setCuratedModels([]);
+
+      expect(provider.getCachedModels()).toEqual([]);
+      expect(await provider.getModels()).toEqual([]);
+    });
+
+    it('should keep hiding all models across a model cache refresh', async () => {
+      provider.setAcpCommand('devin acp');
+      provider.setCuratedModels([]);
+      provider.clearModelCache();
+
+      expect(await provider.getModels()).toEqual([]);
+    });
+
     it('should not be overwritten by live config negotiation', () => {
       provider.setAcpCommand('devin acp');
-      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setCuratedModels([{ id: 'devin-model-a' }]);
       provider.setConfigOptions([
         {
           id: 'model',
@@ -249,9 +298,9 @@ describe('AcpProvider', () => {
       expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['devin-model-a']);
     });
 
-    it('should preserve default-only curation during live config negotiation', () => {
+    it('should preserve an intentionally empty curation during live config negotiation', () => {
       provider.setAcpCommand('devin acp');
-      provider.setAcpModels([]);
+      provider.setCuratedModels([]);
       provider.setConfigOptions([
         {
           id: 'model',
@@ -263,12 +312,12 @@ describe('AcpProvider', () => {
         },
       ]);
 
-      expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-default']);
+      expect(provider.getCachedModels()).toEqual([]);
     });
 
     it('should own curated model ids', () => {
       provider.setAcpCommand('devin acp');
-      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setCuratedModels([{ id: 'devin-model-a' }]);
 
       expect(provider.ownsModel('devin-model-a')).toBe(true);
       expect(provider.ownsModel('acp-default')).toBe(true);
@@ -276,7 +325,7 @@ describe('AcpProvider', () => {
 
     it('should survive clearModelCache (e.g. model refresh)', async () => {
       provider.setAcpCommand('devin acp');
-      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setCuratedModels([{ id: 'devin-model-a' }]);
       provider.clearModelCache();
 
       const models = await provider.getModels();
@@ -500,10 +549,10 @@ describe('AcpProvider', () => {
 
     it('should synthesize the default entry after curated models are cleared', () => {
       provider.setAcpCommand('devin acp');
-      provider.setAcpModels([{ id: 'devin-model-a' }]);
+      provider.setCuratedModels([{ id: 'devin-model-a' }]);
       expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['devin-model-a']);
 
-      provider.setAcpModels(undefined);
+      provider.setCuratedModels(undefined);
 
       expect(provider.getCachedModels()?.map((m) => m.id)).toEqual(['acp-default']);
     });

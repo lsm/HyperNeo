@@ -8,21 +8,22 @@ import {
   deepMergeWithDepthLimit,
   MAX_BUFFER_BYTES,
   parseJsonStdout,
-} from './script-utils';
+} from './script-utils.ts';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { validateWorkflowHookResult } from '../workflow-hook-validation';
-import type { Connector } from './connectors/connector';
+import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { validateWorkflowHookResult } from '../workflow-hook-validation.ts';
+import type { Connector } from './connectors/connector.ts';
 import {
   getConnector,
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
-} from './connectors/connector';
-import './connectors/production';
-import './built-in-validators';
-import { getBuiltInValidator } from './built-in-validator-registry';
-import { resolveGithubConfigDir } from './gh-lookup-helpers';
+} from './connectors/connector.ts';
+import './connectors/production.ts';
+import './built-in-validators/index.ts';
+import { getBuiltInValidator } from './built-in-validator-registry.ts';
+import { resolveGithubConfigDir } from './gh-lookup-helpers.ts';
 
 export interface HookExecutorContext {
   workspacePath: string;
@@ -298,7 +299,7 @@ export async function executeHookScript(
 
   let proc;
   try {
-    proc = Bun.spawn(args, {
+    proc = spawnProcess(args, {
       cwd: context.workspacePath,
       env: restrictedEnv,
       stdout: 'pipe',

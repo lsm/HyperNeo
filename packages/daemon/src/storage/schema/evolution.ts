@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export function createEvolutionTables(db: BunDatabase): void {
   db.exec(`

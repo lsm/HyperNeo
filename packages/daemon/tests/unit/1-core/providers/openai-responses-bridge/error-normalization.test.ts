@@ -6,8 +6,8 @@ import {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-function makeServer(upstream: typeof fetch): OpenAIResponsesBridgeServer {
-  return createOpenAIResponsesBridgeServer({
+async function makeServer(upstream: typeof fetch): Promise<OpenAIResponsesBridgeServer> {
+  return await createOpenAIResponsesBridgeServer({
     auth: { apiKey: 'test-key', source: 'api_key' },
     models: [
       {
@@ -64,7 +64,7 @@ describe.skipIf(!isBun)(
     });
 
     it('reclassifies a 5xx server_error body to overloaded_error (retryable)', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -82,7 +82,7 @@ describe.skipIf(!isBun)(
     });
 
     it('reclassifies a 4xx body with rate_limit_exceeded type to rate_limit_error', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -102,7 +102,7 @@ describe.skipIf(!isBun)(
       const sse =
         'event: error\n' +
         'data: {"type":"error","error":{"type":"server_error","message":"overloaded"}}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -119,7 +119,7 @@ describe.skipIf(!isBun)(
       const sse =
         'event: error\n' +
         'data: {"type":"error","error":{"message":"bad request","code":"invalid_model"}}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -134,7 +134,7 @@ describe.skipIf(!isBun)(
       const sse =
         'event: response.failed\n' +
         'data: {"type":"response.failed","response":{"error":{"type":"server_error","message":"overloaded"}}}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -151,7 +151,7 @@ describe.skipIf(!isBun)(
       const sse =
         'event: error\n' +
         'data: {"type":"error","code":"server_error","message":"the engine is overloaded"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -171,7 +171,7 @@ describe.skipIf(!isBun)(
 
     it('classifies a flat RFC 7807 problem-detail error frame (status/detail)', async () => {
       const sse = 'event: error\n' + 'data: {"status":429,"detail":"Too Many Requests"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -187,7 +187,7 @@ describe.skipIf(!isBun)(
     it('classifies a flat error frame whose data type differs from the SSE event name', async () => {
       const sse =
         'event: error\n' + 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -202,7 +202,7 @@ describe.skipIf(!isBun)(
 
     it('classifies a flat error frame with a numeric code (e.g. {"code":429})', async () => {
       const sse = 'event: error\n' + 'data: {"code":429}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -217,7 +217,7 @@ describe.skipIf(!isBun)(
 
     it('detects a data-only transient frame (no event line, known error type)', async () => {
       const sse = 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -231,7 +231,7 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a 200-with-body rate-limit error before streaming', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -250,7 +250,7 @@ describe.skipIf(!isBun)(
 
     it('normalizes a transient body on a tool-continuation 400 before falling back', async () => {
       let call = 0;
-      server = makeServer(async () => {
+      server = await makeServer(async () => {
         call += 1;
         if (call === 1) {
           return new Response(
@@ -315,7 +315,7 @@ describe.skipIf(!isBun)(
 
     it('normalizes a transient 400 on a replayed-reasoning request before self-healing', async () => {
       let call = 0;
-      server = makeServer(async () => {
+      server = await makeServer(async () => {
         call += 1;
         if (call === 1) {
           return new Response(

@@ -1,5 +1,5 @@
-import type { Database } from '../../storage/database';
-import { BUILTIN_MCP_SERVERS } from '../builtins';
+import type { Database } from '../../storage/database.ts';
+import { BUILTIN_MCP_SERVERS } from '../builtins.ts';
 
 export function seedDefaultMcpEntries(db: Database): void {
   const repo = db.appMcpServers;

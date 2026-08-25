@@ -217,6 +217,20 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
       'Per-terminal-generation outcome notifications for Space goals, with pending/superseded/acknowledged/rejected status and bounded payloads.',
   },
   {
+    tableName: 'space_agent_inactivity_config',
+    scopeColumn: 'space_id',
+    blacklistedColumns: [],
+    description:
+      'Per-agent inactivity watchdog configuration with enablement, threshold, prompt, and revision.',
+  },
+  {
+    tableName: 'space_agent_inactivity_claims',
+    scopeColumn: 'space_id',
+    blacklistedColumns: [],
+    description:
+      'Per-agent inactivity nag window claims with attempt generation, owner token, revision binding, and degraded state.',
+  },
+  {
     tableName: 'space_worktrees',
     scopeColumn: 'space_id',
     blacklistedColumns: [],
@@ -469,6 +483,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
   'migration_markers',
+  'migration_space_reclaims',
   'space_session_groups',
   'space_session_group_members',
   'space_workflow_transitions',

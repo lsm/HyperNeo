@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { createPrReadyValidator } from '../../../../src/lib/space/runtime/built-in-validators/pr-ready-validator';
+import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector';
 
@@ -15,7 +16,7 @@ function streamFromString(text: string): ReadableStream<Uint8Array> {
 function makeMockSpawn(
   results: Array<{ stdout: string; stderr: string; exitCode: number }>,
   calls?: Array<{ cmd: string[]; options?: unknown }>
-): typeof Bun.spawn {
+): SpawnFn {
   let callIndex = 0;
   return ((cmd: string[], options?: unknown) => {
     calls?.push({ cmd, options });
@@ -26,7 +27,7 @@ function makeMockSpawn(
         exited: Promise.resolve(0),
         pid: 12345,
         kill() {},
-      } as unknown as ReturnType<typeof Bun.spawn>;
+      } as unknown as SpawnProcess;
     }
     const result = results[callIndex++] ?? { stdout: '', stderr: '', exitCode: 1 };
     return {
@@ -35,8 +36,8 @@ function makeMockSpawn(
       exited: Promise.resolve(result.exitCode),
       pid: 12345,
       kill() {},
-    } as unknown as ReturnType<typeof Bun.spawn>;
-  }) as unknown as typeof Bun.spawn;
+    } as unknown as SpawnProcess;
+  }) as unknown as SpawnFn;
 }
 
 function makeContext(prUrl?: string): HookExecutorContext {

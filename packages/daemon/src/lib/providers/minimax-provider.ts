@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  ListRemoteModelsOptions,
   ModelTier,
   Provider,
   ProviderAuthStatusInfo,
@@ -8,7 +9,14 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { buildModelListUrl, fetchRemoteModelList } from './shared/model-list.js';
+import {
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 export class MinimaxProvider implements Provider {
   readonly id = 'minimax';
@@ -24,6 +32,7 @@ export class MinimaxProvider implements Provider {
   };
 
   static readonly BASE_URL = 'https://api.minimax.io/anthropic';
+  static readonly MODEL_LIST_BASE_URL = 'https://api.minimax.io/v1';
 
   static readonly MODELS: ModelInfo[] = [
     {
@@ -75,6 +84,7 @@ export class MinimaxProvider implements Provider {
   private credentials: ProviderCredentials | null = null;
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
 
   constructor(
@@ -85,6 +95,11 @@ export class MinimaxProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
+    this.discoveryCache.clear();
+  }
+
+  clearModelCache(): void {
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -104,11 +119,11 @@ export class MinimaxProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: 'api_key',
       error: apiKey ? undefined : 'Set MINIMAX_API_KEY to enable MiniMax models.',
-    };
+    });
   }
 
   private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
@@ -138,7 +153,47 @@ export class MinimaxProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(MinimaxProvider.BASE_URL, apiKey);
-    return MinimaxProvider.MODELS;
+    try {
+      const discovered = await this.listRemoteModels();
+      return mergeDiscoveredModels(MinimaxProvider.MODELS, discovered);
+    } catch {
+      return MinimaxProvider.MODELS;
+    }
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      baseUrl: MinimaxProvider.MODEL_LIST_BASE_URL,
+      credentialKey: this.getApiKey(),
+    });
+  }
+
+  async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('MiniMax API key not configured');
+    const cacheable = options.baseUrl === undefined;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force && cacheable) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
+    const configuredBaseUrl = options.baseUrl?.trim().replace(/\/+$/, '');
+    const baseUrl =
+      configuredBaseUrl?.toLowerCase() === MinimaxProvider.BASE_URL.toLowerCase()
+        ? MinimaxProvider.MODEL_LIST_BASE_URL
+        : (configuredBaseUrl ?? MinimaxProvider.MODEL_LIST_BASE_URL);
+    const models = await fetchRemoteModelList({
+      url: buildModelListUrl(baseUrl, 'openai-chat'),
+      headers: { Authorization: `Bearer ${apiKey}` },
+      fetchImpl: this.fetchImpl,
+    });
+    const discovered = models
+      .filter((model) => this.ownsModel(model.id))
+      .map((model) => this.toRemoteModelInfo(model));
+    if (cacheable) {
+      this.discoveryCache.set(fingerprint, discovered);
+    }
+    return discovered;
   }
 
   ownsModel(modelId: string): boolean {
@@ -182,6 +237,22 @@ export class MinimaxProvider implements Provider {
 
   getTitleGenerationModel(): string {
     return 'MiniMax-M2.7';
+  }
+
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
+    const staticModel = MinimaxProvider.MODELS.find((candidate) => candidate.id === model.id);
+    if (staticModel) return staticModel;
+    return {
+      id: model.id,
+      name: model.name ?? model.id,
+      alias: model.id,
+      family: 'minimax',
+      provider: this.id,
+      contextWindow: this.capabilities.maxContextWindow,
+      description: `${model.name ?? model.id} via MiniMax`,
+      releaseDate: '',
+      available: true,
+    };
   }
 
   async shutdown(): Promise<void> {}

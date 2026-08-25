@@ -9,7 +9,10 @@ import {
   mergeProviderEnvVars,
   resetProviderServiceInstance,
 } from '../../../../src/lib/provider-service';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import {
+  markBuiltInProviderDisabled,
+  resetProviderFactory,
+} from '../../../../src/lib/providers/factory';
 import { ProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 
 class MockProvider implements Provider {
@@ -329,6 +332,7 @@ describe('ProviderService', () => {
 
     resetProviderRegistry();
     resetProviderFactory();
+    markBuiltInProviderDisabled('anthropic-copilot');
 
     registry = new ProviderRegistry();
     registry.register(new AnthropicMockProvider(true));

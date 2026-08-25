@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { isAbsolute, join, resolve } from 'path';
 import type { AppMcpServer, CreateAppMcpServerRequest } from '@hyperneo/shared';
-import type { Database } from '../../storage/database';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/database.ts';
+import { Logger } from '../logger.ts';
 
 export interface ImportResult {
   sourcePath: string;

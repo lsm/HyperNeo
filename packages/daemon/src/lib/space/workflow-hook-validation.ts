@@ -8,12 +8,12 @@ import {
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
   isRegisteredConnector,
-} from './runtime/connectors/connector';
-import './runtime/built-in-validators';
+} from './runtime/connectors/connector.ts';
+import './runtime/built-in-validators/index.ts';
 import {
   getRegisteredBuiltInValidatorIds,
   isRegisteredBuiltInValidator,
-} from './runtime/built-in-validator-registry';
+} from './runtime/built-in-validator-registry.ts';
 
 const VALID_METHODS = new Set([
   'send_message',

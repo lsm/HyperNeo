@@ -1,7 +1,7 @@
 import { appendFile, chmod, mkdir, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import type { StructuredLogEvent } from '@hyperneo/shared';
-import { withConsoleLogCaptureSuppressed } from './logger';
+import { withConsoleLogCaptureSuppressed } from './logger.ts';
 
 export interface StructuredLogFileSinkOptions {
   path: string;

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/model switching, file/git operations, MCP servers, checkpoints, and Space multi-agent workflows.
 
-- **Runtime:** Bun 1.3.14 (pinned in root `package.json`)
+- **Runtimes:** Bun 1.3.14 (pinned release runtime, root `package.json`) and Deno 2.9.x (supported alternative for the daemon; see `docs/supported-runtimes.md`)
 - **Backend:** Hono, Claude Agent SDK, SQLite
 - **Frontend:** Preact + Signals + Vite + Tailwind; use Preact conventions, not React-specific APIs
 - **Transport:** custom MessageHub RPC/pub-sub protocol over WebSocket
@@ -33,6 +33,9 @@ Workspace aliases resolve directly to source: `@hyperneo/shared`, `@hyperneo/dae
 # Development — always isolate the DB in a worktree
 make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
 
+# Daemon under Deno (dual support) — same DB isolation rule; needs `bun install` first
+cd packages/daemon && DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db bun run dev:deno
+
 # Quality
 bun run check        # lint, types, knip, session/schema/test-quality guards
 bun run lint:fix
@@ -40,7 +43,7 @@ bun run format
 
 # Tests — never run `bun test` from repository root
 ./scripts/test-daemon.sh                  # all daemon shards
-./scripts/test-daemon.sh 5-space-runtime-a # one shard
+./scripts/test-daemon.sh 5-space-a # one shard
 ./scripts/test-daemon.sh --rerun
 cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/web && bunx vitest run src/some-test.test.ts
@@ -59,6 +62,7 @@ Prefer unit/component tests; add E2E coverage only when explicitly requested or 
 - Zero comments in `.ts`/`.tsx` sources: no line, block, or JSDoc comments — enforced by `bun run check:no-comments` (CI). Exempt functional directives only: shebangs, `/// <reference>`, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore`, coverage ignores (`v8`/`istanbul`/`c8`).
 - Oxlint rejects explicit `any`, unused variables, and `console.*` in application code. Entry points and tests are exempt; conditional startup logging uses `const logInfo = verbose ? console.log : () => {};`.
 - Make surgical changes: preserve surrounding idioms and avoid unrelated cleanup.
+- Decision logic goes through SuperPipe (ADR 0004, `docs/adr/0004-superpipe-decision-pipelines.md`): before writing any gate/if-chain that decides runtime behavior, check the existing `decisionRun`/`stagedRun` pipelines under `packages/daemon/src/lib/space/runtime/` and extract a pure decision core there instead of inlining imperative branches in managers. Do not hand-roll spaghetti gate chains when a pipeline seam fits.
 - The daemon DB has a PID lock. Always provide a unique `DB_PATH` when running from a worktree.
 - Daemon startup deletes `process.env.CLAUDECODE` so SDK subprocesses can launch inside Claude Code.
 - Credential discovery in `packages/daemon/src/lib/config.ts`: environment → `~/.claude/.credentials.json` → macOS Keychain → `~/.claude/settings.json` environment block.

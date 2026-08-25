@@ -1,6 +1,6 @@
 import type { MessageHub, ToolsConfig, GlobalToolsConfig } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
-import type { AppMcpLifecycleManager } from '../mcp';
+import type { SessionManager } from '../session-manager.ts';
+import type { AppMcpLifecycleManager } from '../mcp/index.ts';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 

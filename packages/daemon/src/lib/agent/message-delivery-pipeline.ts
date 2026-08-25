@@ -1,9 +1,12 @@
-import type { SendStatus } from '../../storage/repositories/sdk-message-repository';
-import { decisionRun } from '../space/runtime/decision-pipeline';
-import type { InjectContextResetPlan, TurnEndFlushContextResetPlan } from './context-reset-planner';
-import { planInjectContextReset, planTurnEndFlushContextReset } from './context-reset-planner';
-import type { FlushDeliveryPlan, FlushMessage, FlushSkipEntry } from './message-ownership-gates';
-import { decideDeferAdmission, planFlushDelivery } from './message-ownership-gates';
+import type { SendStatus } from '../../storage/repositories/sdk-message-repository.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
+import type {
+  InjectContextResetPlan,
+  TurnEndFlushContextResetPlan,
+} from './context-reset-planner.ts';
+import { planInjectContextReset, planTurnEndFlushContextReset } from './context-reset-planner.ts';
+import type { FlushDeliveryPlan, FlushMessage, FlushSkipEntry } from './message-ownership-gates.ts';
+import { decideDeferAdmission, planFlushDelivery } from './message-ownership-gates.ts';
 
 function decided<Ctx extends { decision: unknown }>(
   ctx: Ctx,
@@ -187,10 +190,10 @@ export function decideTurnEndFlush(input: TurnEndFlushInput): TurnEndFlushPlan {
   return ctx.decision ?? { action: 'noop' };
 }
 
-export type { TurnCompletionInput, TurnCompletionOutcome } from './turn-outcome-classification';
+export type { TurnCompletionInput, TurnCompletionOutcome } from './turn-outcome-classification.ts';
 export {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
-} from './turn-outcome-classification';
+} from './turn-outcome-classification.ts';

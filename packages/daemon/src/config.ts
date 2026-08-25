@@ -1,8 +1,15 @@
 import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
-import { getDataDir } from './lib/data-dir';
+import type { SQLiteQueryObservabilityOptions } from './storage/sqlite-query-observability.ts';
+import {
+  DEFAULT_SQL_QUERY_MAX_QUERY_GROUPS,
+  DEFAULT_SQL_QUERY_SLOW_THRESHOLD_MS,
+  DEFAULT_SQL_QUERY_SUMMARY_INTERVAL_MS,
+  DEFAULT_SQL_QUERY_SUMMARY_LIMIT,
+} from './storage/sqlite-query-observability.ts';
+import { getDataDir } from './lib/data-dir.ts';
 
-import { discoverCredentials } from './lib/credential-discovery';
+import { discoverCredentials } from './lib/credential-discovery.ts';
 
 discoverCredentials();
 
@@ -28,6 +35,7 @@ export interface Config {
   structuredLogMaxBytes: number;
   structuredLogRetainedFiles: number;
   structuredLogMaxPendingBytes: number;
+  sqlQueryObservability?: SQLiteQueryObservabilityOptions;
 }
 
 export interface ConfigOverrides {
@@ -54,6 +62,10 @@ export function parsePositiveInt(raw: string | undefined, fallback: number): num
 
 function positiveOverride(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function isExplicitlyDisabled(raw: string | undefined): boolean {
+  return ['0', 'false', 'off'].includes((raw ?? '').trim().toLowerCase());
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {
@@ -83,6 +95,10 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   const defaultLogMaxBytes = 10 * 1024 * 1024;
   const defaultLogRetainedFiles = 5;
   const defaultLogMaxPendingBytes = 2 * 1024 * 1024;
+  const sqlQueryObservabilityExplicit = hyperneoEnv('SQL_QUERY_OBSERVABILITY');
+  const sqlQueryObservabilityEnabled = sqlQueryObservabilityExplicit
+    ? !isExplicitlyDisabled(sqlQueryObservabilityExplicit)
+    : nodeEnv !== 'test';
 
   return {
     port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283', 10),
@@ -121,5 +137,27 @@ export function getConfig(overrides?: ConfigOverrides): Config {
       overrides?.structuredLogMaxPendingBytes,
       parsePositiveInt(hyperneoEnv('LOG_MAX_PENDING_BYTES'), defaultLogMaxPendingBytes)
     ),
+    ...(sqlQueryObservabilityEnabled
+      ? {
+          sqlQueryObservability: {
+            slowThresholdMs: parsePositiveInt(
+              hyperneoEnv('SQL_QUERY_SLOW_THRESHOLD_MS'),
+              DEFAULT_SQL_QUERY_SLOW_THRESHOLD_MS
+            ),
+            summaryIntervalMs: parsePositiveInt(
+              hyperneoEnv('SQL_QUERY_SUMMARY_INTERVAL_MS'),
+              DEFAULT_SQL_QUERY_SUMMARY_INTERVAL_MS
+            ),
+            maxQueryGroups: parsePositiveInt(
+              hyperneoEnv('SQL_QUERY_MAX_QUERY_GROUPS'),
+              DEFAULT_SQL_QUERY_MAX_QUERY_GROUPS
+            ),
+            summaryQueryLimit: parsePositiveInt(
+              hyperneoEnv('SQL_QUERY_SUMMARY_LIMIT'),
+              DEFAULT_SQL_QUERY_SUMMARY_LIMIT
+            ),
+          } satisfies SQLiteQueryObservabilityOptions,
+        }
+      : {}),
   };
 }

@@ -13,7 +13,10 @@ import {
   SPACE_CHAT_COORDINATION_INVARIANTS,
 } from '@hyperneo/prompts';
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
-import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from './long-horizon-agent-tools';
+import {
+  LONG_HORIZON_OWNER_REVIEW_CONTRACT,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from './long-horizon-agent-tools.ts';
 
 export interface WorkflowSummary {
   id: string;
@@ -93,6 +96,8 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
 
   sections.push(`\n## Coordination Invariants\n`);
   sections.push(SPACE_CHAT_COORDINATION_INVARIANTS);
+
+  sections.push(`\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}`);
 
   sections.push(`\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`);
 

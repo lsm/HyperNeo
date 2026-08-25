@@ -7,21 +7,38 @@ import type {
   SpaceWorkflow,
   SpaceWorkflowSyncDiff,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SpaceManager } from '../space/managers/space-manager';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
+import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import {
   getBuiltInWorkflows,
   resolveBuiltInWorkflowTemplate,
   seedBuiltInWorkflows,
-} from '../space/workflows/built-in-workflows';
-import { computeWorkflowHash } from '../space/workflows/template-hash';
-import { getPresetAgentTemplates, retireRemovedPresetAgents } from '../space/agents/seed-agents';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import { Logger } from '../logger';
+} from '../space/workflows/built-in-workflows.ts';
+import { computeWorkflowHash } from '../space/workflows/template-hash.ts';
+import { getPresetAgentTemplates, retireRemovedPresetAgents } from '../space/agents/seed-agents.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('space-workflow-handlers');
+
+const DRIFT_SUMMARY_MAX_CHARS = 900;
+
+function formatDriftEntry(spaceName: string, workflowName: string, customized: boolean): string {
+  const suffix = customized ? ' (customized)' : '';
+  if (spaceName.length + workflowName.length + suffix.length + 1 <= DRIFT_SUMMARY_MAX_CHARS) {
+    return `${spaceName}/${workflowName}${suffix}`;
+  }
+  const half = Math.floor((DRIFT_SUMMARY_MAX_CHARS - suffix.length - 1) / 2);
+  return `${squeezeDriftName(spaceName, half)}/${squeezeDriftName(workflowName, half)}${suffix}`;
+}
+
+function squeezeDriftName(value: string, max: number): string {
+  if (value.length <= max) return value;
+  if (max <= 6) return value.slice(0, max);
+  return `${value.slice(0, max - 6)}...${value.slice(-3)}`;
+}
 
 const PRESET_AGENT_NAMES_LOWER = new Set(
   getPresetAgentTemplates().map((p) => p.name.toLowerCase())
@@ -212,15 +229,30 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     if (updatesAvailable.length === 0 && customizedOnlyCount === 0) return;
 
     if (updatesAvailable.length > 0) {
-      log.warn(
-        `[startup] ${updatesAvailable.length} workflow(s) have a template update available. ` +
-          `Open the Workflow List in the UI and click "Sync" to apply them.`
+      const entries = updatesAvailable.map(({ spaceName, workflowName, customized }) =>
+        formatDriftEntry(spaceName, workflowName, customized)
       );
-      for (const { spaceName, workflowName, templateName, customized } of updatesAvailable) {
-        log.warn(
-          `  • Space "${spaceName}" / Workflow "${workflowName}" (template: "${templateName}") — ` +
-            (customized ? 'update available (customized)' : 'update available')
-        );
+      const header =
+        `[startup] ${updatesAvailable.length} workflow(s) have a template update available ` +
+        `(open the Workflow List in the UI and click "Sync" to apply)`;
+      const single = `${header}: ${entries.join(', ')}`;
+      if (single.length <= DRIFT_SUMMARY_MAX_CHARS) {
+        log.warn(single);
+      } else {
+        log.warn(`${header}. Affected workflows (chunked to fit the log line cap):`);
+        const chunkPrefix = '[startup] workflow template updates (cont.) — ';
+        const chunkBudget = DRIFT_SUMMARY_MAX_CHARS - chunkPrefix.length;
+        let line = '';
+        for (const entry of entries) {
+          const candidate = line ? `${line}, ${entry}` : entry;
+          if (candidate.length > chunkBudget && line) {
+            log.warn(`${chunkPrefix}${line},`);
+            line = entry;
+          } else {
+            line = candidate;
+          }
+        }
+        if (line) log.warn(`${chunkPrefix}${line}`);
       }
     }
     if (customizedOnlyCount > 0) {

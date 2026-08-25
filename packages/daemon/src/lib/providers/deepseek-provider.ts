@@ -1,5 +1,7 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
+  ListRemoteModelsOptions,
   ModelTier,
   Provider,
   ProviderAuthStatusInfo,
@@ -8,7 +10,14 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
+import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { fetchRemoteModelList } from './shared/model-list.js';
+import {
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 export class DeepSeekProvider implements Provider {
   readonly id = 'deepseek';
@@ -24,6 +33,7 @@ export class DeepSeekProvider implements Provider {
   };
 
   static readonly BASE_URL = 'https://api.deepseek.com/anthropic';
+  static readonly MODEL_LIST_URL = 'https://api.deepseek.com/models';
   static readonly DEFAULT_MODEL = 'deepseek-v4-pro';
 
   static readonly MODELS: ModelInfo[] = [
@@ -56,8 +66,13 @@ export class DeepSeekProvider implements Provider {
   ];
 
   private credentials: ProviderCredentials | null = null;
+  private curatedModels: CuratedModel[] | undefined;
+  private credentialsVersion = 0;
+  private credentialSignature: string | undefined;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
+  private static readonly DISCOVERED_MODEL_CONTEXT_WINDOW = 128_000;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -65,8 +80,18 @@ export class DeepSeekProvider implements Provider {
   ) {}
 
   setCredentials(credentials: ProviderCredentials): void {
+    const signature = JSON.stringify(credentials);
+    if (signature !== this.credentialSignature) {
+      this.credentialsVersion++;
+      this.probeCache.clear();
+      this.clearModelCache();
+    }
+    this.credentialSignature = signature;
     this.credentials = credentials;
-    this.probeCache.clear();
+  }
+
+  clearModelCache(): void {
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -86,11 +111,11 @@ export class DeepSeekProvider implements Provider {
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
     const apiKey = this.getApiKey();
-    return {
+    return applyRecordedFailureToAuthStatus(this.id, {
       isAuthenticated: !!apiKey,
       method: 'api_key',
       error: apiKey ? undefined : 'Set DEEPSEEK_API_KEY to enable DeepSeek models.',
-    };
+    });
   }
 
   private async verifyCredentials(baseUrl: string, apiKey: string): Promise<void> {
@@ -120,7 +145,90 @@ export class DeepSeekProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(DeepSeekProvider.BASE_URL, apiKey);
-    return DeepSeekProvider.MODELS;
+    let models: ModelInfo[];
+    try {
+      const discovered = await this.listRemoteModels();
+      models = mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
+    } catch {
+      models = DeepSeekProvider.MODELS;
+    }
+    return this.mergeCuratedModels(models);
+  }
+
+  setCuratedModels(models: CuratedModel[] | undefined): void {
+    this.curatedModels = models;
+  }
+
+  getCachedModels(): ModelInfo[] | null {
+    if (!this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
+  }
+
+  private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
+    if (!this.curatedModels?.length) return models;
+    const merged = [...models];
+    const present = new Set(merged.map((model) => model.id));
+    for (const curated of this.curatedModels) {
+      if (!this.ownsModel(curated.id)) continue;
+      const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
+      if (info && !present.has(info.id)) {
+        merged.push(info);
+        present.add(info.id);
+      }
+    }
+    return merged;
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      baseUrl: DeepSeekProvider.MODEL_LIST_URL,
+      credentialKey: this.getApiKey(),
+    });
+  }
+
+  async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) throw new Error('DeepSeek API key not configured');
+    const credentialsVersion = this.credentialsVersion;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
+    const models = await fetchRemoteModelList({
+      url: DeepSeekProvider.MODEL_LIST_URL,
+      headers: { Authorization: `Bearer ${apiKey}` },
+      fetchImpl: this.fetchImpl,
+    });
+    if (credentialsVersion !== this.credentialsVersion) {
+      this.clearModelCache();
+      throw new Error('DeepSeek credentials changed during model discovery');
+    }
+    const discovered = models
+      .filter((model) => this.ownsModel(model.id))
+      .map((model) => this.toRemoteModelInfo(model));
+    this.discoveryCache.set(fingerprint, discovered);
+    return this.mergeCuratedModels(discovered);
+  }
+
+  private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
+    const staticModel = DeepSeekProvider.MODELS.find(
+      (candidate) => candidate.id === DeepSeekProvider.resolveModelId(model.id)
+    );
+    if (staticModel) return staticModel;
+    return {
+      id: model.id,
+      name: model.name ?? model.id,
+      alias: model.id,
+      family: 'deepseek',
+      provider: this.id,
+      contextWindow: DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
+      preferContextWindowMetadata: true,
+      thinkingModes: this.capabilities.thinkingModes,
+      description: `${model.name ?? model.id} via DeepSeek`,
+      releaseDate: '',
+      available: true,
+    };
   }
 
   ownsModel(modelId: string): boolean {
@@ -129,9 +237,11 @@ export class DeepSeekProvider implements Provider {
 
   private static resolveModelId(modelId: string): string | undefined {
     const normalized = modelId.toLowerCase();
-    return DeepSeekProvider.MODELS.find(
+    const staticModel = DeepSeekProvider.MODELS.find(
       (model) => model.id.toLowerCase() === normalized || model.alias.toLowerCase() === normalized
     )?.id;
+    if (staticModel) return staticModel;
+    return normalized.startsWith('deepseek-') && !normalized.includes(':') ? modelId : undefined;
   }
 
   getModelForTier(tier: ModelTier): string | undefined {
@@ -144,6 +254,9 @@ export class DeepSeekProvider implements Provider {
 
     const routingModelId =
       DeepSeekProvider.resolveModelId(modelId) ?? DeepSeekProvider.DEFAULT_MODEL;
+    const staticModel = DeepSeekProvider.MODELS.find((model) => model.id === routingModelId);
+    const contextWindow =
+      staticModel?.contextWindow ?? DeepSeekProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
     return {
       envVars: {
         ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || DeepSeekProvider.BASE_URL,
@@ -151,7 +264,7 @@ export class DeepSeekProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow),
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
@@ -162,9 +275,10 @@ export class DeepSeekProvider implements Provider {
   }
 
   translateModelIdForSdk(modelId: string): string {
-    return DeepSeekProvider.resolveModelId(modelId) === 'deepseek-v4-pro'
-      ? 'claude-opus-4-6[1m]'
-      : 'claude-sonnet-4-6[1m]';
+    const resolvedModelId = DeepSeekProvider.resolveModelId(modelId);
+    if (resolvedModelId === 'deepseek-v4-pro') return 'claude-opus-4-6[1m]';
+    if (resolvedModelId === 'deepseek-v4-flash') return 'claude-sonnet-4-6[1m]';
+    return resolvedModelId ?? 'claude-sonnet-4-6[1m]';
   }
 
   getTitleGenerationModel(): string {
