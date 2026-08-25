@@ -602,6 +602,16 @@ describe('ProcessingStateManager', () => {
       await waiterA.promise;
     });
 
+    test('cancelling an unconsumed fence clears the in-flight terminal idle flag', async () => {
+      const fence = manager.beginTerminalIdle();
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+
+      manager.cancelTerminalFence(fence);
+
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+      expect(manager.isTerminalIdlePending()).toBe(false);
+    });
+
     test('a stalled predecessor settling first consumes only its own fence', async () => {
       const ownerA = manager.admitDeliveryTurn();
       const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);

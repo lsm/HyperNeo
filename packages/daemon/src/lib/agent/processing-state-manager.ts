@@ -151,6 +151,7 @@ export class ProcessingStateManager {
     const fenceIndex = this.pendingFenceOwners.indexOf(fence);
     if (fenceIndex >= 0) {
       this.pendingFenceOwners.splice(fenceIndex, 1);
+      this.terminalIdleTransitions -= 1;
     }
   }
 
