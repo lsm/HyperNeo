@@ -42,12 +42,37 @@ export type TurnEndPipelineInput = Omit<
 >;
 
 function applyUsageAccountingGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
+  const result = ctx.event.kind === 'result' ? ctx.event.result : null;
+  const accountUsage =
+    result?.isTopLevel === true && result.isSuccess && result.isLimitRecoveryEngaged !== null;
+  if (ctx.resultUsage === null || !accountUsage) {
+    return { ...ctx, usage: ctx.usageState };
+  }
+  return { ...ctx, usage: recordResultUsage(ctx.usageState, ctx.resultUsage) };
+}
+
+export function selectTurnEndAckRow(
+  row: TurnEndAckRow,
+  activeMessageId: string | null
+): TurnEndAckSelection | null {
+  if (
+    !isTurnEndAckEligible({
+      uuid: row.uuid,
+      activeMessageId,
+      durableOwned: row.durableOwned,
+      yielded: row.yielded,
+      pendingOrClaimed: row.pendingOrClaimed,
+    })
+  ) {
+    return null;
+  }
   return {
-    ...ctx,
-    usage:
-      ctx.resultUsage === null
-        ? ctx.usageState
-        : recordResultUsage(ctx.usageState, ctx.resultUsage),
+    messageId: row.uuid,
+    deliveryUuids: composeTurnEndDeliveryUuids({
+      messageId: row.uuid,
+      yielded: row.yielded,
+      batchUuids: row.batchUuids,
+    }),
   };
 }
 
@@ -63,23 +88,8 @@ function applyAckSelectionGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
     return { ...ctx, ackSelection: [] };
   }
   const ackSelection = ctx.ackRows
-    .filter((row) =>
-      isTurnEndAckEligible({
-        uuid: row.uuid,
-        activeMessageId: ctx.activeMessageId,
-        durableOwned: row.durableOwned,
-        yielded: row.yielded,
-        pendingOrClaimed: row.pendingOrClaimed,
-      })
-    )
-    .map((row) => ({
-      messageId: row.uuid,
-      deliveryUuids: composeTurnEndDeliveryUuids({
-        messageId: row.uuid,
-        yielded: row.yielded,
-        batchUuids: row.batchUuids,
-      }),
-    }));
+    .map((row) => selectTurnEndAckRow(row, ctx.activeMessageId))
+    .filter((selection): selection is TurnEndAckSelection => selection !== null);
   return { ...ctx, ackSelection };
 }
 

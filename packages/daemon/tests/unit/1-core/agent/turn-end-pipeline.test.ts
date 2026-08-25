@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   decideTurnEnd,
+  selectTurnEndAckRow,
   type TurnEndAckRow,
   type TurnEndPipelineInput,
 } from '../../../../src/lib/agent/turn-end-pipeline';
@@ -97,30 +98,39 @@ describe('decideTurnEnd', () => {
     });
   });
 
-  const NOT_ADMITTED: Array<{ label: string; overrides: Partial<TurnEndPipelineInput> }> = [
+  const NOT_ADMITTED: Array<{
+    label: string;
+    overrides: Partial<TurnEndPipelineInput>;
+    usageFolded: boolean;
+  }> = [
     {
-      label: 'an armed idle suppression skips the fallback-ack loop',
+      label: 'an armed idle suppression skips the fallback-ack loop but still accounts usage',
       overrides: { flags: { ...resetTurnEndFlags, suppressIdleOnNextResult: true } },
+      usageFolded: true,
     },
     {
-      label: 'an already-acknowledged turn skips the fallback-ack loop',
+      label: 'an already-acknowledged turn skips the fallback-ack loop but still accounts usage',
       overrides: { acknowledgedPersistedUserThisTurn: true },
+      usageFolded: true,
     },
     {
-      label: 'an engaged limit recovery skips the fallback-ack loop',
+      label: 'an engaged limit recovery skips the fallback-ack loop but still accounts usage',
       overrides: {
         event: resultEvent({ isLimitError: true, isLimitRecoveryEngaged: true }),
       },
+      usageFolded: true,
     },
     {
-      label: 'a pre-recovery limit result defers the fallback-ack loop',
+      label: 'a pre-recovery limit result defers both the fallback-ack loop and usage accounting',
       overrides: {
         event: resultEvent({ isLimitError: true, isLimitRecoveryEngaged: null }),
       },
+      usageFolded: false,
     },
     {
-      label: 'a nested result skips the fallback-ack loop',
+      label: 'a nested result skips both the fallback-ack loop and usage accounting',
       overrides: { event: resultEvent({ isTopLevel: false }) },
+      usageFolded: false,
     },
   ];
 
@@ -128,7 +138,9 @@ describe('decideTurnEnd', () => {
     it(row.label, () => {
       const decision = decideTurnEnd(input(row.overrides));
       expect(decision.ackSelection).toEqual([]);
-      expect(decision.usage).toEqual(recordResultUsage(usageState, resultUsage));
+      expect(decision.usage).toEqual(
+        row.usageFolded ? recordResultUsage(usageState, resultUsage) : usageState
+      );
     });
   }
 
@@ -141,5 +153,15 @@ describe('decideTurnEnd', () => {
       ackSelection: [],
       plan: routeTurnEnd(flags, event, { queryMode: 'immediate' }),
     });
+  });
+
+  it('a row that gains a durable owner mid-loop revalidates to no selection', () => {
+    expect(selectTurnEndAckRow(ACK_ROWS[2], 'active-3')).toEqual({
+      messageId: 'active-3',
+      deliveryUuids: ['active-3', 'batch-1', 'batch-2'],
+    });
+    const resnapshotted: TurnEndAckRow = { ...ACK_ROWS[2], pendingOrClaimed: true };
+    expect(selectTurnEndAckRow(resnapshotted, 'active-3')).toEqual(null);
+    expect(selectTurnEndAckRow(ACK_ROWS[2], 'successor-message')).toEqual(null);
   });
 });
