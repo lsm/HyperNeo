@@ -20,7 +20,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Logger } from '../../logger.js';
 import { COPILOT_ANTHROPIC_MODELS } from './models.js';
-import { buildCommandEnv } from '../../spawn-env.ts';
+import { buildCommandEnv, envValue } from '../../spawn-env.ts';
 
 const COPILOT_GH_LOOKUP_ENV_KEYS = [
   'GH_TOKEN',
@@ -726,7 +726,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private buildGhLookupEnv(): Record<string, string> {
     const env = buildCommandEnv(this.env);
     for (const key of COPILOT_GH_LOOKUP_ENV_KEYS) {
-      const value = this.env[key];
+      const value = envValue(this.env, key);
       if (value !== undefined) env[key] = value;
     }
     return env;
@@ -744,7 +744,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private getEnterpriseDomain(): string | undefined {
-    const apiUrl = this.env.GITHUB_API_URL;
+    const apiUrl = envValue(this.env, 'GITHUB_API_URL');
     if (!apiUrl) return undefined;
     try {
       const url = new URL(apiUrl);
@@ -760,7 +760,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private getClientId(): string {
-    return this.env.GITHUB_COPILOT_CLIENT_ID || 'Iv1.b507a08c87ecfe98';
+    return envValue(this.env, 'GITHUB_COPILOT_CLIENT_ID') || 'Iv1.b507a08c87ecfe98';
   }
 
   private async startDeviceFlow(enterpriseDomain?: string): Promise<DeviceFlowResponse> {
@@ -924,7 +924,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         ...buildCommandEnv(this.env),
         COPILOT_GITHUB_TOKEN: this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN,
         GH_TOKEN: this.credentialEnvBaseline.GH_TOKEN,
-        GITHUB_API_URL: this.env.GITHUB_API_URL,
+        GITHUB_API_URL: envValue(this.env, 'GITHUB_API_URL'),
         GITHUB_COPILOT_CLIENT_ID: this.getClientId(),
       };
       if (env.COPILOT_GITHUB_TOKEN === undefined) delete env.COPILOT_GITHUB_TOKEN;

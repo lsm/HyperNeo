@@ -2189,6 +2189,48 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     expect(permitted.result.message).toContain('gh.enterprise.example');
   });
 
+  test('proxy env vars inject only when external lookups are permitted', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      HTTPS_PROXY: 'http://user:secret@proxy.corp.example:8080',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const source =
+      'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${HTTPS_PROXY:-missing}\\" }"';
+    const scriptValidator = {
+      kind: 'script' as const,
+      interpreter: 'bash' as const,
+      source,
+    };
+    const baseContext = {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+    };
+
+    const denied = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: [] }
+    );
+    const permitted = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: ['github'] }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(denied.result.message).toBe('missing');
+    expect(permitted.result.message).toBe('http://user:secret@proxy.corp.example:8080');
+  });
+
   test('process group is killed after successful script exit', async () => {
     const originalKill = process.kill;
     const killCalls: Array<{ pid: number; signal: string | number }> = [];

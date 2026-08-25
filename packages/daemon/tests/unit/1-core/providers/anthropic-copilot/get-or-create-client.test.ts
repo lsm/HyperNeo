@@ -239,4 +239,27 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
       "Failed to start GitHub Copilot client: ResolveMessage: Cannot find package '@github/copilot/sdk'"
     );
   });
+
+  it.skipIf(process.platform !== 'win32')(
+    'resolves casing-variant GitHub inputs from the captured snapshot on Windows',
+    async () => {
+      const providerVariant = new AnthropicToCopilotBridgeProvider('/tmp', {
+        Github_Api_Url: 'https://github.acme.example',
+      });
+      const getOrCreate = (
+        providerVariant as unknown as {
+          getOrCreateClient(token?: string): Promise<unknown>;
+        }
+      ).getOrCreateClient.bind(providerVariant);
+
+      const clientPromise = getOrCreate('gho_test_token');
+      startCalls[0].resolve();
+      await clientPromise;
+
+      const opts = constructOpts[constructOpts.length - 1] as {
+        env: Record<string, string | undefined>;
+      };
+      expect(opts.env.GITHUB_API_URL).toBe('https://github.acme.example');
+    }
+  );
 });

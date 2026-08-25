@@ -165,7 +165,7 @@ function buildHookRestrictedEnv(
 
   const baselineEnvKeys = new Set<string>([
     ...ALWAYS_ALLOWED_ENV_KEYS,
-    ...PROXY_TLS_ENV_KEYS,
+    ...(permittedConnectorEnvKeys.size > 0 ? PROXY_TLS_ENV_KEYS : []),
     ...permittedConnectorEnvKeys,
   ]);
   for (const key of baselineEnvKeys) {
