@@ -197,6 +197,7 @@ import {
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from './query-runner.ts';
+import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
@@ -2879,10 +2880,11 @@ export class AgentSession
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
-      for (const msg of this.db.getUserMessageIdsByStatus(this.session.id, 'submitted')) {
-        const uuid = msg.uuid;
-        if (typeof uuid !== 'string' || uuid.length === 0) continue;
-        if (activeNow.has(uuid)) continue;
+      const staleSubmitted = selectStaleSubmittedDeliveries(
+        this.db.getUserMessageIdsByStatus(this.session.id, 'submitted'),
+        activeNow
+      );
+      for (const uuid of staleSubmitted) {
         const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, uuid);
         if (dbId) {
           settled++;
