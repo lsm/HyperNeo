@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -38,6 +38,25 @@ function findFreePort(): Promise<number> {
       server.close((err) => (err ? reject(err) : resolve(port)));
     });
     server.on('error', reject);
+  });
+}
+
+function waitForProcessExit(
+  process: ChildProcess,
+  hasExited: boolean,
+  timeout: number
+): Promise<void> {
+  if (hasExited) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timed out waiting for process exit after ${timeout}ms`));
+    }, timeout);
+    process.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
   });
 }
 
@@ -103,122 +122,160 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
     detached: false,
   });
 
-  let stdoutOutput = '';
-  let stderrOutput = '';
-  let baseUrl = '';
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error('Deno daemon startup timeout')),
-      SETUP_TIMEOUT_MS
-    );
-    let portResolved = false;
-
-    const onData = (data: Buffer) => {
-      const text = data.toString();
-      stdoutOutput += text;
-      stderrOutput += text;
-      if (process.env.TEST_VERBOSE) {
-        console.error(`[DENO-DAEMON] ${text.trim()}`);
-      }
-      if (!portResolved) {
-        const match = text.match(/Port:\s*(\d+)/);
-        if (match) {
-          const port = Number.parseInt(match[1], 10);
-          baseUrl = `http://127.0.0.1:${port}`;
-          portResolved = true;
-          clearTimeout(timeout);
-          resolve();
-        }
-      }
-    };
-
-    daemonProcess.stdout?.on('data', onData);
-    daemonProcess.stderr?.on('data', onData);
-
-    daemonProcess.on('error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-
-    daemonProcess.on('exit', (code) => {
-      clearTimeout(timeout);
-      reject(
-        new Error(
-          `Deno daemon exited with code ${code}\nStdout: ${stdoutOutput}\nStderr: ${stderrOutput}`
-        )
-      );
-    });
-  });
-
-  const transport = new WebSocketClientTransport({
-    url: `${baseUrl}/ws`,
-    autoReconnect: false,
-  });
-  const messageHub = new MessageHub({ defaultSessionId: 'global' });
-  messageHub.registerTransport(transport);
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('WebSocket connection to Deno daemon timed out')),
-      WEBSOCKET_READY_TIMEOUT_MS
-    );
-    transport.onConnectionChange((state) => {
-      if (state === 'connected') {
-        clearTimeout(timer);
-        resolve();
-      }
-    });
-    transport.initialize().catch((error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-  });
-
-  await waitForModelsReady(messageHub);
-
-  const trackedSessions: string[] = [];
-
-  const cleanup = async () => {
-    for (const sessionId of trackedSessions) {
-      try {
-        await messageHub.request('session.delete', { sessionId });
-      } catch {}
-    }
-    trackedSessions.length = 0;
-  };
-
   let hasExited = false;
   daemonProcess.once('exit', () => {
     hasExited = true;
   });
 
-  return {
-    pid: daemonProcess.pid ?? 0,
-    messageHub,
-    baseUrl,
-    devProxy: null,
-    getCapturedOutput: () => stdoutOutput,
-    kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
-    waitForExit: async () => {
-      await cleanup();
-      if (!hasExited) {
-        await new Promise<void>((resolve) => daemonProcess.once('exit', () => resolve()));
+  let stdoutOutput = '';
+  let stderrOutput = '';
+  let baseUrl = '';
+  let transport: WebSocketClientTransport | undefined;
+
+  async function dispose(reason?: string): Promise<void> {
+    if (reason && process.env.TEST_VERBOSE) {
+      console.error(`[DENO-DAEMON] cleaning up after error: ${reason}`);
+    }
+    if (daemonProcess && !hasExited) {
+      try {
+        daemonProcess.kill('SIGTERM');
+      } catch {}
+      try {
+        await waitForProcessExit(daemonProcess, hasExited, 10000);
+      } catch {
+        try {
+          daemonProcess.kill('SIGKILL');
+        } catch {}
       }
+    }
+    if (transport) {
       try {
         await transport.close();
       } catch {}
-      try {
-        await mockServer.stop();
-      } catch {}
-      try {
-        rmSync(workDir, { recursive: true, force: true });
-      } catch {}
+    }
+    try {
+      await mockServer.stop();
+    } catch {}
+    try {
+      rmSync(workDir, { recursive: true, force: true });
+    } catch {}
+    try {
       mockServer.restoreEnv();
-    },
-    trackSession: (sessionId: string) => {
-      trackedSessions.push(sessionId);
-    },
-    cleanup,
-  };
+    } catch {}
+  }
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Deno daemon startup timeout')),
+        SETUP_TIMEOUT_MS
+      );
+      let portResolved = false;
+
+      const onData = (data: Buffer) => {
+        const text = data.toString();
+        stdoutOutput += text;
+        stderrOutput += text;
+        if (process.env.TEST_VERBOSE) {
+          console.error(`[DENO-DAEMON] ${text.trim()}`);
+        }
+        if (!portResolved) {
+          const match = text.match(/Port:\s*(\d+)/);
+          if (match) {
+            const port = Number.parseInt(match[1], 10);
+            baseUrl = `http://127.0.0.1:${port}`;
+            portResolved = true;
+            clearTimeout(timeout);
+            resolve();
+          }
+        }
+      };
+
+      daemonProcess.stdout?.on('data', onData);
+      daemonProcess.stderr?.on('data', onData);
+
+      daemonProcess.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      daemonProcess.on('exit', (code) => {
+        clearTimeout(timeout);
+        reject(
+          new Error(
+            `Deno daemon exited with code ${code}\nStdout: ${stdoutOutput}\nStderr: ${stderrOutput}`
+          )
+        );
+      });
+    });
+
+    transport = new WebSocketClientTransport({
+      url: `${baseUrl}/ws`,
+      autoReconnect: false,
+    });
+    const messageHub = new MessageHub({ defaultSessionId: 'global' });
+    messageHub.registerTransport(transport!);
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('WebSocket connection to Deno daemon timed out')),
+        WEBSOCKET_READY_TIMEOUT_MS
+      );
+      transport!.onConnectionChange((state) => {
+        if (state === 'connected') {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      transport!.initialize().catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+
+    await waitForModelsReady(messageHub);
+
+    const trackedSessions: string[] = [];
+
+    const cleanup = async () => {
+      for (const sessionId of trackedSessions) {
+        try {
+          await messageHub.request('session.delete', { sessionId });
+        } catch {}
+      }
+      trackedSessions.length = 0;
+    };
+
+    return {
+      pid: daemonProcess.pid ?? 0,
+      messageHub,
+      baseUrl,
+      devProxy: null,
+      getCapturedOutput: () => stdoutOutput,
+      kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
+      waitForExit: async () => {
+        await cleanup();
+        if (!hasExited) {
+          await new Promise<void>((resolve) => daemonProcess.once('exit', () => resolve()));
+        }
+        try {
+          await transport?.close();
+        } catch {}
+        try {
+          await mockServer.stop();
+        } catch {}
+        try {
+          rmSync(workDir, { recursive: true, force: true });
+        } catch {}
+        mockServer.restoreEnv();
+      },
+      trackSession: (sessionId: string) => {
+        trackedSessions.push(sessionId);
+      },
+      cleanup,
+    };
+  } catch (error) {
+    await dispose(String(error instanceof Error ? error.message : error));
+    throw error;
+  }
 }
