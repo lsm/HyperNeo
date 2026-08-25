@@ -92,6 +92,12 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'LANG',
   'TERM',
   'TMPDIR',
+  'SystemRoot',
+  'SystemDrive',
+  'ComSpec',
+  'PATHEXT',
+  'TEMP',
+  'TMP',
   'HYPERNEO_VALIDATION_BASE_REF',
 ]);
 

@@ -1,4 +1,4 @@
-import { buildCommandEnv } from '../spawn-env.ts';
+import { buildOsBaselineEnv } from '../spawn-env.ts';
 import type { SpawnFn, SpawnOptions, SpawnProcess } from './types.ts';
 
 interface BunSubprocess {
@@ -18,6 +18,6 @@ export function createBunSpawn(): SpawnFn {
   return (args: string[], options?: SpawnOptions): SpawnProcess =>
     Bun.spawn(args, {
       ...options,
-      env: options?.env ?? buildCommandEnv(),
+      env: options?.env ?? buildOsBaselineEnv(),
     });
 }

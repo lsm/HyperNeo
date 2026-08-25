@@ -28,6 +28,7 @@ const SOURCE: Record<string, string> = {
   SSL_CERT_FILE: '/tmp/corp-ca.pem',
   CURL_CA_BUNDLE: '/tmp/curl-ca.pem',
   GIT_SSL_CAINFO: '/tmp/git-ca.pem',
+  GIT_SSL_CAPATH: '/tmp/git-ca-dir',
   GIT_EXEC_PATH: '/usr/libexec/git-core',
   ANTHROPIC_API_KEY: 'anthropic-secret',
   CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
@@ -100,6 +101,7 @@ describe('buildGitSshEnv', () => {
     const env = buildGitSshEnv(SOURCE);
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);

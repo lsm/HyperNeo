@@ -2231,6 +2231,46 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     expect(permitted.result.message).toBe('http://user:secret@proxy.corp.example:8080');
   });
 
+  test('windows runtime variables stay available to hook scripts', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      SystemRoot: 'C:\\Windows',
+      TEMP: 'C:\\Users\\agent\\AppData\\Local\\Temp',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source:
+            'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${SystemRoot:-missing}|${TEMP:-missing}\\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe('C:\\Windows|C:\\Users\\agent\\AppData\\Local\\Temp');
+  });
+
   test('process group is killed after successful script exit', async () => {
     const originalKill = process.kill;
     const killCalls: Array<{ pid: number; signal: string | number }> = [];

@@ -763,7 +763,9 @@ export class WorktreeManager {
       await worktreeAddGit.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
       branchProvisioned = true;
 
-      const networkGit = simpleGit(worktreePath).env(buildGitSshEnv());
+      const networkGit = simpleGit(worktreePath, { timeout: { block: 300_000 } }).env(
+        buildGitSshEnv()
+      );
       try {
         await networkGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */

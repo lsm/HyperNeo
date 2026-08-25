@@ -868,8 +868,14 @@ CRITICAL RULES:
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    const processProviderEnvVars = new Set(providerEnvVars);
+    processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
+    processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
 
     const mergedEnv: Record<string, string> = buildSdkRuntimeEnv();
+    for (const key of processProviderEnvVars) {
+      delete mergedEnv[key];
+    }
 
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
       const authToken = envValue(STARTUP_ENV_BASELINE, 'ANTHROPIC_AUTH_TOKEN');

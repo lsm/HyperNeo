@@ -41,6 +41,7 @@ const PROXY_TLS_ENV_KEYS = [
   'SSL_CERT_DIR',
   'CURL_CA_BUNDLE',
   'GIT_SSL_CAINFO',
+  'GIT_SSL_CAPATH',
 ] as const;
 
 const SDK_USER_CONFIG_ENV_KEYS = [

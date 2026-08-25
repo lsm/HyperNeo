@@ -875,8 +875,12 @@ describe('QueryOptionsBuilder', () => {
 
     it('should filter provider env overrides so provider cleanup owns the SDK env', async () => {
       const previousBaseline: Record<string, string | undefined> = { ...process.env };
-      delete previousBaseline.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-      _setStartupEnvBaselineForTesting(previousBaseline);
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '180000',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'startup-subagent',
+        ENABLE_TOOL_SEARCH: 'startup',
+      });
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: {
           CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
