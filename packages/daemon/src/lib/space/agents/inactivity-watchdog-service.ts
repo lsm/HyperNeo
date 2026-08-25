@@ -30,9 +30,25 @@ export type InactivityNagDeliveryOutcome =
 
 export interface InactivityWatchdogSessionSnapshot {
   latestConsumedMessageAt: number | null;
+  latestConsumedUserMessageAt: number | null;
   sessionCreatedAt: number | null;
   busyWithOtherWork: boolean;
   pendingOtherAcceptedDelivery: boolean;
+}
+
+export function applyRunNowBaseline(
+  session: InactivityWatchdogSessionSnapshot,
+  activityBaseline: number | undefined,
+  invokedAt: number | undefined,
+  invokingUserMsgAt: number | null | undefined,
+  snapshotActivity: number | null
+): number | null {
+  if (activityBaseline === undefined || invokedAt === undefined) return snapshotActivity;
+  const freshTurnStarted =
+    invokingUserMsgAt !== undefined &&
+    session.latestConsumedUserMessageAt !== null &&
+    session.latestConsumedUserMessageAt > (invokingUserMsgAt ?? 0);
+  return freshTurnStarted ? snapshotActivity : activityBaseline;
 }
 
 export interface InactivityWatchdogDeps {
@@ -88,7 +104,8 @@ export class SpaceAgentInactivityWatchdogService {
     spaceId: string,
     agentId: string,
     activityBaseline?: number,
-    invokedAt?: number
+    invokedAt?: number,
+    invokingUserMsgAt?: number | null
   ): Promise<void> {
     const config = this.deps.configRepo.getByAgent(spaceId, agentId);
     if (config === null || !config.enabled) return;
@@ -101,13 +118,13 @@ export class SpaceAgentInactivityWatchdogService {
       sessionCreatedAt: session.sessionCreatedAt,
       agentCreatedAt: agent.createdAt,
     });
-    const lastActivityAt =
-      activityBaseline !== undefined &&
-      invokedAt !== undefined &&
-      snapshotActivity !== null &&
-      snapshotActivity <= invokedAt
-        ? activityBaseline
-        : snapshotActivity;
+    const lastActivityAt = applyRunNowBaseline(
+      session,
+      activityBaseline,
+      invokedAt,
+      invokingUserMsgAt,
+      snapshotActivity
+    );
     if (lastActivityAt === null) return;
     const space = await this.deps.spaceManager.getSpace(spaceId);
     let claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
@@ -194,6 +211,7 @@ export class SpaceAgentInactivityWatchdogService {
       decision.configRevision,
       activityBaseline,
       invokedAt,
+      invokingUserMsgAt,
       boundInactivityNagPrompt(config.prompt)
     );
   }
@@ -206,6 +224,7 @@ export class SpaceAgentInactivityWatchdogService {
     acquiredConfigRevision: number | null,
     activityBaseline: number | undefined,
     invokedAt: number | undefined,
+    invokingUserMsgAt: number | null | undefined,
     prompt: string
   ): Promise<void> {
     const space = await this.deps.spaceManager.getSpace(spaceId);
@@ -244,13 +263,13 @@ export class SpaceAgentInactivityWatchdogService {
       sessionCreatedAt: recheckSession.sessionCreatedAt,
       agentCreatedAt: recheckAgent.createdAt,
     });
-    const lastActivityAt =
-      activityBaseline !== undefined &&
-      invokedAt !== undefined &&
-      snapshotActivity !== null &&
-      snapshotActivity <= invokedAt
-        ? activityBaseline
-        : snapshotActivity;
+    const lastActivityAt = applyRunNowBaseline(
+      recheckSession,
+      activityBaseline,
+      invokedAt,
+      invokingUserMsgAt,
+      snapshotActivity
+    );
     const recheck = decideInactivityNag({
       now: this.deps.now?.() ?? Date.now(),
       enabled: recheckConfig.enabled,

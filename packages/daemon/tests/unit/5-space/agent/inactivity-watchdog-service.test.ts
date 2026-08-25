@@ -85,6 +85,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     };
     sessionSnapshot = {
       latestConsumedMessageAt: NOW - THRESHOLD_MS - 5000,
+      latestConsumedUserMessageAt: NOW - THRESHOLD_MS - 5000,
       sessionCreatedAt: NOW - THRESHOLD_MS - 9000,
       busyWithOtherWork: false,
       pendingOtherAcceptedDelivery: false,
@@ -443,5 +444,25 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
     expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+  });
+
+  it('keeps the run-now baseline when only the invoking turn advanced activity', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    const baseline = NOW - THRESHOLD_MS - 5000;
+    const invokingUserMsgAt = NOW - THRESHOLD_MS - 1000;
+    sessionSnapshot.latestConsumedUserMessageAt = invokingUserMsgAt;
+    sessionSnapshot.latestConsumedMessageAt = NOW - 10;
+    await makeService().scanAgent(spaceId, 'agent-1', baseline, NOW - 100, invokingUserMsgAt);
+    expect(outcomes).toHaveLength(1);
+  });
+
+  it('cancels run-now admission when a newer turn started after invocation', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    const baseline = NOW - THRESHOLD_MS - 5000;
+    const invokingUserMsgAt = NOW - THRESHOLD_MS - 1000;
+    sessionSnapshot.latestConsumedUserMessageAt = NOW - 50;
+    sessionSnapshot.latestConsumedMessageAt = NOW - 10;
+    await makeService().scanAgent(spaceId, 'agent-1', baseline, NOW - 100, invokingUserMsgAt);
+    expect(outcomes).toHaveLength(0);
   });
 });

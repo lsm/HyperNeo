@@ -708,7 +708,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
               )
               .get(sessionId, sessionId) as { ts?: string | number | null } | null)
           : null;
+      const invokingUserRow =
+        sessionId !== null && sessionId !== undefined
+          ? (db
+              .prepare(
+                `SELECT MAX(timestamp) AS ts FROM sdk_messages
+                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+                   AND message_type = 'user'`
+              )
+              .get(sessionId) as { ts?: string | number | null } | null)
+          : null;
       const activityBaseline = toEpochMs(anchorRow?.ts) ?? undefined;
+      const invokingUserMsgAt = toEpochMs(invokingUserRow?.ts);
       const invokedAt = Date.now();
       let task: Promise<void>;
       const run = async () => {
@@ -744,7 +755,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           }
           if (!inactivityRunNowCancelled) {
             await spaceAgentInactivityWatchdog
-              .scanAgent(spaceId, agentId, activityBaseline, invokedAt)
+              .scanAgent(spaceId, agentId, activityBaseline, invokedAt, invokingUserMsgAt)
               .catch(() => {});
           }
         } finally {
@@ -789,6 +800,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
            WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
           )
           .get(agent.sessionId) as { ts?: string | number | null } | null;
+        const consumedUserRow = db
+          .prepare(
+            `SELECT MAX(timestamp) AS ts FROM sdk_messages
+           WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+             AND message_type = 'user'`
+          )
+          .get(agent.sessionId) as { ts?: string | number | null } | null;
         const pendingRow = db
           .prepare(
             `SELECT COUNT(*) AS n FROM sdk_messages
@@ -809,6 +827,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         }
         return {
           latestConsumedMessageAt: toEpochMs(consumedRow?.ts),
+          latestConsumedUserMessageAt: toEpochMs(consumedUserRow?.ts),
           sessionCreatedAt: toEpochMs(sessionRow?.created_at),
           busyWithOtherWork:
             status === 'processing' ||

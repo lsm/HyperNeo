@@ -382,6 +382,16 @@ export class SpaceRuntimeService {
     }
     const agentAfter = this.config.longHorizonAgentRepo?.getById(args.agentId);
     if (!agentAfter || agentAfter.status !== 'active') return 'pre_admission_failure';
+    if (args.expectedConfigRevision !== undefined) {
+      const configAfter = this.config.inactivityConfigRepo?.getByAgent(args.spaceId, args.agentId);
+      if (
+        !configAfter ||
+        !configAfter.enabled ||
+        configAfter.configRevision !== args.expectedConfigRevision
+      ) {
+        return 'pre_admission_failure';
+      }
+    }
     const sessionState = session.stateManager?.getState().status as string | undefined;
     if (
       sessionState === 'processing' ||

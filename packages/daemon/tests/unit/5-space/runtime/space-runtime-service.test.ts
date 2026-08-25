@@ -1420,6 +1420,68 @@ describe('SpaceRuntimeService', () => {
       expect(result).toBe('pre_admission_failure');
     });
 
+    test('deliverLongHorizonAgentNag revalidates the config revision after session resolution', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'lh-agent-1',
+          displayName: 'LH Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: '',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: ['project'],
+          toolPermissions: { tools: [] },
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+        getCoordinator: mock(() => null),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      let configCalls = 0;
+      const inactivityConfigRepo = {
+        getByAgent: mock(() => {
+          configCalls += 1;
+          return { enabled: true, configRevision: configCalls === 1 ? 1 : 2 };
+        }),
+      } as unknown as SpaceRuntimeServiceConfig['inactivityConfigRepo'];
+      const { reactiveDb } = buildDurableDeliveryReactiveDb();
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+        inactivityConfigRepo,
+      });
+      const result = await svc.deliverLongHorizonAgentNag({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'nag',
+        idempotencyKey: 'k',
+        expectedConfigRevision: 1,
+      });
+      expect(result).toBe('pre_admission_failure');
+      expect(configCalls).toBeGreaterThanOrEqual(2);
+    });
+
     test('long-horizon event sessions forward scoped Bash entries so the scope hook installs', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const createdSession = {
