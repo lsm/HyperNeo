@@ -8,6 +8,7 @@ import type {
 } from '../../storage/repositories/sdk-message-repository.ts';
 import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
+import { planDeliveryRoleArbitration } from './delivery-turn-routing.ts';
 import {
   isUniqueConstraintError,
   MESSAGE_DELIVERY_MAX_RETRIES,
@@ -48,6 +49,13 @@ export function persistAndEnqueueDelivery(
     origin: args.delivery.origin,
     parentToolUseId: args.delivery.parentToolUseId ?? null,
   };
+  const arbitration = planDeliveryRoleArbitration({
+    existingActiveRole: null,
+    requestedRole: undefined,
+  });
+  if (arbitration.action === 'reuse') {
+    throw new Error('persistAndEnqueueDelivery: arbitration returned reuse without an active role');
+  }
 
   const result = db.transaction(() => {
     const core = sdkMessageRepo.saveUserMessageCore(sessionId, message, sendStatus, origin);
@@ -55,18 +63,19 @@ export function persistAndEnqueueDelivery(
     try {
       jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
-        payload: basePayload,
+        payload: { ...basePayload, role: arbitration.role },
         maxRetries: DELIVERY_MAX_RETRIES,
       });
-      role = 'turn';
+      role = arbitration.role;
     } catch (err) {
       if (!isUniqueConstraintError(err)) throw err;
+      if (arbitration.uniqueConstraintFallback === null) throw err;
       jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
-        payload: { ...basePayload, role: 'steer' },
+        payload: { ...basePayload, role: arbitration.uniqueConstraintFallback },
         maxRetries: DELIVERY_MAX_RETRIES,
       });
-      role = 'steer';
+      role = arbitration.uniqueConstraintFallback;
     }
     return { core, role };
   })();

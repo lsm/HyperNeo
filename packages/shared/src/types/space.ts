@@ -106,6 +106,29 @@ export interface SpaceLongHorizonAgentGoal {
   updatedAt: number;
 }
 
+export type SpaceGoalOwnerAgentState = 'active' | 'missing' | 'paused' | 'disabled' | 'archived';
+
+export interface SpaceGoalOwnerCandidate {
+  agentId: string;
+  relationship: SpaceLongHorizonAgentRelationship;
+  createdAt: number;
+}
+
+export type SpaceGoalOwnerResolution =
+  | {
+      action: 'resolved';
+      owner: SpaceGoalOwnerCandidate;
+      conflicts: SpaceGoalOwnerCandidate[];
+    }
+  | {
+      action: 'degraded';
+      reason: SpaceGoalOwnerAgentState;
+      owner: SpaceGoalOwnerCandidate;
+      conflicts: SpaceGoalOwnerCandidate[];
+    }
+  | { action: 'coordinator_fallback'; coordinatorAgentId: string }
+  | { action: 'no_recipient' };
+
 export interface SpaceLongHorizonAgentForgeScope {
   agentId: string;
   scopeId: string;

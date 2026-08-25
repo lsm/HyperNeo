@@ -20,6 +20,7 @@
   },
   "scripts": {
     "dev": "bun run --watch main.ts",
+    "dev:deno": "deno run -A --watch main.ts",
     "start": "NODE_ENV=production bun run main.ts",
     "test": "bun run test:unit && bun run test:online",
     "test:unit": "cd ../.. && ./scripts/test-daemon.sh",
