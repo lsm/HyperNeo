@@ -389,6 +389,43 @@ describe('WorktreeManager', () => {
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });
 
+    it('should not delete a pre-existing fallback branch when worktree add fails', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      mockGitBranch
+        .mockRejectedValueOnce(new Error('branch checked out elsewhere'))
+        .mockResolvedValue({});
+      mockGitRaw
+        .mockResolvedValueOnce('  custom-branch\n')
+        .mockImplementation(async (args: string[]) => {
+          if (args[0] === 'worktree') throw new Error('fatal: a branch named already exists');
+          return '';
+        });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+          branchName: 'custom-branch',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledTimes(1);
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'custom-branch']);
+    });
+
     it('should fall back to UUID branch name when branch -D is rejected (branch checked out elsewhere)', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);

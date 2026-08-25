@@ -755,13 +755,13 @@ export class WorktreeManager {
           branchName = `session/${safeSessionId}`;
         }
       }
-      branchProvisioned = true;
 
       const worktreeAddGit = simpleGit(gitRoot).env({
         ...buildGitCommandEnv(),
         GIT_LFS_SKIP_SMUDGE: '1',
       });
       await worktreeAddGit.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
+      branchProvisioned = true;
 
       const networkGit = simpleGit(worktreePath).env(buildGitSshEnv());
       try {
