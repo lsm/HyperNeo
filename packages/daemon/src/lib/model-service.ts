@@ -396,6 +396,8 @@ const scopedCatalogStamps = new Map<string, string>();
 
 const scopedDiscoveryInFlight = new Map<string, number>();
 
+const scopedDiscoverySeq = new Map<string, number>();
+
 function peekSessionCatalogModels(cacheKey: string): ModelInfo[] | null {
   const cached = modelsCache.get(cacheKey);
   const at = cacheTimestamps.get(cacheKey);
@@ -439,31 +441,40 @@ export async function ensureScopedProviderCatalogModels(
     sessionCacheKey,
     (scopedDiscoveryInFlight.get(sessionCacheKey) ?? 0) + 1
   );
+  const seq = (scopedDiscoverySeq.get(sessionCacheKey) ?? 0) + 1;
+  scopedDiscoverySeq.set(sessionCacheKey, seq);
   if (!cacheGeneration.has(sessionCacheKey)) {
     cacheGeneration.set(sessionCacheKey, 0);
   }
   const generationAtStart = cacheGeneration.get(sessionCacheKey) ?? 0;
   try {
     const models = await provider.getModelsForSessionConfig(sessionConfig);
-    if ((cacheGeneration.get(sessionCacheKey) ?? 0) !== generationAtStart) {
-      dropScopedCatalog();
+    if (
+      scopedDiscoverySeq.get(sessionCacheKey) !== seq ||
+      (cacheGeneration.get(sessionCacheKey) ?? 0) !== generationAtStart
+    ) {
       return;
     }
     modelsCache.set(sessionCacheKey, models);
     cacheTimestamps.set(sessionCacheKey, Date.now());
     scopedCatalogStamps.set(sessionCacheKey, stamp);
   } catch {
-    dropScopedCatalog();
+    if (scopedDiscoverySeq.get(sessionCacheKey) === seq) {
+      dropScopedCatalog();
+    }
   } finally {
     const remaining = (scopedDiscoveryInFlight.get(sessionCacheKey) ?? 1) - 1;
     if (remaining <= 0) {
       scopedDiscoveryInFlight.delete(sessionCacheKey);
+      scopedDiscoverySeq.delete(sessionCacheKey);
       cacheGeneration.delete(sessionCacheKey);
     } else {
       scopedDiscoveryInFlight.set(sessionCacheKey, remaining);
     }
   }
 }
+
+const PROVIDER_CATALOG_DISCOVERY_TIMEOUT_MS = 5_000;
 
 const providerCatalogCache = new WeakMap<
   Provider,
@@ -472,6 +483,7 @@ const providerCatalogCache = new WeakMap<
     at: number;
     curatedStamp: string | undefined;
     epoch: number;
+    discovered: boolean;
   }
 >();
 
@@ -515,6 +527,7 @@ async function loadProviderCatalogModels(
   provider: Provider
 ): Promise<ModelInfo[]> {
   let models: ModelInfo[] = [];
+  let discovered = false;
   for (let attempt = 0; ; attempt += 1) {
     const curatedNow = getProviderRegistry().getCuratedModels(providerId);
     const curatedStamp =
@@ -530,17 +543,29 @@ async function loadProviderCatalogModels(
     }
     const epochAtFetch = providerCatalogEpoch;
     try {
-      const fetched = await provider.getModels();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const fetched = await Promise.race([
+        provider.getModels(),
+        new Promise<ModelInfo[]>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('provider catalog discovery timed out')),
+            PROVIDER_CATALOG_DISCOVERY_TIMEOUT_MS
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
       if (fetched.length > 0 || provider.hasCuratedModelList?.()) {
         models = fetched;
+        discovered = true;
       } else {
         models =
           curatedNow !== undefined && curatedNow.length === 0
             ? fetched
             : fallbackModelsFor(provider);
+        discovered = false;
       }
     } catch {
       models = fallbackModelsFor(provider);
+      discovered = false;
     }
     if (providerCatalogEpoch === epochAtFetch) {
       if (models.length > 0) {
@@ -549,6 +574,7 @@ async function loadProviderCatalogModels(
           at: Date.now(),
           curatedStamp,
           epoch: epochAtFetch,
+          discovered,
         });
       }
       return models;
@@ -557,6 +583,20 @@ async function loadProviderCatalogModels(
       return models;
     }
   }
+}
+
+function isProviderCatalogDiscovered(providerId: string, provider: Provider): boolean {
+  const curatedNow = getProviderRegistry().getCuratedModels(providerId);
+  const curatedStamp =
+    curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(',');
+  const cached = providerCatalogCache.get(provider);
+  return Boolean(
+    cached &&
+      cached.discovered &&
+      cached.curatedStamp === curatedStamp &&
+      cached.epoch === providerCatalogEpoch &&
+      Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
+  );
 }
 
 function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[] {
@@ -1394,24 +1434,31 @@ export async function resolveVisibleCanonicalModelId(
 ): Promise<string | null> {
   const cachedId = resolveCuratedCanonicalModelId(idOrAlias, providerId, cacheKey);
   let liveModels: ModelInfo[] | null = preloadedModels ?? null;
+  let liveDiscovered = preloadedModels !== undefined;
   if (preloadedModels === undefined) {
     const provider = getProviderRegistry().get(providerId);
     if (provider) {
       const cachedCatalog = peekProviderCatalogModels(providerId, provider);
       if (cachedCatalog) {
         liveModels = cachedCatalog;
+        liveDiscovered = isProviderCatalogDiscovered(providerId, provider);
       } else {
         try {
           if (await provider.isAvailable()) {
             liveModels = await getProviderCatalogModels(providerId, provider);
+            liveDiscovered = isProviderCatalogDiscovered(providerId, provider);
           }
         } catch {
           liveModels = fallbackModelsFor(provider);
+          liveDiscovered = false;
         }
       }
     }
   }
 
+  if (!liveDiscovered) {
+    return cachedId;
+  }
   if (cachedId) {
     if (liveModels === null) return cachedId;
     const liveResolved = findInModels(liveModels, idOrAlias);

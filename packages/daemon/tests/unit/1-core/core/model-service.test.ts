@@ -3729,6 +3729,69 @@ describe('Model Service', () => {
 
       expect(getAvailableModels('session-scoped-13')).toEqual([]);
     });
+
+    it('prevents an older scoped discovery from overwriting a newer catalog', async () => {
+      const registry = getProviderRegistry();
+      let releaseOldFetch: (() => void) | undefined;
+      let releaseNewFetch: (() => void) | undefined;
+      const oldGate = new Promise<void>((resolve) => {
+        releaseOldFetch = resolve;
+      });
+      const newGate = new Promise<void>((resolve) => {
+        releaseNewFetch = resolve;
+      });
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async (sessionConfig) => {
+          if (sessionConfig.baseUrl === 'http://old.example') {
+            await oldGate;
+          } else {
+            await newGate;
+          }
+          return [
+            {
+              id: `model-${sessionConfig.baseUrl}`,
+              name: `Model ${sessionConfig.baseUrl}`,
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      const older = ensureScopedProviderCatalogModels('session-scoped-14', 'ollama', {
+        baseUrl: 'http://old.example',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const newer = ensureScopedProviderCatalogModels('session-scoped-14', 'ollama', {
+        baseUrl: 'http://new.example',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      releaseNewFetch?.();
+      await newer;
+      expect(getAvailableModels('session-scoped-14').map((model) => model.id)).toEqual([
+        'model-http://new.example',
+      ]);
+
+      releaseOldFetch?.();
+      await older;
+      expect(getAvailableModels('session-scoped-14').map((model) => model.id)).toEqual([
+        'model-http://new.example',
+      ]);
+    });
   });
 
   describe('resolveVisibleCanonicalModelId', () => {

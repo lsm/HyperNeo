@@ -9,6 +9,7 @@ import { Logger } from './logger.js';
 import {
   getCuratedModelIds,
   getProviderCatalogModels,
+  isCuratedOutModel,
   resolveVisibleCanonicalModelId,
 } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
@@ -289,7 +290,7 @@ export class ProviderService {
         candidate;
       const curatedEntries = registry.getCuratedModels(providerId);
       if (curatedEntries === undefined) {
-        return candidate;
+        return canonicalId;
       }
       let allowed = getCuratedModelIds(providerId)?.has(canonicalId) ?? false;
       if (!allowed) {
@@ -305,7 +306,7 @@ export class ProviderService {
       }
       if (!allowed) continue;
       if (!catalogIds.has(canonicalId)) continue;
-      return candidate;
+      return canonicalId;
     }
     const curatedAfter = registry.getCuratedModels(providerId);
     if (curatedAfter === undefined) {
@@ -351,6 +352,7 @@ export class ProviderService {
           () => []
         );
         for (const model of catalogModels) {
+          if (isCuratedOutModel(model.id, providerId)) continue;
           try {
             const sdkConfig = provider.buildSdkConfig(model.id);
             providerModelId = model.id;
@@ -433,6 +435,7 @@ export class ProviderService {
       );
       let healed = false;
       for (const candidate of catalogModels) {
+        if (isCuratedOutModel(candidate.id, providerId)) continue;
         try {
           const sdkConfig = provider.buildSdkConfig(candidate.id);
           modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? candidate.id;

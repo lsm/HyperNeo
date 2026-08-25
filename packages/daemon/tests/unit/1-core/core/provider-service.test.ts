@@ -631,7 +631,7 @@ describe('ProviderService', () => {
 
       const model = await realService.getTitleGenerationModel('glm', 'glm');
 
-      expect(model).toBe('glm');
+      expect(model).toBe('translated-5');
     });
 
     it('accepts an uncached alias of a curated model on a dynamically discovered provider', async () => {
@@ -662,7 +662,7 @@ describe('ProviderService', () => {
 
       const model = await realService.getTitleGenerationModel('ollama', 'qwen3');
 
-      expect(model).toBe('qwen3');
+      expect(model).toBe('ollama-qwen');
     });
 
     it('returns null when curation is explicitly empty', async () => {
