@@ -419,6 +419,91 @@ describe('QueryOptionsBuilder', () => {
         expect(response).toEqual({ behavior: 'cancelled' });
       });
 
+      it('declines the refusal dialog when the dialog signal is already aborted', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        const aborted = new AbortController();
+        aborted.abort();
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: aborted.signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog when the signal aborts during scoped discovery', async () => {
+        let scopedFetchCount = 0;
+        let releaseFetch: (() => void) | undefined;
+        getProviderRegistry().register({
+          id: 'scoped-abort-test',
+          displayName: 'Scoped Abort Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            if (scopedFetchCount > 1) {
+              await new Promise<void>((resolve) => {
+                releaseFetch = resolve;
+              });
+            }
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-abort-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-abort-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-abort-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
+
+          const options = await builder.build();
+          expect(scopedFetchCount).toBe(1);
+
+          clearModelsCache(mockSession.id);
+          const controller = new AbortController();
+          const pending = options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: controller.signal, requestId: 'test' }
+          );
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          controller.abort();
+          releaseFetch?.();
+          const response = await pending;
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+          expect(scopedFetchCount).toBe(2);
+        } finally {
+          getProviderRegistry().unregister('scoped-abort-test');
+          getProviderRegistry().setCuratedModels('scoped-abort-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
       it('skips scoped catalog discovery when no curation is configured', async () => {
         let scopedFetchCount = 0;
         getProviderRegistry().register({

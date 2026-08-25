@@ -455,9 +455,9 @@ export class QueryOptionsBuilder {
       hooks,
 
       canUseTool: this.canUseTool,
-      onUserDialog: async (request) => {
+      onUserDialog: async (request, { signal }) => {
         if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
-        if (!configuredFallbackModel) {
+        if (!configuredFallbackModel || signal.aborted) {
           return { behavior: 'cancelled' };
         }
         const matchesBuildSnapshot = () => {
@@ -498,7 +498,7 @@ export class QueryOptionsBuilder {
         } else {
           fallbackExcluded = await isModelExcludedByCuration(configuredFallbackModel, providerId);
         }
-        if (fallbackExcluded || !guardsIntact()) {
+        if (fallbackExcluded || !guardsIntact() || signal.aborted) {
           return { behavior: 'cancelled' };
         }
         return { behavior: 'completed', result: { continue: true } };

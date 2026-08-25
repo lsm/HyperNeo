@@ -13,7 +13,10 @@ export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
 ): Promise<void> {
   applyProviderModelAllowlistsToEnv(allowlists);
-  const { clearModelsCache } = await import('../model-service.ts');
+  const { bumpProviderCatalogEpoch, clearModelsCache } = await import('../model-service.ts');
+  for (const providerId of Object.keys(allowlists ?? {})) {
+    bumpProviderCatalogEpoch(providerId);
+  }
   clearModelsCache();
 }
 

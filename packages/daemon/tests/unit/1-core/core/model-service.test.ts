@@ -3643,6 +3643,49 @@ describe('Model Service', () => {
         false
       );
     });
+
+    it('discards the scoped catalog result when the session cache is cleared mid-discovery', async () => {
+      const registry = getProviderRegistry();
+      let releaseFetch: (() => void) | undefined;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async () => {
+          await new Promise<void>((resolve) => {
+            releaseFetch = resolve;
+          });
+          return [
+            {
+              id: 'scoped-late-model',
+              name: 'Scoped Late Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Late Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      const pending = ensureScopedProviderCatalogModels('session-scoped-12', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      clearModelsCache('session-scoped-12');
+      releaseFetch?.();
+      await pending;
+
+      expect(getAvailableModels('session-scoped-12')).toEqual([]);
+    });
   });
 
   describe('resolveVisibleCanonicalModelId', () => {

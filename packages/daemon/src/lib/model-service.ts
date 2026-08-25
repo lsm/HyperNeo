@@ -433,8 +433,16 @@ export async function ensureScopedProviderCatalogModels(
     dropScopedCatalog();
     return;
   }
+  if (!cacheGeneration.has(sessionCacheKey)) {
+    cacheGeneration.set(sessionCacheKey, 0);
+  }
+  const generationAtStart = cacheGeneration.get(sessionCacheKey) ?? 0;
   try {
     const models = await provider.getModelsForSessionConfig(sessionConfig);
+    if ((cacheGeneration.get(sessionCacheKey) ?? 0) !== generationAtStart) {
+      dropScopedCatalog();
+      return;
+    }
     modelsCache.set(sessionCacheKey, models);
     cacheTimestamps.set(sessionCacheKey, Date.now());
     scopedCatalogStamps.set(sessionCacheKey, stamp);
