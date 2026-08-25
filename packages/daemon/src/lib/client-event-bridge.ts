@@ -128,6 +128,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
       Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.deleted']).spaceId),
   },
   {
+    event: 'spaceGoal.ownerChanged',
+    clientEvent: 'spaceGoal.ownerChanged',
+    channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceGoal.ownerChanged']).spaceId),
+  },
+  {
     event: 'spaceWorkflow.created',
     clientEvent: 'spaceWorkflow.created',
     channel: () => Channels.global(),

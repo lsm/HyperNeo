@@ -930,6 +930,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
     longHorizonAgentRepo,
+    internalEventBus: deps.internalEventBus,
   });
 
   setupSpaceLongHorizonAgentHandlers(
