@@ -1340,7 +1340,7 @@ export class SDKMessageHandler {
       scopedApiKeyBefore || scopedBaseUrlBefore || scopedRegionBefore
     );
     const fallbackExcluded = sessionScopedProvider
-      ? isCuratedOutModelAllowingExactId(fallbackModel, providerId)
+      ? isCuratedOutModelAllowingExactId(fallbackModel, providerId, session.id)
       : await isModelExcludedByCuration(fallbackModel, providerId);
     if (fallbackExcluded) return;
     const liveConfig = this.ctx.session.config;

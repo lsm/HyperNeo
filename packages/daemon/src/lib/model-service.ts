@@ -1270,13 +1270,31 @@ export async function resolveVisibleCanonicalModelId(
   return findInModels(liveModels, idOrAlias)?.id ?? null;
 }
 
-export function isCuratedOutModelAllowingExactId(idOrAlias: string, providerId: string): boolean {
+export function isCuratedOutModelAllowingExactId(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
   const curatedIds = getCuratedModelIds(providerId);
   if (curatedIds !== undefined) {
     const lowerInput = idOrAlias.toLowerCase();
     for (const curatedId of curatedIds) {
       if (curatedId.toLowerCase() === lowerInput) {
         return false;
+      }
+    }
+    if (cacheKey !== 'global') {
+      const scopedModels = readCachedModels(cacheKey);
+      if (scopedModels && scopedModels.length > 0) {
+        const scopedCanonical = findInModels(scopedModels, idOrAlias)?.id;
+        if (scopedCanonical) {
+          for (const curatedId of curatedIds) {
+            if (findInModels(scopedModels, curatedId)?.id === scopedCanonical) {
+              return false;
+            }
+          }
+          return true;
+        }
       }
     }
     const canonicalInput = resolveCuratedCanonicalModelId(idOrAlias, providerId);

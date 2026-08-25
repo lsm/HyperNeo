@@ -332,7 +332,7 @@ export class QueryOptionsBuilder {
           config.providerConfig?.region
       );
       const fallbackExcluded = sessionScopedProvider
-        ? isCuratedOutModelAllowingExactId(config.fallbackModel, providerId)
+        ? isCuratedOutModelAllowingExactId(config.fallbackModel, providerId, this.ctx.session.id)
         : await isModelExcludedByCuration(config.fallbackModel, providerId);
       if (fallbackExcluded) {
         this.logger.warn(
@@ -447,7 +447,7 @@ export class QueryOptionsBuilder {
             this.ctx.session.config.providerConfig?.region
         );
         const fallbackExcluded = sessionScopedProvider
-          ? isCuratedOutModelAllowingExactId(fallbackAtRequest, providerId)
+          ? isCuratedOutModelAllowingExactId(fallbackAtRequest, providerId, this.ctx.session.id)
           : await isModelExcludedByCuration(fallbackAtRequest, providerId);
         if (fallbackExcluded) {
           return { behavior: 'cancelled' };

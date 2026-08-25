@@ -2844,6 +2844,63 @@ describe('Model Service', () => {
       expect(isCuratedOutModelAllowingExactId('qwen3:latest', 'ollama')).toBe(false);
       expect(isCuratedOutModelAllowingExactId('llama3:latest', 'ollama')).toBe(true);
     });
+
+    it('validates scoped aliases against the session-scoped catalog', () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3' }]);
+      setModelsCache(
+        new Map<string, ModelInfo[]>([
+          [
+            'global',
+            [
+              {
+                id: 'qwen3:8b',
+                name: 'Qwen 3 8B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Qwen 3 8B',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+          [
+            'session-scoped-1',
+            [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'anthropic',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModelAllowingExactId('qwen3:14b', 'ollama', 'session-scoped-1')).toBe(
+        false
+      );
+      expect(isCuratedOutModelAllowingExactId('llama3:latest', 'ollama', 'session-scoped-1')).toBe(
+        true
+      );
+    });
   });
 
   describe('getProviderCatalogModels', () => {
