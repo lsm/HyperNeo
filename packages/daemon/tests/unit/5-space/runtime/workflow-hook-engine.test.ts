@@ -2231,11 +2231,13 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     expect(permitted.result.message).toBe('http://user:secret@proxy.corp.example:8080');
   });
 
-  test('windows runtime variables stay available to hook scripts', async () => {
+  test('windows runtime and locale variables stay available to hook scripts', async () => {
     _setStartupEnvBaselineForTesting({
       ...process.env,
       SystemRoot: 'C:\\Windows',
       TEMP: 'C:\\Users\\agent\\AppData\\Local\\Temp',
+      LC_ALL: 'en_US.UTF-8',
+      LC_CTYPE: 'en_US.UTF-8',
     });
     const executor = new HookExecutor({ workspacePath: '/tmp' });
     const result = await executor.execute(
@@ -2246,7 +2248,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
           kind: 'script',
           interpreter: 'bash',
           source:
-            'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${SystemRoot:-missing}|${TEMP:-missing}\\" }"',
+            'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${SystemRoot:-missing}|${TEMP:-missing}|${LC_ALL:-missing}|${LC_CTYPE:-missing}\\" }"',
         },
       }),
       {
@@ -2268,7 +2270,9 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     _setStartupEnvBaselineForTesting(process.env);
 
     expect(result.result.type).toBe('allow');
-    expect(result.result.message).toBe('C:\\Windows|C:\\Users\\agent\\AppData\\Local\\Temp');
+    expect(result.result.message).toBe(
+      'C:\\Windows|C:\\Users\\agent\\AppData\\Local\\Temp|en_US.UTF-8|en_US.UTF-8'
+    );
   });
 
   test('process group is killed after successful script exit', async () => {

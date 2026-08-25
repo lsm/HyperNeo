@@ -11,7 +11,11 @@ import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
-import { indexContainsLfsPointer, worktreeDeclaresLfsAttributes } from '../../worktree-lfs.ts';
+import {
+  GIT_PROBE_MAX_BUFFER_BYTES,
+  indexContainsLfsPointer,
+  worktreeDeclaresLfsAttributes,
+} from '../../worktree-lfs.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -230,6 +234,7 @@ export class SpaceWorktreeManager {
         cwd: worktreePath,
         encoding: 'utf8',
         timeout: 60_000,
+        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
         env: buildGitSshEnv(),
       });
       tracked = stdout;
@@ -241,6 +246,7 @@ export class SpaceWorktreeManager {
             cwd: worktreePath,
             encoding: 'utf8',
             timeout: 60_000,
+            maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
             env: buildGitCommandEnv(),
           });
           return stdout;
@@ -264,6 +270,7 @@ export class SpaceWorktreeManager {
         cwd: worktreePath,
         encoding: 'utf8',
         timeout: 300_000,
+        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
         env: buildGitSshEnv(),
       });
     }

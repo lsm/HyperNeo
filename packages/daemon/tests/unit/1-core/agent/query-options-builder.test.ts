@@ -989,6 +989,30 @@ describe('QueryOptionsBuilder', () => {
       }
     );
 
+    it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
+      'should not forward ambient Anthropic credentials to ACP commands',
+      async () => {
+        const previousBaseline: Record<string, string | undefined> = { ...process.env };
+        _setStartupEnvBaselineForTesting({
+          ...previousBaseline,
+          ANTHROPIC_API_KEY: 'ambient-api-key',
+          ANTHROPIC_AUTH_TOKEN: 'ambient-auth-token',
+          CLAUDE_CODE_OAUTH_TOKEN: 'ambient-oauth-token',
+          ANTHROPIC_BASE_URL: 'https://acme.example',
+        });
+        mockSession.config.provider = 'acp';
+
+        try {
+          const options = await builder.build();
+          expect(options.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+          expect(options.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
+          expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+        } finally {
+          _setStartupEnvBaselineForTesting(previousBaseline);
+        }
+      }
+    );
+
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       const options = await builder.build();
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });

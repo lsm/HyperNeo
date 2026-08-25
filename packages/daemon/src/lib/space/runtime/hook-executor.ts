@@ -90,6 +90,8 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'USER',
   'SHELL',
   'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
   'TERM',
   'TMPDIR',
   'SystemRoot',

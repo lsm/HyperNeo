@@ -141,6 +141,12 @@ const FULL_BUILTIN_TOOL_LIST = [
 
 const AGENT_INVOCATION_TOOLS = ['Agent', 'Task', 'TaskOutput', 'TaskStop'];
 
+const AMBIENT_AUTH_ENV_KEYS = new Set([
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+]);
+
 function isNonDelegatingGeneralOverride(agents: Options['agents']): boolean {
   if (!agents || Object.keys(agents).length !== 1) return false;
   const agent = agents['general-purpose'];
@@ -891,6 +897,7 @@ CRITICAL RULES:
     } else {
       delete mergedEnv.CLAUDE_CODE_SUBAGENT_MODEL;
       delete mergedEnv.ENABLE_TOOL_SEARCH;
+      const isAcpProvider = this.ctx.session.config.provider === 'acp';
       const providerVars = [
         'ANTHROPIC_BASE_URL',
         'ANTHROPIC_API_KEY',
@@ -910,6 +917,7 @@ CRITICAL RULES:
         }
       }
       for (const key of providerVars) {
+        if (isAcpProvider && AMBIENT_AUTH_ENV_KEYS.has(key)) continue;
         const value = envValue(STARTUP_ENV_BASELINE, key);
         if (value !== undefined && value !== '') {
           mergedEnv[key] = value;
