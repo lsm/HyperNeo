@@ -21,7 +21,7 @@ function isLfsPointerContent(content: string): boolean {
   const lines = content
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .filter((line) => line.trim() !== '');
+    .filter((line) => line !== '');
   if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
   const seenPriorities = new Set<number>();
   let index = 1;

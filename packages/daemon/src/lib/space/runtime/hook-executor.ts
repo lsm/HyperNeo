@@ -94,6 +94,7 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'LC_CTYPE',
   'TERM',
   'TMPDIR',
+  'CI',
   'SystemRoot',
   'SystemDrive',
   'ComSpec',

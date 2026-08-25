@@ -7,11 +7,17 @@ const OS_ENV_KEYS = [
   'SHELL',
   'LANG',
   'LC_ALL',
+  'LC_COLLATE',
   'LC_CTYPE',
+  'LC_MESSAGES',
+  'LC_MONETARY',
+  'LC_NUMERIC',
+  'LC_TIME',
   'TERM',
   'TMPDIR',
   'TZ',
   'CI',
+  'JAVA_HOME',
   'XDG_CONFIG_HOME',
   'XDG_DATA_HOME',
   'XDG_CACHE_HOME',
@@ -77,6 +83,7 @@ const DIALOG_ENV_KEYS = [
 ] as const;
 
 const GIT_COMMAND_ENV_KEYS = [
+  'GNUPGHOME',
   'GIT_SSL_CAINFO',
   'GIT_SSL_NO_VERIFY',
   'GIT_CEILING_DIRECTORIES',

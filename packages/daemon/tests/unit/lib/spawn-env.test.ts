@@ -22,7 +22,11 @@ const SOURCE: Record<string, string> = {
   TMPDIR: '/var/folders/ab/',
   LANG: 'en_US.UTF-8',
   LC_CTYPE: 'en_US.UTF-8',
+  LC_COLLATE: 'C',
+  LC_NUMERIC: 'de_DE.UTF-8',
   CI: 'true',
+  JAVA_HOME: '/Library/Java/JavaVirtualMachines/jdk-21/Contents/Home',
+  GNUPGHOME: '/tmp/gnupg-keyring',
   WINDIR: 'C:\\Windows',
   DISPLAY: ':0',
   WAYLAND_DISPLAY: 'wayland-0',
@@ -76,8 +80,11 @@ describe('buildOsBaselineEnv', () => {
     expect(env.HOME).toBe(SOURCE.HOME);
     expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
     expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
+    expect(env.LC_COLLATE).toBe(SOURCE.LC_COLLATE);
+    expect(env.LC_NUMERIC).toBe(SOURCE.LC_NUMERIC);
     expect(env.USERNAME).toBe(SOURCE.USERNAME);
     expect(env.CI).toBe('true');
+    expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
     expect(env.WINDIR).toBe(SOURCE.WINDIR);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -261,6 +268,7 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
     expect(env.GIT_EDITOR).toBe(SOURCE.GIT_EDITOR);
+    expect(env.GNUPGHOME).toBe(SOURCE.GNUPGHOME);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
