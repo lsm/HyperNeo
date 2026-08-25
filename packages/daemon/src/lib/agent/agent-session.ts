@@ -2252,8 +2252,10 @@ export class AgentSession
           this.reopenDeliveryForRetry(messageUuid);
           kickoffDiedBeforeConsumption = true;
         }
+        const kickoffStatus = this.stateManager.getState().status;
         if (
           !kickoffDiedBeforeConsumption &&
+          (kickoffStatus === 'processing' || kickoffStatus === 'idle') &&
           (!claimGuard || claimGuard()) &&
           this.acknowledgedDeliveryStillOwned(messageUuid)
         ) {

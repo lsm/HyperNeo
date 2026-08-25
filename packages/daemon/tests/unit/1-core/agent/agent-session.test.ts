@@ -6586,6 +6586,41 @@ describe('AgentSession', () => {
       }
     });
 
+    it('an interrupt clearing a yielded kickoff never marks the batch consumed', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-interrupted');
+      try {
+        agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        const drive = agentSession.driveDeliveryTurn(
+          hardUuid,
+          hardContent,
+          null,
+          false,
+          () => true
+        );
+        const queue = agentSession.messageQueue;
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-turn-interrupted', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        await agentSession.stateManager.setInterrupted();
+        queue.clear();
+        resolveQuery();
+        await expect(drive).rejects.toThrow('Turn ended without a response');
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-interrupted', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+      } finally {
+        db.close();
+      }
+    });
+
     it('an ACP kickoff submitted before the ack still counts as acknowledged', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-submitted', {
         provider: 'acp',
