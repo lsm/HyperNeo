@@ -384,12 +384,26 @@ export function peekProviderCatalogModels(
   return null;
 }
 
+const scopedCatalogStamps = new Map<string, string>();
+
+function scopedCatalogStamp(providerId: string, sessionConfig: ProviderSessionConfig): string {
+  return [
+    providerId,
+    sessionConfig.baseUrl ?? '',
+    sessionConfig.apiKey ?? '',
+    typeof sessionConfig.region === 'string' ? sessionConfig.region : '',
+  ].join(' ');
+}
+
 export async function ensureScopedProviderCatalogModels(
   sessionCacheKey: string,
   providerId: string,
   sessionConfig: ProviderSessionConfig
 ): Promise<void> {
-  if (readCachedModels(sessionCacheKey)) return;
+  const stamp = scopedCatalogStamp(providerId, sessionConfig);
+  if (readCachedModels(sessionCacheKey) && scopedCatalogStamps.get(sessionCacheKey) === stamp) {
+    return;
+  }
   const provider = getProviderRegistry().get(providerId);
   if (!provider?.getModelsForSessionConfig) return;
   try {
@@ -397,6 +411,7 @@ export async function ensureScopedProviderCatalogModels(
     if (models.length > 0) {
       modelsCache.set(sessionCacheKey, models);
       cacheTimestamps.set(sessionCacheKey, Date.now());
+      scopedCatalogStamps.set(sessionCacheKey, stamp);
     }
   } catch {}
 }

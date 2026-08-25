@@ -163,14 +163,16 @@ export class OllamaProvider implements Provider {
   }
 
   async getModelsForSessionConfig(sessionConfig?: ProviderSessionConfig): Promise<ModelInfo[]> {
-    if (!sessionConfig?.baseUrl) {
+    const baseUrl = sessionConfig?.baseUrl;
+    const apiKey = sessionConfig?.apiKey;
+    if (!baseUrl && !apiKey) {
       return this.getModels();
     }
     try {
       return await this.fetchModels(
-        sessionConfig.baseUrl,
+        baseUrl ?? this.getBaseUrl(),
         false,
-        sessionConfig.apiKey || this.getApiKey()
+        apiKey || this.getApiKey()
       );
     } catch {
       return this.fallbackModels();

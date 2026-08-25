@@ -3153,6 +3153,57 @@ describe('Model Service', () => {
 
       expect(getAvailableModels('session-scoped-3')).toEqual([]);
     });
+
+    it('refetches the scoped catalog when session settings change', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async (sessionConfig) => {
+          scopedFetchCount += 1;
+          return [
+            {
+              id: `scoped-${sessionConfig.baseUrl}-${sessionConfig.apiKey ?? 'none'}`,
+              name: 'Scoped Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-4', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      await ensureScopedProviderCatalogModels('session-scoped-4', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(scopedFetchCount).toBe(1);
+      expect(getAvailableModels('session-scoped-4').map((model) => model.id)).toEqual([
+        'scoped-http://127.0.0.1:11434-none',
+      ]);
+
+      await ensureScopedProviderCatalogModels('session-scoped-4', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11500',
+        apiKey: 'session-key',
+      });
+      expect(scopedFetchCount).toBe(2);
+      expect(getAvailableModels('session-scoped-4').map((model) => model.id)).toEqual([
+        'scoped-http://127.0.0.1:11500-session-key',
+      ]);
+    });
   });
 
   describe('resolveVisibleCanonicalModelId', () => {

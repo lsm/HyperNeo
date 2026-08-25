@@ -148,6 +148,40 @@ describe('OllamaProvider', () => {
     });
   });
 
+  it('authenticates scoped discovery with the session API key when only the key is overridden', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: 'qwen3:14b',
+                model: 'qwen3:14b',
+                modified_at: '2026-04-20T00:00:00Z',
+                details: { family: 'qwen', parameter_size: '14B', quantization_level: 'Q4_K_M' },
+              },
+            ],
+          }),
+          { status: 200 }
+        )
+    );
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'session-key' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('http://ollama.test/api/tags', {
+      headers: { Authorization: 'Bearer session-key' },
+    });
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({ id: 'qwen3:14b' });
+  });
+
   it('bypasses the Ollama model cache for forced remote discovery', async () => {
     let callCount = 0;
     const fetchMock = mock(async () => {
