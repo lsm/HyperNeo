@@ -24,7 +24,7 @@ For each function below, the plan picks the combinator that matches the existing
 | `delivery-turn-routing.ts:planDeliveryRoleArbitration` | `decisionRun` (`delivery-role-arbitration`) | `reuse` vs `enqueue` decision with fallback role computation. |
 | `handler-outcome-routing.ts:routeDriveTurnOutcome` | `decisionRun` (`drive-turn-outcome`) | Maps `DriveTurnOutcome` to a `HandlerOutcomeRoute`. |
 | `handler-outcome-routing.ts:routeFeedSteerOutcome` | `decisionRun` (`feed-steer-outcome`) | Maps `FeedSteerOutcome` to a `HandlerOutcomeRoute` with park-budget gates. |
-| `context-reset-planner.ts:planInjectContextReset` | `decisionRun` (`inject-context-reset`) | Six-guard sequential cascade that admits `clear_before_deliver` only when every guard passes. |
+| `context-reset-planner.ts:planInjectContextReset` | Ordinary pure helper consumed by `message-delivery-pipeline.ts` (review correction: its own `decisionRun` would make every inject-delivery run execute an inner pipeline) | Six-guard sequential cascade that admits `clear_before_deliver` only when every guard passes. |
 | `context-reset-planner.ts:planTurnEndFlushContextReset` | `decisionRun` (`turn-end-flush-context-reset`) | Three-guard cascade for `clear_then_flush` vs `flush_without_clear`. |
 | `message-ownership-gates.ts:resolveDeliveryRole` | `decisionRun` (`delivery-role`) | Small priority table with TypeScript overloads. |
 
@@ -127,7 +127,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 - **Input/output snapshot design:**
   - Input: `{ route: QueryRetryRoute; env: QueryRetryEnvironment; errorSignal?: QueryRetryErrorSignal; }`.
   - Output: `QueryRetryDecision`.
-- **Pure core design:** Each `case` in the switch becomes a gate. Because only one case matches a given `route.action`, the finalizer gates run through unmatched gates (they return `ctx`) and halt once one sets `decision`. `applyRateLimitHandoffFinalizeGate` is the only non-trivial gate: it branches on `env.rateLimitHandoffResult` and, for `declined`, FIRST re-checks `isQueryInterrupted` — a handoff declined after the lifecycle became interrupted (or with the abort signal set) whose error name is not `AbortError` currently returns `aborted_noop` with recovery-aware finalizer flags, and a naive rerun would fall through to a terminal rate-limit route instead — and only otherwise re-runs the same single `route-query-retry` pipeline with a `hasRateLimitHandoff: false` environment and takes that run's `decision`. That re-entrant call is a fresh pipeline invocation, not recursion through an intermediate wrapper, and it terminates because `hasRateLimitHandoff: false` means the classifier cannot select `rate_limit_handoff` again.
+- **Pure core design:** Each `case` in the switch becomes a gate. Because only one case matches a given `route.action`, the finalizer gates run through unmatched gates (they return `ctx`) and halt once one sets `decision`. `applyRateLimitHandoffFinalizeGate` is the only non-trivial gate: it branches on `env.rateLimitHandoffResult` and, for `declined`, FIRST re-checks `isQueryInterrupted` — a handoff declined after the lifecycle became interrupted (or with the abort signal set) whose error name is not `AbortError` currently returns `aborted_noop` with recovery-aware finalizer flags, and a naive rerun would fall through to a terminal rate-limit route instead — and only otherwise performs the amended-environment reclassification INLINE — as pure helper stages within the CURRENT run (`classifyRoutePure(env with hasRateLimitHandoff: false, errorSignal)` + finalizer mapping helpers; review correction round 16: invoking `routeQueryRetryRun` from inside a gate would nest the business operation inside itself and contradict the single-invocation instruction). Termination is by construction: with `hasRateLimitHandoff: false` the classifier cannot select `rate_limit_handoff` again.
   - `applySupersededNoopFinalizer`
   - `applyCleanupNoopFinalizer`
   - `applyStartupTimeoutRetryFinalizer`
@@ -142,7 +142,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 - **Step-by-step migration:**
   1. Add the finalizer gates to the SAME `routeQueryRetryRun` pipeline, after the classifier gates (review correction: no separate `queryRetryFinalizeRun` runner and no separate `resolveDecision` production call — that would recreate two composition boundaries; the business path is one pipeline).
   2. Replace each `case` with a gate that checks `ctx.route.action === '<action>'` and `ctx.decision === null`, then sets `ctx.decision`.
-  3. Move the `rate_limit_handoff` switch into `applyRateLimitHandoffFinalizeGate`; its `declined` branch re-invokes `routeQueryRetryRun` with the amended env.
+  3. Move the `rate_limit_handoff` switch into `applyRateLimitHandoffFinalizeGate`; its `declined` branch recomputes via the inline pure helpers (amended env) WITHIN the current run.
   4. Keep `makeFinalizer`, `skipIdleDueToRecovery`, `skipFinalizerIdleDueToLifecycle`, and `skipFinalizerIdleAlways` as helpers used by the gates.
   5. Update `decideQueryRetry` to invoke `routeQueryRetryRun` ONCE and return `ctx.decision`.
 - **Tests:** `query-retry-routing.test.ts` is the parity suite. Add `query-retry-finalize-gates.test.ts` that tests each finalizer gate per `route.action`, including the `rate_limit_handoff` `accepted`/`declined`/`thrown`/`undefined` branches and the `declined` recompute. Add a contract test that the `declined` path returns the same decision as the current hand-rolled function.
@@ -280,7 +280,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/context-reset-planner.ts:planInjectContextReset`
 
 - **Current summary:** Six-guard sequential cascade that decides whether to clear conversation context before delivering a newly persisted message. Only admits `clear_before_deliver` for `task` inputs on a non-busy session with prior context, a slot that resets context, no active delivery job, and no unconsumed delivered work.
-- **Proposed combinator:** `decisionRun` named `inject-context-reset`.
+- **Proposed combinator:** Review correction — keep this planner as an ORDINARY PURE HELPER (its six-guard cascade intact); `message-delivery-pipeline.ts` calls it directly. Converting it to its own `decisionRun` while `message-inject-delivery` calls it would make every inject-delivery operation execute an inner pipeline to obtain one of the outer pipeline's decisions.
 - **Input/output snapshot design:**
   - Input: `{ inputKind: string; isBusy: boolean; hasPriorContext: boolean; slotResetsContext: boolean; hasActiveDeliveryJob: boolean; hasUnconsumedDeliveredWork: boolean; }`.
   - Output: `InjectContextResetPlan`.
@@ -357,7 +357,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ## Open questions
 
 1. ~~**Should `routeTurnEnd` be folded into `turn-end-pipeline.ts`?**~~ Resolved by review: yes — the routing gates extend `turn-end-pipeline.ts` directly (one pipeline per business path); no separate `sdk-turn-end-routing` runner.
-2. ~~**Should `classifyQueryRetryRoute` and `resolveDecision` remain two separate `decisionRun`s or be one combined pipeline?**~~ Resolved by review: they compose as ONE `route-query-retry` pipeline per business path; the `rate_limit_handoff` `declined` branch re-invokes that pipeline with `hasRateLimitHandoff: false` (a fresh run, terminating by construction).
+2. ~~**Should `classifyQueryRetryRoute` and `resolveDecision` remain two separate `decisionRun`s or be one combined pipeline?**~~ Resolved by review: they compose as ONE `route-query-retry` pipeline invoked ONCE per operation; the `rate_limit_handoff` `declined` branch recomputes INLINE (pure helper stages, amended env) within that single run.
 3. ~~**How should the `rate_limit_handoff` `declined` recompute be modeled without a recursive call?**~~ Resolved with the combined pipeline above: the finalizer gate re-runs `routeQueryRetryRun` once with the amended environment; no wrapper recursion and no duplicated classifier gates.
 4. **Is `resolveDeliveryRole` too hot for `decisionRun` overhead?** It runs on every message enqueue. The `decisionRun` overhead is ~2 µs per call, but if deliveries become a bottleneck, this function may be a candidate to keep as a plain function or a raw `superpipe` transform with no gates. A microbenchmark should confirm.
 5. **Should the exported function names be kept as wrappers or replaced with `decideXxx` runners?** This plan preserves `routeTurnEnd`, `classifyQueryRetryRoute`, `resolveDecision` (private), `resolveSteerAdmission`, `planDeliveryRoleArbitration`, `routeDriveTurnOutcome`, `routeFeedSteerOutcome`, `planInjectContextReset`, `planTurnEndFlushContextReset`, and `resolveDeliveryRole` as the public API to avoid churning every caller. The internal `decideXxx` runners are private.

@@ -284,8 +284,17 @@ The normalizer family has no DB/network writes.
    and keep the `publishEvent` per-space call site unchanged (projection
    stays at the publish boundary; it never joins the normalize-once ingest
    pipeline).
-6. After all wrappers pass the existing test suites, delete the old
-   implementations and rename the pipeline runners to the original export names.
+6. Review correction — before deleting any old implementations, rewire the
+   DIRECT per-kind consumers: `github-event-extension.ts` invokes
+   `normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus` (~lines
+   825–834), `normalizeGitHubStatus` (~line 925), and the check-run,
+   merge-conflict, review, and reaction normalizers from polling loops. Each
+   per-kind export must remain callable (as a thin wrapper over its stage
+   group of the ingest pipeline) OR every direct consumer must be explicitly
+   rewired to the ingest pipeline in the same commit — otherwise those
+   webhook and polling event classes lose their normalization path. Then
+   delete the old bodies and rename the pipeline runners to the original
+   export names.
 7. Update `github/index.ts` if any internal exports change; public export
    surface must remain the same.
 

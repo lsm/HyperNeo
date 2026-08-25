@@ -844,7 +844,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     decision: ActivationRoutingDecision | null;
   }
   ```
-- **Pure core design**: `decideActivationRouting` with gates: `reuseInProgressOrBlocked`, `rejectUndeclared`, `returnEmpty`, `spawn`.
+- **Pure core design**: `decideActivationRouting` with gates: `reuseInProgressOrBlocked` (review correction: returns `reuse_existing` ONLY when the existing execution has a LIVE `agentSessionId`; when the execution is `in_progress`/`blocked` but has NO live session it must return `reset_pending_and_continue` so the stale execution is reset before continuing — without that branch a literal implementation falls through toward `spawn`, losing recovery of dead worker executions), `rejectUndeclared`, `returnEmpty`, `spawn`.
 - **Shell/effect wiring**: The caller (`TaskAgentManager` activation logic) interprets the decision and executes the chosen action.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts`.

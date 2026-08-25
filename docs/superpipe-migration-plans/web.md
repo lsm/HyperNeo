@@ -729,8 +729,11 @@ anywhere in this plan.
 - **Proposed combinator.** Direct mixed pipeline, migrated in two
   independently shippable steps: Step 1 admission `decisionRun`; Step 2 full
   pipeline with async effect stages.
-- **Input/output snapshot design.** Step 1 ctx: `{ content, images?,
-  deliveryMode, sessionStatus, isSending, allowQueueWhileProcessing,
+- **Input/output snapshot design.** Step 1 ctx: `{ sessionId, content, images?,
+  deliveryMode, sessionStatus, isSending, allowQueueWhileProcessing,` (review
+  correction: `sessionId` MUST ride in the per-call context — both the direct
+  and queued `message.send` payloads require it, and the pure
+  `stageBuildPayload` cannot otherwise reconstruct the target session)
   isConnected, decision }` with decision union `'rejectEmpty' |
   'rejectArchived' | 'queueOffline' | 'send'`. The hook
   snapshots `session?.status`, `isSending`, and
