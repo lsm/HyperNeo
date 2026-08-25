@@ -6404,4 +6404,138 @@ describe('AgentSession', () => {
       }
     });
   });
+
+  describe('delivery continuation hardening (A3a)', () => {
+    const hardUuid = 'hard-msg-uuid';
+    const hardContent = 'hard-content';
+
+    async function makeHardeningSession(
+      sessionId: string
+    ): Promise<{ db: Database; agentSession: AgentSession }> {
+      const db = await createTestDb();
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: hardUuid,
+          message: { role: 'user', content: hardContent },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      const bus = await createTestInternalEventBus();
+      const agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key'),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoReplayPendingMessages: false }
+      );
+      await agentSession.stateManager.setProcessing('active-msg-uuid');
+      return { db, agentSession };
+    }
+
+    async function waitForQueueEntry(queue: { size: () => number }): Promise<void> {
+      for (let i = 0; i < 200 && queue.size() === 0; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    it('a steer whose yielded acknowledgment is cleared by an interrupt aborts instead of consuming', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-cleared');
+      try {
+        const queue = agentSession.messageQueue;
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const steerPromise = agentSession.feedDeliverySteer(
+          hardUuid,
+          hardContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-steer-cleared', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        expect(queue.hasYielded(hardUuid)).toBe(true);
+        await agentSession.stateManager.setInterrupted();
+        queue.clear();
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-cleared', hardUuid)?.sendStatus
+        ).toBe('enqueued');
+        expect(queue.size()).toBe(0);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a steer whose claim is superseded during the acknowledgment wait aborts instead of consuming', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-superseded');
+      try {
+        const queue = agentSession.messageQueue;
+        agentSession.queryPromise = new Promise<void>(() => {});
+        let claimHeld = true;
+        const steerPromise = agentSession.feedDeliverySteer(
+          hardUuid,
+          hardContent,
+          null,
+          () => claimHeld
+        );
+        await waitForQueueEntry(queue);
+        claimHeld = false;
+        queue.remove(hardUuid);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-superseded', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a turn whose claim is superseded during the acknowledgment wait never marks the batch consumed', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-superseded');
+      try {
+        agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        let claimHeld = true;
+        const drive = agentSession.driveDeliveryTurn(
+          hardUuid,
+          hardContent,
+          null,
+          false,
+          () => claimHeld
+        );
+        await waitForQueueEntry(agentSession.messageQueue);
+        claimHeld = false;
+        agentSession.messageQueue.remove(hardUuid);
+        for (let i = 0; i < 100; i++) {
+          await Promise.resolve();
+        }
+        await agentSession.stateManager.setIdle();
+        resolveQuery();
+        await expect(drive).rejects.toThrow('Turn ended without a response');
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-superseded', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+      } finally {
+        db.close();
+      }
+    });
+  });
 });

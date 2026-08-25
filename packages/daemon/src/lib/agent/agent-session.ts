@@ -142,6 +142,7 @@ import {
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
 import { ContextTracker } from './context-tracker.ts';
+import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
 import {
   EventSubscriptionSetup,
@@ -2251,7 +2252,11 @@ export class AgentSession
           this.reopenDeliveryForRetry(messageUuid);
           kickoffDiedBeforeConsumption = true;
         }
-        if (!kickoffDiedBeforeConsumption) {
+        if (
+          !kickoffDiedBeforeConsumption &&
+          (!claimGuard || claimGuard()) &&
+          this.messageDeliveryValid(messageUuid, alreadyConsumed)
+        ) {
           kickoffAcknowledged = true;
           this.zeroProgressDeliveryFailures = null;
           this.logger.debug(
@@ -2540,26 +2545,26 @@ export class AgentSession
     const action = await withSessionLock(
       this.session.id,
       async () => {
-        if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
-        const status = this.stateManager.getState().status;
-        if (status === 'processing') {
-          if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
-          if (!this.queryPromise) return { kind: 'promote' as const };
-          const generation = this.getQueryGeneration();
-          observer?.reportStage('query_ready', { generation });
-          if (
-            this.session.config.provider === 'acp' &&
-            this.messageQueue.hasPendingOrInFlight(messageUuid)
-          ) {
-            return { kind: 'awaiting_acceptance' as const };
-          }
-          const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
-            durable: true,
-          });
-          return { kind: 'feed' as const, acknowledgment, generation };
+        const decision = resolveSteerAdmission({
+          claimCurrent: claimGuard ? claimGuard() : true,
+          status: this.stateManager.getState().status,
+          deliveryValid: this.messageDeliveryValid(messageUuid),
+          hasLiveQuery: !!this.queryPromise,
+          provider: this.session.config.provider ?? '',
+          queueOwnsMessage: this.messageQueue.hasPendingOrInFlight(messageUuid),
+        });
+        if (decision.action === 'aborted') return { kind: 'aborted' as const };
+        if (decision.action === 'park') return { kind: 'park' as const };
+        if (decision.action === 'promote') return { kind: 'promote' as const };
+        const generation = this.getQueryGeneration();
+        observer?.reportStage('query_ready', { generation });
+        if (decision.action === 'awaiting_acceptance') {
+          return { kind: 'awaiting_acceptance' as const };
         }
-        if (status === 'queued') return { kind: 'park' as const };
-        return { kind: 'promote' as const };
+        const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+          durable: true,
+        });
+        return { kind: 'feed' as const, acknowledgment, generation };
       },
       signal
     );
@@ -2602,9 +2607,15 @@ export class AgentSession
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
+    if ((claimGuard && !claimGuard()) || this.stateManager.getState().status !== 'processing') {
+      return { outcome: 'aborted' };
+    }
     deliveryMetrics.recordFeed(messageUuid);
     observer?.reportStage('sdk_admitted', { generation: action.generation });
-    if (this.session.config.provider !== 'acp') {
+    const acknowledged = classifyAcknowledgedSteer({
+      provider: this.session.config.provider ?? '',
+    });
+    if (acknowledged === 'consumed') {
       this.markDeliveryConsumed(messageUuid);
       signalDeliveryConsumed(this.session.id, messageUuid);
       return { outcome: 'consumed' };
