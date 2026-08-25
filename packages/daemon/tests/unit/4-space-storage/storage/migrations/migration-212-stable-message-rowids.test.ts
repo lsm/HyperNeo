@@ -149,4 +149,141 @@ describe('Migration 212: stable sdk_messages rowids', () => {
         .run()
     ).toThrow();
   });
+
+  test('commits the copy in chunks and resumes from the last committed chunk after a crash', () => {
+    const dbPath = join(testDir, 'test.db');
+    const rowIdsBefore = db
+      .prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`)
+      .all() as Array<{ id: string; cursor: number }>;
+    const rowsBefore = db
+      .prepare(
+        `SELECT id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, consumed_seq
+         FROM sdk_messages ORDER BY id`
+      )
+      .all();
+
+    const originalPrepare = db.prepare.bind(db);
+    let chunkRuns = 0;
+    db.prepare = ((sql: string, options?: unknown) => {
+      const statement = originalPrepare(sql, options as never);
+      if (sql.includes('INSERT INTO sdk_messages_m212_new')) {
+        const originalRun = statement.run.bind(statement);
+        (statement as unknown as { run: (...args: unknown[]) => unknown }).run = (
+          ...args: unknown[]
+        ) => {
+          chunkRuns++;
+          if (chunkRuns > 2) throw new Error('simulated crash after two committed chunks');
+          return originalRun(...(args as never[]));
+        };
+      }
+      return statement;
+    }) as typeof db.prepare;
+
+    expect(() => runMigration212(db, 10)).toThrow('simulated crash after two committed chunks');
+
+    db.close();
+    db = new BunDatabase(dbPath);
+    expect(db.prepare(`SELECT COUNT(*) AS copied FROM sdk_messages_m212_new`).get()).toEqual({
+      copied: 20,
+    });
+    expect(db.prepare(`SELECT MAX(seq) AS maxSeq FROM sdk_messages_m212_new`).get()).toEqual({
+      maxSeq: 20,
+    });
+
+    runMigration212(db, 10);
+
+    const tableSql = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sdk_messages'`)
+      .get() as { sql: string };
+    expect(tableSql.sql).toContain('seq INTEGER PRIMARY KEY');
+    expect(
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sdk_messages_m212_new'`
+        )
+        .all()
+    ).toEqual([]);
+    expect(db.prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`).all()).toEqual(
+      rowIdsBefore
+    );
+    expect(
+      db
+        .prepare(
+          `SELECT id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, consumed_seq
+           FROM sdk_messages ORDER BY id`
+        )
+        .all()
+    ).toEqual(rowsBefore);
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND tbl_name = 'sdk_messages' AND name IN ('idx_sdk_messages_session_timestamp', 'idx_sdk_messages_consumed_seq')`
+        )
+        .get()
+    ).toEqual({ n: 2 });
+    expect(db.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+    expect(db.prepare(`PRAGMA integrity_check`).get()).toEqual({ integrity_check: 'ok' });
+    expect(runMigration212(db, 10)).toBeUndefined();
+  });
+
+  test('resumes with the copy phase complete when the crash landed before the swap', () => {
+    db.exec(`
+      CREATE TABLE sdk_messages_m212_new (
+        seq INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        message_subtype TEXT,
+        message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL,
+        sdk_message TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        send_status TEXT,
+        consumed_seq INTEGER,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )
+    `);
+    db.exec(`
+      INSERT INTO sdk_messages_m212_new (
+        seq, id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, consumed_seq
+      )
+      SELECT
+        rowid, id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, consumed_seq
+      FROM sdk_messages
+    `);
+
+    const rowIdsBefore = db
+      .prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`)
+      .all() as Array<{ id: string; cursor: number }>;
+
+    runMigration212(db, 10);
+
+    expect(db.prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`).all()).toEqual(
+      rowIdsBefore
+    );
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 24 });
+    expect(db.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+    expect(db.prepare(`PRAGMA integrity_check`).get()).toEqual({ integrity_check: 'ok' });
+  });
+
+  test('drops a leftover partial table with an incompatible schema and rebuilds from scratch', () => {
+    db.exec(`
+      CREATE TABLE sdk_messages_m212_new (
+        seq INTEGER PRIMARY KEY,
+        id TEXT NOT NULL UNIQUE
+      )
+    `);
+    db.prepare(`INSERT INTO sdk_messages_m212_new (seq, id) VALUES (1, 'message-00')`).run();
+
+    const rowIdsBefore = db
+      .prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`)
+      .all() as Array<{ id: string; cursor: number }>;
+
+    runMigration212(db, 10);
+
+    expect(db.prepare(`SELECT id, rowid AS cursor FROM sdk_messages ORDER BY rowid`).all()).toEqual(
+      rowIdsBefore
+    );
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 24 });
+    expect(db.prepare(`PRAGMA integrity_check`).get()).toEqual({ integrity_check: 'ok' });
+  });
 });

@@ -101,6 +101,33 @@ describe('DatabaseCore', () => {
       expect(result.foreign_keys).toBe(1);
     });
 
+    it('should configure a 512 MiB page cache before migrations run', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      const result = db.prepare('PRAGMA cache_size').get() as { cache_size: number };
+      expect(result.cache_size).toBe(-524288);
+    });
+
+    it('should keep temporary sorts and index builds in memory', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      const result = db.prepare('PRAGMA temp_store').get() as { temp_store: number };
+      expect(result.temp_store).toBe(2);
+    });
+
+    it('should raise the mmap read limit for large database rewrites', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      const result = db.prepare('PRAGMA mmap_size').get() as { mmap_size: number };
+      expect(result.mmap_size).toBeGreaterThanOrEqual(1073741824);
+    });
+
     it('should create database tables', async () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();

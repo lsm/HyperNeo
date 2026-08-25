@@ -73,16 +73,18 @@ export class DatabaseCore {
 
       this.db.exec('PRAGMA foreign_keys = ON');
 
+      this.db.exec('PRAGMA cache_size = -524288');
+
+      this.db.exec('PRAGMA temp_store = MEMORY');
+
+      this.db.exec('PRAGMA mmap_size = 34359738368');
+
       const pendingSpaceReclaims = runMigrations(this.db, () => this.createBackup());
       const reclaim = reclaimPendingMigrationSpace(this.db, pendingSpaceReclaims);
       if (reclaim.kind === 'reclaimed') {
         this.logger.info(
-          `[Database] Reclaimed space after ${reclaim.reclaimedMigrations} rewrite migrations` +
-            ` (${reclaim.freelistBefore} free pages${reclaim.vacuumed ? '' : ', no vacuum needed'})`
-        );
-      } else if (reclaim.kind === 'deferred') {
-        this.logger.warn(
-          '[Database] Migration space reclaim blocked by an active WAL reader; retrying next startup'
+          `[Database] Recorded ${reclaim.reclaimedMigrations} rewrite migration space reclaims` +
+            ` (${reclaim.freelistBefore} free pages left for reuse; vacuum skipped)`
         );
       }
 
