@@ -371,40 +371,49 @@ export async function getProviderCatalogModels(
   providerId: string,
   provider: Provider
 ): Promise<ModelInfo[]> {
-  const curatedNow = getProviderRegistry().getCuratedModels(providerId);
-  const curatedStamp =
-    curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(',');
-  const cached = providerCatalogCache.get(provider);
-  if (
-    cached &&
-    cached.curatedStamp === curatedStamp &&
-    cached.epoch === providerCatalogEpoch &&
-    Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
-  ) {
-    return cached.models;
-  }
-  const epochAtFetch = providerCatalogEpoch;
-  let models: ModelInfo[];
-  try {
-    const fetched = await provider.getModels();
-    if (fetched.length > 0 || provider.hasCuratedModelList?.()) {
-      models = fetched;
-    } else {
-      models =
-        curatedNow !== undefined && curatedNow.length === 0 ? fetched : fallbackModelsFor(provider);
+  let models: ModelInfo[] = [];
+  for (let attempt = 0; ; attempt += 1) {
+    const curatedNow = getProviderRegistry().getCuratedModels(providerId);
+    const curatedStamp =
+      curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(',');
+    const cached = providerCatalogCache.get(provider);
+    if (
+      cached &&
+      cached.curatedStamp === curatedStamp &&
+      cached.epoch === providerCatalogEpoch &&
+      Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
+    ) {
+      return cached.models;
     }
-  } catch {
-    models = fallbackModelsFor(provider);
+    const epochAtFetch = providerCatalogEpoch;
+    try {
+      const fetched = await provider.getModels();
+      if (fetched.length > 0 || provider.hasCuratedModelList?.()) {
+        models = fetched;
+      } else {
+        models =
+          curatedNow !== undefined && curatedNow.length === 0
+            ? fetched
+            : fallbackModelsFor(provider);
+      }
+    } catch {
+      models = fallbackModelsFor(provider);
+    }
+    if (providerCatalogEpoch === epochAtFetch) {
+      if (models.length > 0) {
+        providerCatalogCache.set(provider, {
+          models,
+          at: Date.now(),
+          curatedStamp,
+          epoch: epochAtFetch,
+        });
+      }
+      return models;
+    }
+    if (attempt >= 2) {
+      return models;
+    }
   }
-  if (models.length > 0 && providerCatalogEpoch === epochAtFetch) {
-    providerCatalogCache.set(provider, {
-      models,
-      at: Date.now(),
-      curatedStamp,
-      epoch: epochAtFetch,
-    });
-  }
-  return models;
 }
 
 async function loadProviderModels(
@@ -1224,7 +1233,8 @@ export async function resolveVisibleCanonicalModelId(
     const exactLive = liveModels.find(
       (model) =>
         model.id.toLowerCase() === lowerInput ||
-        (model.alias ? model.alias.toLowerCase() === lowerInput : false)
+        (model.alias ? model.alias.toLowerCase() === lowerInput : false) ||
+        (model.providerAliases?.some((alias) => alias.toLowerCase() === lowerInput) ?? false)
     );
     if (exactLive) return exactLive.id;
     if (liveModels.some((model) => model.id === cachedId)) return cachedId;
@@ -1262,8 +1272,12 @@ export async function isModelExcludedByCuration(
   cacheKey: string = 'global'
 ): Promise<boolean> {
   const registry = getProviderRegistry();
-  if (registry.getCuratedModels(providerId) === undefined) {
+  const curatedBefore = registry.getCuratedModels(providerId);
+  if (curatedBefore === undefined) {
     return false;
+  }
+  if (curatedBefore.length === 0) {
+    return true;
   }
 
   const canonicalId = await resolveVisibleCanonicalModelId(idOrAlias, providerId, cacheKey);

@@ -276,6 +276,10 @@ export class ProviderService {
       const catalogModels = await this.getProviderCatalogModels(providerId, provider);
       return catalogModels[0]?.id;
     }
+    const curatedNow = registry.getCuratedModels(providerId);
+    if (curatedNow !== undefined && curatedNow.length === 0) {
+      return undefined;
+    }
     const catalogModels = await this.getProviderCatalogModels(providerId, provider);
     const catalogIds = new Set(catalogModels.map((model) => model.id));
     for (const candidate of candidates) {

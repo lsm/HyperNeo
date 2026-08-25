@@ -11,6 +11,7 @@ import {
   resolveModelAliasUnfiltered,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
+  resolveVisibleCanonicalModelId,
   clearModelsCache,
   getModelsCache,
   setModelsCache,
@@ -2743,6 +2744,28 @@ describe('Model Service', () => {
 
       expect(fetchCount).toBe(1);
     });
+
+    it('short-circuits explicitly empty curation without discovery', async () => {
+      const registry = getProviderRegistry();
+      let fetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', []);
+      setModelsCache(new Map());
+
+      await expect(isModelExcludedByCuration('ollama-qwen', 'ollama')).resolves.toBe(true);
+      expect(fetchCount).toBe(0);
+    });
   });
 
   describe('isCuratedOutModelAllowingExactId', () => {
@@ -2823,7 +2846,7 @@ describe('Model Service', () => {
   });
 
   describe('getProviderCatalogModels', () => {
-    it('does not cache a catalog fetched across a provider sync epoch bump', async () => {
+    it('discards and refetches a catalog when the epoch changes mid-discovery', async () => {
       const registry = getProviderRegistry();
       let fetchCount = 0;
       registry.register({
@@ -2834,32 +2857,44 @@ describe('Model Service', () => {
           fetchCount += 1;
           await new Promise((resolve) => setTimeout(resolve, 5));
           return [
-            {
-              id: 'ollama-qwen',
-              name: 'Qwen',
-              alias: 'qwen3',
-              family: 'qwen',
-              provider: 'ollama',
-              contextWindow: 128000,
-              description: 'Qwen',
-              releaseDate: '',
-              available: true,
-            },
+            fetchCount === 1
+              ? {
+                  id: 'ollama-stale',
+                  name: 'Stale',
+                  provider: 'ollama',
+                  contextWindow: 128000,
+                  description: 'Stale',
+                  releaseDate: '',
+                  available: true,
+                }
+              : {
+                  id: 'ollama-fresh',
+                  name: 'Fresh',
+                  alias: 'qwen3',
+                  family: 'qwen',
+                  provider: 'ollama',
+                  contextWindow: 128000,
+                  description: 'Fresh',
+                  releaseDate: '',
+                  available: true,
+                },
           ];
         },
         ownsModel: () => false,
         getModelForTier: () => undefined,
         buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
       } as unknown as Parameters<typeof registry.register>[0]);
-      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-fresh' }]);
       setModelsCache(new Map());
       const provider = registry.get('ollama')!;
 
       const firstFetch = getProviderCatalogModels('ollama', provider);
       await new Promise((resolve) => setTimeout(resolve, 0));
       bumpProviderCatalogEpoch();
-      await firstFetch;
-      expect(fetchCount).toBe(1);
+      const models = await firstFetch;
+
+      expect(fetchCount).toBe(2);
+      expect(models.map((model) => model.id)).toEqual(['ollama-fresh']);
 
       await getProviderCatalogModels('ollama', provider);
       expect(fetchCount).toBe(2);
@@ -2902,6 +2937,44 @@ describe('Model Service', () => {
       clearModelsCache();
       await getProviderCatalogModels('ollama', provider);
       expect(fetchCount).toBe(2);
+    });
+  });
+
+  describe('resolveVisibleCanonicalModelId', () => {
+    it('matches live provider aliases before cached ids', async () => {
+      const registry = getProviderRegistry();
+      const staticPinnedModel: ModelInfo = {
+        id: 'glm-4.7',
+        name: 'GLM 4.7',
+        provider: 'ollama',
+        contextWindow: 128000,
+        description: 'GLM 4.7',
+        releaseDate: '',
+        available: true,
+        providerAliasPrefixes: ['glm'],
+      };
+      const repointedModel: ModelInfo = {
+        id: 'glm-4.8',
+        name: 'GLM 4.8',
+        provider: 'ollama',
+        contextWindow: 128000,
+        description: 'GLM 4.8',
+        releaseDate: '',
+        available: true,
+        providerAliases: ['glm'],
+      };
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [staticPinnedModel, repointedModel],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map([['global', [staticPinnedModel]]]));
+
+      await expect(resolveVisibleCanonicalModelId('glm', 'ollama')).resolves.toBe('glm-4.8');
     });
   });
 

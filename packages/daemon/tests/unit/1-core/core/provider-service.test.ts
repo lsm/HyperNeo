@@ -675,6 +675,33 @@ describe('ProviderService', () => {
 
       expect(model).toBeNull();
     });
+
+    it('skips provider discovery when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      let fetchCount = 0;
+      globalRegistry.register({
+        id: 'title-empty',
+        displayName: 'Title Empty Provider',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('title-empty', []);
+
+      const model = await realService.getTitleGenerationModel(
+        'title-empty' as unknown as ProviderId,
+        'title-9'
+      );
+
+      expect(model).toBeNull();
+      expect(fetchCount).toBe(0);
+    });
   });
 
   describe('getTitleGenerationConfig', () => {
