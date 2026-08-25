@@ -774,12 +774,12 @@ export class AcpQueryRunner {
             }
 
             try {
-              await this.handleSDKMessage(acpMessage as SDKMessage);
+              await this.handleSDKMessage(acpMessage as SDKMessage, queryGeneration);
             } catch (error) {
               logger.error('Error handling ACP SDK message:', error);
               logger.error('Message type:', (acpMessage as SDKMessage).type);
 
-              if (!this.ctx.isCleaningUp()) {
+              if (!this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration) {
                 const processingState = stateManager.getState();
                 await drainDeliveryWaitersOnTerminalSDKMessage(
                   stateManager,
@@ -1097,8 +1097,8 @@ export class AcpQueryRunner {
     }
   }
 
-  private async handleSDKMessage(message: SDKMessage): Promise<void> {
-    await this.ctx.onSDKMessage(message);
+  private async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
+    await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message);
   }
 

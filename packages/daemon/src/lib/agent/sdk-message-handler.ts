@@ -720,9 +720,9 @@ export class SDKMessageHandler {
     } as unknown as SDKMessage).catch(() => {});
   }
 
-  async handleMessage(message: SDKMessage): Promise<void> {
+  async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
-    const invocationGeneration = this.ctx.getQueryGeneration?.() ?? null;
+    const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
 
     this.ctx.bumpDeliveryTurnActivity?.();
     this.ctx.reportFirstDeliverySDKResponse?.(message.type);
@@ -874,7 +874,7 @@ export class SDKMessageHandler {
     if (isTopLevelResult) {
       this.resetThinkingTokenTracking();
       const limitError = this.assessResultLimitError(message);
-      if (limitError) {
+      if (limitError && !this.isInvocationStale(invocationGeneration)) {
         limitBillingTerminal = limitError.hint.billingTerminal === true;
         limitEngaged =
           (await this.ctx.onResultLimitError?.(
@@ -1152,6 +1152,7 @@ export class SDKMessageHandler {
       if (confirmsArmedClear) {
         this.clearIdleSuppression();
       }
+      this.retirePendingTerminalFence({ generation: invocationGeneration });
       throw error;
     }
   }

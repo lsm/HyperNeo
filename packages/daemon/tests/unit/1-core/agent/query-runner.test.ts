@@ -1266,11 +1266,11 @@ describe('QueryRunner', () => {
         session_id: 'sdk-session-123',
       };
 
-      await runner.handleSDKMessage(systemInitMessage as unknown as SDKMessage);
+      await runner.handleSDKMessage(systemInitMessage as unknown as SDKMessage, 1);
 
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
-      expect(onSDKMessageSpy).toHaveBeenCalledWith(systemInitMessage);
+      expect(onSDKMessageSpy).toHaveBeenCalledWith(systemInitMessage, undefined, 1);
     });
 
     it('should delegate to onSDKMessage callback', async () => {
@@ -1282,9 +1282,9 @@ describe('QueryRunner', () => {
         message: { role: 'assistant', content: [] },
       };
 
-      await runner.handleSDKMessage(message as unknown as SDKMessage);
+      await runner.handleSDKMessage(message as unknown as SDKMessage, 1);
 
-      expect(onSDKMessageSpy).toHaveBeenCalledWith(message);
+      expect(onSDKMessageSpy).toHaveBeenCalledWith(message, undefined, 1);
     });
 
     it('should call onMarkApiSuccess after handling message', async () => {

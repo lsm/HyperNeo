@@ -1461,8 +1461,12 @@ export class AgentSession
     return this._isCleaningUp;
   }
 
-  async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
-    const queryGeneration = this.getQueryGeneration();
+  async onSDKMessage(
+    message: import('@hyperneo/shared/sdk').SDKMessage,
+    queuedMessages?: Array<import('@hyperneo/shared/sdk').SDKMessage>,
+    runnerGeneration?: number
+  ): Promise<void> {
+    const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
       this.session.config.provider !== 'acp' &&
       isSDKSessionStateChangedMessage(message) &&
@@ -1476,7 +1480,7 @@ export class AgentSession
     }
     try {
       try {
-        await this.messageHandler.handleMessage(message);
+        await this.messageHandler.handleMessage(message, queryGeneration);
       } catch (error) {
         if (this.getQueryGeneration() === queryGeneration) {
           this.observeTaskNotificationResult(message);

@@ -3394,7 +3394,7 @@ describe('AgentSession', () => {
       const message = { type: 'assistant', message: { content: [] } };
       await agentSession.onSDKMessage(message as never);
 
-      expect(handleMessageSpy).toHaveBeenCalledWith(message);
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, agentSession.getQueryGeneration());
     });
   });
 
