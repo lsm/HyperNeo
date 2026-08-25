@@ -26,6 +26,7 @@ import { runMigration209 } from './m209-drop-inbox-agent-fk.ts';
 import { runMigration213 } from './m213-inactivity-watchdog.ts';
 import { runMigration214 } from './m214-backfill-session-agent-provenance.ts';
 import { runMigration215 } from './m215-space-agent-model-pool.ts';
+import { runMigration216 } from './m216-restamp-reviewer-base-advance-policy.ts';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
 import {
   findPendingMigrationSpaceReclaims,
@@ -487,6 +488,8 @@ export function runMigrations(
   run(migrationMarkerKey(214), () => runMigration214(db));
 
   run(migrationMarkerKey(215), () => runMigration215(db));
+
+  run(migrationMarkerKey(216), () => runMigration216(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
