@@ -313,7 +313,8 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failInvalidWorker') {
         return {
-          success: queued.length > 0 ? 'partial' : false,
+          success:
+            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: `Invalid worker target ${decision.target}: ${decision.reason}`,
@@ -412,7 +413,8 @@ export class AgentMessageRouter {
           : null;
       if (!permittedChannelTarget) {
         return {
-          success: queued.length > 0 ? 'partial' : false,
+          success:
+            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: `Channel topology does not permit '${fromAgentName}' to send to: ${target}.`,

@@ -10,6 +10,8 @@ import {
 } from '../../agent/message-delivery.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
+export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
+
 export type SpaceAgentInjectionOutcome =
   | { state: 'delivered'; messageId: string }
   | { state: 'queued'; messageId: string }
@@ -130,8 +132,16 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
       },
     };
   }
+  const onConsumed = ctx.deps.onConsumed;
+  if (!onConsumed) {
+    return { ...ctx, outcome: { state: 'queued', messageId } };
+  }
   const late = waitForDeliveryConsumption(sessionId, messageId);
-  void late.promise.then(() => ctx.deps.onConsumed?.());
+  const expiry = setTimeout(() => late.cancel(), LATE_SETTLE_HORIZON_MS);
+  void late.promise.then(() => {
+    clearTimeout(expiry);
+    onConsumed();
+  });
   return { ...ctx, outcome: { state: 'queued', messageId } };
 }
 

@@ -1969,6 +1969,28 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(result.reason).toContain("Channel topology does not permit 'coder' to send to");
   });
 
+  test('keeps earlier delivered results when a later generic target is invalid', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      spaceAgentInjector: async () => ({ state: 'delivered', messageId: 'msg-live-coordinator' }),
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: ['@coordinator', '@worker:%2F/bad'],
+      message: 'delivered then invalid',
+    });
+
+    expect(result.success).toBe('partial');
+    expect(result.delivered).toEqual([
+      { agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
+    ]);
+    expect(result.reason).toContain("Channel topology does not permit 'coder' to send to");
+  });
+
   test('reports injector failure to the sender when an idle-coordinator delivery dead-letters', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);

@@ -684,6 +684,24 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
   });
 
+  it('settles space_agent rows already consumed before this drain pass', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'consumed while the daemon was down' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'consumed' } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+  });
+
   it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
     let settleQueuedRow: (() => void) | null = null;
     const h = makeSpaceAgentHarness({

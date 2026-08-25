@@ -1496,6 +1496,14 @@ export class TaskAgentManager {
     );
 
     for (const row of drain.rows) {
+      const settledStatus = this.config.db
+        .getSDKMessageRepo?.()
+        ?.getDeliveryContent(spaceChatSessionId, row.id)?.sendStatus;
+      if (settledStatus === 'consumed') {
+        repo.markDelivered(row.id, spaceChatSessionId);
+        this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        continue;
+      }
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const registry = this.config.replyRoutingRegistry;
