@@ -117,6 +117,9 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
     return { ...ctx, outcome: { state: 'delivered', messageId } };
   }
   const settled = ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+  if (settled === 'consumed') {
+    return { ...ctx, outcome: { state: 'delivered', messageId } };
+  }
   if (settled === 'failed') {
     return {
       ...ctx,

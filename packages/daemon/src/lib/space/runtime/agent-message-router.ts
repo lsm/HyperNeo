@@ -313,10 +313,12 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failInvalidWorker') {
         return {
-          success: false,
-          delivered: [],
-          failed: [],
+          success: queued.length > 0 ? 'partial' : false,
+          delivered,
+          failed,
           reason: `Invalid worker target ${decision.target}: ${decision.reason}`,
+          queued: queued.length > 0 ? queued : undefined,
+          notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
         };
       }
       if (decision.action === 'deliverToCoordinator') {
@@ -410,12 +412,14 @@ export class AgentMessageRouter {
           : null;
       if (!permittedChannelTarget) {
         return {
-          success: false,
-          delivered: [],
-          failed: [],
+          success: queued.length > 0 ? 'partial' : false,
+          delivered,
+          failed,
           reason: `Channel topology does not permit '${fromAgentName}' to send to: ${target}.`,
           unauthorizedAgentNames: [target],
           permittedTargets: resolver.getPermittedTargets(fromNodeName),
+          queued: queued.length > 0 ? queued : undefined,
+          notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
         };
       }
       try {

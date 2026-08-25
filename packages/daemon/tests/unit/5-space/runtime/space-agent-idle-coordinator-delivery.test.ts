@@ -431,6 +431,50 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       );
     });
 
+    it('reports delivered when consumption lands between the timeout and classification', async () => {
+      const harness = await makeIdleCoordinatorHarness();
+      track(harness, harness.agentSession.getSessionData().workspacePath);
+      const { db } = harness;
+      const realRepo = db.getSDKMessageRepo();
+      let reads = 0;
+      const lateConsumingRepo = new Proxy(realRepo, {
+        get(target, prop, receiver) {
+          if (prop !== 'getDeliveryContent') {
+            return Reflect.get(target, prop, receiver);
+          }
+          return (sessionId: string, uuid: string) => {
+            reads += 1;
+            if (reads >= 2 && uuid === 'msg-boundary-1') {
+              realRepo.markDeliveryConsumedByUuid(sessionId, uuid);
+            }
+            return Reflect.get(target, prop, receiver).call(target, sessionId, uuid);
+          };
+        },
+      });
+
+      const escalated = deliverSpaceAgentMessage(
+        {
+          sdkMessageRepo: lateConsumingRepo,
+          saveUserMessage: (sid, msg, status) => db.saveUserMessage(sid, msg, status),
+          publishStatusChanged: async () => {},
+          jobQueue: db.getJobQueueRepo(),
+        },
+        {
+          sessionId: SESSION_ID,
+          messageId: 'msg-boundary-1',
+          sdkUserMessage: {
+            type: 'user',
+            uuid: 'msg-boundary-1',
+            session_id: SESSION_ID,
+            parent_tool_use_id: null,
+            message: { role: 'user', content: [{ type: 'text', text: 'boundary race' }] },
+          } as unknown as SDKUserMessage,
+        }
+      );
+      const outcome = await escalated;
+      expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-boundary-1' });
+    });
+
     it('settles a queued escalation through the delayed-consumption hook', async () => {
       const harness = await makeIdleCoordinatorHarness();
       track(harness, harness.agentSession.getSessionData().workspacePath);
