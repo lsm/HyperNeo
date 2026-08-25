@@ -5732,7 +5732,7 @@ describe('AgentSession', () => {
       } catch {}
     });
 
-    it('a bare marker (no success result) is cleared and NOT silently completed', async () => {
+    it('a bare marker (no success result) is NOT silently completed; a failed pass restores it', async () => {
       await setupDriverail({ marker: true, successResult: false });
       const repo = db.getSDKMessageRepo();
       expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(true);
@@ -5752,7 +5752,7 @@ describe('AgentSession', () => {
       }
       expect(outcome).not.toEqual({ outcome: 'turn_terminated' });
       expect(threw).toBe(true);
-      expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(false);
+      expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(true);
     });
 
     it('a SUCCESS-terminated reclaim still completes (turn_terminated) without starting a query', async () => {

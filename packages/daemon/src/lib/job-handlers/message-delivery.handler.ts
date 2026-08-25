@@ -114,7 +114,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         claimCurrent,
         payload.batchUuids,
         signal,
-        reportStage ? { reportStage } : undefined
+        reportStage ? { reportStage } : undefined,
+        job.claimToken
       );
       const result = await turn;
       const route = routeDriveTurnOutcome(result);
