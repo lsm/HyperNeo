@@ -159,7 +159,9 @@ describe('decideTurnEnd', () => {
       plan: routeTurnEnd(flags, event, { queryMode: 'immediate' }),
     });
   });
+});
 
+describe('selectTurnEndAckRow', () => {
   it('a row that gains a durable owner mid-loop revalidates to no selection', () => {
     expect(selectTurnEndAckRow(ACK_ROWS[2], 'active-3')).toEqual({
       messageId: 'active-3',
