@@ -107,6 +107,17 @@ describe('SpaceWorkspaceRepository', () => {
     expect(owner!.id).not.toBe(secondaryInA.id);
   });
 
+  test('findOwnerByPath breaks created_at ties on id so the winner is stable', () => {
+    const inA = repo.create({ spaceId: SPACE_A, path: '/repos/shared' });
+    const inB = repo.create({ spaceId: SPACE_B, path: '/repos/shared' });
+    db.prepare(`UPDATE space_workspaces SET created_at = ?`).run(1000);
+
+    const expected = [inA.id, inB.id].sort()[0]!;
+    for (let i = 0; i < 3; i++) {
+      expect(repo.findOwnerByPath('/repos/shared')!.id).toBe(expected);
+    }
+  });
+
   test('updateLabel changes only the target row and bumps updated_at', () => {
     const inA = repo.create({ spaceId: SPACE_A, path: '/repos/alpha' });
     const inB = repo.create({ spaceId: SPACE_B, path: '/repos/beta' });

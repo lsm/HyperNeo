@@ -59,7 +59,7 @@ export class SpaceWorkspaceRepository {
   findOwnerByPath(path: string): SpaceWorkspaceRecord | null {
     const row = this.db
       .prepare(
-        `SELECT * FROM space_workspaces WHERE path = ? ORDER BY is_primary DESC, created_at ASC LIMIT 1`
+        `SELECT * FROM space_workspaces WHERE path = ? ORDER BY is_primary DESC, created_at ASC, id ASC LIMIT 1`
       )
       .get(path) as Record<string, unknown> | undefined;
     if (!row) return null;

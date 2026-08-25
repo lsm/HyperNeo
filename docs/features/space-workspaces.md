@@ -27,4 +27,6 @@ Consequences of that contract:
   `findOwnerByPath` will not match both.
 - `getByPath` never leaks across spaces: it always takes `(spaceId, path)`.
 - When several spaces registered the same canonical path, `findOwnerByPath` returns the primary
-  row of one of them deterministically (primary rows win, then earliest `created_at`).
+  row of one of them deterministically (primary rows win, then earliest `created_at`, then
+  lexicographically smallest `id`, so the winner is stable even when rows share a millisecond
+  timestamp).
