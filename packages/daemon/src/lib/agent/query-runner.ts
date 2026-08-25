@@ -340,6 +340,7 @@ export interface QueryRunnerContext {
   incrementQueryGeneration(): number;
   getQueryGeneration(): number;
   isCleaningUp(): boolean;
+  attemptTokens: QueryAttemptRegistry;
 
   onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
@@ -401,8 +402,6 @@ export class QueryRunner {
   constructor(private ctx: QueryRunnerContext) {}
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
-
-  private readonly attemptTokens = new QueryAttemptRegistry();
 
   private hasLiveQuery(): boolean {
     const queryPromise = this.ctx.queryPromise;
@@ -561,7 +560,7 @@ export class QueryRunner {
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
-    const attemptToken = this.attemptTokens.allocate();
+    const attemptToken = this.ctx.attemptTokens.allocate();
 
     let startupPermit: SdkStartupPermit | null = null;
     const releaseStartupPermit = (reason: string): void => {
@@ -1216,7 +1215,7 @@ export class QueryRunner {
         }
       }
     } finally {
-      this.attemptTokens.invalidate(attemptToken);
+      this.ctx.attemptTokens.invalidate(attemptToken);
 
       releaseStartupPermit('attempt_finished');
 
@@ -1412,6 +1411,8 @@ export class QueryRunner {
   ): Promise<void> {
     const { messageQueue, stateManager, logger } = this.ctx;
 
+    this.ctx.attemptTokens.invalidate(attemptToken);
+
     const abandon = (point: string): boolean => {
       const routeGuard = options.routeGuard;
       if (!routeGuard) {
@@ -1572,7 +1573,6 @@ export class QueryRunner {
     };
 
     const recurseNextAttempt = async (): Promise<void> => {
-      this.attemptTokens.invalidate(attemptToken);
       await this.runQuery(queryGeneration, options.nextAttempt, options.recoveryState);
     };
 

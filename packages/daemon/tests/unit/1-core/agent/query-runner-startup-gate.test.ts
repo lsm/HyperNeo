@@ -42,6 +42,7 @@ import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
@@ -227,6 +228,7 @@ describe('QueryRunner startup gate', () => {
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
+      attemptTokens: new QueryAttemptRegistry(),
 
       onSDKMessage: async () => {},
       onSlashCommandsFetched: async () => {},

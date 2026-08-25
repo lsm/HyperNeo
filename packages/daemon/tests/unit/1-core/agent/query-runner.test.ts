@@ -232,6 +232,7 @@ describe('QueryRunner', () => {
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
+      attemptTokens: new QueryAttemptRegistry(),
 
       onSDKMessage: onSDKMessageSpy,
       onSlashCommandsFetched: onSlashCommandsFetchedSpy,
@@ -3141,6 +3142,7 @@ describe('QueryRunner', () => {
         incrementQueryGeneration: () => ++queryGeneration,
         getQueryGeneration: () => queryGeneration,
         isCleaningUp: () => false,
+        attemptTokens: new QueryAttemptRegistry(),
 
         onSDKMessage: onSDKMessageSpy,
         onSlashCommandsFetched: onSlashCommandsFetchedSpy,
@@ -5609,14 +5611,51 @@ describe('QueryRunner', () => {
       ]);
 
       runner.start();
+      const teardownStartDeadline = Date.now() + 5000;
+      while (
+        !setIdleSpy.mock.calls.some(
+          (call) =>
+            (call[0] as { suppressDeliveryWaiters?: boolean } | undefined)
+              ?.suppressDeliveryWaiters === true
+        ) &&
+        Date.now() < teardownStartDeadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<[HookCallback]>;
+      const duringTeardown = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-during-wait'));
+      expect(duringTeardown.permissionDecision).toBe('deny');
+      expect(innerHookCalls).toHaveLength(0);
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
-      const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<[HookCallback]>;
       const latePredecessor = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-late'));
       expect(latePredecessor.permissionDecision).toBe('deny');
       expect(innerHookCalls).toHaveLength(0);
     }, 15000);
+
+    it('shares attempt liveness across runner replacements through the session registry', async () => {
+      const sharedRegistry = new QueryAttemptRegistry();
+      const outgoingToken = sharedRegistry.allocate();
+      runner = createRunner({ attemptTokens: sharedRegistry });
+      const bindAttemptHook = (
+        runner as unknown as {
+          createAttemptBoundPreToolUseHook: (token: QueryAttemptToken) => HookCallback;
+        }
+      ).createAttemptBoundPreToolUseHook.bind(runner);
+      const outgoingHook = bindAttemptHook(outgoingToken);
+
+      await invokeHook(outgoingHook, 'tu-outgoing');
+      expect(innerHookCalls).toHaveLength(1);
+
+      createRunner({ attemptTokens: sharedRegistry });
+      const replacementToken = sharedRegistry.allocate();
+      expect(outgoingToken.isLive()).toBe(false);
+      expect(replacementToken.isLive()).toBe(true);
+      const denied = denyDecisionOf(await invokeHook(outgoingHook, 'tu-after-replacement'));
+      expect(denied.permissionDecision).toBe('deny');
+      expect(innerHookCalls).toHaveLength(1);
+    });
 
     it('invalidates the attempt token when the run exits without a retry', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));

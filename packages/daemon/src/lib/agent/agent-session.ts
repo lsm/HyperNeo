@@ -190,6 +190,7 @@ import {
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
+import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
@@ -242,6 +243,7 @@ export class AgentSession
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly optionsBuilder: QueryOptionsBuilder;
+  readonly attemptTokens = new QueryAttemptRegistry();
 
   private queryRunner: QueryRunner | AcpQueryRunner;
   readonly interruptHandler: InterruptHandler;
