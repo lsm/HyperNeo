@@ -245,7 +245,9 @@ export class ProviderService {
     } catch {
       models = fallbackModelsFor(provider);
     }
-    this.catalogCache.set(provider, { models, at: Date.now() });
+    if (models.length > 0) {
+      this.catalogCache.set(provider, { models, at: Date.now() });
+    }
     return models;
   }
 
@@ -286,9 +288,15 @@ export class ProviderService {
   ): Promise<{ providerModelId: string; sdkModelId: string } | null> {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
-    let providerModelId = provider?.getTitleGenerationModel?.() ?? sessionModelId;
+    const titleOverride = provider?.getTitleGenerationModel?.();
+    let providerModelId = titleOverride ?? sessionModelId;
     if (provider) {
-      const resolved = await this.resolveVisibleCuratedModel(providerId, provider, providerModelId);
+      const resolved = await this.resolveVisibleCuratedModel(
+        providerId,
+        provider,
+        titleOverride,
+        sessionModelId
+      );
       if (!resolved) return null;
       providerModelId = resolved;
     }

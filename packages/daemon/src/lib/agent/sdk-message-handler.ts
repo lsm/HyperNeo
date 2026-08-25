@@ -53,7 +53,10 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
-import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
+import {
+  getBuiltFallbackModel,
+  shouldUseHyperNeoCompactFallback,
+} from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
@@ -1310,6 +1313,8 @@ export class SDKMessageHandler {
     if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
+    const builtFallbackModel = getBuiltFallbackModel(session);
+    if (builtFallbackModel === undefined || builtFallbackModel !== fallbackModel) return;
     const providerId = session.config.provider ?? 'anthropic';
     const configuredFallbackModel = session.config.fallbackModel;
     const primaryModelBeforeGuard = session.config.model;

@@ -1003,6 +1003,71 @@ describe('ProviderService', () => {
       expect(fetchCount).toBe(1);
     });
 
+    it('uses the supplied session model when the title override is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new TitleOverrideMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => [
+        ...baseModels,
+        {
+          id: 'title-2',
+          name: 'Title Model 2',
+          alias: 'title2',
+          family: 'mock',
+          provider: 'title-override',
+          contextWindow: 100000,
+          description: 'Mock model',
+          releaseDate: '',
+          available: true,
+        },
+      ];
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-2' }, { id: 'title-1' }]);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-2');
+
+      expect(model).toBe('translated-2');
+    });
+
+    it('does not cache empty catalogs across curation changes', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'custom-model',
+            name: 'Custom Model',
+            alias: 'custom',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', []);
+
+      expect(
+        await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId)
+      ).toBeNull();
+
+      globalRegistry.setCuratedModels('custom-endpoint', [{ id: 'custom-model' }]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-model');
+    });
+
     it('re-reads curation after catalog discovery', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();
