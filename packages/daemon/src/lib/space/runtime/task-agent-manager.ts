@@ -248,7 +248,7 @@ export interface TaskAgentManagerConfig {
     message: string,
     replyToSessionId?: string | null,
     explicitMessageId?: string
-  ) => Promise<void>;
+  ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
@@ -1501,9 +1501,16 @@ export class TaskAgentManager {
         const replyTo =
           extractReplyToSessionId(message) ??
           (registry && row.taskId ? registry.get(row.taskId) : null);
-        await inject(spaceId, message, replyTo, row.id);
-        repo.markDelivered(row.id, spaceChatSessionId);
-        this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        const outcome = await inject(spaceId, message, replyTo, row.id);
+        if (outcome.delivered) {
+          repo.markDelivered(row.id, spaceChatSessionId);
+          this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        } else {
+          log.info(
+            `TaskAgentManager: Space Agent delivery for ${row.id} queued pending consumption ` +
+              `by ${spaceChatSessionId}; leaving the pending row for a later flush`
+          );
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);

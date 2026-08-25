@@ -373,6 +373,36 @@ export function deliveryConsumptionTimeoutMs(provider?: string): number | undefi
   return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
 }
 
+export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {
+  return timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+}
+
+export async function awaitDeliveryConsumptionTolerant(args: {
+  sessionId: string;
+  messageUuid: string;
+  deliver: () => Promise<void>;
+  timeoutMs?: number;
+}): Promise<{ consumed: boolean }> {
+  const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
+  let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await args.deliver();
+    const won = await Promise.race([
+      consumed.promise.then(() => true as const),
+      new Promise<boolean>((resolve) => {
+        consumptionTimeout = setTimeout(
+          () => resolve(false),
+          deliveryConsumptionTimeoutOrDefault(args.timeoutMs)
+        );
+      }),
+    ]);
+    return { consumed: won };
+  } finally {
+    if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    consumed.cancel();
+  }
+}
+
 export async function awaitDeliveryConsumption(args: {
   sessionId: string;
   messageUuid: string;
@@ -384,8 +414,7 @@ export async function awaitDeliveryConsumption(args: {
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await args.deliver();
-    const consumptionTimeoutMs =
-      args.timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+    const consumptionTimeoutMs = deliveryConsumptionTimeoutOrDefault(args.timeoutMs);
     await Promise.race([
       consumed.promise,
       new Promise<void>((_, reject) => {

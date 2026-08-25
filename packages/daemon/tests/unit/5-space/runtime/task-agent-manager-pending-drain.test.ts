@@ -600,7 +600,7 @@ function makeSpaceAgentHarness(
       message: string,
       replyTo: string | null,
       rowId: string
-    ) => Promise<string>;
+    ) => Promise<{ delivered: boolean; messageId: string }>;
     registry?: { get: (taskId: string) => string | null };
   } = {}
 ): SpaceAgentHarness {
@@ -629,7 +629,10 @@ function makeSpaceAgentHarness(
   const publish = mock(async (_event: string, _payload: unknown) => {});
   const injector = mock(
     options.injectorImpl ??
-      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => rowId)
+      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
+        delivered: true,
+        messageId: rowId,
+      }))
   );
 
   const config: Record<string, unknown> = {
@@ -794,7 +797,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
         if (message.includes('fails first')) throw new Error('injector down');
-        return rowId;
+        return { delivered: true, messageId: rowId };
       },
     });
     dbByTest.push(h.db);
