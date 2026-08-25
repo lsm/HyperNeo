@@ -405,14 +405,20 @@ function persistLastGoodDiscoveredModels(
 ): boolean {
   let base: Record<string, unknown> = {};
   if (record.configJson) {
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(record.configJson);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
+      parsed = JSON.parse(record.configJson);
     } catch {
-      base = {};
+      throw new Error(
+        'Saved provider config is not valid JSON; refresh rejected to avoid overwriting it'
+      );
     }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(
+        'Saved provider config is not a JSON object; refresh rejected to avoid overwriting it'
+      );
+    }
+    base = parsed as Record<string, unknown>;
   }
   const budget = lastGoodDiscoveryBudget(base);
   if (budget < 2) {
@@ -883,7 +889,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       if (record.kind === 'built_in') {
-        providerRepo.updateProvider(data.id, { isEnabled: false });
+        const strippedConfig = stripPersistedDiscovery(record.configJson);
+        const updates: UpdateProviderParams = { isEnabled: false };
+        if (strippedConfig !== record.configJson) {
+          updates.configJson = strippedConfig;
+        }
+        providerRepo.updateProvider(data.id, updates);
         markBuiltInProviderDisabled(record.providerId);
       } else {
         providerRepo.deleteProvider(data.id);

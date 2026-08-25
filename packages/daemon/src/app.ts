@@ -500,9 +500,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         const { recoverDormantProvider } = await import('./lib/model-service.ts');
         return await recoverDormantProvider(providerId);
       },
-      onPreRecoveryInvalidate: async (_providerId) => {
+      onPreRecoveryInvalidate: async (providerId) => {
         const { clearModelsCache } = await import('./lib/model-service.js');
         clearModelsCache();
+        try {
+          const record = db.providers.getProviderByProviderId(providerId);
+          if (record) {
+            const stripped = stripPersistedDiscovery(record.configJson);
+            if (stripped !== record.configJson) {
+              db.providers.updateProvider(record.id, { configJson: stripped });
+            }
+          }
+        } catch (error) {
+          logError(`[Daemon] Pre-recovery discovery strip failed for ${providerId}:`, error);
+        }
       },
       onProviderChanged: async (providerId, outcome) => {
         let skipCacheClear = false;

@@ -739,7 +739,7 @@ describe('Provider RPC handlers', () => {
       }
     });
 
-    it('merges into existing config keys and rebuilds from scratch on unparsable JSON', async () => {
+    it('merges into existing config keys', async () => {
       const withConfig = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
@@ -747,27 +747,14 @@ describe('Provider RPC handlers', () => {
         authType: 'none',
         configJson: '{"region":"china","models":[{"id":"static-one"}],"broken":true}',
       });
-      const withBrokenConfig = repo.createProvider({
-        providerId: 'remote2',
-        displayName: 'Remote Two',
-        kind: 'built_in',
-        authType: 'none',
-        configJson: 'not-json{',
-      });
       registerRemoteProvider({
         listRemoteModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
         getModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
       });
-      getProviderRegistry().register({
-        id: 'remote2',
-        listRemoteModels: async () => [makeDiscoveredModel('remote-b')],
-        getModels: async () => [makeDiscoveredModel('remote-b')],
-      } as unknown as Provider);
       const handlers = setup();
       const handler = handlers.get('providers.refreshDiscovery')!;
 
       await handler({ id: withConfig.id }, {});
-      await handler({ id: withBrokenConfig.id }, {});
 
       const first = parsePersisted(repo.getProvider(withConfig.id)?.configJson) as Record<
         string,
@@ -776,12 +763,27 @@ describe('Provider RPC handlers', () => {
       expect(first.region).toBe('china');
       expect(first.broken).toBe(true);
       expect(first.discoveredModels.models).toEqual([{ id: 'remote-a', name: 'Remote A' }]);
-      const second = parsePersisted(repo.getProvider(withBrokenConfig.id)?.configJson) as {
-        discoveredModels: { models: Array<{ id: string; name?: string }> };
-      };
-      expect(second.discoveredModels).toEqual({
-        models: [{ id: 'remote-b', name: 'remote-b' }],
+    });
+
+    it('rejects refresh on unparsable JSON to avoid overwriting the saved configuration', async () => {
+      const withBrokenConfig = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: 'not-json{',
       });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
+        getModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
+      });
+      const handlers = setup();
+      const handler = handlers.get('providers.refreshDiscovery')!;
+
+      await expect(handler({ id: withBrokenConfig.id }, {})).rejects.toThrow(
+        /Saved provider config is not valid JSON/
+      );
+      expect(repo.getProvider(withBrokenConfig.id)?.configJson).toBe('not-json{');
     });
 
     it('persists configured curated ids ahead of discovery even when discovery omits them', async () => {
@@ -1832,6 +1834,27 @@ describe('Provider RPC handlers', () => {
       expect(result.success).toBe(true);
       const after = repo.getProvider(created.id);
       expect(after).not.toBeNull();
+      expect(after?.isEnabled).toBe(false);
+    });
+
+    it('strips persisted discovery when deleting a built-in provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({
+          region: 'china',
+          discoveredModels: { models: [{ id: 'remote-a' }] },
+        }),
+      });
+      const handlers = setup();
+      await handlers.get('providers.delete')!({ id: created.id }, {});
+
+      const after = repo.getProvider(created.id);
+      const stored = JSON.parse(after?.configJson ?? '{}') as Record<string, unknown>;
+      expect(stored.region).toBe('china');
+      expect(stored).not.toHaveProperty('discoveredModels');
       expect(after?.isEnabled).toBe(false);
     });
 
