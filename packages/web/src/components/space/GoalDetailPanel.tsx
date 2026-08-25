@@ -64,6 +64,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const agentsVersion = agents.map((item) => `${item.id}:${item.status}`).join('|');
   const goalIdRef = useRef(goalId);
   const spaceIdRef = useRef(spaceId);
+  const ownerMutationTokenRef = useRef(0);
   goalIdRef.current = goalId;
   spaceIdRef.current = spaceId;
 
@@ -78,23 +79,27 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     if (owner) setOwnerLoadFailed(false);
   }, [owner]);
 
+  const selectedSpaceId = spaceStore.spaceId.value;
+
   useEffect(() => {
     let cancelled = false;
-    spaceStore
-      .fetchGoalOwner(goalId)
-      .then(() => {
-        if (!cancelled) setOwnerLoadFailed(false);
-      })
-      .catch(() => {
-        if (!cancelled) setOwnerLoadFailed(true);
-      });
+    if (selectedSpaceId === spaceId) {
+      spaceStore
+        .fetchGoalOwner(goalId)
+        .then(() => {
+          if (!cancelled) setOwnerLoadFailed(false);
+        })
+        .catch(() => {
+          if (!cancelled) setOwnerLoadFailed(true);
+        });
+    }
     if (spaceStore.longHorizonAgents.value.length === 0) {
       spaceStore.refreshLongHorizonAgents().catch(() => {});
     }
     return () => {
       cancelled = true;
     };
-  }, [spaceId, goalId, agentsVersion, connectionState.value]);
+  }, [spaceId, goalId, agentsVersion, connectionState.value, selectedSpaceId]);
 
   if (!goal) {
     return (
@@ -145,6 +150,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     const previousOwner = owner;
     const mutatedGoalId = goal.id;
     const mutatedSpaceId = spaceId;
+    const mutationToken = ++ownerMutationTokenRef.current;
     const stillViewing = () =>
       goalIdRef.current === mutatedGoalId && spaceIdRef.current === mutatedSpaceId;
     try {
@@ -171,6 +177,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Owner update failed');
     } finally {
+      if (ownerMutationTokenRef.current !== mutationToken) return;
       setOwnerBusy(false);
       if (stillViewing()) {
         setAssignOpen(false);

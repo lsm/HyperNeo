@@ -585,6 +585,60 @@ describe('GoalDetailPanel', () => {
     );
   });
 
+  it('keeps controls busy when an older mutation settles after a newer one starts', async () => {
+    mockLongHorizonAgents.value = [
+      makeAgent(),
+      makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
+    ];
+    const resolvers: Array<() => void> = [];
+    mockAssignGoalOwner.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
+      const owner = resolvedOwner();
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return owner;
+    });
+    mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
+    const { rerender } = render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
+    await chooseAssignee('agent-2');
+    fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
+
+    rerender(<GoalDetailPanel spaceId="space-1" goalId="goal-2" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
+    await chooseAssignee('agent-2');
+    fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
+
+    resolvers[0]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect((screen.getByRole('button', { name: 'Assign' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+
+    resolvers[1]();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Change owner' }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+  });
+
+  it('defers the owner fetch until the store selects the requested space', async () => {
+    mockSpaceId.value = 'space-other';
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockFetchGoalOwner).not.toHaveBeenCalled();
+
+    mockSpaceId.value = 'space-1';
+    await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledWith('goal-1'));
+  });
+
   it('refreshes the owner resolution when the owning agent changes status', async () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
     await waitFor(() => expect(screen.getByText('Owned')).toBeTruthy());
