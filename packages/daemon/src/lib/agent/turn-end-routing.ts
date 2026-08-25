@@ -20,7 +20,7 @@ export type TurnEndResultEvent = {
   isTopLevel: boolean;
   isSuccess: boolean;
   isLimitError: boolean;
-  isLimitRecoveryEngaged: boolean;
+  isLimitRecoveryEngaged: boolean | null;
   confirmsArmedClear: boolean;
 };
 
@@ -119,13 +119,15 @@ export function routeTurnEnd(
   const { isTopLevel, isSuccess, isLimitError, isLimitRecoveryEngaged, confirmsArmedClear } =
     event.result;
   const settlesArmedClearError = confirmsArmedClear && !isSuccess;
+  const isRecoveryFinal = isLimitRecoveryEngaged !== null;
   const lastResultWasSuccess = isTopLevel ? isSuccess && !isLimitError : flags.lastResultWasSuccess;
   const nextFlags = { ...flags, lastResultWasSuccess };
   const plan: Partial<Omit<TurnEndPlan, 'nextFlags' | 'afterEffectsFlags'>> = {
-    resetThinkingTokens: isTopLevel,
+    resetThinkingTokens: isTopLevel && (!isRecoveryFinal || !isLimitError),
     cancelSuppressedTimer: confirmsArmedClear,
   };
-  const canBeginIdle = isTopLevel && !isLimitRecoveryEngaged && !flags.suppressIdleOnNextResult;
+  const canBeginIdle =
+    isTopLevel && isLimitRecoveryEngaged === false && !flags.suppressIdleOnNextResult;
   if (canBeginIdle) {
     plan.idleFence = true;
     if (!flags.usesSessionStateChangedTurnEnd && !settlesArmedClearError) {
@@ -137,8 +139,9 @@ export function routeTurnEnd(
   }
   if (settlesArmedClearError) {
     return makePlan(
-      { ...resetTurnEndFlags },
-      { ...plan, clearSuppression: true, settleSuppressedWaiter: 'reset' }
+      nextFlags,
+      { ...plan, clearSuppression: true, settleSuppressedWaiter: 'reset' },
+      resetTurnEndFlags
     );
   }
   if (confirmsArmedClear) {
@@ -157,7 +160,8 @@ export function routeTurnEnd(
     isSuccess &&
     !flags.suppressIdleOnNextResult &&
     !flags.usesSessionStateChangedTurnEnd &&
-    !flags.expectsSessionStateIdleAfterResult
+    !flags.expectsSessionStateIdleAfterResult &&
+    isLimitRecoveryEngaged === false
   ) {
     plan.finishTurn = true;
     plan.allowQueueReplay = canReplay(nextFlags.lastResultWasSuccess, ctx.queryMode);

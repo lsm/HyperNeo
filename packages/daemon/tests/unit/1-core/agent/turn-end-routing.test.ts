@@ -207,7 +207,13 @@ describe('routeTurnEnd', () => {
         cancelSuppressedTimer: true,
         clearSuppression: true,
         settleSuppressedWaiter: 'reset',
-        ...same(resetTurnEndFlags),
+        nextFlags: {
+          ...resetTurnEndFlags,
+          lastResultWasSuccess: false,
+          suppressIdleOnNextResult: true,
+          clearMessageInFlight: true,
+        },
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
     {
@@ -258,6 +264,14 @@ describe('routeTurnEnd', () => {
       expected: { ...same(resetTurnEndFlags) },
     },
     {
+      label: 'a pre-recovery limit error only resets thinking tokens',
+      event: result({ isLimitError: true, isLimitRecoveryEngaged: null }),
+      expected: {
+        resetThinkingTokens: true,
+        ...same(failure),
+      },
+    },
+    {
       label: 'a detected limit error with declined recovery marks failure and skips replay',
       event: result({ isLimitError: true, isLimitRecoveryEngaged: false }),
       expected: {
@@ -265,7 +279,6 @@ describe('routeTurnEnd', () => {
         earlySetIdle: true,
         finishTurn: true,
         allowQueueReplay: false,
-        resetThinkingTokens: true,
         ...same(failure),
       },
     },
@@ -273,7 +286,6 @@ describe('routeTurnEnd', () => {
       label: 'an engaged limit recovery skips turn-end action and replay',
       event: result({ isLimitError: true, isLimitRecoveryEngaged: true }),
       expected: {
-        resetThinkingTokens: true,
         ...same(failure),
       },
     },
