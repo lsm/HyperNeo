@@ -107,7 +107,14 @@ The repo already has several proven pipelines. Use these as the model for each s
   3. `decide` runs `decideDirectSteerFlush` over the snapshot.
   4. `effect` `save-passenger-copy` (when `proceed`) writes the passenger row and publishes `deferred`. Register `compensate` that calls `discardPassengerCopy`.
   5. `resnapshot` re-reads session and parent-task state.
-  6. Second `decide` aborts if the session left processing or became limited.
+  6. Second `decide` aborts if the session left processing or became
+     limited. Review correction: this branch must run a GUARDED CLEANUP
+     EFFECT (`consume-passenger-copy`, the same status update the current
+     implementation performs in this race) BEFORE halting — `stagedRun`
+     unwinds compensations only on errors or `superseded`, not on a
+     successful halt, so the registered `discardPassengerCopy` compensation
+     would NOT run here and the copied row would remain `deferred` alongside
+     its original source rows.
   7. `effect` `save-steer-row` saves the steer message.
   8. `effect` `enqueue-steer-delivery` calls `deliverMessage`. On throw, mark the steer row `failed` and trigger the passenger compensation.
   9. `effect` `consume-source-rows` updates source row statuses.
@@ -211,7 +218,15 @@ The repo already has several proven pipelines. Use these as the model for each s
      conditional CAS (the loser of the reservation race halts at step 7
      without ever spawning; if this CAS loses despite the reservation, the
      unwind runs step 8's compensate and terminates THIS caller's spawned
-     session — the winner's claim is never touched).
+     session — the winner's claim is never touched). Review correction
+     round 4: after that termination is VERIFIED, this caller must
+     conditionally release its own dispatch claim (a conditional delete
+     scoped to this caller's reservation token — or use an
+     expiring/tokenized claim): leaving the reservation in place with no
+     live post-approval session makes every retry lose at `reserve-dispatch`
+     and permanently blocks the approved task. Retain the claim only when
+     session termination cannot be confirmed (crash window), where the
+     expiring-claim fallback eventually unblocks).
   10. `halt` returns `spawn` result.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), the spawn compensation path, AND the round-3 row: `record-dispatched-session` throwing leaves the claim in place and terminates the spawned session (task must NOT become dispatchable again).
 - **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task — hence the reservation-before-spawn step above; without it, a conditional `record-dispatched-session` alone protects the row but leaves the losing spawned session orphaned and active. The compensations are asymmetric by design: claim-release only pre-spawn, session-termination only post-spawn. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
@@ -503,8 +518,13 @@ The repo already has several proven pipelines. Use these as the model for each s
   1. Define the direct sync pipeline `selfNagScheduleSyncRun` (`superpipe` + `.end`, effect functions synchronous).
   2. Gather stage lists schedules, reads goal and policy.
   3. Effect stage `pause-orphan-schedules` pauses stale schedules unconditionally (preliminary, nonterminal).
-  4. Decide stage selects the current-schedule branch (`!branchDecided` halt after).
-  5. Guarded effect stages execute the schedule mutation.
+  4. Decide stage selects the current-schedule branch and stores it in ctx
+     (review correction: NO `!branchDecided` halt — a `!dep` halt exits the
+     whole pipeline, so none of the guarded effects could run and an active
+     goal's schedule would be left stale or absent after orphan cleanup;
+     only the actual `noOp` branch halts).
+  5. Guarded effect stages inspect the selected branch and execute the
+     matching schedule mutation.
   6. `.end` returns `void` or `{ scheduleId }`.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts` and any goal-automation schedule tests. Add a row where a schedule mutation throws mid-flow with `db` present: no partial pause/update commits.
 - **Risks/caveats**: `scheduleService` operations are not currently CAS. The optional `db` transaction is the only atomicity mechanism. If `db` is absent, the flow is best-effort. All effect stages must run synchronously inside the transaction and throw on failure; the transaction rolls back.
@@ -523,12 +543,13 @@ The repo already has several proven pipelines. Use these as the model for each s
     appliedGoal: SpaceGoal;
   }
   ```
-- **Pure core design**: Reuse the existing `decideClaimAdmission` from `claim-admission-gates.ts` as the `decide` stage.
+- **Pure core design**: Reuse the existing `decideClaimAdmission` from `claim-admission-gates.ts` as the decide stage, preceded by an already-applied gate (review correction: the current method checks `notification.status === params.dispositionStatus` BEFORE admission and returns `already_applied` after authorization and identity checks — without that gate, any non-`pending` notification is classified `deny/superseded` and an idempotent retry of a successfully applied outcome becomes an error). Halt rules (review correction): `decideClaimAdmission` ALWAYS returns a non-null decision, so a blanket `!decided` halt would exit for `admit` too and every admitted claim would no-op — halt ONLY on `deny`; `admit` and `already_applied` continue to their effect/return stages.
 - **Shell/effect wiring**: Effects: `params.apply(goal)` (if `mutatesGoalState`), `outcomeNotificationRepo.updateStatus`. The shell is the `runAtomic` block; the sync pipeline runs inside it.
 - **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
   1. Replace the inline `decideClaimAdmission` call with the sync `superpipe` pipeline that wraps it.
   2. Gather stage loads notification and goal, computes `authorizedAgentIds`.
-  3. Decide stage runs `decideClaimAdmission` (`!decided` halt).
+  3. Decide stage runs the already-applied gate, then `decideClaimAdmission`;
+     halt only on `deny` (never a blanket `!decided` — `admit` must continue).
   4. Effect stage `apply-goal-update` (when `admit` and `mutatesGoalState`) calls `params.apply`.
   5. Effect stage `update-notification-status` calls `outcomeNotificationRepo.updateStatus`.
   6. `.end` returns `ClaimOutcomeNotificationResult`.
@@ -658,7 +679,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   current resolver first computes the resolved names and THEN applies the
   shared `canSend` authorization to every resolved target — authorization
   comes after resolution, so resolution must be nonterminal.
-- **Pure core design**: A direct `superpipe` pipeline (not a plain `decisionRun`): the resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) are NONTERMINAL — each populates `targetAgentNames` when it matches and is followed by a dedicated `!hasTargets` halt (`ctx.targetAgentNames.length > 0`), never the final-decision halt. Only the terminal stages set `decision`: `unknownTarget` (no resolution matched), `unauthorized` (`canSend` fails for any resolved target), `resolved` (carries the authorized `targetAgentNames`). A plain `decisionRun` would halt at the first deciding resolution gate and skip the shared authorization check entirely.
+- **Pure core design**: A direct `superpipe` pipeline (not a plain `decisionRun`), LINEAR with self-guarding stages and NO `!dep` halts between resolution stages (review correction round 4: `!hasTargets` after each resolution stage halts the WHOLE run once a known target is found, so `unauthorized`/`resolved` never execute and the shared `canSend` check is still bypassed). The resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) are nonterminal self-guarding no-ops once `targetAgentNames` is populated (first match wins, later stages decline to overwrite). Only the terminal stages set `decision`, in order: `noPermittedTargets` (review correction: `target === '*'` with an empty `permittedTargets` list is a DISTINCT public outcome with its own topology-specific explanation — it must not collapse into `unknownTarget`), `unknownTarget` (no resolution matched), `unauthorized` (`canSend` fails for any resolved target), `resolved` (carries the authorized `targetAgentNames`). Terminal stages match only when `decision === null`.
 - **Shell/effect wiring**: None; the result is consumed by `decideAgentMessageRouting` in `agent-message-routing-pipeline.ts`.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/node-agent-target-resolution-pipeline.ts`.

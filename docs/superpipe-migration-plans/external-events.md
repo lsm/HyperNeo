@@ -202,18 +202,25 @@ interface ToExternalEventCtx {
    dispatch stage keyed on `endpointKey` (`issue_comments`, `review_comments`,
    `pulls`, etc.) followed by the endpoint-specific transform stages inline.
 
-5. **`toExternalEvent` stages append to the same operation pipeline** — the
-   extension's only production caller (`github-event-extension.ts:publishEvent`)
-   always projects and publishes immediately after normalizing, so the complete
-   business path is one pipeline (`ingest-github-webhook` /
-   `ingest-github-polling-row`) whose tail stages are:
+5. **`toExternalEvent` stays a separate per-space projection pipeline at the
+   publish boundary** (review correction: for a webhook watched by multiple
+   spaces, normalization runs ONCE before the loop over matching
+   repositories, while `toExternalEvent(spaceId, normalized)` runs separately
+   inside `publishEvent` for EACH space — the ingest pipeline has no
+   `spaceId`, so appending `assembleExternalEvent` to it either cannot
+   construct the event or constructs one event reused with the wrong space
+   scope/UUID across all targets). The ingest pipelines
+   (`ingest-github-webhook` / `ingest-github-polling-row`) end at
+   `NormalizedGitHubEvent`; the projection stages form their own small raw
+   transform (`project-external-event`) covering:
    - `canonicalizeRepo`
    - `selectTopicParts` (uses `mapEventType`)
    - `buildPayload` (spreads `event.payload` into the record)
-   - `assembleExternalEvent` (generates `crypto.randomUUID()` in the final stage)
+   - `assembleExternalEvent` (generates `crypto.randomUUID()` in the final
+     stage — one fresh UUID per space)
 
-   The standalone `toExternalEvent` export remains as a thin wrapper over the
-   projection stages for tests and any future callers.
+   The exported `toExternalEvent(spaceId, event)` wraps that transform and is
+   what `publishEvent` calls per space.
 
 #### Shell/effect wiring
 
@@ -262,9 +269,10 @@ family has no DB/network writes.
    thin wrapper over the pipeline.
 4. Convert `normalizeGitHubPollingRow` to the single
    `ingest-github-polling-row` pipeline the same way.
-5. Fold the `toExternalEvent` projection stages into the ingest pipelines'
-   tails for the extension's publish path, keeping the standalone export as a
-   wrapper over the same stages.
+5. Convert `toExternalEvent` to its own `project-external-event` transform
+   and keep the `publishEvent` per-space call site unchanged (projection
+   stays at the publish boundary; it never joins the normalize-once ingest
+   pipeline).
 6. After all wrappers pass the existing test suites, delete the old
    implementations and rename the pipeline runners to the original export names.
 7. Update `github/index.ts` if any internal exports change; public export
