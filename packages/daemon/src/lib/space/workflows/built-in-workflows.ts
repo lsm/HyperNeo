@@ -220,7 +220,7 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
       '3. If changes needed: send clear feedback to Coding',
   ],
-  'Coding with QA|qa': [
+  'QA|qa': [
     QA_SYSTEM_CONTRACT +
       '\n\nYou are the QA node in a Fullstack QA Loop workflow. Validate the reviewer-approved PR. ' +
       'If QA fails, send detailed failures and repro steps to Coding, save a failed result artifact, ' +
