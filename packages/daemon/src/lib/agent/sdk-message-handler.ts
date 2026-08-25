@@ -945,10 +945,12 @@ export class SDKMessageHandler {
       }
     }
 
+    let settledTurnOwner: IdleOwnerScope | undefined;
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
         const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
         if (terminalFence) {
+          settledTurnOwner = terminalFence;
           await stateManager.setIdle({ fence: terminalFence });
         } else if (!this.isInvocationStale(invocationGeneration)) {
           await stateManager.setIdle();
@@ -965,7 +967,12 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message, activeMessageId, invocationGeneration);
+      await this.handleResultMessage(
+        message,
+        activeMessageId,
+        invocationGeneration,
+        settledTurnOwner
+      );
     }
 
     if (isSDKAssistantMessage(message)) {
@@ -1126,7 +1133,8 @@ export class SDKMessageHandler {
   private async handleResultMessage(
     message: SDKMessage,
     activeMessageId: string | null,
-    invocationGeneration: number | null
+    invocationGeneration: number | null,
+    settledTurnOwner?: IdleOwnerScope
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
@@ -1137,7 +1145,8 @@ export class SDKMessageHandler {
         message,
         activeMessageId,
         confirmsArmedClear,
-        invocationGeneration
+        invocationGeneration,
+        settledTurnOwner
       );
     } catch (error) {
       if (confirmsArmedClear) {
@@ -1151,7 +1160,8 @@ export class SDKMessageHandler {
     message: SDKMessage,
     activeMessageId: string | null,
     confirmsArmedClear: boolean,
-    invocationGeneration: number | null
+    invocationGeneration: number | null,
+    settledTurnOwner?: IdleOwnerScope
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
@@ -1189,7 +1199,11 @@ export class SDKMessageHandler {
       !this.usesSessionStateChangedTurnEnd &&
       !this.expectsSessionStateIdleAfterResult
     ) {
-      await this.finishTurn(this.lastResultWasSuccess !== false, invocationGeneration);
+      await this.finishTurn(
+        this.lastResultWasSuccess !== false,
+        invocationGeneration,
+        settledTurnOwner
+      );
     }
     if (confirmsArmedClear) {
       if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
@@ -1292,7 +1306,8 @@ export class SDKMessageHandler {
 
   private async finishTurn(
     allowQueueReplay = true,
-    invocationGeneration: number | null = null
+    invocationGeneration: number | null = null,
+    settledTurnOwner?: IdleOwnerScope
   ): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
@@ -1309,6 +1324,8 @@ export class SDKMessageHandler {
     const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
     if (terminalFence) {
       await stateManager.setIdle({ fence: terminalFence });
+    } else if (settledTurnOwner) {
+      await stateManager.setIdle({ owner: settledTurnOwner });
     } else if (!this.isInvocationStale(invocationGeneration)) {
       await stateManager.setIdle();
     }
@@ -1327,6 +1344,10 @@ export class SDKMessageHandler {
     invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKSessionStateChangedMessage(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) {
+      this.logger.warn('Ignoring session-state event from a replaced query.');
+      return;
+    }
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {

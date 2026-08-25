@@ -948,7 +948,7 @@ export class QueryRunner {
           logger.error('Error handling SDK message:', error);
           logger.error('Message type:', (message as SDKMessage).type);
 
-          if (!this.ctx.isCleaningUp()) {
+          if (!this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration) {
             const processingState = stateManager.getState();
             await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
 
