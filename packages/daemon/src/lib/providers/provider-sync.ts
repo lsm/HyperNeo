@@ -81,12 +81,14 @@ export async function syncProviderToRegistry(
         const own = await provider.getCredentials();
         if (!own) {
           logger.info(`Skipping stale stored credentials for ${record.providerId}`);
+          bumpProviderCatalogEpoch();
           return;
         }
       }
       provider.setCredentials(credentials);
       logger.info(`Applied credentials to built-in provider ${record.providerId}`);
     }
+    bumpProviderCatalogEpoch();
     return;
   }
 
@@ -129,6 +131,7 @@ export async function syncProviderToRegistry(
     } catch (err) {
       logger.warn(`Failed to register custom endpoint provider ${providerId}:`, err);
     }
+    bumpProviderCatalogEpoch();
   }
 }
 

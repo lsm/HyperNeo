@@ -2861,6 +2861,8 @@ describe('Model Service', () => {
               ? {
                   id: 'ollama-stale',
                   name: 'Stale',
+                  alias: 'stale',
+                  family: 'qwen',
                   provider: 'ollama',
                   contextWindow: 128000,
                   description: 'Stale',
@@ -2946,6 +2948,8 @@ describe('Model Service', () => {
       const staticPinnedModel: ModelInfo = {
         id: 'glm-4.7',
         name: 'GLM 4.7',
+        alias: 'glm-legacy',
+        family: 'glm',
         provider: 'ollama',
         contextWindow: 128000,
         description: 'GLM 4.7',
@@ -2956,6 +2960,8 @@ describe('Model Service', () => {
       const repointedModel: ModelInfo = {
         id: 'glm-4.8',
         name: 'GLM 4.8',
+        alias: 'glm-air',
+        family: 'glm',
         provider: 'ollama',
         contextWindow: 128000,
         description: 'GLM 4.8',
@@ -2973,6 +2979,57 @@ describe('Model Service', () => {
         buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
       } as unknown as Parameters<typeof registry.register>[0]);
       setModelsCache(new Map([['global', [staticPinnedModel]]]));
+
+      await expect(resolveVisibleCanonicalModelId('glm', 'ollama')).resolves.toBe('glm-4.8');
+    });
+
+    it('matches live prefix aliases before cached ids', async () => {
+      const registry = getProviderRegistry();
+      const pinnedCachedModel: ModelInfo = {
+        id: 'glm-4.7',
+        name: 'GLM 4.7',
+        alias: 'glm-legacy',
+        family: 'glm',
+        provider: 'ollama',
+        contextWindow: 128000,
+        description: 'GLM 4.7',
+        releaseDate: '',
+        available: true,
+        providerAliasPrefixes: ['glm'],
+      };
+      const livePinnedModel: ModelInfo = {
+        id: 'glm-4.7',
+        name: 'GLM 4.7',
+        alias: 'glm-legacy',
+        family: 'glm',
+        provider: 'ollama',
+        contextWindow: 128000,
+        description: 'GLM 4.7',
+        releaseDate: '',
+        available: true,
+      };
+      const prefixRepointedModel: ModelInfo = {
+        id: 'glm-4.8',
+        name: 'GLM 4.8',
+        alias: 'glm-air',
+        family: 'glm',
+        provider: 'ollama',
+        contextWindow: 128000,
+        description: 'GLM 4.8',
+        releaseDate: '',
+        available: true,
+        providerAliasPrefixes: ['glm'],
+      };
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [livePinnedModel, prefixRepointedModel],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map([['global', [pinnedCachedModel]]]));
 
       await expect(resolveVisibleCanonicalModelId('glm', 'ollama')).resolves.toBe('glm-4.8');
     });
