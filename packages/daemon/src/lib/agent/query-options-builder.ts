@@ -39,6 +39,7 @@ import { Logger } from '../logger.ts';
 import {
   getSessionModelInfo,
   isCuratedOutModel,
+  isCuratedOutModelAllowingExactId,
   isModelExcludedByCuration,
 } from '../model-service.ts';
 import {
@@ -331,7 +332,7 @@ export class QueryOptionsBuilder {
           config.providerConfig?.region
       );
       const fallbackExcluded = sessionScopedProvider
-        ? isCuratedOutModel(config.fallbackModel, providerId)
+        ? isCuratedOutModelAllowingExactId(config.fallbackModel, providerId)
         : await isModelExcludedByCuration(config.fallbackModel, providerId);
       if (fallbackExcluded) {
         this.logger.warn(
@@ -446,7 +447,7 @@ export class QueryOptionsBuilder {
             this.ctx.session.config.providerConfig?.region
         );
         const fallbackExcluded = sessionScopedProvider
-          ? isCuratedOutModel(fallbackAtRequest, providerId)
+          ? isCuratedOutModelAllowingExactId(fallbackAtRequest, providerId)
           : await isModelExcludedByCuration(fallbackAtRequest, providerId);
         if (fallbackExcluded) {
           return { behavior: 'cancelled' };

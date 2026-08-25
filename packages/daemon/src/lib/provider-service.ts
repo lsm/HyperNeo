@@ -334,11 +334,23 @@ export class ProviderService {
       const canonicalId =
         (await resolveVisibleCanonicalModelId(candidate, providerId, 'global', catalogModels)) ??
         candidate;
-      const expandedCuratedIds = getCuratedModelIds(providerId);
-      if (expandedCuratedIds === undefined) {
+      const curatedEntries = registry.getCuratedModels(providerId);
+      if (curatedEntries === undefined) {
         return candidate;
       }
-      if (!expandedCuratedIds.has(canonicalId)) continue;
+      let allowed = getCuratedModelIds(providerId)?.has(canonicalId) ?? false;
+      if (!allowed) {
+        for (const entry of curatedEntries) {
+          const entryCanonical =
+            (await resolveVisibleCanonicalModelId(entry.id, providerId, 'global', catalogModels)) ??
+            entry.id;
+          if (entryCanonical === canonicalId) {
+            allowed = true;
+            break;
+          }
+        }
+      }
+      if (!allowed) continue;
       if (!catalogIds.has(canonicalId)) continue;
       return candidate;
     }

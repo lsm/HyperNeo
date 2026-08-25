@@ -1182,6 +1182,13 @@ export async function resolveVisibleCanonicalModelId(
   return findInModels(liveModels, idOrAlias)?.id ?? null;
 }
 
+export function isCuratedOutModelAllowingExactId(idOrAlias: string, providerId: string): boolean {
+  if (getCuratedModelIds(providerId)?.has(idOrAlias)) {
+    return false;
+  }
+  return isCuratedOutModel(idOrAlias, providerId);
+}
+
 export async function isModelExcludedByCuration(
   idOrAlias: string,
   providerId: string,
@@ -1205,7 +1212,16 @@ export async function isModelExcludedByCuration(
   if (expandedCuratedIds === undefined) {
     return false;
   }
-  return !expandedCuratedIds.has(canonicalId);
+  if (expandedCuratedIds.has(canonicalId)) {
+    return false;
+  }
+  for (const entry of curatedAfter) {
+    const entryCanonical = await resolveVisibleCanonicalModelId(entry.id, providerId, cacheKey);
+    if (entryCanonical === canonicalId) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export async function resolveModelAlias(

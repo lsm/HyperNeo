@@ -250,6 +250,24 @@ describe('QueryOptionsBuilder', () => {
         }
       });
 
+      it('keeps an exact capacity-tagged curated fallback in a scoped session', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'moonshot-k3-128k' }]);
+        try {
+          mockSession.config.provider = 'kimi';
+          mockSession.config.model = 'kimi-k3';
+          mockSession.config.fallbackModel = 'moonshot-k3-128k';
+          mockSession.config.providerConfig = { apiKey: 'sk-session-scoped' };
+
+          const options = await builder.build();
+
+          expect(options.fallbackModel).toBeDefined();
+          expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+        } finally {
+          getProviderRegistry().setCuratedModels('kimi', undefined);
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
       it('treats a region-scoped provider as session-scoped', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
         try {

@@ -2674,6 +2674,36 @@ describe('Model Service', () => {
       await expect(isModelExcludedByCuration('kimi-k3[1m]', 'kimi')).resolves.toBe(false);
       await expect(isModelExcludedByCuration('kimi-k3', 'kimi')).resolves.toBe(false);
     });
+
+    it('canonicalizes live-only curated aliases against the provider catalog', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'ollama-qwen',
+            name: 'Qwen',
+            alias: 'qwen3',
+            family: 'qwen',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Qwen',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3' }]);
+      setModelsCache(new Map());
+
+      await expect(isModelExcludedByCuration('ollama-qwen', 'ollama')).resolves.toBe(false);
+      await expect(isModelExcludedByCuration('ollama-ghost', 'ollama')).resolves.toBe(true);
+    });
   });
 
   describe('getAvailableModels', () => {

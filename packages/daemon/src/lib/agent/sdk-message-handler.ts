@@ -39,7 +39,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import {
   getSessionModelInfo,
-  isCuratedOutModel,
+  isCuratedOutModelAllowingExactId,
   isModelExcludedByCuration,
 } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
@@ -1340,7 +1340,7 @@ export class SDKMessageHandler {
       scopedApiKeyBefore || scopedBaseUrlBefore || scopedRegionBefore
     );
     const fallbackExcluded = sessionScopedProvider
-      ? isCuratedOutModel(fallbackModel, providerId)
+      ? isCuratedOutModelAllowingExactId(fallbackModel, providerId)
       : await isModelExcludedByCuration(fallbackModel, providerId);
     if (fallbackExcluded) return;
     const liveConfig = this.ctx.session.config;
