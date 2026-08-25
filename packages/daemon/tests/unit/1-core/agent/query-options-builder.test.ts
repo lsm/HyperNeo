@@ -315,8 +315,8 @@ describe('QueryOptionsBuilder', () => {
 
       it('keeps a scoped fallback mapped by the session-scoped catalog', async () => {
         getProviderRegistry().register({
-          id: 'ollama',
-          displayName: 'Ollama',
+          id: 'scoped-catalog-test',
+          displayName: 'Scoped Catalog Test',
           capabilities: {
             streaming: true,
             extendedThinking: false,
@@ -332,7 +332,7 @@ describe('QueryOptionsBuilder', () => {
               name: 'Qwen 3 14B',
               alias: 'qwen3',
               family: 'qwen',
-              provider: 'ollama',
+              provider: 'scoped-catalog-test',
               contextWindow: 128000,
               description: 'Qwen 3 14B',
               releaseDate: '',
@@ -343,9 +343,9 @@ describe('QueryOptionsBuilder', () => {
           getModelForTier: () => undefined,
           buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
         } as unknown as Provider);
-        getProviderRegistry().setCuratedModels('ollama', [{ id: 'qwen3' }]);
+        getProviderRegistry().setCuratedModels('scoped-catalog-test', [{ id: 'qwen3' }]);
         try {
-          mockSession.config.provider = 'ollama';
+          mockSession.config.provider = 'scoped-catalog-test';
           mockSession.config.model = 'qwen3:14b';
           mockSession.config.fallbackModel = 'qwen3:14b';
           mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
@@ -359,7 +359,7 @@ describe('QueryOptionsBuilder', () => {
                     name: 'Qwen 3 8B',
                     alias: 'qwen3',
                     family: 'qwen',
-                    provider: 'ollama',
+                    provider: 'scoped-catalog-test',
                     contextWindow: 128000,
                     description: 'Qwen 3 8B',
                     releaseDate: '',
@@ -374,7 +374,8 @@ describe('QueryOptionsBuilder', () => {
 
           expect(options.fallbackModel).toBe('qwen3:14b');
         } finally {
-          getProviderRegistry().setCuratedModels('ollama', undefined);
+          getProviderRegistry().unregister('scoped-catalog-test');
+          getProviderRegistry().setCuratedModels('scoped-catalog-test', undefined);
           mockSession.config.provider = 'anthropic';
           mockSession.config.providerConfig = undefined;
           setModelsCache(new Map());
