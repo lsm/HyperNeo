@@ -923,6 +923,7 @@ export async function refreshModels(
     }
     const current = pruneSupersededProviders(result);
     applyProviderLoadOutcome(current);
+    bumpProviderCatalogEpoch();
     if (current.forcedDiscoveryError !== undefined) {
       clearFailedStrictProviderCaches(current);
       if (current.loadedProviderIds.length > 0) {
