@@ -18,7 +18,7 @@ import {
   MessageHub,
   MessageHubRouter,
 } from '@hyperneo/shared';
-import type { Provider } from '@hyperneo/shared/provider';
+import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -122,14 +122,44 @@ import {
   type ProcessSnapshot,
 } from './lib/process-watchdog.ts';
 
+function sameCredentialIdentity(
+  existing: ProviderCredentials | null,
+  incoming: ProviderCredentials
+): boolean {
+  if (!existing || existing.type !== incoming.type) return false;
+  if (incoming.type === 'api_key' && existing.type === 'api_key') {
+    return existing.apiKey === incoming.apiKey;
+  }
+  if (incoming.type === 'oauth' && existing.type === 'oauth') {
+    return (
+      existing.accessToken === incoming.accessToken &&
+      existing.refreshToken === incoming.refreshToken
+    );
+  }
+  return false;
+}
+
 async function applyStoredProviderCredentials(
   providers: Provider[],
   credentialManager: ProviderCredentialManager,
+  db: Database,
   logError: (...args: unknown[]) => void
 ): Promise<void> {
   for (const provider of providers) {
     try {
       const providerCredentials = await provider.getCredentials?.();
+      if (providerCredentials?.type === 'oauth' || providerCredentials?.type === 'api_key') {
+        const stored = await credentialManager.getCredentials(provider.id);
+        if (stored && !sameCredentialIdentity(stored, providerCredentials)) {
+          const record = db.providers.getProviderByProviderId(provider.id);
+          if (record) {
+            const stripped = stripPersistedDiscovery(record.configJson);
+            if (stripped !== record.configJson) {
+              db.providers.updateProvider(record.id, { configJson: stripped });
+            }
+          }
+        }
+      }
       if (providerCredentials?.type === 'oauth') {
         await credentialManager.storeOAuthTokens(provider.id, providerCredentials);
         continue;
@@ -381,7 +411,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
-    await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
+    await applyStoredProviderCredentials(
+      providerRegistry.getAll(),
+      credentialManager,
+      db,
+      logError
+    );
 
     startupTimer.start('provider sync (migrate / custom endpoints / registry)');
     try {
@@ -568,7 +603,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     credentialManager.registerStatusChangeCallback(() => {
       void stateManager.broadcastSystemChange();
-      void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
+      void applyStoredProviderCredentials(
+        providerRegistry.getAll(),
+        credentialManager,
+        db,
+        logError
+      );
     });
 
     startupTimer.start('github + external event setup');

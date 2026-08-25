@@ -894,6 +894,7 @@ export async function refreshModels(
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
   const previousModels = modelsCache.get(cacheKey);
   clearProviderModelCaches(forceRemote);
+  if (forceRemote) discardMarkedPendingSlices(cacheKey);
 
   const refreshPromise = (async () => {
     if (signal?.aborted) {
@@ -997,9 +998,29 @@ export function applyDiscoveredProviderModels(
   models: ModelInfo[],
   cacheKey: string = 'global'
 ): boolean {
+  const curatedIds = getCuratedModelIds(providerId);
+  let enriched = models;
+  if (curatedIds !== undefined) {
+    const present = new Set(models.map((model) => model.id));
+    const missing = [...curatedIds].filter((id) => !present.has(id));
+    if (missing.length > 0) {
+      const currentSlice = (modelsCache.get(cacheKey) ?? []).filter(
+        (model) => model.provider === providerId
+      );
+      const byId = new Map(currentSlice.map((model) => [model.id, model]));
+      const seeded: ModelInfo[] = [];
+      for (const id of missing) {
+        const found =
+          byId.get(id) ??
+          STATIC_MODEL_METADATA.find((model) => model.provider === providerId && model.id === id);
+        if (found) seeded.push(found);
+      }
+      if (seeded.length > 0) enriched = [...seeded, ...models];
+    }
+  }
   return updateProviderModelsInCache(
     providerId,
-    filterProviderModels(providerId, models),
+    filterProviderModels(providerId, enriched),
     cacheKey
   );
 }
@@ -1017,6 +1038,15 @@ export function releaseAppliedProviderSlice(providerId: string, cacheKey: string
 
 export function schedulePendingSliceRelease(providerId: string, cacheKey: string = 'global'): void {
   pendingSliceReleases.add(pendingSliceKey(cacheKey, providerId));
+}
+
+function discardMarkedPendingSlices(cacheKey: string): void {
+  for (const key of [...pendingSliceReleases]) {
+    if (key.startsWith(`${cacheKey}:`)) {
+      pendingSliceReleases.delete(key);
+      pendingProviderSlices.delete(key);
+    }
+  }
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {

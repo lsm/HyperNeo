@@ -816,6 +816,39 @@ describe('Provider RPC handlers', () => {
       ]);
     });
 
+    it('keeps configured curated models in the live slice when discovery omits them', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().setCuratedModels('remote', [
+        { id: 'kept-curated' },
+        { id: 'fetched-curated' },
+      ]);
+      const keptFromPreviousSlice = makeDiscoveredModel('kept-curated');
+      const fetched = [makeDiscoveredModel('fetched-curated')];
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('kept-curated'), ...fetched],
+        getModels: async () => fetched,
+      });
+      setModelsCache(new Map([['global', [keptFromPreviousSlice]]]));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const slice = (getModelsCache().get('global') ?? []).filter(
+        (model) => model.provider === 'remote'
+      );
+      expect(slice.map((model) => model.id)).toContain('kept-curated');
+      expect(slice.map((model) => model.id)).toContain('fetched-curated');
+    });
+
     it('treats an empty forced discovery result as a failed refresh even with static fallbacks', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
