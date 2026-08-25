@@ -1,14 +1,14 @@
 import type { MessageContent, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import type { Database } from '../../storage/database';
+import type { Database } from '../../storage/database.ts';
 import {
   DEFERRED_FOLD_UUID_PREFIX,
   foldDeferredExternalEventsAtFlush,
-} from '../external-events/deferred-event-digest';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Logger } from '../logger';
-import { ClearConversationCancelledError } from './agent-session';
+} from '../external-events/deferred-event-digest.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Logger } from '../logger.ts';
+import { ClearConversationCancelledError } from './agent-session.ts';
 import {
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
@@ -16,10 +16,10 @@ import {
   isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
   withSessionResetCoordination,
-} from './message-delivery';
-import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline';
-import { type FlushMessage, isTaskFlushInput } from './message-ownership-gates';
-import type { MessageQueue } from './message-queue';
+} from './message-delivery.ts';
+import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline.ts';
+import { type FlushMessage, isTaskFlushInput } from './message-ownership-gates.ts';
+import type { MessageQueue } from './message-queue.ts';
 
 export interface QueryModeHandlerContext {
   readonly session: Session;

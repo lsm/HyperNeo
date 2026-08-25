@@ -88,6 +88,8 @@ export class OllamaProvider implements Provider {
   private lastAuthError: string | undefined;
   private credentials: ProviderCredentials | null = null;
   private bridgeServers = new Map<string, OllamaBridgeServer>();
+  private bridgePromises = new Map<string, Promise<void>>();
+  private shutdownStarted = false;
 
   constructor(options: OllamaProviderOptions) {
     this.kind = options.kind;
@@ -98,8 +100,12 @@ export class OllamaProvider implements Provider {
   }
 
   setCredentials(credentials: ProviderCredentials): void {
+    const previousApiKey = this.getApiKey();
     this.credentials = credentials;
     this.clearModelCache();
+    if (this.getApiKey() !== previousApiKey) {
+      this.lastAuthError = undefined;
+    }
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -147,6 +153,7 @@ export class OllamaProvider implements Provider {
 
   async getModels(): Promise<ModelInfo[]> {
     if (this.kind === 'cloud' && !this.getApiKey()) return [];
+    void this.ensureBridgeStarted('default').catch(() => {});
     if (this.modelCache && Date.now() - this.modelCacheAt < 5 * 60_000) return this.modelCache;
     try {
       return await this.fetchModels();
@@ -203,7 +210,14 @@ export class OllamaProvider implements Provider {
         this.getBaseUrl() ||
         (this.kind === 'cloud' ? OllamaProvider.CLOUD_BASE_URL : OllamaProvider.LOCAL_BASE_URL)
     );
-    const bridge = this.getOrCreateBridge(upstreamBaseUrl, apiKey);
+    const bridgeKey = this.bridgeKeyFor(upstreamBaseUrl, apiKey);
+    const bridge = this.bridgeServers.get(bridgeKey);
+    if (!bridge) {
+      throw new Error(
+        'OllamaProvider: bridge not started. ' +
+          'Await ensureBridgeStarted() before calling buildSdkConfig().'
+      );
+    }
     const routingModelId =
       modelId && modelId !== 'default'
         ? modelId
@@ -247,6 +261,8 @@ export class OllamaProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
+    this.shutdownStarted = true;
+    this.bridgePromises.clear();
     for (const bridge of this.bridgeServers.values()) bridge.stop();
     this.bridgeServers.clear();
   }
@@ -277,17 +293,48 @@ export class OllamaProvider implements Provider {
     return result;
   }
 
-  private getOrCreateBridge(baseUrl: string, apiKey?: string): OllamaBridgeServer {
-    const key = `${baseUrl}\u0000${apiKey ?? ''}`;
-    const existingBridge = this.bridgeServers.get(key);
-    if (existingBridge) return existingBridge;
-    const bridge = createOllamaAnthropicBridgeServer({
-      baseUrl,
+  private bridgeKeyFor(baseUrl: string, apiKey?: string): string {
+    return `${baseUrl}\u0000${apiKey ?? ''}`;
+  }
+
+  async ensureBridgeStarted(
+    _modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): Promise<void> {
+    const apiKey = sessionConfig?.apiKey || this.getApiKey();
+    if (this.kind === 'cloud' && !apiKey) {
+      throw new Error('Ollama Cloud API key not configured. Set OLLAMA_CLOUD_API_KEY.');
+    }
+    const upstreamBaseUrl = normalizeBaseUrl(
+      sessionConfig?.baseUrl ||
+        this.getBaseUrl() ||
+        (this.kind === 'cloud' ? OllamaProvider.CLOUD_BASE_URL : OllamaProvider.LOCAL_BASE_URL)
+    );
+    const key = this.bridgeKeyFor(upstreamBaseUrl, apiKey);
+    if (this.bridgeServers.get(key)) return;
+    const pending = this.bridgePromises.get(key);
+    if (pending) return pending;
+    const ready = createOllamaAnthropicBridgeServer({
+      baseUrl: upstreamBaseUrl,
       apiKey,
       fetchImpl: this.fetchImpl,
-    });
-    this.bridgeServers.set(key, bridge);
-    return bridge;
+    }).then(
+      (bridge) => {
+        if (this.shutdownStarted) {
+          bridge.stop();
+          this.bridgePromises.delete(key);
+          return;
+        }
+        this.bridgeServers.set(key, bridge);
+        this.bridgePromises.delete(key);
+      },
+      (error) => {
+        this.bridgePromises.delete(key);
+        throw error;
+      }
+    );
+    this.bridgePromises.set(key, ready);
+    return ready;
   }
 
   private fallbackModels(): ModelInfo[] {

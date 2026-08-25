@@ -1,4 +1,4 @@
-import type { QueryLike } from '../agent/query-like';
+import type { QueryLike } from '../agent/query-like.ts';
 import type {
   Provider,
   ProviderAuthStatusInfo,
@@ -10,8 +10,9 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
+import { providerEnvCoordinator } from './provider-env-enrollment.ts';
 
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
 
@@ -121,11 +122,13 @@ export class AnthropicProvider implements Provider {
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-    const apiKey = this.getApiKey();
-    return applyRecordedFailureToAuthStatus(this.id, {
-      isAuthenticated: !!apiKey,
-      method: this.credentials?.type ?? 'api_key',
-      error: apiKey ? undefined : 'Set ANTHROPIC_API_KEY or log in with Claude Code OAuth.',
+    return providerEnvCoordinator.runWithLease('anthropic.isAvailable', () => {
+      const apiKey = this.getApiKey();
+      return applyRecordedFailureToAuthStatus(this.id, {
+        isAuthenticated: !!apiKey,
+        method: this.credentials?.type ?? 'api_key',
+        error: apiKey ? undefined : 'Set ANTHROPIC_API_KEY or log in with Claude Code OAuth.',
+      });
     });
   }
 

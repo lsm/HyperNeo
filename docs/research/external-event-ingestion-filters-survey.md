@@ -1,5 +1,7 @@
 # External-event ingestion: user-configurable filters/mappings + self-event suppression — survey & chain proposal
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Task #1259 survey. Analysis only — maps the external-event ingestion path on current
 `dev` (e87cadcd7) and proposes chains that close the two owner-reported product gaps:
 (1) ingestion-level filtering + field mapping ("for GitHub events, I only need this one
@@ -189,9 +191,10 @@ polling sources.
   original author (`github-normalizer.ts:385`, `:397-403`) — another user's edit of
   a token-owner-authored comment would otherwise be dropped as self-originated.
   Edited rows carry initiator unknown. **Fail-open:** an event with no resolvable
-  initiator is always admitted. Per the pilot precedent, a single gate is a **pure
-  function** — adopt `decisionRun` composition only when chain B adds more gates and
-  order becomes contract. Shell: `publishEvent` (`:1731`) reads the cached identity
+  initiator is always admitted. SUPERSEDED 2026-08-25 (ADR 0004 revision): compose
+  the admission as a direct superpipe pipeline from the start — the
+  "single gate stays a plain function" instruction below predates the
+  one-pipeline-per-business-path revision and no longer applies. Shell: `publishEvent` (`:1731`) reads the cached identity
   and gates **first observations only** (review finding, PR #2723): a `getByDedupe`
   lookup precedes the gate, and an existing canonical row — retryable (`published`)
   or terminal — bypasses the gate entirely and flows through the normal duplicate

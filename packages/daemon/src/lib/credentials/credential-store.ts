@@ -1,12 +1,12 @@
-import { getDataDir } from '../data-dir';
-import { Database } from '../../storage/sqlite-compat';
+import { getDataDir } from '../data-dir.ts';
+import { Database } from '../../storage/sqlite-compat.ts';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { platform } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'HYPERNEO_PROVIDER_CREDENTIAL_KEY';

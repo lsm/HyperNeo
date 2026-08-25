@@ -1,5 +1,5 @@
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
-import type { QueryLike } from './query-like';
+import type { QueryLike } from './query-like.ts';
 import type {
   ContextInfo,
   ContextCategoryBreakdown,
@@ -7,7 +7,7 @@ import type {
   ContextAPIUsage,
   ModelInfo,
 } from '@hyperneo/shared';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,

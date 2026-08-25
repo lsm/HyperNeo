@@ -1,0 +1,2375 @@
+# Provider-Concurrency Admission Gate — Design (ADR 0004 Phase 2, chain C5)
+
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path"). In particular, the "`decisionRun` admission gate" / "new `decisionRun` core" plan language (Purpose, the decision-points list, and the P1 gate table) is superseded: implement `decideMessageSendAdmission` and the other decision points as direct superpipe pipelines; the gate inventory, ordering, and decision content stand unchanged.
+
+Status: Proposed (design pass — doc only, no production code in this change)
+Date: 2026-08-23
+Task: #1313. Sources: `docs/reports/providers-area-survey.md` chain C5 (PR #2722) and
+ADR 0004 Roadmap Phase 2 (archived: `docs/adr/history/0004-pilots.md`, Roadmap
+section — the Phase 2 row carries the sequencing and pre-persistence queueing
+language; the current ADR lists the gate as an open roadmap item).
+Consumes: the limit-error classifier from #2661 (merged 2026-08-22, `667d53a1`) and
+the LLM classification tier from #2664 (merged 2026-08-23, `ae179427`); both are in
+`dev` at this branch's base, so the chain's sequencing precondition is satisfied.
+
+## Purpose
+
+Design the **provider-concurrency admission gate**: a `decisionRun` admission gate in
+the message pipeline that **queues a message before it enters the session's delivery
+pipeline** when its provider is at a concurrency/account limit (e.g. GLM returning
+429), instead of letting concurrent calls from sibling sessions pile up at the
+provider. Per ADR 0004 Phase 2:
+
+> The message-admission pipeline — sequenced behind the in-flight delivery-ordering
+> fixes in the turn lifecycle — is also the landing spot for a provider-concurrency
+> admission gate: when a provider (e.g. GLM) is at its concurrency limit, the
+> admission decision queues the message before it is persisted to the session,
+> instead of letting concurrent calls pile up at the provider.
+
+This document specifies the **gate order**, **state ownership**, and **test plan**,
+following ADR 0004's pilot conventions (characterization pins → pure core →
+composition → apply; boundary caveats recorded; every core export production-consumed
+or test-pinned).
+
+## Scope
+
+**In scope (v1):**
+
+- A daemon-scoped, provider-keyed saturation registry fed by the existing limit-error
+  classification sites (plus the provider-retry branch), deriving waits from the
+  existing backoff ladder (`fallback-recovery.ts`) and parsed resets
+  (`limit-error-classifier.ts`).
+- An admission gate at the message pipeline's decision points: message-send
+  persistence (new `decisionRun` core), the Space inject pipeline
+  (`decideInjectDelivery`), delivery start in both delivery modes (V2 claim, V1
+  inline start — point consults), and the watchdog auto-retry.
+- A wake path that promotes provider-queued messages when saturation lifts, paced
+  by a one-at-a-time probing release.
+- The test plan and PR sequence for the implementation chain.
+
+**Out of scope (recorded as follow-ups, not silently dropped):**
+
+- **Configured per-provider concurrency caps** (proactive admission against a known
+  N). v1 is reactive: saturation is armed by observed limit errors only. The
+  in-flight counter the registry maintains is the seam a later cap plugs into.
+- **Persisting the fine-grained registry across restarts.** The saturation
+  *episode* itself IS durable in v1 — one persisted marker row per account
+  (caveat 1, in the C5-PR3 migration family) so a restart re-enters
+  saturation or the closed state rather than re-admitting a herd. What
+  stays in-memory is the fine-grained state around it — registrations and
+  in-flight counts (re-registered from the durable markers) — while a
+  probing episode's grant holder and lease ARE durable (the probing
+  record) and are reconstructed bound to the serialized identity or
+  pending; only a non-probing episode's transition back into the drain
+  can pay one re-armed discovery 429 (bounded, see caveats).
+- **Provider-level UI surfacing** (a `providers.changed`-style status event, picker
+  badges). Queued messages are visible as pending (deferred) rows in the existing UI.
+- **Falling back on provider queueing.** The per-session fallback ladder
+  (`RateLimitWatchdog` → `selectNextFallback`) is unchanged; a queued session waits,
+  it does not switch providers (rationale under Decisions).
+- **`getModels()` probe 429s** (survey ACUTE-1 cause C) — those flow through provider
+  listing, not the query error paths; chain C1 owns that neighborhood.
+- **E2E coverage.** Daemon unit/integration suites only, per repository convention.
+
+## Problem — current behavior (pinned facts)
+
+All paths `packages/daemon` (D). Line numbers verified against this branch's base.
+
+1. **Nothing provider-scoped exists between message send and the provider call.**
+   `message.send` (`D/src/lib/rpc-handlers/session-handlers.ts:527-560`) validates
+   only `deliveryMode` and session existence, then persists.
+   `MessagePersistence.persist` decides the initial send status from exactly two
+   facts — `queryMode === 'manual'` and a busy check of `processing | queued`
+   (`D/src/lib/session/message-persistence.ts:180-192`) — then, for the dispatch
+   case, the same transaction inserts the row as `'enqueued'` **and** a durable
+   `message_delivery` job (`D/src/lib/agent/message-delivery-outbox.ts:36-82`). No
+   provider, limit, or concurrency input exists at this seam.
+
+2. **Cooldown state is per-session.** The limit pipeline is:
+   query error / error result → `assessLimitError`
+   (`D/src/lib/agent/query-runner.ts:1258`, `D/src/lib/agent/sdk-message-handler.ts:1215`,
+   `D/src/lib/acp/acp-query-runner.ts:1009`) → `onRateLimitExhausted`
+   (`D/src/lib/agent/agent-session.ts:1399-1405`) → that **one session's**
+   `RateLimitWatchdog` (`D/src/lib/agent/rate-limit-watchdog.ts:75`, constructed per
+   `AgentSession` at `agent-session.ts:380`), which arms a per-session cooldown
+   (`ProcessingStateManager.setRateLimitCooldown`,
+   `D/src/lib/agent/processing-state-manager.ts:225-236`) and retries that session's
+   own episode. A 429 in session A does not stop session B on the same provider from
+   dispatching a new query.
+
+3. **The only cross-session limit aggregation is task-scoped.**
+   `TaskAgentManager.limitedSessionsByTask`
+   (`D/src/lib/space/runtime/task-agent-manager.ts:309`, fed by
+   `session.rate_limit_pause` events at `:361-388`) restricts a Space *task* whose
+   sub-sessions are limited. It keys by task, not provider, and reacts after
+   sessions have already entered their own cooldown episodes.
+
+4. **The only concurrency gate is global, cold-start-only, and provider-blind.**
+   `SdkStartupConcurrencyGate` (`D/src/lib/agent/sdk-startup-gate.ts:35-111`,
+   singleton `:113-118`; acquired at `query-runner.ts:713`) caps concurrent SDK
+   subprocess *startups* at 3 and releases at the first SDK message
+   (`query-runner.ts:820`). It bounds no steady-state provider load and carries no
+   provider key. Survey area map: "Concurrency limits | none at provider level
+   (ADR Phase 2 explicitly open); session-level startup gate only (#2552)".
+
+5. **Even a session's own cooldown does not gate at persist.** During
+   `rate_limit_cooldown`, `message.send` still persists `'enqueued'` + a delivery
+   job (the busy check at `message-persistence.ts:181-182` does not include
+   `rate_limit_cooldown`); the job is claimed and later **parked** by
+   `driveDeliveryTurn`'s recovery-pending arm
+   (`D/src/lib/agent/agent-session.ts:1762-1773` →
+   `D/src/lib/job-handlers/message-delivery.handler.ts:121-123`). That
+   persist-then-park churn — a claimed job, a session flipped to queued, a retry
+   scheduled — is exactly the shape the admission gate removes, one layer earlier.
+
+**Net effect (the GLM scenario):** N sessions on one GLM account; the account's
+concurrency cap is exceeded; each session independently 429s, arms its own ≥10-minute
+ladder cooldown, retries its own message, and possibly runs its own fallback chain —
+while siblings keep firing fresh queries into the saturated provider. The provider
+sees a thundering herd; the daemon sees N uncoordinated recovery episodes.
+
+## Design overview
+
+```mermaid
+flowchart LR
+  subgraph MessagePipeline[message pipeline — admission points]
+    MS["message.send persist\n(decideMessageSendAdmission — NEW)"]
+    INJ["Space inject\n(decideInjectDelivery + provider gate)"]
+    JOB["delivery-job claim\n(point consult)"]
+  end
+  subgraph Registry[ProviderConcurrencyRegistry — daemon singleton]
+    SAT["saturation per provider\n{untilMs, kind, source, charge}"]
+    FLR["inFlight per provider\n(query start/end)"]
+    Q["global FIFO queue\n{(sessionId, messageUuid)*} —\nper-session sets are indices"]
+  end
+  CLR["limit-error classification sites\n(query-runner / sdk-message-handler / acp)"]
+  QRY["query-runner\n(provider-resolved query start/end)"]
+
+  MS -->|"queue arm: persist 'deferred', no job"| ROW[("sdk_messages\nsend_status")]
+  INJ -->|"provider_queue arm: settle 'deferred'"| ROW
+  JOB -->|"saturated: park job with retryAt"| JQ[("job queue")]
+  CLR -->|"assessment/hint"| SAT
+  QRY --> FLR
+  SAT -->|"snapshot facts"| MS & INJ & JOB
+  FLR --> SAT
+  SAT -->|"clear: floor timer + clean-completion probe"| WAKE["provider.concurrency.open\n(per-session, probe grant)"]
+  WAKE -->|"one granted delivery; next per\nprobe resolution"| ROW
+```
+
+Three properties carry the design:
+
+1. **One pure admission core, many interpreters.** A single pure function
+   (`decideProviderAdmission`) decides admit vs queue; each decision point maps the
+   decision onto its local mechanism (deferred row without a job / inject defer
+   outcome / parked job / skipped retry). No decision point duplicates the policy.
+2. **The queue is the existing durable one.** A provider-queued message is an
+   ordinary `sdk_messages` row with `send_status = 'deferred'` — the state the
+   manual query mode and busy-defer already produce, with existing UI, existing
+   transitions (`delivery-status-routing.ts:17-27`), and existing replay paths.
+   The registry adds only the wake linkage, plus a persisted `queue_reason` marker so
+   the linkage survives restarts.
+3. **Claim-time re-check is the enforcement backstop.** Racing wakes and in-flight
+   saturations are convergent because every delivery-job claim re-runs admission
+   before any provider call — the same belt-and-braces shape as pilot 7's
+   reservation behind the spawn gates.
+
+## The admission gate — order
+
+### P1 — `decideMessageSendAdmission` (new `decisionRun`, at persist)
+
+Extract the inline status cascade at `message-persistence.ts:180-192` into a
+`decisionRun` core (module `D/src/lib/agent/message-send-admission.ts`), composed of
+ordered gates — first decision wins, per `decisionRun` semantics:
+
+| # | Gate | Decision | Today's equivalent |
+| --- | --- | --- | --- |
+| 1 | `applyManualModeGate` | `queue` (reason `manual_mode`) | `isManualMode` → `'deferred'` |
+| 2 | `applyBusyDeferGate` | `queue` (reason `busy_defer`) | `deliveryMode === 'defer' && isBusy` → `'deferred'` |
+| 3 | `applyProviderConcurrencyGate` — skipped when the session has a live turn (`liveTurnActive`): the send is a *steer candidate* (the outbox resolves the steer role later, and the claim-level `liveTurnSteer` bypass governs); queueing it here would park input the live turn is waiting on | `queue` (reason `provider_saturated`, `untilMs`) | **new** — today dispatches |
+| 4 | `applyDispatchFinalGate` | `dispatch` | `'enqueued'` + outbox job |
+
+The queue arm's interpreter is the **existing** non-outbox persist branch: insert the
+row with `send_status='deferred'` (and, for the `provider_saturated` reason, the
+`queue_reason` marker — see Queue and wake), publish `messages.statusChanged`, and
+register the `{sessionId, messageUuid}` with the registry. No `message_delivery` job
+is created and the session is not flipped to queued — but unlike the manual-mode
+path it extends, the provider-queue arm **still publishes `message.persisted` with
+`skipQueryStart: true`** (the event fires only under `shouldDispatchToQuery` today,
+`message-persistence.ts:276-294`, and it is what clears the submitted composer
+draft and enqueues initial title generation — suppressing it would leave stale
+composer state on every saturated send; the subscriber's `skipQueryStart` guard
+already prevents a query start). One side effect is deliberately deferred:
+`needsWorkspaceInit` is published **false** for a provider-queued send, because
+title generation runs its own SDK query outside the message pipeline
+(`session-title.handler.ts:4-20` → `generateTitleWithSdk`,
+`session-lifecycle.ts:926-979`, which invokes the SDK directly) — N new
+sessions on a saturated account would otherwise each fire a title query the
+gate never sees. Re-flagging and admission are two separate rules:
+
+- **Re-flag** happens after **any terminal outcome of a delivery whose
+  queueing suppressed title generation** — success or failure. Success
+  covers the granted probe turn and a provider-change re-admission's
+  ordinary turn alike; failure covers the queued first delivery dying to a
+  non-limit error, where a success-only rule would leave the session
+  untitled forever with no later event to schedule the job (a regression
+  against today's behavior, where a failed title SDK query still falls
+  back to the first 50 characters, session-lifecycle.ts:914-922). At
+  terminal failure the re-flag schedules the title job immediately; its
+  own consult governs when the query may run, and the existing fallback
+  title covers its failure. **The obligation is durable through prompt
+  yield**: the marker clears at yield, and a restart between yield and the
+  terminal outcome would otherwise find no marker, no title job
+  (`needsWorkspaceInit: false` suppressed its creation), and possibly no
+  later message — an untitled session forever. The yield-boundary clear
+  therefore enqueues the admission-gated title job in the SAME transition
+  that clears the marker (the durable job-queue row carries the
+  obligation from that instant; the job parks behind its own consult
+  while probing), so no window exists in which the suppression is
+  unrecorded. (Not at promotion, which happens while the
+  provider is still probing.)
+- **The title job has its own admission interpreter.** Title generation is
+  lowest-priority background work, and its admission follows the **standard
+  contract — saturated/closed → deny, probing → deny unless it holds the
+  grant, open → admit — with no fully-open-only exception**: its precedence
+  over nothing from **separate queues, not one interleaved FIFO**: chat
+  registrations hold the chat queue, background identities a background
+  queue, and the grant always binds the chat queue's head first — the
+  background queue is admitted only when the chat queue is empty (a single
+  interleaved FIFO would make a newly arriving user turn wait behind an
+  entire parked background drain). When the chat queue empties, the successor
+  grant binds the background head and its consult admits on that grant; the
+  grant machinery serializes the background wave one at a time. **Background
+  grants live the full lifecycle**: a direct caller that admits on a grant
+  consumes it at its SDK query start and resolves it on termination — clean
+  completion mints the successor, its classified 429 re-arms saturation,
+  any other termination releases — mirroring the turn-boundary semantics
+  (for a one-shot background query, the query IS the turn); the
+  `reportQueryStart/End` wiring these interpreters already owe carries the
+  consumption and resolution. Consult identity is the **title job's
+  durable identity** — `{kind: 'job', jobKind: 'title', jobId}` from the
+  `session-title` job itself, never an in-memory synthetic tuple (the grant
+  union and the job wake dispatcher key on `jobId`; a synthetic
+  `(sessionId, 'title')` would leave the dispatcher with nothing to wake and
+  the consult unable to report holding the grant, so it would park forever).
+  One such job per session, idempotent. The consult
+  sits at `handleSessionTitleGeneration`'s entry, before any lifecycle work;
+  denial returns the same parked shape P3 uses — `requeue(job.id, retryAt)`
+  with `retryAt` = the saturation deadline, or the probe tick while probing —
+  so the job retries through the ordinary queue instead of throwing into the
+  job-queue default retry. **Failures feed back — and are
+  surfaced**: `generateTitleFromMessage` currently swallows the SDK exception
+  into a fallback title (`session-lifecycle.ts:914-922`) and
+  `handleSessionTitleGeneration` discards even that (`session-title.handler.ts:17-19`
+  returns `{ generated: true }` unconditionally), so the PR3 wiring extends the
+  lifecycle result to a structured `{ title, fellBack, error? }` — the
+  handler then runs `assessLimitError` on the original error text/status and
+  reports via `reportLimitError` with the title
+  query's **actual effective account key** (title generation may resolve a
+  different provider than the session's chat provider) before falling back — a
+  title request can be the call that trips the cap, and the registry must learn
+  it. This keeps background titling strictly behind the user-visible drain —
+  chat-queue precedence plus one-at-a-time grant release; a 64-wide title herd
+  cannot hit the just-recovered account. **Parked background jobs survive
+  restart**: their synthetic registrations are in-memory and they have no
+  `sdk_messages` row for the marker scan, so the park stamps a
+  `provider_park` reason on the job-queue row itself — cleared by the same
+  lifecycle as its registration: **at the admitted query's start itself**
+  (mirroring the message-row prompt-yield rule — a job re-admitted onto an
+  already-open account after credential rotation or a Space provider
+  change starts with no grant to consume, and keying the clear to grant
+  consumption would leave its marker durable through a crash, letting
+  reconstruction wake already-started work), on its terminal
+  completion/failure, and on explicit user removal — so a job that starts
+  then fails non-limit-wise requeues through the ordinary retry backoff
+  without a stale marker letting restart reconstruction wake it ahead of
+  that backoff. The startup scan
+  extends to parked background jobs (registering them into the background
+  queue by park order) — otherwise their shared `run_at` becomes due against
+  an open registry and every claim starts concurrently, recreating the herd.
+  **The same interpreter covers the Space background provider
+  queries** — `evolution-conversation-analysis-service.ts:289-296`,
+  `evolution-episode-service.ts:754-761`, and `llm-workflow-selector.ts:56-61`
+  each invoke the SDK directly on the configured Space/default provider: they
+  follow the **same grant-aware background contract as titles** — standard
+  admission (saturated/closed deny, probing deny unless the bound grant is
+  theirs, open admit), background-queue position, full grant lifecycle
+  (consume at query start, resolve on termination) — and classify/report
+  their failures via `reportLimitError`; but **each caller's denial shape
+  differs**:
+  the conversation-friction analysis runs inside a durable job (the title
+  interpreter's `requeue(job.id, retryAt)` park applies as-is);
+  `evolution.episode.createFromEvidence` awaits its judge inside a MessageHub
+  **request** with no `job.id` — denial fails the request with a typed
+  retryable `provider_saturated` error the caller surfaces (the request
+  completes with an explicit outcome, never hangs); and the workflow selector
+  runs inline with a deterministic fallback — denial selects the fallback.
+  Those last two callers abandon denied work **per invocation, not per
+  service**: `createFromEvidence` called from a transient MessageHub request
+  is ephemeral (never registered — nothing durable remains to run, and a
+  registration could receive a grant it can neither consume nor resolve),
+  but the SAME service called by the durable `goalAutomation.execute`
+  handler (goal-automation-execute.handler.ts:175-179, enqueued with only
+  two retries, goal-automation-service.ts:170-177) takes its job's park
+  shape — and the identity must be CARRIED, not assumed: the handler
+  passes only `{scopeId, evidenceIds, confirmLowConfidence}` and
+  `createFromEvidence` accepts no job context, so the admission
+  interpreter inside the shared service cannot distinguish this call
+  from the transient RPC/tool invocations or construct
+  `{kind:'job', jobKind, jobId}` on its own. The PR3 wiring therefore
+  threads an optional invocation context (the caller's durable job
+  identity) into `createFromEvidence`'s consult — or, equivalently, the
+  handler catches the typed `provider_saturated` denial and parks the
+  job itself — so the durable invocation gets the requeue park instead
+  of the ephemeral typed error, whose retry loop would exhaust the job's
+  two retries during a reset instead of waking when the account reopens. The
+  workflow selector stays ephemeral in all cases (its fallback is
+  deterministic and selection retriggers naturally)
+  (rule-based selection) instead of deferring. These six surfaces (titles +
+  three Space jobs + `github/router-agent.ts:198-244` and
+  `github/security-agent.ts:147-204`, which `DaemonApp` supplies with the same
+  stored session credentials, `app.ts:536-566` — a **one-time snapshot**,
+  so the credential-change re-admission hook recreates/updates both agents
+  from the new credentials before re-admitting or draining any parked
+  GitHub analysis; replaying with a stale snapshot would invoke the old
+  key while the registry reasons about the new account). These surfaces are
+  v1's roster
+  of out-of-pipeline provider callers; any new direct `query(...)` caller
+  joins
+  them by convention. **One event, one grant**: `processEvent` chains
+  `checkSecurity` → `routeEvent` (github-service.ts:214-287), so an event's
+  grant spans the whole workflow — granted once at event admission, each
+  agent query rides it (multiple queries, one concurrency slot), resolved when
+  the event's processing terminates; per-agent grants would interleave events
+  (A's router denied after A's security consumed its grant and the successor
+  bound to B) and never complete an event. **Grant resolution is therefore
+  keyed to the workflow boundary, not the query boundary**: the two agent
+  queries still report `reportQueryStart/End` for `inFlight` bookkeeping and
+  limit classification, but the security query's clean completion must NOT
+  resolve the event's grant — the feed-site contract below resolves a
+  consumed grant on clean completion for *single-query* callers, and applying
+  that here would mint A's successor while `routeEvent` is still starting
+  its query, letting event B overlap A's router against the same upstream
+  (the backlog expands into concurrent calls the serialized lane excludes).
+  The consumed grant resolves only when `processEvent` terminates — clean
+  completion of the whole chain mints the successor, a classified 429 from
+  either agent re-arms saturation, any other termination releases.
+  **Each agent query re-consults admission at its start**: an event
+  admitted while the account was open holds no grant, and a sibling arming
+  saturation while its security query runs would otherwise let it walk
+  straight into the router query under the workflow-wide rule — with
+  several security checks in flight, all of them would start fresh router
+  calls after the cap is known, recreating the concurrent wave the lane
+  excludes. The per-query consult admits the workflow through when it
+  already holds the event grant (probing included); a grantless event
+  whose account went saturated or closed between stages parks durably —
+  the inbox entry this design already gives GitHub events carries the
+  resume state (security verdict already computed), and the wake re-enters
+  `processEvent` at `routeEvent` without repeating the completed security
+  query. **Termination awaits cancellation**: both agents' timeout paths
+  currently fire-and-forget `queryObj.interrupt().catch(() => {})`
+  (security-agent.ts:236-238, router-agent.ts:270-272), so `processEvent`
+  could terminate while the timed-out SDK request is still live —
+  releasing the grant there would wake a successor overlapping it, and
+  repeated timeouts would stack concurrent probes. The timeout path
+  therefore awaits both the interrupt and the query's actual termination
+  (the runner's terminal callback / abort completion) before the workflow
+  reports query end and resolves the grant, so `inFlight` decrements and
+  successor minting happen only after the request is truly dead.
+  The GitHub agents' denial shape **splits by invocation** — and the
+  production ingest paths are both provider-free: watched-repository
+  polling ALSO lives in the extension (`github-event-extension.ts:2483-2486`
+  normalizes each polled row and calls `publishEvent` directly; the legacy
+  service's `addRepository` has no production caller, so its polling queue
+  stays empty), so polls publish durably through the same
+  `ExternalEventService` path webhooks do, ungated at ingest, with the
+  cross-source dedupe applied at the store and only downstream P2 agent
+  work admission-gated. The poller's **watermark advance is conditioned
+  on the publish commit**: the extension advances `endpointPending`/
+  watermarks past an event only after its durable publish succeeds, so a
+  failed store commit re-observes the event next tick (nothing was
+  consumed) instead of silently skipping it. The agents' own contracts
+  above (one event one grant, per-query consults, awaited interruption)
+  bind any driver that ever invokes the legacy `processEvent` workflow;
+  PR4's dead-copy sweep records whether that caller-less path is deleted
+  outright, taking its park shapes with it.
+  The **webhook path**
+  reprocessed by the next poll either (dual owners would duplicate room
+  messages); the **webhook path interpreter sits on the ACTIVE
+  route** — and the delivery-semantics design from here through the
+  caveat-9 sweep (raw-event store, dedupe keys, conditional
+  acknowledgment, reconciliation) belongs to the SPLIT CHAIN recorded
+  under Sequencing: it gates no provider call and is not part of C5's
+  PRs; it is specified here because this is where the analysis lives:
+  production requests to `/webhook/github/space` are dispatched to
+  `GitHubEventExtension`'s registered handler
+  (github-event-extension.ts:277-278 → `:663`), NOT to
+  `GitHubService.handleWebhook` (github-service.ts:203) — a repo-wide
+  search finds no caller for the service method, so specifying the
+  interpreter there would leave the live endpoint unprotected during
+  saturation. The extension's handler processes the event **without**
+  agent analysis — and because that request **starts no provider call, it
+  is not admission-gated at all**: the handler persists the event to the
+  durable store and publishes to `SpaceRuntime` immediately regardless of
+  provider state (parking the raw webhook during saturation would delay
+  Space subscriptions and non-AI workflows — potentially indefinitely —
+  for a request that never touches the provider); admission applies only
+  at the downstream provider-call boundary, where any agent injection the
+  Space routing eventually triggers consults P2 and parks there. What the
+  webhook path DOES gain is the **conditional acknowledgment**: the 200 is
+  returned only after the durable store commit succeeds; if the write
+  throws, the handler **first retries the commit in-process within the
+  callback window** (a short bounded backoff — transient SQLite contention
+  is the expected failure, and the callback must still complete quickly or
+  GitHub times the delivery out) and only then answers non-2xx — which
+  **reports non-acceptance, never an upstream retry queue**: GitHub records
+  a failed delivery and does NOT automatically redeliver, so the payload's
+  survival past the in-process retries is backstopped only where a token
+  exists — a **reconciliation sweep** (caveat 9) lists the hook's recent
+  failed deliveries via the GitHub deliveries API and re-ingests their
+  payloads through the same store; a token-less webhook-only
+  installation has no backstop, and the guarantee is qualified accordingly
+  (today's catch path still 200s, which would silently drop the
+  event even when local persistence is healthy). The callback must complete quickly either way — a GitHub timeout is
+  itself a FAILED delivery (no automatic redelivery; manual or
+  API-driven only, per caveat 9 — treating it as a retry backstop would
+  hide permanent loss in exactly the token-less installations with no
+  sweep) — and **the raw webhook payload is
+  persisted for exact replay**: poll-derived events are
+  not a substitute — normalization synthesizes actions (`updated`) that
+  differ from webhook actions (`opened`/`closed`/`synchronize`), so replaying
+  via the next poll would route differently or be filtered out entirely.
+  Neither source parks at ingest: the raw webhook AND the polled row
+  publish immediately (the ungated rule above), and any downstream agent
+  work the Space routing triggers parks at P2 under its own identity.
+  Deduplication still makes
+  **both sources converge on one upstream identity**: the store records the
+  upstream resource tuple (event/repo/row-id/`updated_at`) as a secondary
+  index beside its source-specific key, and deduplication uses **two key
+  levels**. The per-source exactly-once key is **source-appropriate**:
+  webhooks key by **`X-GitHub-Delivery`** — each delivery is a distinct
+  upstream push, and two edits of one resource within the same second share
+  type/repo/row-id, second-resolution `updated_at`, AND the action, so a
+  tuple+action key would classify the second edit's distinct payload as a
+  replay and drop it (the delivery id is the identity GitHub itself
+  guarantees distinct per push); polls key by the upstream tuple **plus the
+  action and the canonical payload-projection digest** (defined below) —
+  the poll normalizers derive no transition-specific action (issues and
+  PRs always synthesize `updated`, comments always `created`,
+  event-normalizer.ts:189,223,263), so two DIFFERENT states of one
+  resource whose `updated_at` values fall in the same second share the
+  tuple and the action; the digest component distinguishes them (a
+  changed state is a distinct key and delivers) while a crash- or
+  cursor-race re-observation of the SAME state hashes equal and stays a
+  replay — and the action addition still distinguishes a created-then-
+  edited sequence whose members
+  share the resource timestamp. The **canonical correlation key** — the
+  action-insensitive upstream tuple (type/repo/row-id/`updated_at`) —
+  carries cross-source suppression, because equivalent events do NOT share
+  actions across sources (polling synthesizes `updated` while the webhook
+  emits `opened`/`closed`/`synchronize`; keying cross-source dedupe on
+  tuple+action would deliver the same change twice from both-enabled
+  configurations). Delivery inserts under its per-source key and records
+  its source on the canonical key — **canonical suppression applies only
+  cross-source**: a replay from the SAME source consults only its own
+  per-source key (the canonical key must not suppress a same-source
+  distinct action or delivery — the created-then-edited poll example would
+  lose the edit, since both actions share the resource timestamp and the
+  first would consume their shared canonical key, and a same-second
+  same-action webhook re-edit is a distinct delivery id the canonical key
+  must not absorb); a replay from the OTHER source is suppressed only by a
+  **payload-correlated pairing, never by the tuple alone**: each delivered
+  event records its canonical tuple alongside the digest of a **canonical
+  cross-source projection** of its payload, and an arriving opposite-source
+  event under the same tuple is
+  suppressed only when its projected digest matches a recorded one — the
+  tuple says the events may be the same change; the payload says they ARE.
+  Arrival order never decides: a poll observing the final state after two
+  same-second webhook transitions suppresses the webhook whose payload it
+  actually carries (the final one) and delivers the other (the earlier
+  transition it does not), in either arrival order, because suppression
+  follows payload equivalence, not first-arrival; the reverse order
+  (webhooks first, poll last) suppresses the poll against the matching
+  webhook by the same test. **Each recorded event's pairing slot is
+  one-use**: the match consumes the record's slot — one opposite-source
+  event, one suppression — so two distinct webhook deliveries carrying the
+  same canonical projection as one poll observation suppress at most one
+  of them (the other matches nothing unconsumed and delivers), never both
+  off a single record. A global once-latch or a first-arrival slot on
+  the coarse tuple would instead drop BOTH webhooks off one poll (or the
+  earlier transition while re-delivering the final state twice) —
+  order-dependent loss of a transition that may route differently. A
+  payload mismatch always delivers (the tuple's second resolution cannot
+  prove duplication), at most re-delivering partial state; the
+  both-enabled common case (one change, one webhook, one poll, identical
+  payloads) still dedupes to exactly one delivery. The projection is
+  defined, not the raw normalized payload: the two sources deliberately
+  differ in transport-specific fields — `action` (webhook
+  `opened`/`closed`/`synchronize` vs synthesized `updated`), `source`,
+  freshly generated `id`/`receivedAt`, and structurally different
+  `rawPayload` envelopes (webhook delivery wrapper vs API row) — so
+  hashing the normalized payload as-is would ALWAYS differ and both
+  copies would route. The projection strips every transport-specific
+  field and hashes only the harmonized resource subset: event type,
+  repo, upstream row id, and the comparable content fields
+  (title/body/state/diff refs as the type provides), mapped to one
+  neutral shape per event type before digesting. **Actor is excluded**:
+  the sources give it different semantics — webhook normalization
+  records the delivery's `sender` (event-normalizer.ts:68-71,150-153)
+  while polling records the issue/PR author (:207-210,281-284) — so a
+  maintainer closing, synchronizing, or editing another user's resource
+  would hash differently across sources and route both copies despite
+  the projection.
+  **Webhook-only installations** (webhooks enabled
+  without a GitHub token, or polling interval zero — `refreshPolling`
+  disables polling entirely) have no next poll — and under the ungated
+  rule above they need none at ingest: the raw webhook publishes
+  immediately whatever the provider state, and any downstream agent work
+  parks at P2. Their raw-event store is still keyed by the **GitHub
+  delivery id** (`X-GitHub-Delivery`, github-event-extension.ts:671) — not the
+  normalized event id, which the normalizer regenerates per receipt
+  (`crypto.randomUUID()`, github-normalizer.ts:1094), so a crash before the
+  200 response (whose delivery is later re-ingested by the caveat-9
+  reconciliation sweep or a manual redelivery — both reuse the delivery id)
+  would land as an
+  unrelated key and bypass the delivery-record dedupe — and for **polled**
+  events the replay key is the full **per-source poll key: the stable
+  upstream tuple (eventType + repo +
+  upstream row id + `updated_at`) plus the action and the canonical
+  payload-projection digest** (the normalizer distinguishes pulls,
+  issue comments, and review comments by `eventType` plus the row's own
+  `id`, github-normalizer.ts:386-408, and second-resolution `updated_at`
+  alone would collide two comments on one PR, permanently suppressing one
+  — and the tuple alone would collide two same-second states of ONE
+  resource in the inbox before the per-source dedupe can distinguish
+  them, permanently dropping the later event; the digest component makes
+  a different state a different key while a re-observation of the same
+  state still replays to nothing):
+  a crash after the inbox commit but
+  before `lastPollTime` persists (polling-service.ts:132) re-polls the same
+  object and normalization mints yet another fresh UUID
+  (event-normalizer.ts:10-11), so anything less stable than the upstream
+  tuple defeats the delivery-record dedupe. **No ingest path parks at
+  all — both sources are ungated**, and the store's entries are delivery
+  records, NOT background waiters: waiter registration exists only for
+  the legacy `processEvent` workflow's actual mid-flow park (the
+  grantless-between-stages arm) — registering polled entries broadly
+  would replay an already-published extension event through a second
+  workflow after recovery, consuming grants and duplicating downstream
+  work — and the credential-change re-admission hook still covers
+  whatever that legacy arm parks (the billing-closed case included).
+  **Restating the ungated rule**: the raw
+  webhook AND the polled row publish at ingest regardless of provider
+  state (the ungated rule above — `context.publisher.publish` durably
+  stores the event, then notifies `SpaceRuntime`,
+  github-event-extension.ts:725-735,1731-1737, and the extension's own
+  polling loop publishes the same way, `:2483-2486`; neither invokes the
+  security/router agents), so there is no webhook- or poll-sourced
+  waiter to drain — routing a saturated event through the legacy agents
+  and `GitHubService.deliverToRoom` would make its destination and
+  delivery semantics depend on whether the provider happened to be
+  saturated, bypassing the extension's Space subscriptions and delivery
+  records. The raw-event store is a **delivery-record and dedupe
+  structure, not a waiter lane**: its entries register as durable
+  background waiters ONLY for the legacy `processEvent` workflow's
+  mid-flow parks (the grantless-between-stages arm above), and every
+  downstream agent injection the Space routing triggers consults P2 and
+  wakes through the message channel under its own identity. This is the
+manual-mode code path today
+(`message-persistence.ts:227-229`) plus that event; the gate adds a third way to
+reach it.
+
+**"Before it is persisted to the session," interpreted.** The ADR's phrase is
+realized as: the admission decision runs **before the persist transaction chooses
+the send status and (critically) before the outbox job is enqueued** — a queued
+message never enters the session's delivery pipeline, so nothing downstream of it
+can start a provider call. The message *content* is still persisted immediately as a
+`'deferred'` row: holding user input only in memory would lose it on crash, and the
+deferred state already renders as a pending message the user can promote, defer, or
+remove (`session.messages.promotePending` et al.,
+`D/src/lib/rpc-handlers/session-handlers.ts:1058-1182`). Queueing-before-persistence
+and durability are reconciled by queueing *as* the persisted-but-not-dispatched
+state.
+
+Gate order rationale: gates 1–2 reproduce today's precedence exactly (parity), and
+the provider gate narrows only flows that today dispatch — the standard
+pilot-convention placement for a new gate (pilot 5's arg-before-target rule: a new
+gate inherits the documented order; existing outcomes are unchanged).
+
+### P2 — provider gate in `decideInjectDelivery` (Space inject pipeline)
+
+Insert `applyInjectProviderConcurrencyGate` into the existing composition
+(`D/src/lib/agent/message-delivery-pipeline.ts:79-85`). Like P1, the gate is
+**skipped when the target session has a live turn** (`liveTurnActive`): an
+immediate injection into a processing session is a steer candidate whose role
+the delivery layer resolves after admission, and queueing it here could
+withhold input the active turn needs to finish and clear saturation — the same
+pre-gate ordering obligation as P1. Gate list:
+
+```
+applyAlreadyConsumedGate          → noop            (unchanged)
+applyFailedReopenGate             — marks reopen    (unchanged)
+applyDeferAdmissionGate           → defer           (unchanged: session cooldown /
+                                                     parent-task-limited / defer-busy)
+applyInjectProviderConcurrencyGate → provider_queue {untilMs}   (NEW)
+applyInjectContextResetGate       → clear_*         (unchanged)
+applyInjectFinalGate              → deliver         (unchanged)
+```
+
+Placement **after** the defer-admission gate is deliberate: `decideDeferAdmission`
+(`D/src/lib/agent/message-ownership-gates.ts:112-126`) already defers for
+session-scoped and task-scoped reasons; the provider gate only intercepts flows that
+would otherwise deliver. A session already in its own cooldown keeps today's
+behavior; a clean sibling session on a saturated provider — the GLM scenario — gets
+the new arm. The `provider_queue` arm's interpreter reuses the existing defer
+effects verbatim (`task-agent-manager.ts:3383-3398`:
+`markDeliveryDeferredByUuid` / `settleDeliveryRowStatus` with status `'deferred'`)
+and adds the registry registration; `settleDeliveryRowStatus`'s insert path carries
+the `queue_reason` marker the same way. A distinct arm (rather than
+folding a boolean into `decideDeferAdmission`) keeps the `untilMs` payload and the
+wake obligation typed, and leaves the pinned defer decision table untouched.
+
+### P3 — delivery-start consults (point decisions, enforcement)
+
+**V2 (default):** consult `decideProviderAdmission` in the delivery handler at the
+existing skip cluster (`D/src/lib/job-handlers/message-delivery.handler.ts:81-84`):
+if the row is deliverable but the provider is saturated **or probing without a
+grant for this delivery**, return the same parked shape the recovery-pending arm
+already produces (`requeue(job.id, retryAt)` →
+`{ parked: 'provider_saturated', retryAt }`), with `retryAt` = the saturation
+deadline for the first park and a short probe tick afterwards — parked jobs
+re-consult on every claim, so the probing release admits them one probe at a time
+instead of releasing a 64-wide claim wave at the shared deadline
+(`D/src/app.ts:307-318`). Because the consult sits ahead of `driveDeliveryTurn`,
+the session lock is never taken and no turn state is touched; the interpreter
+obligation it adds is restoring an idle session that persist had flipped to queued
+via `setQueuedIfIdle` (`message-persistence.ts:224-226`) — pinned in the test plan.
+
+**V1 (`HYPERNEO_MESSAGE_DELIVERY_V2=0`) and every direct-start path:** the V1
+surface is not one call site — `startQueryAndEnqueue`
+(`message-persistence.ts:271-275`), `deliverRowsViaMemoryQueue`, and the V1 branch
+of `deliverInjectedMessage` all reach `ensureQueryStarted()` directly
+(`D/src/lib/agent/query-lifecycle-manager.ts:432-525`). Rather than enumerating
+them, the consult sits at **`ensureQueryStarted` itself — the common provider-start
+boundary every delivery path crosses** — with the handler-level V2 consult kept as
+the cheaper early park. `ensureQueryStarted` today takes only an optional
+`AbortSignal`, and `deliverRowsViaMemoryQueue` calls it once before iterating a
+batch — so the boundary gains an **optional delivery-identity parameter** (the
+message uuid / batch head the start serves): it is what names the grant holder
+on admit and the row to defer-and-register on denial, and batch callers pass
+their per-uuid identity (calling the boundary per row where they currently call
+it once). **Not-yet-persisted deliveries are a distinct case**: the V1
+injection paths (`deliverInjectedMessage`,
+`injection-delivery-steps.ts:148-156`; the long-term-agent V1 path,
+`space-runtime-service.ts:572-575`; and `spaceAgentInjector`,
+`rpc-handlers/index.ts:869-880`) call `ensureQueryStarted` *before*
+inserting their SDK row — there is no row to settle or register on denial, and
+the message exists only in the caller's memory. For these the boundary returns
+a **typed `provider_parked` outcome** to the caller — and the caller's
+obligation is to **durably insert the deferred row and marker first**: an
+in-memory-only copy is lost on restart (under a long reset or the indefinite
+closed state), silently dropping the injection. The parked flow: insert the
+`'deferred'` row with the marker (these callers already build the full SDK
+message — persisting it ahead of the retry is P1's queue-arm shape),
+register it normally, then return `provider_parked` so the caller abandons
+the in-memory start; the wake re-runs the inject against the persisted row.
+No synthetic in-memory registration remains on this path. **Identity-less
+callers split into exempt and admitted**: `ensureQueryStarted` is not
+exclusively a delivery boundary — context-reset / restart paths call it with
+no message row to resume an existing turn's lifecycle, and those starts ride
+existing turn-lifecycle mechanics (no new admission), their limit errors
+still arming the registry through the classifier like any others. The
+**`AskUserQuestion` answer-after-stop path is NOT exempt**:
+`submitAnswerForRestartedQuestion` first sets the session idle, then calls
+`ensureQueryStarted()` — which starts a **fresh streaming query**, a new
+provider call — before enqueueing the tool result
+(ask-user-question-handler.ts:524-568); treating it as an already-live steer
+would let every session answering a question bypass the serialized probe
+lane while a sibling has armed saturation. This restart therefore carries a
+**durable admission identity** — `{kind:'restart', sessionId, toolUseId}`,
+named by the pending question's `toolUseId` — and **persists before
+parking**, following the same durability rule as every other
+not-yet-persisted delivery: today the answer's in-memory window ends the
+moment the tool result is enqueued, but an admission denial deliberately
+extends it across the provider outage (minutes to indefinite), during
+which a restart would drop the user's submitted answer. The park
+therefore first writes a **replayable answer record** (the pending
+question's stored state extended with the submitted tool-result payload,
+keyed by `toolUseId`, and stamped with a **sequence from the same shared
+monotonic allocator** the other lanes use — the record has no
+`sdk_messages` row, so without its own sequence the restart scan cannot
+merge it with queued message rows in registration order, and the
+question's `askedAt` is wrong because submission happens later), then
+registers `{kind:'restart'}` in the
+chat lane against it — and a denial skips `ensureQueryStarted` and
+returns; the wake (or restart reconstruction, which scans the answer
+records) re-runs the submission against the persisted answer. **The
+record retires on delivery**: once the restarted submission's tool
+result is durably accepted by the live query, the answer record is
+atomically marked consumed (or deleted) in the same transition —
+preserved on a provider park or a failed enqueue — because
+reconstruction scans these records, and the enqueue identifier embeds
+`Date.now()` (ask-user-question-handler.ts:562), so a surviving record
+after a later restart would re-inject the already-delivered answer with
+no dedupe to stop it.
+A boundary denial for a delivery-identified caller has no job to park: the
+delivery settles its row back to
+`'deferred'` with the `queue_reason` marker and registers it (V2 surfaces this as
+the recovery-pending park instead, upstream). A delivery holding the probe grant
+passes. Without the boundary consult, startup/manual pending replay and a Space
+injection that passed P2 just before a sibling armed saturation could still start
+their provider calls — voiding the enforcement claim in the documented rollback
+mode (`docs/features/message-delivery-v2.md`) and the replay paths alike.
+
+Together these are the backstop that makes races convergent:
+
+- messages persisted before saturation armed (already `'enqueued'` + job),
+- flush-path promotions that outran a re-saturation,
+- sessions fed by the direct persist callers (`D/src/lib/rpc-handlers/index.ts:804,872`,
+  `D/src/lib/space/runtime/space-runtime-service.ts:530,573`),
+- the V1 inline path.
+
+A point consult, not a pipeline: a single boolean-shaped precondition at each
+delivery-start boundary, the ADR's sanctioned inline shape (pilot 4's point
+decisions at the tail).
+
+### P4 — watchdog auto-retry consult (point decision)
+
+`executeRateLimitAutoRetry` (`D/src/lib/agent/agent-session.ts:931-970`) starts a
+query directly, bypassing the message pipeline. It consults the same core; when
+saturated, it skips the start and settles the episode's row back to
+`'deferred'` with the marker — **through an atomic consumed-to-deferred
+transition**: the failed provider call already admitted its prompt, so the
+row is normally `'consumed'` (`markDeliveryConsumedByUuid`), and the plain
+defer helper accepts only `'enqueued'` rows — applying it to a consumed row
+changes nothing while registering a terminal row whose targeted wake can
+never promote it (the user's retry is lost and a bound grant stalls on an
+undeliverable identity). The settle is therefore a single
+consumed→deferred transition (or the existing retry path to `'enqueued'`
+followed by defer, both steps inside one registration transaction) —
+**writing the row's original admission origin**: the episode passes
+`executeRateLimitAutoRetry` only `{ uuid, content }`
+(agent-session.ts:931-963) and the original `queue_reason` was cleared at
+prompt yield, so this branch has no information from which to choose
+`provider_saturated_p1` vs `_p2` — defaulting to P1 would bypass the
+injection pipeline's parent-task/cooldown/context-reset gates, to P2
+would misroute ordinary user sends. The yield-boundary marker clear
+therefore **persists the row's last admission origin** (a shadow of the
+arm the queueing used, carried on the row/episode record), and the P4
+settle writes the matching marker value —
+then registers the row, letting the wake path re-promote. The retry
+callback's boolean contract (started / not-started) cannot express this —
+`false` would push the watchdog into its startup-retry loop and eventually
+`startupExhausted`, `true` would `notifyResume` as though a query started — so
+the callback's result widens to **three states — `started | not_started |
+parked`** — where `parked` makes the
+watchdog relinquish its cooldown timer without startup retries and
+**publishes the pause-clearing resume variant** (distinct from a started
+resume: it clears `session.rate_limit_pause` so
+`TaskAgentManager.limitedSessionsByTask` drops the session — an unmatched
+pause would keep the parent task restricted and its injections deferring
+through `parentTaskLimited` instead of registering with the provider queue —
+while signaling the provider-queued state for the UI): the registry now owns
+that row's wake. `not_started` preserves today's branch unchanged: a
+`startQueryAndEnqueue` that throws or returns without starting a query
+still reports it, and that `false`-today outcome still drives the bounded
+startup-retry loop and eventually leaves manual Retry available — mapping
+it onto `parked` would relinquish the watchdog with no durable
+registration created, and onto `started` would falsely resume the
+session. This closes the last
+uncoordinated provider-call starter. (The fallback arm — `switchAndRetryForFallback`
+— is exempt by construction: it has already switched the session's provider, and
+admission is always evaluated against the *current* `session.config.provider`, so
+a fallback-switched session escapes the saturated provider's queue on its next
+admission.)
+
+### The pure core
+
+Module `D/src/lib/agent/provider-admission-gates.ts`:
+
+```ts
+interface ProviderAdmissionFacts {
+  providerId: string;
+  now: number;
+  configuredCap: number | null;     // v1: always null (reactive only)
+  inFlight: number;                 // registry snapshot
+  saturationUntilMs: number | null; // registry snapshot (null = no timed
+                                    // saturation; closure is the separate flag)
+  closed: boolean;                  // billing-terminal closure — no deadline,
+                                    // admits nothing until reopened (manual
+                                    // retry, health probe, credential change)
+  accountAvailable: boolean;        // usable credentials present — false once
+                                    // auth.logout removes the last stored
+                                    // credential; denies like closed
+  closureProbe: boolean;            // this caller is the manual Retry or the
+                                    // bounded daily health probe — the only
+                                    // callers ELIGIBLE to probe closure
+                                    // (eligibility alone never admits)
+  holdsClosureProbeGrant: boolean;  // this caller holds the account's single
+                                    // atomic closure-probe grant — the fact
+                                    // the closed arm actually tests
+  probing: boolean;                 // post-clear / post-restart: a probe grant
+                                    // is outstanding and unresolved
+  holdsProbeGrant: boolean;         // this delivery owns the grant
+  liveTurnSteer: boolean;           // feeds an already-live provider turn —
+                                    // adds no concurrency
+}
+type ProviderAdmission =
+  | { action: 'admit' }
+  | { action: 'queue_until'; untilMs: number | null; reason: 'closed' | 'saturated' | 'probing' | 'slot_pressure' };
+```
+
+`decideProviderAdmission(facts)` is pure and synchronous (`.end`, never
+`.endAsync` — Decision item 5): `liveTurnSteer` → `admit` unconditionally (a
+steer fed into a live turn via `feedDeliverySteer` rides the turn's existing
+provider call; it adds none — and parking it while the live turn waits on that
+very input would deadlock the turn whose completion could clear saturation);
+else `!accountAvailable` → `queue_until` with **no deadline** (reason
+`closed`) — evaluated **independently and first**: no credential, no call,
+and `closureProbe` cannot bypass it (a health probe or manual Retry on a
+logged-out account would be an unauthenticated SDK call; those callers
+consult again after `auth.login`); else `closed && !(closureProbe && holdsClosureProbeGrant)` →
+`queue_until` with **no deadline** (reason `closed`, `untilMs` null — the
+billing kind has no reset; it re-opens via the closure probes below or a
+credential change, so callers treat it as queue-indefinitely / surface to
+the user, never tick-retry; the core tests grant OWNERSHIP, not probe
+eligibility — `closureProbe` alone must not admit, or concurrent Retry
+clicks and an overlapping health probe would all bypass and recreate the
+wave the atomic grant exists to prevent); else
+saturated → `queue_until` with the registry's deadline; else
+probing without the grant → `queue_until` (reason `probing`, until = the probe
+tick); else if `configuredCap !== null && inFlight >= configuredCap` →
+`queue_until` (reason `slot_pressure`, until = null-safe probe tick); else
+`admit`. **Grants are minted by the registry at clear time, before any
+consult** (the core only reads `holdsProbeGrant`); the first-admitting-
+consult-mints wording from earlier drafts is exactly the scheduling race the
+mint-bound contract removed. The grant's identity has exactly two
+well-defined mint shapes: with a non-empty backlog the grant mints
+**bound** to the selected FIFO head (the mint-bound contract, no consult
+involved); a clear that drained to nothing has no head to bind, so it
+mints **pending — `identity: null`** — and the first admission consult of
+any kind binds it through `claimPendingGrant(identity)`, a REGISTRY-side
+compare-and-set the interpreter invokes around the consult (its atomic
+result is what populates the `holdsProbeGrant` fact the pure core reads;
+the core itself never mints, binds, or claims). "First consult wins" over
+an already-BINDABLE queue is the removed A2/B1 race; a CAS over an
+identity-null grant has no queue to steal from and no race window — one
+atomic transition. **`liveTurnSteer` consults never claim**: the steer's
+provider turn started BEFORE the clear (the bypass exists precisely
+because it adds no new concurrency), so its completion is not a valid
+post-clear probe — claiming would let it resolve the grant and open the
+account prematurely, and a steer that never crosses the new-turn
+lifecycle hooks would strand probing until lease expiry. The claim
+eligibility check mirrors the core's own first rule: a consult admitting
+on the `liveTurnSteer` fact reads the pending grant but leaves it
+pending; the next admission that actually starts a post-clear provider
+turn claims it. The two `apply*Gate` wrappers above adapt the core to their pipelines' ctx
+shapes (`(ctx) => ctx`, pass-through identity per Decision item 6(b)).
+
+Hot-path check: this core runs once per message send / inject / job claim — the
+same frequency class as `AgentMessageRouter`, whose awaited repository reads are
+millisecond-scale against `decisionRun`'s ~2 µs. GO by the ADR benchmark; no
+microtask-profile obligation beyond the sync-core rule (pinned anyway, cheaply, in
+the send-admission suite).
+
+## State ownership
+
+### `ProviderConcurrencyRegistry` — daemon singleton
+
+Module `D/src/lib/agent/provider-concurrency-registry.ts`; class with a
+module-level singleton + `resetForTests()`, following the `getSdkStartupGate`
+(`sdk-startup-gate.ts:113-120`) and provider-registry precedents. It is a class,
+not a pipeline: it owns timers and an event publisher, and pipelines/cores receive
+only its snapshots (the ADR resource-ownership rule).
+
+Per **provider key = the concurrency domain of one upstream account**, keyed
+primarily by a **non-secret digest of the effective credential, namespaced
+by the upstream provider family** — the credential is the
+billing/concurrency identity, so everything routing under one credential
+shares one key, but the same literal key configured against two DIFFERENT
+upstreams (a custom OpenAI-compatible endpoint carrying a common dummy key
+and a built-in provider configured with the same value) is two accounts:
+hashing the bare value would merge them and let either upstream's limit or
+billing closure gate the other. The digest is therefore
+`digest(family + ':' + accountIdentity)` — family being the resolved
+provider family/upstream authority (the same family namespace the
+credentialless keys use), so logical records for the SAME upstream account
+still converge (same family, same credential → same key) while unrelated
+issuers never do. **Custom endpoints add their baseUrl to the authority**:
+two credential-backed custom endpoints of the same resolved type routinely
+share a literal placeholder or locally managed key while their `baseUrl`
+values point at unrelated upstreams — for custom endpoints the key is
+`digest(family + ':' + canonicalBaseUrl + ':' + credential + ':' +
+digest(identityHeaders))` — an **effective** identity-header digest — the identity
+component is computed from the FINAL provider-specific authentication
+identity after custom headers are applied, because the bridges spread
+`config.headers`
+AFTER the generated API-key authentication
+(openai-chat-bridge/server.ts:749-752,
+anthropic-messages-bridge/server.ts:188-194): two records with one base
+URL and a placeholder `apiKey` but different overriding `Authorization`
+or tenant headers send as different identities and must not share a key,
+while two records whose overrides make their differing
+placeholder `apiKey` values irrelevant send as the SAME identity and
+must share one — where "irrelevant" means EVERY provider-specific
+generated authentication header the credential supplies has been
+overridden: the anthropic bridge generates BOTH `Authorization` and
+`x-api-key` before applying custom headers
+(anthropic-messages-bridge/server.ts:188-194), so overriding only
+`Authorization` leaves the generated `x-api-key` differing and the raw
+credential stays in the digest (a partial override excludes nothing);
+absent identity headers digest to a constant
+and the raw credential stands in — the
+`baseUrl` component canonicalized through the SAME provider-specific
+base-authority normalization the request builders apply (whitespace and
+trailing-slash trimming, terminal request paths such as
+`/chat/completions` or `/v1/messages` stripped), so equivalent URL
+spellings of one upstream (`https://host/v1` and
+`https://host/v1/chat/completions` both issuing requests to the same
+endpoint) hash equal and cannot split one upstream into two concurrency
+domains — identical records
+(same endpoint, same credential) converge and different endpoints never
+gate each other; built-in providers keep `family + credential` (the same
+credential through a built-in provider's endpoint variants is still one
+pool, per the endpoint rule below):
+
+- **Stored default credentials**: key = the family- (and for custom
+  endpoints, baseUrl-) namespaced digest of the
+  storedCredential, scoped by
+  the provider id only as a namespace for *finding* the credential — and the
+  digest changes when the stored credential does, so an
+  `auth.logout`/`auth.login` rotation moves sessions and their backlog to a
+  fresh key (the shared-credential re-admission hook fires on exactly that
+  fingerprint change). **OAuth refreshes are not rotations**:
+  `OAuthRefreshScheduler` periodically stores a new `accessToken` for the
+  *same upstream account* (oauth-refresh-scheduler.ts:51-82), so the digest
+  input is the **stable account identity, not the raw token** (for OAuth:
+  the provider + account identifier; for static keys: the key itself) — a
+  routine refresh keeps the key, keeping active saturation/closure on the
+  account it belongs to; only a genuine credential *change* (different
+  account identity) re-keys. **When no account identifier exists** (the
+  generic OAuth shape carries only `accessToken`/`refreshToken`/`expiresAt`/
+  `raw`, shared/src/provider/types.ts:23-31, and env migration stores a bare
+  token), the digest falls back to `hash(refreshToken ?? accessToken)` —
+  stable across access-token refreshes by construction (the refresh token
+  identifies the grant) — and where only an access token exists, the first
+  observed value pins the key and a later changed value is treated as a
+  rotation (the imprecision is recorded: a token refresh that rotates the
+  refresh token itself re-keys; the account-identifier field is the durable
+  fix and lands with the credential schema, not this design). **The
+  refresh-rotation re-key is still hooked**: the scheduler's credential
+  write (oauth-refresh-scheduler.ts:76-82 — it stores refreshed
+  credentials directly, outside `providers.update` and
+  `auth.login`/`auth.logout`) invokes the same re-admission hook the
+  other credential mutations use, with account-continuous semantics —
+  registrations migrate from the old digest to the new and the move is
+  ATOMIC across everything the account owns: an active saturation/closure
+  record, a persisted probing record, its probe grant (pending or bound —
+  a bound ephemeral holder re-keys too, so its terminal report resolves
+  against the new key instead of stranding the old one's probing state),
+  and the in-flight/captured-report associations (the same upstream
+  account; only the digest changed — moving registrations alone would let
+  migrated waiters and new calls admit concurrently against a probing
+  account whose grant stayed behind). Without the hook, queued work
+  strands under the old key while new calls compute the new one and
+  bypass its episode.
+- **Session overrides** (`providerConfig.apiKey`): the override digest keys
+  the session — two built-in-provider sessions with different API keys are
+  different accounts; neither queues behind the other.
+- **Explicit endpoints** (`baseUrl`, region variants): same credential
+  through endpoints X and Y is treated as **one pool** — the credential is
+  the account-wide limit's subject (X's 429 stops Y), accepting the recorded
+  imprecision that distinct sub-accounts behind one credential+endpoint pair
+  (e.g. Kimi china/global with one key) share a registry entry; splitting
+  those would need per-endpoint account knowledge the daemon does not have.
+- Logical provider records that carry the **same effective credential**
+  through identical endpoints (`custom-endpoint.ts:23-30` allows distinct
+  ids with identical `baseUrl`/`apiKey`) merge into one key — one account
+  regardless of logical record. Distinct API keys at the same endpoint do
+  NOT merge — they are different accounts per the digest rule, and merging
+  them would let one customer's limit block another's traffic.
+
+Endpoint/region fields therefore do NOT join the key **for built-in
+provider endpoint variants** (the family-namespace rule above already
+carries a custom endpoint's `baseUrl` IN the key — that is the authority
+exception, not a contradiction: for custom endpoints the baseUrl IS the
+issuer); what the
+provider normalizer routes by matters for *calls*, while what bills matters
+for *limits*. **Credentialless providers** (a supported configuration:
+`AcpProvider` is available from `HYPERNEO_ACP_COMMAND` with no
+`getCredentials()` at all, acp-provider.ts:101-106, and
+`CustomEndpointProvider` treats a base URL as sufficient with an absent
+API key, custom-endpoint-provider.ts:94-99) key by their **endpoint or
+command identity** instead — `digest(family + ':' + canonical(baseUrl ??
+command) + ':' + digest(identityHeaders))` under a
+**provider-family namespace (the resolved provider type, never the logical
+record id)**, where `identityHeaders` is a stable digest of the
+configuration's identity-bearing headers (`Authorization`, `x-api-key`,
+tenant-routing headers — `CustomEndpointConfig.headers` is a supported
+field, shared/src/types/custom-endpoint.ts:23-30, forwarded to every
+bridge, custom-endpoint-provider.ts:316-346, so two credentialless
+endpoints on one base URL with different auth headers are different
+accounts and must not merge; non-identity headers stay excluded so
+content-type variation never splits a domain) — two credentialless custom-endpoint records with the same
+`baseUrl` carry distinct runtime ids (`custom:<endpointId>`) yet send to the
+same anonymous upstream concurrency domain, so a record-id namespace would
+let each observe the other's limit without gating it and sibling traffic
+would keep hitting the capped endpoint; the family namespace converges
+identical credentialless endpoint identities while distinct endpoints and
+commands stay distinct keys — and report `accountAvailable: true` (the
+command/endpoint IS the access; there is no credential to be absent);
+their limits gate exactly like anyone else's. An absent `providerConfig` and an effectively-default one hash
+equal, so the common case shares one key.
+
+| State | Type | Written by | Read by |
+| --- | --- | --- | --- |
+| `saturation` | `{ untilMs: number \| null (null = billing-closed), kind, source, armedAtMs, charge, authoritative: boolean (parsed/structured reset — non-probe-clearable — vs ladder/probe-clearable; the same provenance the durable row persists, without which the 60-second probe-floor decision cannot be made: kind + untilMs alone cannot distinguish early probing from a known reset) } \| null` per provider | `reportLimitError` (classification sites ×3 + provider-retry branch **+ every out-of-pipeline interpreter**: title, Space jobs, GitHub agents, classifier query, **and the closure-health probe** — a renewed billing account answering its daily probe with a classified NON-billing limit must transition `closed` → timed saturation via this report, or the account stays indefinitely closed waiting for another daily probe) | admission facts, wake timer |
+| `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner **+ every direct SDK interpreter — title, the Space background jobs, the GitHub agents, the LLM classifier, the closure-health probe — the same complete lifecycle roster the feed-site contract below wires; a direct caller that skips the report leaves its consumed grant unresolved and strands the queue**) | admission facts (cap follow-up), probe evidence |
+| `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}` / **transient arms** `{kind:'restart', sessionId, toolUseId}` (chat lane — the AskUserQuestion answer park) and `{kind:'ephemeral', callerKind, callId}` (a grant-holder record ONLY — see the wake contract), so every claimable/registrable identity is representable; chat-first priority: background admits only when the chat lane is empty **of eligible rows — a retained manual-mode row counts as ABSENT for lane-priority selection** (scanning past it, exactly as grant selection does): if every chat registration has switched to manual while a background waiter exists, the retained rows would otherwise keep the lane nonempty indefinitely and title/Space jobs would stay unwakeable with no eligible chat consumer in sight), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks, the answer-restart park | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
+| `probeGrant` | `{ identity: GrantIdentity \| null (typed union — see queuedMessages; null ONLY in the post-empty-clear pending window), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time when the backlog is non-empty** (never by the first admitting consult); a clear that drained to nothing mints **pending (identity null)** — the first admission consult of any kind binds it via the registry's atomic `claimPendingGrant` CAS; consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield, or pending → claim) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints (bound again, or pending again for a still-empty backlog) and re-binds — **except an unconsumed `{kind:'ephemeral'}` holder, which is discarded at expiry**: it has no durable row and no dispatcher, so the lane-tail move is impossible and queueing it would let a later grant bind to an identity nothing can wake, stalling the drain repeatedly; expiry drops it and mints for the next durable waiter (or pending when empty), and a still-live caller learns it lost the grant at its own authoritative start check | downstream consults (same delivery passes), probe resolution |
+| `closureProbeGrant` | `{ holder, leaseUntilMs, configRef } \| null` per provider — `configRef` is the resolvable configuration snapshot (provider id + effective providerConfig/credential reference captured when closure armed, kept current by the rotation hooks AND refreshed on same-key routing changes: a built-in provider's `baseUrl`/region change deliberately keeps the account key so the fingerprint hook does not fire, yet GLM-class providers route through `sessionConfig.baseUrl` (glm-provider.ts:203-218) and a stale reference would keep probing a removed or failing endpoint — the reference is re-captured whenever a same-key routing change lands, and the probe resolves a CURRENT configuration owner at request time rather than trusting the capture alone), without which the scheduled timer could not construct its probe request from a digest alone — the atomic reservation behind `holdsClosureProbeGrant`, independent of `probeGrant` (closure probing never mints or consumes post-clear probes) | **CAS-acquired** by manual Retry / the health-probe timer (the loser queues on its own trigger) | `holdsClosureProbeGrant` (the core's closed arm); **released** by the holder's outcome (success → closure clears **through a probing transition, never a bulk drain**: clearing `closed` with registrations parked would let the core admit every waiter at once and recreate the provider wave the moment the account renews — success therefore enters `probing` and mints exactly ONE successor grant bound to the FIFO head (pending if the backlog is empty); where the holder is the manual Retry turn, that successful turn IS the first probe and its completion mints the successor; the daily health probe's clean completion mints the first successor the same way; fresh billing-terminal → re-arm `closed`; classified non-billing limit → timed saturation; other error → closure stays armed) or by lease expiry — **which bounds only the unstarted grant** (acquire → probe start), exactly as `probeGrant`'s lease does: once the probe's request has started, only its termination releases, so a long-running Retry turn or health query cannot have its lane re-granted mid-flight |
+| `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
+| wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
+
+Registry state is in-memory; the durable additions — one migration family
+in C5-PR3, each piece storage an ACTUAL provider waiter needs — are: the
+`queue_reason`, `admission_arm`, and monotonic queue-sequence columns on
+`sdk_messages` (linkage and FIFO order restart-safe; reconstruction sorts by
+the sequence, pinned); `provider_park`/`provider_park_seq` on the
+job-queue rows (background-waiter linkage and ordering); the persisted
+shared sequence allocator's
+counter row; and the **per-account saturation marker row** (key, kind,
+`untilMs`/closed, charge, the episode's **clearability provenance —
+`authoritative` (parsed/structured reset, non-probe-clearable) vs ladder
+(probe-clearable) — and `armedAtMs`** (the probe floor's timing), because
+`kind` plus `untilMs` alone cannot reconstruct the episode's semantics:
+treating an authoritative reset as probe-clearable would probe before the
+reset, treating a ladder episode as authoritative would forfeit its
+intended early recovery, and without `armedAtMs` the probe floor is
+unknown; and — stored with the closed kind — the same
+resolvable `configRef` snapshot the in-memory `closureProbeGrant` carries:
+provider id plus effective providerConfig/credential reference, captured
+when closure armed and kept current by the rotation hooks; a restart
+reconstructing a closed account with no waiter could not build the daily
+health probe's request from a digest alone, and without the persisted
+reference the account would stay closed until manual Retry or a
+credential change — written on arm, updated on refine, **and not
+deleted at clear: a clear transitions the row to a probing record**
+(`kind: 'probing'`, the grant's bound identity serialized — `null` for a
+pending/empty-backlog grant — plus the lease deadline **and any recorded
+refinement** (`resetAtMs` + token) captured while the running probe
+holds a consumed grant, because that evidence lives only in the
+in-memory episode: a restart after the refinement arrives but before the
+probe terminates would re-mint the probe without it, and a subsequent 429
+would re-arm from the short ladder instead of the authoritative refined
+deadline — the row carries it until the reconstructed probe resolves),
+because the
+`probeGrant` is in-memory and the holder's queue marker clears at
+prompt yield: a restart while an empty-backlog pending grant exists, or
+while the final granted probe is running, would otherwise find neither
+a saturation row nor a remaining marker and open the account — several
+new sends could start concurrently before one reports another 429,
+recreating the post-reset herd the pending grant exists to prevent.
+The row is **rewritten atomically whenever a successor grant is minted**
+(the successor's identity and lease replace the old holder's) — a clean
+probe with registrations remaining does NOT open the account, it mints
+the successor and continues probing, so a restart after the first item
+of a multi-item drain must reconstruct the successor's probing state,
+not an open account or a stale holder — and deleted only when a clean
+probe resolves with NO successor remaining (truly open), or rewritten
+when its 429 re-arms; reconstruction of a probing row
+re-enters probing and re-mints the grant — re-bound to the serialized
+identity when it is a durable kind still registered, else re-minted
+pending (an ephemeral holder died with the process) — so restart
+reconstruction re-enters saturation, closure, or probing
+instead of an open registry; caveat 1). None of these exist in the current
+schema — the PR3 plan's migration scope names all of them.
+
+### Saturation derivation — consuming the classifier and the ladder
+
+`reportLimitError(accountKey, assessment, now)` — the **effective
+provider-account key** of State ownership, not the bare provider id — arms
+saturation from an
+`assessLimitError` result (`LimitErrorAssessment` from
+`D/src/lib/agent/limit-error-classifier.ts:114-183`), reusing exactly the
+primitives #2661/#2664 shipped — **not** the watchdog's trip gate (whose
+`give-up`/`surface-billing` arms encode episode-retry semantics the registry must
+not inherit):
+
+- `assessment.billingTerminal` → arms a **non-timed `closed` state** at provider
+  scope: no `untilMs` exists (the session watchdog still owns surfacing the
+  manual-retry pause), but leaving the registry open would let every sibling
+  keep issuing doomed calls to an exhausted account — contrary to Decision 2's
+  all-limits-arm rule. `closed` admits nothing and clears only on a
+  credential/account change (the same re-admission hooks as provider changes);
+  it has no probe and no ladder. **Reopening without a credential change**:
+  topping up or renewing the same upstream account leaves the fingerprint
+  untouched, so closure also clears on (a) the session's manual Retry Now /
+  Resume path (the existing RPC re-runs the consult; a closed account's
+  manual retry is the one caller allowed to probe closure — success clears,
+  a fresh billing-terminal response re-arms). **The origin must be carried,
+  not inferred**: `retryNow()` and the automatic timer both funnel through
+  the same `fireCooldownRetry()` callback, so the P4 interpreter cannot see
+  which fired — setting `closureProbe` for the shared callback would let
+  automatic retries bypass `closed`, leaving it false would park a manual
+  Retry forever. The retry callback/context therefore widens to carry a
+  `manual | automatic` origin (`retryNow()` passes `manual`, the cooldown
+  timer passes `automatic`), and only a `manual` origin sets the
+  `closureProbe` fact on the re-consult — an automatic retry consults
+  ordinary admission (closed → deny). **The manual path must also be made
+  reachable**: today the first billing-terminal error with no usable
+  fallback trips `decideRateLimitTrip` to `surface-billing`, and
+  `RateLimitWatchdog.scheduleRetry` returns `false` immediately — no
+  cooldown armed, no banner, no `startupExhausted` — while `retryNow()`'s
+  `canRetryNow` check rejects the state, so even a direct
+  `session.retryNowAfterRateLimit` call cannot fire and the documented
+  manual probe is unreachable. PR3 therefore adds a **retryable
+  billing-closed pause**: the `surface-billing` trip arms an indefinite
+  pause that surfaces the closure banner AND satisfies `canRetryNow`
+  (no ladder, no timed cooldown), so Retry Now runs the manual-origin
+  callback and its `closureProbe` consult; without it, users stay closed
+  until the daily health check or a credential rotation. **And the pause
+  is restored after a failed probe**: `runCooldownRetry` calls
+  `notifyResume()` as soon as the callback reports `started`
+  (rate-limit-watchdog.ts:389-406), dissolving the banner and the
+  `canRetryNow` state — so a manual probe that starts cleanly but then
+  ends in a non-limit error (closure stays armed, no new billing
+  classification to recreate the pause) would leave nothing retryable
+  until the daily timer. When a manual closure probe terminates without
+  clearing or transitioning the closure, the interpreter re-arms the
+  billing-closed pause (banner and `canRetryNow` restored), keeping the
+  manual path repeatedly available across transient probe failures. And (b) a bounded daily
+  health probe per closed account (one unref'd timer; a successful probe
+  turn performs the same **one-grant probing transition** the state-table
+  contract defines — closure clears INTO probing, exactly one successor
+  grant minted for the FIFO head, never a bulk drain of the closed
+  backlog — and a limit re-arms) so a renewal while the daemon idles is not
+  stuck until restart. **Durable parking under closure**: the job
+  queue's `run_at` is `INTEGER NOT NULL` and `requeue` takes a number, so a
+  closed denial parks an already-enqueued job at a far-future sentinel
+  (`CLOSED_PARK_MS`, e.g. 24 h) purely to keep the row durable — the sentinel
+  retry re-consults and re-parks (cheap) — and **registers the identity under
+  the closed account key**, so the credential-change re-admission hook
+  (which already re-admits registrations on `providers.update` /
+  `auth.login` / `auth.logout`) requeues it to `now` the moment the account
+  re-opens; no tick-retry loop ever hits the provider. **The daily health
+  probe's operation is a minimal one-shot upstream request** on the closed
+  account's own credential, through a **provider-native runner
+  abstraction**: a single-turn SDK `query()` with a trivial prompt for
+  SDK-backed providers (the same direct-call shape as the
+  classifier/background interpreters) and a minimal single-turn ACP
+  request for command-backed ones — the ACP runner is one of the
+  classifier feed sites, so an ACP turn can itself arm billing closure,
+  and an SDK-only probe shape would leave a renewed ACP account with no
+  valid daily check (stuck closed until manual retry or credential
+  change); the abstraction is selected by the closed account's own
+  provider kind, reported through the turn start/end wiring so its outcome
+  is classified: clean completion clears closure, a billing-terminal
+  response re-arms it, a non-billing classified limit transitions to timed
+  saturation, other errors leave it armed. `isAvailable()` is explicitly
+  NOT sufficient — for most providers it is a local key/base-URL presence
+  check (GLM/DeepSeek/MiniMax/Kimi/Anthropic test key presence,
+  CustomEndpoint tests `baseUrl`), and a billing-closed account still has
+  its credentials, so the timer would "succeed" without ever reaching the
+  upstream and clear closure blindly. `getModels()` is deliberately not
+  used either (its 429 handling is chain C1's scope). Manual Retry needs
+  no separate operation — it executes the retried message itself as its
+  probe turn.
+  **Closure probes are
+  the one admitted lane while closed — exactly one at a time**: a bypass
+  requires holding the account's **closure-probe grant**, a single atomic
+  reservation (concurrent Retry Now clicks or a manual retry overlapping
+  the daily health probe would otherwise all bypass `closed` — v1's cap is
+  null, so nothing else bounds them — and re-create the parallel wave
+  against the exhausted account). A caller denied the grant queues on its
+  own trigger and consults again. The holder's outcome resolves the grant:
+  success clears closure and drains registrations, a fresh billing-terminal
+  response re-arms `closed`, **a classified non-billing limit transitions to
+  normal timed saturation** (the renewed-but-rate-limited case — the probe's
+  classification flows through `reportLimitError`, whose parsed reset arms
+  the authoritative deadline instead of leaving the account indefinitely
+  closed waiting for the next probe), and any other error leaves it armed
+  (the probe retries on its own schedule). Ordinary deliveries can never set
+  the fact nor hold the grant. This reconciles the
+  old "do not arm" exception with the provider-wide admission objective.
+- `resetAtMs` present (bounded by `MAX_RESET_HORIZON_MS`, the same check
+  `decideRateLimitTrip` makes) → `untilMs = cooldownFromReset(resetAtMs).retryAtMs`
+  (`limit-error-classifier.ts:185-194`). Authoritative: nothing clears it early.
+- no reset → ladder: `computeCooldown(rawText, charge, now)`
+  (`fallback-recovery.ts:188-221`; first step 10 min, jitter included). A **probe
+  rule** may clear it early. The clear condition is: the floor
+  (`PROBE_FLOOR_MS` ≈ 60 s) has elapsed since `armedAtMs` **and** a clean query
+  completion has been observed — recorded as `lastCleanCompletionAtMs`, which may
+  precede the arm but only **freshly**: evidence older than
+  `armedAtMs − PROBE_EVIDENCE_WINDOW_MS` (≈ 2 min, a couple of query durations)
+  is discarded at arm time, so a completion from hours before the episode cannot
+  clear a fresh limit at the floor. Both edges are evented: arming schedules a
+  floor timer, and a clean completion while armed re-evaluates; whichever fires
+  second clears and starts the probing release (below) — if the provider is still
+  capped, the probe's 429 re-arms with the next charge. Without the
+  completion-before-arm half, a concurrency cap whose only in-flight requests all
+  finished before the floor would impose the full jittered 10-minute first step
+  for want of any later completion. **A clean completion means a genuinely
+  successful provider turn**: the query seam reports `success` only when the
+  turn's top-level result was successful — no `is_error`, no limit
+  classification. An `is_error`/error *result message* 429 does not throw; the
+  stream loop can fulfill normally (`sdk-message-handler.ts:1198-1234` classifies
+  it from the message), so the outcome flag is derived from the turn/result
+  classification, not from mere iteration fulfillment — a limited turn reports
+  `limited` (it arms/re-arms saturation, never probe evidence). Floor evidence
+  and probe resolution are **different events**: pre-clear in-flight completions
+  may satisfy the floor condition, but only the completion of a query **started
+  after the clear** — the outstanding probe itself — ends probing. A second
+  pre-arm completion arriving while the probe runs is more floor evidence, never
+  a second release.
+  Self-correcting, and honest about the classifier's limit: `assessLimitError`
+  cannot distinguish a concurrency-cap 429 from an RPM 429 (the GLM brackets
+  `[1305]/[1308]/[1313]` and the framed-429 regex are limit markers, not
+  concurrency-specific), so short concurrency waits must not pay the full
+  10-minute first ladder step forever.
+- **LLM refinements feed the registry, correlated to their episode.** The
+  watchdog's refinement tier (`fireLlmRefinement`,
+  `rate-limit-watchdog.ts:256-317`) can upgrade an ambiguous ladder-armed error
+  to a multi-hour parsed reset — but as wired it extends only the originating
+  session's cooldown. The accepted refinement is forwarded to the registry
+  (`reportRefinedReset(accountKey, episodeToken, resetAtMs)` from the same
+  wiring that owns `classifyUnknownLimit`): `reportLimitError` returns an
+  **episode token**, and the refinement must carry it. The token remains
+  matchable for the episode's whole life — arming, clear, probing,
+  *including while the probe's grant is consumed and its turn runs* — and is
+  retired only when the episode's grant fully resolves (turn terminal) or a
+  newer episode arms:
+  this is what makes the revocation rules below reachable (a token killed at
+  the early clear could never revoke the post-clear grant). A mismatched or
+  late-token refinement (newer episode live) is **discarded** rather than
+  overwriting whatever episode is now live (a stale multi-hour deadline would
+  queue siblings against a limit that may have lifted). A matching refinement converts the ladder episode to
+  authoritative reset state: `untilMs` is replaced (never shortened for an
+  already-authoritative reset), the wake timer reschedules, and any outstanding
+  probe grant is revoked (its delivery returns to the queue) so the next
+  admission waits for the known reset. **Refinement vs a running probe**:
+  the token is matchable for the whole episode life (per its own
+  declaration — matchability is never the gate); what the grant's state
+  gates is the *action*: a matching refinement against an **unconsumed**
+  grant revokes it (its delivery returns to the queue) and converts to
+  reset state; against a **consumed** grant
+  (the probe's prompt has yielded — a running turn cannot be safely
+  un-yielded) the refinement is **recorded against the episode** — kept,
+  not discarded — and the running probe resolves on its own termination:
+  its 429 re-arms **by consuming the recorded refinement atomically, inside
+  the same transition that retires the old episode** — routing the 429
+  through the ordinary arm path first would mint a NEWER episode and
+  retire the old token before a separate `reportRefinedReset` could run,
+  and the matching refinement would then be discarded as a stale token,
+  dropping the authoritative reset back to the short ladder; the re-arm
+  therefore reads the episode's recorded refinement (if any) and arms the
+  new episode authoritative at the refined deadline in one step, while
+  its clean completion opens AND **retires the recorded refinement with
+  the episode** — a successful post-clear request has disproved the
+  evidence the reset timestamp carried, and letting an unrelated later
+  concurrency 429 inherit an authoritative multi-hour deadline from it
+  would violate the stale-evidence rule above — so the refinement's
+  knowledge is applied exactly when the probe confirmed the limit, no
+  delivery is
+  duplicated and nothing stale survives into a fresh episode. The classifier's **own SDK query
+  consults admission too**: `resolveClassifierProvider` prefers another
+  provider but falls back to the excluded one when it is the only usable
+  choice — on a single-provider installation every ambiguous limit error would
+  trigger a fresh call to the already-saturated account outside the registry.
+  The classifier therefore skips (and its callers treat the attempt as
+  unrefined) while its selected effective account is saturated or
+  **probing WITHOUT a claimable grant** — but it participates in the
+  first-consult/ephemeral-claim contract like any caller: when a probing
+  account holds an unclaimed pending grant, the classifier claims it
+  under its `{kind:'ephemeral'}` identity and resolves it through its
+  already-required lifecycle reports. An account used only as the
+  alternate classifier provider would otherwise loop pending-expiry
+  forever, every invocation abandoning its call while the grant merely
+  expires and re-mints.
+  And **the classifier query's own failures arm the registry too**:
+  `classifyUncached` currently swallows them
+  (`limit-error-llm-classifier.ts:313-315`), so a 429 received by the
+  classifier's call on an otherwise-open alternate account would leave that
+  account open to siblings — the PR3 wiring classifies the classifier
+  query's thrown/error-result failures and reports them via
+  `reportLimitError` under that account's canonical key, per the
+  all-classified-limits-arm rule.
+  This is the design's full consumption of #2664's tier, not just its
+  deterministic half.
+
+**Feed sites — including the provider-retry branch.** `reportLimitError` is
+wired at the three existing classification sites (`query-runner.ts:1258`,
+`sdk-message-handler.ts:1215`, `acp-query-runner.ts:1009`) **and at the
+provider-retry branch** (`query-runner.ts:1090-1174`): that branch retries
+whatever `isRetryableProviderError` accepts — a taxonomy-data-driven predicate
+(`error-taxonomy.ts:369-391`) — up to `maxProviderRetries` (default 3) recursive
+attempts *before* the `:1258` site is ever reached, so a bracketed GLM limit
+carrying no literal 4xx code could burn four calls per session while the
+registry stays clear. The branch classifies the raw message **before its
+destructive setup** — the consult sits ahead of the consumed-message move
+(`retryMsg = this._lastConsumedUserMessage; this._lastConsumedUserMessage =
+null` at the branch head, query-runner.ts:1110-1112): a limit assessment
+reports to the registry immediately, and the consult gates only the
+**recursive re-entry** — a denial must not skip-and-return (the branch
+tail-returns `runQuery(...)`, so a bare skip would return from the outer
+catch and swallow the error before the `:1258` assessment ever arms the
+session watchdog), and it must not fall through *after* the destructive
+setup either (the error path's `messageQueue.clear()` would find
+`_lastConsumedUserMessage` already null and the watchdog could never recover
+the episode's message); consulting before the move lets the denial fall
+through to the existing error-path assessment with the consumed message
+intact, exactly as an exhausted retry does. Lifecycle reporting
+is wired symmetrically at the **provider-turn boundary** — start when the query
+consumes the granted delivery's prompt, end at the turn's terminal result,
+already classified — on the SDK `QueryRunner`, the ACP runner, **and every
+  direct SDK caller** (title, the Space background jobs, the GitHub agents,
+  the LLM classifier, the closure-health probe — each may own a consumed
+  grant, and a clean direct query with no lifecycle report would never
+  resolve it or wake the next identity, leaving `inFlight` stuck too; the
+  one GitHub exception is recorded above — an event's TWO agent queries
+  report query start/end each, but its grant resolves at the `processEvent`
+  boundary, so the security query's completion must not mint the successor)
+  (saturation
+arms from `acp-query-runner.ts:1009`, so an ACP probe's completion must be
+reportable too, or an ACP-cleared saturation would probe once and stay probing
+forever).
+
+**`closed` is dominant against late ordinary reports.** A sibling request
+that was already in flight when another's billing-terminal error closed
+the account can still report a non-billing 429 afterwards — and
+`reportLimitError` carries no caller identity, so the registry cannot
+infer whether a report is that stale sibling or the authorized closure
+probe whose non-billing result is the one transition entitled to convert
+`closed` → timed saturation. The rule: while `closed`, a non-billing
+limit report from anyone EXCEPT the active `closureProbeGrant` holder
+(the report API takes an optional closure-holder provenance the probe and
+the manual Retry turn pass) is recorded as evidence but changes nothing —
+no reset, no ladder arming, no reopening; `closed` clears only through
+the closure probes or a credential change. Without this, a stale sibling
+429 would downgrade the billing closure to a timed episode and eventually
+reopen an account that never passed a closure probe.
+
+**Charging is per saturation episode, not per report.** N sibling sessions 429ing
+within the same window produce N `reportLimitError` calls; reports arriving while
+saturated never extend an **authoritative** (parsed/structured-reset) episode —
+  a later reset-less report's ladder deadline is computed from its own later
+  timestamp and could slide a reset two minutes out to ten; only a newer
+  reset-bearing report may extend an authoritative episode — and do **not**
+  advance `charge` — otherwise
+ten concurrent 429s would jump straight to the ladder's 4-hour cap
+(`ladderIndex = min(retryCount, lastIndex)`) off one transient blip. A
+**reset-bearing report upgrades a ladder episode**: it converts the active
+episode to authoritative, non-probe-clearable reset state (extending only
+`untilMs` would keep the 60-second probe clear armed against a limit now known
+to carry a reset). `charge` advances when arming from a clear state, and
+`chargeResetArmed` — set at any clear — is consumed **only by the outstanding
+probe's own clean completion**, the same identity check probe resolution uses: a
+pre-arm sibling completing after the clear must not erase the episode's charge
+before the granted probe's verdict, or a re-arm under continued saturation would
+fall back to the first ladder step instead of escalating. The timer-expiry path
+still resets: expiry clears → successor probe granted → its clean completion
+consumes the flag. **The empty-backlog clear is the one exception**: when a
+clear's drain finds no registrations, no probe identity will ever exist, so
+the flag is consumed by the **first clean provider turn that both started and
+completed after that clear** (the turn-start generation is recorded against the
+clear generation, the same identity discipline as probe resolution — a
+pre-clear sibling turn finishing moments after the clear must not consume it,
+or a continuing-saturation 429 would wrongly restart at charge 1). The
+exception applies whenever **that clear never leaves an outstanding probe** —
+initially empty backlog *or* a drain whose registrations all exit non-cleanly
+(interrupts/non-limit errors mint successors, but the final exit leaves no
+probe identity either); otherwise the next independent episode inherits the
+advanced charge and starts at a longer ladder step for no reason. **Such a
+clear does not fully open the account**: it enters `probing` with a
+**pending grant (`identity: null`)** — and ONE rule governs it: **every
+admission consult, initial or re-admission, runs `claimPendingGrant`
+first** (the CAS from the core contract; there is no separate
+post-registration-only claiming flow). The two orderings fall out of that
+single rule: (a) a consult arriving while the pending grant exists
+claims it atomically and admits immediately — the sender dispatches
+through the ordinary outbox path, never parking at all; (b) a sender
+whose consult PRECEDED the clear (denied while probing, its admission
+generation stamped) persists and registers its deferred row, and the
+generation-conditional re-admission that the registration itself
+triggers is a consult like any other — it claims the still-pending
+grant and admits directly (promotion runs at once), never parked behind
+a grant only lease expiry could recover. Durable first arrivals behave
+exactly like ephemeral ones, and
+post-clear sends serialize exactly as backlog drains do; fully
+open requires a probe to have resolved cleanly. **Ephemeral callers can
+claim it too**: the pending grant binds to the first arriving admission
+consult of ANY kind — including the never-registered ephemeral callers
+(episode request, workflow selector), whose grant attaches to their
+in-flight request and resolves with its turn — otherwise an account used
+only by those callers would stay probing forever, each trigger denied and
+abandoned with nothing durable ever registering to claim the grant. Without this, several
+sessions sending right after the clear all admit concurrently — the exact
+post-reset herd the gate exists to prevent. Mirrors the watchdog's
+`retryCount` / `freeWait` distinction at provider scope.
+
+### Queue and wake
+
+- **Registering:** every queue arm appends a composite `(sessionId, messageUuid)`
+  entry to one of **two provider-wide insertion-ordered queues — chat and
+  background — with the grant always binding the chat queue's head first and
+  the background queue admitted only when the chat queue is empty**
+  (per-session indices exist only for wake routing and deregistration), and the
+  append stamps a
+  **monotonic queue sequence** alongside the `queue_reason` marker (same
+  migration) — the durable order key for message rows. **Background waiters
+  persist their own sequence — **stamped from one shared monotonic
+  allocator** (a single daemon-wide counter persisted alongside; jobs and
+  inbox entries occupy the same background lane, so independently generated
+  per-table sequences are not comparable and would leave their cross-type
+  order ambiguous after restart): parked jobs stamp `provider_park_seq`
+  beside `provider_park` on the job-queue row, and a mid-flow event park
+  stamps its waiter sequence at REGISTRATION time — not its ingest
+  sequence, because the entry may be ingested long before it reaches
+  provider admission (its security stage may still be running), and
+  ordering by ingest would leapfrog an already-waiting job that
+  registered during that interval — the stamp allocating from that same
+  allocator when the park registers; neither has a message row, so
+  each lane reconstructs from its own durable order and the lanes merge
+  only at selection time (chat-first). In-memory order can diverge from row
+  age (an older preexisting row P3-parks after a newer message registered),
+  and neither row id nor message timestamp reconstructs registration order,
+  so restart reconstruction orders the scan by the persisted sequence; without
+  it the daemon-start enumeration could mint the first grant to the wrong
+  head and reverse the promised cross-session FIFO. Release order is the global arrival
+  order: per-session grouping alone would let a session with a large backlog
+  monopolize the one-at-a-time drain while earlier messages from other sessions
+  wait. Scope is per message, not per session, so the wake never
+  promotes a user's deliberately deferred (manual-mode) rows —
+  `handleQueryTrigger`'s blanket deferred→enqueued flip
+  (`D/src/lib/agent/query-mode-handler.ts:39-108`) is *not* the wake path. The
+  queue arm also stamps the row with a **`queue_reason` marker** — a new nullable
+  `queue_reason` column on `sdk_messages` (`'provider_saturated_p1'` when
+  queued by the P1 persist arm, `'provider_saturated_p2'` when queued by the
+  P2 inject arm — the origin-routing values the wake contract below
+  requires, so reconstruction re-runs the correct pipeline — NULL
+  otherwise), one migration — and **registration carries an
+  admission generation: a counter covering every admission-state transition
+  (arm, clear, probe mint, probe-resolution-to-open), not merely the
+  saturation episode token**. Any transition landing between the consult and
+  the insert/register invalidates the read and the row immediately re-admits
+  instead of waiting for a wake that already fired; the generation, not the
+  episode token, is what closes the probe-resolves-to-open interleaving (a
+  send consulting while probing whose row registers only after the final
+  probe completes-and-opens would otherwise strand behind a wake that never
+  fires). All interleavings pinned in the test plan. The existing `origin` column cannot
+  carry it: the schema constrains `origin` to `NULL | 'human' | 'system'`
+  (`D/src/storage/schema/index.ts:199`), so a new value would fail the CHECK, and
+  overloading it would discard the row's human/system semantics anyway —
+  the admission-arm shadow therefore gets its OWN nullable
+  `admission_arm` column in the same migration (written for EVERY P1/P2
+  delivery entering a provider call — not only previously queued ones,
+  because the call that first discovers a limit was admitted while the
+  registry was open, never took the queue arm, and would otherwise reach
+  P4 with a null shadow — and **retained past prompt yield — cleared
+  only on terminal status flips or user removal**, because P4 runs AFTER
+  the yielded provider call reports its limit and must still read the
+  arm to restore `provider_saturated_p1` vs `_p2`; clearing it with the
+  marker at yield would null it exactly when the retry needs it), not an
+  overload of
+  `queue_reason` or `origin`.
+- **Waking, routed per session:** the internal event bus routes by
+  `data.sessionId ?? data.namespaceId ?? __global__`
+  (`D/src/lib/internal-event-bus.ts:116-135`), while session handlers are
+  subscribed under their session id — so the registry does **not** publish one
+  provider-wide event (it would land in `__global__` and reach zero per-session
+  subscribers). **The wake has exactly one recipient: the grant-bound FIFO
+  identity, dispatched by its kind** — with a single outstanding grant,
+  waking every registered session would load inactive sessions and scan their
+  queues for a grant none of them holds, and the per-session broadcast from
+  earlier drafts contradicted the mint-bound contract. Grant identities are
+  **typed**: `{kind: 'message', sessionId, messageUuid}` for chat/parked rows
+  and `{kind: 'job', jobKind, jobId}` / `{kind: 'inbox', eventId}` for
+  background waiters (a friction-analysis job carries only `scopeId`/`taskId`
+  and an inbox entry only its event id — neither has an `sdk_messages` UUID,
+  so routing every grant through a session-message wake leaves those bound
+  grants without a recipient until expiry), plus the **transient arms from
+  the queue union**: `{kind: 'restart', sessionId, toolUseId}` dispatches
+  through the message-kind session wake (the `provider.concurrency.open`
+  publish carries its `sessionId`; the session's handler routes a restart
+  identity to the pending-question resubmission, which claims the grant
+  and starts), and `{kind: 'ephemeral', callerKind, callId}` — the
+  holder record an ephemeral caller's pending-grant claim writes — has NO
+  dispatcher by construction: the holder is in-flight at claim time, its
+  resolution is the caller's own `reportQueryEnd` lifecycle wiring (which
+  every direct caller owes), and a crash dissolves the in-memory grant
+  with the registry itself (reconstruction mints pending again); the
+  record exists so `probeGrant.identity` can represent every holder and
+  resolution always has a subject — without it an ephemeral claim would
+  leave the account probing until lease expiry with no resolvable owner.
+  Each kind has its own dispatcher:
+  the **message** wake publishes
+  `provider.concurrency.open {sessionId, providerId, messageUuid}` through
+  `event-subscription-setup.ts` (the wiring that binds `query.trigger` at
+  `:103-110`) and re-runs the **full admission of the arm that queued it**:
+  every `{kind: 'message'}` registration records its origin — P1 (chat) or
+  P2 (Space inject) — at registration time, and the wake re-runs that
+  pipeline's own gates for the bound uuid — **and the arm persists**: the
+  durable marker carries it (`queue_reason` values
+  `'provider_saturated_p1'`/`'provider_saturated_p2'`, same migration), so
+  the restart marker scan knows which pipeline each reconstructed row must
+  re-run instead of defaulting to P1 (which would bypass an injection's
+  parent-task, cooldown, and context-reset gates). An injected row re-runs the
+  inject pipeline: parent-task-limited, session cooldown, and the
+  context-reset arms are P2 facts P1 never evaluates, and P1's manual-mode
+  semantics do not apply to an injection; routing an injected row through
+  P1 could promote it straight into delivery past every one of those
+  gates) —
+  manual-mode gate included: if the bound row's session has switched to
+  manual, the row is retained and the grant re-binds to the next eligible
+  identity (scan-past, same as drain selection) — then promotes through the
+  existing per-uuid promotion path (the mechanism behind
+  `session.messages.promotePending`, `session-handlers.ts:1126-1182`:
+  deferred → enqueued → delivery job; the enqueued wake arm below for parked
+  rows); the **job** wake directly makes that durable job claimable
+  (`retryAt = now` under the same claim-token rules) — and for jobs whose
+  handler needs an active session (title generation throws on an unloaded
+  `SessionCache`, session-lifecycle.ts:768-773), the wake resolves the
+  owning session first (`getSessionAsync`) so a reconstructed
+  never-loaded-session job does not burn grants failing to find it; the
+  **inbox** wake drains that event through the agents.
+- **Probing release — one probe grant, carried end-to-end, pushing the drain.**
+  After **any** clear (probe rule or timer expiry), the
+  provider mints a single **probe grant — bound at mint time, not by
+  race**. **Startup reconstruction is NOT in that set**: reconstruction
+  re-enters the persisted record's state verbatim — a saturation row
+  whose `untilMs` is still in the future (authoritative or not) stays
+  saturated with its wake timer re-armed, a closed row stays closed, and
+  a probing row re-mints per its own rule — a grant is minted at
+  reconstruction only when the reconstructed record is already probing,
+  or its timed episode has actually expired by the restart clock.
+  Treating reconstruction as a blanket clear would let a restart mint a
+  probe against an unexpired authoritative reset or a billing closure
+  and permit an upstream call immediately, voiding the persistence
+  contract:
+  the registry selects the earliest eligible composite identity from the global
+  queue (scanning past retained manual-mode rows), binds the grant to it, and
+  publishes the targeted wake for that identity's session only. The wake
+  handler admits exactly the bound identity; an unbound delivery consulting
+  while probing queues at the tick. Binding at mint is what makes the
+  cross-session FIFO real — "first admitting consult wins" would let A2 steal
+  B1's turn whenever session A's handler happens to run first; the one
+  exception is the empty-backlog clear, which has no head to steal and mints
+  the pending (`identity: null`) grant whose `claimPendingGrant` CAS is a
+  single atomic transition, not a scheduling race (defined with the core and
+  state table above). Every downstream
+  consult for the *bound* delivery — the V2 claim, the V1 start, the retry —
+  admits on the grant, so one logical delivery passes all backstops instead of
+  deadlocking against its own probing state. **Batching is disabled while the
+  account is saturated or probing**: `AgentSession.buildDeliveryBatch`
+  otherwise folds additional `'enqueued'` rows of the same session into one
+  prompt, letting an ungranted row (A2) ride the granted head (A1) ahead of the
+  global FIFO's B1 — batches form only when the account is fully open, and a
+  granted delivery is a single-identity prompt. **Chat arrival rebinds an
+  unconsumed background grant**: priority is enforced at mint AND while the
+  grant is outstanding — if the chat lane gains a head while a background
+  identity holds an unconsumed grant, the grant re-binds to the chat head and
+  the background job returns to its queue's front (a consumed/running
+  background probe finishes normally; no preemption). The grant is consumed **at the
+  prompt yield — the turn boundary — and that consumption is the authoritative
+  grant check**: the
+  boundary-level consults are advisory early parks, and a grant whose lease
+  lapsed during SDK startup (mint → yield longer than the lease) does not start
+  a turn — the prompt is not yielded, the delivery returns to the queue, and
+  the successor proceeds. The probe resolves exactly three ways:
+  its turn's clean completion **mints the successor grant and wakes the next
+  queued delivery** (the drain is *pushed* — the remaining deferred rows have no
+  jobs polling, so nothing else would ever re-run their admission; the pace
+  continues one-at-a-time until no registrations remain, then the provider is
+  fully open — and **every successor mint rewrites the persisted probing
+  row** with the new holder and lease — as does every **chat preemption
+  of a background grant** (the rebind changes the authoritative holder,
+  and a restart after rebind-but-before-yield must not reconstruct the
+  background identity while the chat queue is nonempty; the rewrite is
+  atomic with the rebind) — so a mid-drain restart reconstructs the
+  successor's serialized lane; the row is deleted only when a clean probe
+  resolves with NO successor remaining), its classified 429 re-arms saturation (whose timer wakes the
+  queue), and any other termination — interrupt, session destroy, non-limit
+  error — **likewise mints the successor grant and wakes the next queued
+  delivery**: in a deferred-only backlog no consult would ever arrive to claim a
+  bare release, stranding the queue. A **lease bounds only the unconsumed
+  grant** (mint → turn start): provider turns legitimately stream for long, so a
+  consumed grant resolves solely on its own turn's termination — lease-expiring
+  a running probe would stack concurrent probes and defeat the one-at-a-time
+  recovery; unconsumed-grant expiry **requeues the expired holder to its
+  lane's tail atomically with minting the successor** (the holder stays
+  eligible — durable work is never dropped — but cannot be re-selected at
+  the head until it reaches the front again, so a dispatcher that failed to
+  start in time cannot starve the drain by repeated re-grant). The tail
+  move **persists**: the requeue assigns a fresh sequence from the shared
+  durable allocator in the same write, because an in-memory-only move
+  leaves the row's stored `queue_sequence`/`provider_park_seq` stale — a
+  restart before the holder eventually runs would sort it back to the head,
+  undoing the anti-starvation move, and repeated restarts could keep
+  earlier eligible work behind it forever. All other consults while probing queue at a short
+  probe tick. Without this rule, every path that consults a clear snapshot
+  simultaneously recreates the herd the gate exists to prevent: N parked V2 jobs
+  requeued to one deadline and claimed up to 64-wide by the delivery processor
+  (`D/src/app.ts:307-318`), a backlog wake promoting every registered uuid, or
+  post-restart reconstruction firing independently in several sessions.
+- **Restart reconstruction — a daemon-level marker scan.** At daemon startup
+  (not per-session: a jobless `'deferred'` row never causes its lazy
+  `SessionCache` session to load, so a startup hook beside
+  `scheduleInitialPendingMessageReplay` would never run for inactive sessions),
+  one scan enumerates `sdk_messages WHERE queue_reason IS NOT NULL` and
+  re-registers every marker row — both `'deferred'` rows and **`'enqueued'`
+  rows parked by a P3 denial** (a parked V2 job stays `'enqueued'` with a
+  durable requeued job and no deferred twin, so a deferred-only filter would
+  miss exactly the rows whose shared `retryAt` could otherwise release as a
+  64-wide post-restart wave); rows without the marker are untouched, and
+  historical rows are invisible because the marker is cleared on exit (below).
+  The wake path likewise resolves sessions on demand (`getSessionAsync`) rather
+  than relying on already-subscribed sessions — **with automatic replay
+  suppressed for provider-wake loads**: a never-loaded `AgentSession`
+  immediately schedules `scheduleInitialPendingMessageReplay`
+  (agent-session.ts:452-456,671-686), whose query-mode handler selects
+  every deferred row and flips them all to `'enqueued'`
+  (query-mode-handler.ts:53-69), and that microtask can run as the load
+  resolves — BEFORE the targeted grant event is handled — promoting the
+  session's entire provider backlog and creating exactly the claim wave
+  the targeted load avoids; the wake's load therefore passes a
+  replay-suppressed flag (or the blanket replay excludes
+  provider-marked rows), so only the bound identity moves. **Archived sessions are
+  excluded, on both edges — including their parked background jobs**:
+  `archiveResources` cancels only delivery-job UUIDs
+  (`cancelForSessionWithMessages`, `session-lifecycle.ts:481-520`) — a
+  provider-queued `'deferred'` row has no such job, and neither does a parked
+  title/analysis job — so archiving also retires marked rows atomically
+  (marker cleared, registration removed) **and cancels/deregisters the
+  session's parked background jobs** (a surviving job would later consume a
+  grant to run an unwanted query against an archived session), and the scans
+  join against non-archived sessions, clearing markers and skipping
+  archived-session jobs as stale. Without this, the on-demand wake could load and
+  promote an archived conversation into a provider call after restart.
+  **Reconstruction stages before it mints**: message rows, parked jobs, and
+  inbox entries are three different scans, so enumerating them one at a time
+  could bind the first grant onto an older background identity discovered
+  before a newer chat registration — violating chat-first priority from the
+  very first grant. The scan completes all three queues (ordered by the
+  persisted sequence) and only then selects and mints against the completed
+  queues, so the restart drain starts on the true head, serialized by the
+  same one-at-a-time release. Saturation state itself is **not** lost — the
+  per-account marker row (caveat 1) re-enters saturation or the closed state
+  directly, so the reconstructed backlog meets a limited registry rather than
+  an open one — but the fine-grained probe/grant state is, so the drain's
+  first probe may still pay one discovery 429 — bounded, and the persisted
+  charge keeps that re-arm from restarting the ladder at step one.
+- **The enqueued wake arm addresses the existing job.** Waking a
+  reconstructed/P3-parked `'enqueued'` row must NOT go through the deferred-row
+  promotion path — `promotePending` cannot select it, and its durable job sits
+  at a stale `retryAt` (potentially hours out), which would leave the grant
+  minting and expiring against a registration that never claims. The enqueued
+  arm instead makes the row's existing delivery job claimable immediately
+  (requeue with `retryAt = now` under the same claim token rules); the claim's
+  P3 consult then applies the grant. Deferred rows keep the promotion path.
+- **Marker clearing on exit.** The marker and registration are **retained
+  through promotion**: a promoted row keeps them until the grant is consumed at
+  its prompt yield or the row otherwise exits — a daemon restart between
+  promotion and yield must still find the row in the marker scan, or its
+  ordinary job would claim alongside the single reconstructed probe. The exits
+  that clear both, atomically with their status flip, are: **prompt yield
+  itself** (the turn started — a migrated delivery on an already-open account
+  holds no grant, so keying the exit to "grant consumption" would leave its
+  marker reconstructable after a crash mid-turn), terminal `'consumed'` /
+  `'failed'`,
+  **and an explicit user defer of a P3-parked `'enqueued'` row**
+  (`session.messages.deferPending` → `deferEnqueuedUserMessage`): leaving the
+  marker there would let a later provider wake auto-promote a row the user just
+  deferred — clears `queue_reason` and deregisters the uuid in the same
+  statement as the `send_status` flip — **and `session.messages.removePending`
+  (row deletion via `revokePendingDelivery(..., 'remove')`) deregisters the
+  same way**: a deleted row's composite identity must leave the registry with
+  the row, or repeated send/remove cycles during a long reset window grow stale
+  registrations whose wakes burn grants on nonexistent deliveries (the chain-B
+  status-plan interpreter's instructions are the natural carrier), so
+  reconstruction never registers history the user or the pipeline retired. A stale marker on a retired row
+  would otherwise mint a probe grant with nothing deliverable to resolve it.
+- **Provider changes re-admit their queue.** Any change of a session's
+  effective account key while its rows are registered behind the old key
+  deregisters them and immediately re-runs admission against the new key —
+  session-local changes (`switchModel`/`handleModelSwitch` and
+  `SessionConfigHandler.updateConfig`, which Space long-horizon refresh and
+  provider clearing use, never `switchModel`) **and shared credential changes**
+  (`providers.update` credential resync, `auth.login`/`auth.logout` mutating
+  the registered provider's credentials — these change the effective
+  fingerprint for every session on the provider's default credentials without
+  touching any `session.config`) — **and query-mode changes**: when
+  `SessionConfigHandler.updateConfig`/`updateBulk` flips `queryMode` back to
+  `'immediate'`, retained (previously skipped) registrations re-run admission
+  immediately — that path publishes only `session.updated` and no turn-end
+  replay exists to re-run P1 for an idle session, so the rows would otherwise
+  stay deferred indefinitely while newer immediate messages dispatch. The
+  principle: retained rows are re-admitted on any config event that changes
+  *why* they were retained. **Space-level provider changes re-admit parked
+  jobs**: `space.update` changing a Space's `defaultModel`/`defaultProvider`
+  matches none of the session hooks — but conversation-friction and other
+  Space-scoped jobs resolve their provider from the Space **at execution
+  time**, so their registrations under the old key are as stale as a
+  switched session's; `space.update` joins the re-admission triggers,
+  re-admitting the Space's parked jobs under the new effective key.
+  **Space archive/delete retires them**: those paths cancel no job-queue
+  rows today, and a conversation-friction job has only `{scopeId, taskId}`
+  with no owning session — so `space.archive`/`space.delete` cancel and
+  deregister the Space's marked background jobs (and reconstruction skips
+  archived/deleted Spaces), preventing a grant-funded analysis run for a
+  Space that no longer exists.
+  **Credential rotation re-admits every waiter under the key, sessionless
+  ones included**: typed Space jobs and inbox entries have no session index,
+  but they live under the same credential key — the rotation hook
+  deregisters and re-admits the key's registrations by **recomputing each
+  waiter's effective key from its own configuration** (both lanes,
+  by key lookup, not by session enumeration) so a closed default
+  credential's parked background work follows the replacement credential
+  instead of waiting forever; recreating the GitHub agents is the separate
+  snapshot fix above. **Logout closes, it does not re-admit**: the
+  re-admission hook re-runs admission against the *new* key — and
+  `ProviderAdmissionFacts` gains an `accountAvailable: boolean` fact (usable
+  credentials present); `auth.logout` removing a provider's only credential
+  makes the key unavailable, unavailable admits as `queue_until` (reason
+  `closed`, retained) rather than dispatching an unauthenticated call, and
+  the backlog re-admits only when a later `auth.login`/credential resync
+  makes the account usable again. **The unavailable state has its own
+  stable key**: a credential-backed provider with no credentials has no
+  digest to compute, so an empty effective credential set keys the registry
+  under a provider-scoped sentinel — `digest('unavailable:' +
+  providerId)` — rather than an absent one. Logout migrates the removed
+  digest key's registrations to the sentinel; a message created AFTER
+  logout (no old fingerprint to retain) registers under the sentinel
+  directly, so it sits in a domain the login hook actually inspects — and
+  `auth.login`/credential resync migrates the sentinel's registrations to
+  the new digest key by the same recompute-and-re-admit rule and admits
+  them against the restored account. Without the sentinel, a post-logout
+  send has no key to retain under and an `auth.login` would find nothing
+  to re-admit. Otherwise queued rows wait on a wake for an
+  account key the session no longer uses, while newer messages on the new key
+  run ahead of them.
+- **Deregistering:** lazily — after a promotion that finds no deliverable
+  registered rows for the session, on terminal row status, and on session destroy.
+  **Every deregistration path resolves a bound unconsumed grant atomically
+  with the removal**: user defer, `removePending` row deletion, archive,
+  session destroy, and provider-change migration all check `probeGrant` —
+  if it is bound (unconsumed) to the deregistered identity, the removal
+  revokes it and immediately re-binds and wakes the next eligible FIFO
+  identity (the same selection a mint uses); a CONSUMED grant is
+  untouched (owned by its running turn, resolved at that turn's
+  termination). Without this rule the grant would sit bound to an
+  identity that can neither claim nor terminate it, and the lease-expiry
+  path — which assumes the holder is merely slow and returns it to the
+  lane — would be the only recovery, invalid after deletion or migration
+  (a migrated row is no longer eligible under the old key at all).
+  **Orphaned override accounts retire their closure machinery**: a
+  billing closure keyed only by a session-level credential override
+  survives the session's destroy with its waiters removed but the closed
+  row, daily timer, and captured `configRef` still alive — the probe
+  would keep issuing requests with credentials the user removed with
+  the session, or repeatedly fail to resolve a session-backed reference.
+  When deregistration leaves an override-keyed account with no
+  remaining configuration owner, the closure timer is cancelled and the
+  marker row retired (still-configured shared accounts keep theirs —
+  retirement is per-last-owner, not per-waiter).
+  Registrations are idempotent insertion-ordered sets, so a parked job
+  re-consulting every probe tick cannot accumulate duplicates. Bounded memory by
+  construction.
+
+### What does NOT change
+
+- `RateLimitWatchdog` and `ProcessingStateManager` keep owning the *session's*
+  cooldown, banner, fallback ladder, and episode retries — the ownership
+  split is unchanged, but the watchdog itself is NOT untouched: P4 widens
+  its retry callback to `started | not_started | parked`, the closure flow
+  adds `manual | automatic` origin tracking, the `surface-billing` trip
+  arms the retryable billing-closed pause, and a failed manual probe
+  restores it (all specified above; listed here so "unchanged" is never
+  read as "no diff"). The registry
+  is additive provider-scoped state consulted at admission; it never writes session
+  state.
+- `TaskAgentManager.limitedSessionsByTask` keeps its task-scoped role (it reacts to
+  sessions that did hit limits; the gate makes those rarer, it does not replace
+  them).
+- The startup gate (`sdk-startup-gate.ts`) stays global and cold-start-only —
+  orthogonal load shaping (unifying the two gates is a recorded follow-up, not a
+  v1 concern).
+- `decideDeferAdmission` and its pinned decision table are untouched.
+
+## Decisions (with rationale)
+
+1. **Queue, don't switch.** Provider queueing does not engage the fallback ladder:
+   a fallback switch persists a new `session.config.model/provider`
+   (`model-switch-handler.ts:212-273`) — a wrong response to a transient
+   concurrency cap. Waiting preserves the session's configured model; users who
+   prefer escape keep their configured chains, which the session's *own* 429 still
+   triggers exactly as today.
+2. **All classified limits arm the registry** (`rate_limit` and `usage_limit`
+   alike): an account-wide GLM 5-hour cap 429s sibling sessions just as hard; the
+   kind only changes clearability (reset-bearing usage limits are authoritative,
+   ladder-armed rate limits are probe-clearable).
+3. **Reactive v1.** No configured caps; the registry never blocks on its own — it
+   answers admission questions and publishes wakes. A blocking semaphore at the
+   query-runner was rejected: it would duplicate queue policy in a second place and
+   hide saturation behind silently-blocked queries; claim-time consults at each
+   message-pipeline decision point are the correct single home.
+4. **The registry is non-blocking bookkeeping at the provider-turn seam.**
+   `reportQueryStart/End` maintain `inFlight` (and the clean-completion signal
+   for the probe rule) at the **turn boundary** — start when the query yields
+   the delivery's prompt, end at that turn's terminal result — not at the
+   startup-permit sites and not for the whole streaming query, which stays
+   alive across turns. Every report is keyed by the **canonical account
+   key** of State ownership — the effective **family-namespaced credential
+   digest** (endpoint
+   and region never join the key for built-in endpoint variants — a custom
+   endpoint's `baseUrl` is part of its key authority; every stored credential contributes its
+   digest, so rotation changes it; the family namespace keeps identical
+   literal keys on different upstreams separate) — never the bare
+   `resolvedProviderId`,
+   and never an endpoint-split of one credential's account.
+
+## Sequencing
+
+- **Behind #2661 / #2664:** satisfied — both merged to `dev` and contained in this
+  branch's base. The design consumes their exported surface
+  (`assessLimitError`, `cooldownFromReset`, `LimitRetryHint`,
+  `computeCooldown`/ladder); no further coupling.
+- **Versus chain I (pilot 8, pending-drain + injection shell, tasks #1243+):** the
+  ADR sequences the message-admission pipeline behind "the in-flight
+  delivery-ordering fixes in the turn lifecycle" — chain I, not yet landed (pilot 8
+  is reserved). This design targets the *current* seams (`MessagePersistence`,
+  `decideInjectDelivery`, the delivery handler) and its cores take plain inputs, so
+  chain I can adopt or relocate the consults without re-deriving policy. If chain I
+  lands first, P2's gate list moves with `decideInjectDelivery` wherever it lands;
+  P1's core is unaffected (persist seam is not chain I's territory). Implementation
+  order should follow whichever chain lands first; the cores are seam-agnostic by
+  construction.
+- **Split out — the GitHub delivery-semantics redesign:** the raw-event
+  store, cross-source dedupe (per-source keys, canonical projection,
+  payload pairing), the conditional webhook acknowledgment, the
+  caveat-9 reconciliation sweep, and the poller's watermark-durability
+  rule enforce NO provider admission — both ingest paths are ungated and
+  the legacy agent workflow has no production caller — so that machinery
+  moves to its own chain (this document's GitHub sections remain its
+  specified seed); C5 keeps only what a provider waiter touches. The
+  split is deliberate: C5-PR3 is already the largest PR in the chain.
+- **Versus chain C1 (stuck-provider recovery):** disjoint files except
+  `model-service`/provider listing, which this design does not touch. C1-PR3's
+  provider retry timers and this registry are siblings (both daemon-scoped
+  provider health state) but independent; unification, if ever, is a follow-up.
+
+## PR plan (pilot conventions)
+
+| PR | Scope | Contents |
+| --- | --- | --- |
+| **C5-PR1 (pins)** | Characterization | Pin today's matrix: (a) the persist status decision at `message-persistence.ts:180-192` (manual/busy/defer × outbox-job presence, archived race); (b) the sibling non-communication — session A 429 → A cooldown armed, session B on the same provider still persists `'enqueued'` + job and starts a query; (c) the recovery-pending park (`agent-session.ts:1762-1773` → handler `:121-123`); (d) the `decideInjectDelivery` decision table extension for the arms P2 touches. |
+| **C5-PR2 (extract, parity)** | P1 core | Extract `decideMessageSendAdmission` + gates (`message-send-admission.ts`), interpret at `MessagePersistence.persist` with the provider gate **absent** (gate list: manual → busy → dispatch). Zero behavior change; PR1 pins green unchanged; every export production-consumed (knip clean, no dead copy left inline). |
+| **C5-PR3 (apply)** | Gate + registry + wiring | Add `provider-admission-gates.ts` (core + gate wrappers) and `provider-concurrency-registry.ts` (account-fingerprint keying, probe grant + lease); insert the provider gate into P1 (incl. the `message.persisted` skipQueryStart publish) and `decideInjectDelivery`; the delivery-start consults — V2 claim plus the `ensureQueryStarted` boundary covering every direct-start path (P3) — the retry consult (P4), and the title-job consult at `handleSessionTitleGeneration` (grant-aware standard admission, durable typed identity `{kind:'job', jobKind:'title', jobId}`, park-on-denial); wire `reportLimitError` (×3 sites + provider-retry branch with fall-through + the title/Space/GitHub/classifier/closure-probe interpreters' failure feedback), `reportQueryStart(End)` (SDK + ACP + every direct caller — title/Space/GitHub/classifier/closure-probe), `reportRefinedReset`; the full migration family of the persistence contract — `queue_reason` + message sequence on `sdk_messages` (clearing-on-exit, both-states reconstruction), `provider_park`/`provider_park_seq` on job-queue rows, the shared sequence-allocator counter, and the per-account saturation marker row (caveat 1 — arm/refine/clear writes incl. the closed kind's resolvable `configRef`, its repository, and the reconstruction wiring that re-enters saturation/closed/probing from it, including probing-record reconstruction with grant re-minting (bound to the serialized durable identity or pending), without which a restart between the first 429 and the first waiter reconstructs an open registry and re-admits the herd) — plus their repositories; per-session wake publishes (deferred promotion + enqueued requeue arms) + grant lifecycle + provider-change re-admission (session-local and shared-credential) + episode-token refinement wiring + subscription. Flip PR1's sibling pin to the new behavior; add the scenario suites. |
+| **C5-PR4 (sweep + record)** | Docs | ADR 0004 Phase-2 note (caveats below), survey C5 status update, this doc's status → Implemented; dead-copy sweep; knip/oxlint/tsc/format/no-comments clean. |
+
+Rough cost (pilot-style ledger): cores ≈ +180 lines (send-admission ~70,
+admission-gates ~60, registry ~250 incl. timers/wake), interpreter deltas ≈ ±120,
+tests ≈ +1,300 across four PRs. The value, as in pilots 4/9, is expected to be
+incident-shaped: writing the PR1 pins against two live sessions is the first time
+the sibling non-communication is asserted anywhere.
+
+## Test plan
+
+Following Decision item 6 (parity harness + gate unit tests + interpreter coverage
+by pre-existing suites):
+
+1. **Decision tables — `provider-admission-gates.test.ts`:** the full facts matrix
+   (saturated with reset / saturated ladder / probing / cap-null vs set / inFlight
+   boundary), `untilMs` propagation (reset + `RESET_BUFFER_MS`; ladder step +
+   jitter bounds via injected jitter/now; probe tick), precedence (`saturated`
+   beats `probing` beats `slot_pressure`; admit pass-through), and per-gate
+   identity pins (`gate(ctx) === ctx`).
+2. **Decision table — `message-send-admission.test.ts`:** the four-arm table and
+   precedence (manual beats busy beats provider beats dispatch), parity against the
+   PR1-pinned inline matrix for the three pre-existing arms; the provider arm's
+   `untilMs` payload; sync-core pin (no async executor).
+3. **Registry suite — `provider-concurrency-registry.test.ts`:** arming from reset
+   vs ladder; **episode charging** (10 concurrent reports → charge 1, `untilMs` =
+   max); charge reset after **both** clear kinds (probe-clear and timer-expiry,
+   via the `chargeResetArmed` flag — the timer path is the one that would silently
+   march to the 4-hour cap); billing-terminal **closure** (arms the non-timed
+   closed state — the old exclusion assertion is replaced by: closed admits
+   nothing, parks durably at the sentinel, requeues on credential change, and
+   clears via manual Retry or the bounded daily health probe without any
+   credential change), including reconstruction of a closed account
+   resolving the daily health probe's configuration from the row's
+   persisted `configRef` (no digest-only dead end); the
+   consult-before-destructive-setup pin (a denied
+   recursive retry falls through with `_lastConsumedUserMessage` intact);
+   per-event poll rollback (the watermark advances only past durably
+   published events — a failed store commit re-observes next tick, and
+   completed events are not reprocessed; the dedupe-key, watermark, and
+   webhook-ack bullets in this cluster belong to the SPLIT
+   delivery-semantics chain's suite — C5's registry suite keeps the
+   admission-semantics pins: the one-event-one-grant boundary and the
+   agents' consults); the
+   **source-appropriate dedupe keys** — two same-second same-action webhook
+   deliveries (distinct `X-GitHub-Delivery` ids) both ingest, two
+   same-second same-action poll observations of DIFFERENT states both
+   ingest (the poll key carries the payload-projection digest — only a
+   re-observation of the same state is a replay), a
+   created-then-edited same-second poll pair both ingest, a
+   cross-source pair sharing the canonical tuple delivers exactly once
+   (their digests computed over the canonical cross-source projection —
+   transport fields `action`/`source`/`id`/`receivedAt`/`rawPayload`
+   excluded, resource fields harmonized, and `actor` omitted since the
+   sources record sender vs author, so equivalent webhook and
+   poll observations hash equal),
+   and a poll followed by two distinct same-second webhooks suppresses the
+   payload-matching one and delivers the other (payload-correlated
+   pairing — arrival order never decides, the canonical tuple is never a
+   global once-latch, and the earlier transition is never dropped);
+   **one-event-one-grant boundary** — the security query's clean completion
+   leaves the event grant held (no successor minted, event B stays parked)
+   until `processEvent` terminates, a timed-out agent query's interrupt
+   and termination are awaited before the grant resolves (no successor
+   overlaps a live timed-out request), and a grantless event whose account
+   saturates between security and routing parks via the inbox and resumes
+   at `routeEvent` on the wake (security not repeated); a webhook OR
+   polled row received while the provider is saturated publishes at
+   ingest (Space subscriptions fire; no waiter entry, no legacy-agent
+   routing) and any
+   Space-triggered agent injection parks at P2 and wakes through the
+   message channel; the extension poller's watermark advances only past
+   events whose durable publish committed (a failed store commit
+   re-observes next tick); a manual closure probe that ends non-limit
+   re-arms the billing-closed pause (banner and `canRetryNow`
+   restorable across repeated transient failures); the retry callback's
+   `not_started` outcome still drives the bounded startup-retry loop
+   (never mapped onto `parked` or `started`); an expired unconsumed
+   `{kind:'ephemeral'}` holder is discarded and the mint selects the
+   next durable waiter (its still-live caller observes the loss at the
+   authoritative start check);
+   two poll observations of DIFFERENT same-second states are distinct
+   inbox keys (the replay key carries the projection digest) while a
+   same-state re-observation replays to nothing; one poll record
+   suppresses at most one payload-matching webhook (one-use pairing
+   slots — two distinct same-projection webhooks cannot both be consumed
+   by it); a closure-health probe's classified non-billing limit reports
+   via `reportLimitError` and transitions closed → timed saturation; the
+   persisted saturation row reconstructs authoritative-vs-ladder
+   clearability and the probe floor from its `authoritative` flag and
+   `armedAtMs`; a steer consult against a pending grant leaves it
+   pending (the next post-clear turn-start claims); custom-endpoint keys
+   include the baseUrl authority (same literal key, different endpoints —
+   two keys, with equivalent URL spellings like `https://host/v1` vs
+   `https://host/v1/chat/completions` canonicalized to one authority)
+   while identical records converge; an
+   ephemeral caller's pending-grant claim writes the `{kind:'ephemeral',
+   callerKind, callId}` holder record, resolved by its own
+   `reportQueryEnd` (no dispatcher, no stuck probing); a parked
+   `{kind:'restart'}` identity is woken through the message-kind session
+   channel and routed to the pending-question resubmission; webhook inbox-commit failure exhausts
+   the in-process retries and answers non-2xx without any duplicate ingest
+   when the caveat-9 sweep later re-ingests the same delivery id; GitHub
+   agents recreated from new credentials before replay;
+   refinement-vs-running-probe (unconsumed grant revoked; a consumed-grant
+   refinement applies only when the running probe confirms the limit via its
+   429 and retires with the episode on the probe's clean completion — never
+   carried into a fresh episode); batch split-on-park (all members stamped +
+   registered in FIFO order); post-logout unavailable-key retention (backlog
+   waits for usable credentials, under the provider-scoped
+   `digest('unavailable:' + providerId)` sentinel — a post-logout send
+   registers there and `auth.login` migrates the sentinel's registrations
+   to the new digest key and admits them);
+   probe rule both-edges
+   (completion before arm + floor timer; completion after floor; no clear before
+   floor; no clear for reset-bearing saturation); `reportRefinedReset` replaces a
+   ladder `untilMs` and never shortens a parsed one; **wake routing** — a
+   provider-wide payload reaches zero per-session subscribers
+   (`internal-event-bus.ts:116-135`) — **exactly one wake per clear, addressed
+   to the grant-bound identity's session** (never one per registered session);
+   a manual-mode bound row retains and re-binds next eligible; **probe grant
+   lifecycle** — **minted and bound during the clear, before any consult**
+   (the old mint-at-first-admitting-consult wording re-opened the A2/B1
+   scheduling race and is removed everywhere), with the one defined
+   exception pinned: an empty-backlog clear mints the pending
+   (`identity: null`) grant, the first admission consult of any kind
+   claims it via the atomic `claimPendingGrant` CAS (durable registration
+   append and ephemeral caller alike — the claimer is admitted directly),
+   the lease bounds the unclaimed pending grant, and a still-empty expiry
+   re-mints pending; the A2/B1 anti-steal pin applies only to a
+   non-empty backlog, honored by downstream consults
+   for the same delivery (the end-to-end pass that prevents the
+   self-deadlock), registration is
+   admission-generation-conditional (any state transition landing between
+   consult and register re-admits immediately), the wake reaches only the bound identity's session
+   (manual-mode bound row → retain and re-bind next eligible), billing-terminal
+   arms the non-timed closed state cleared by all three reopening paths
+   (manual Retry probing closure, bounded daily health probe, credential
+   change), closure-probe success enters probing with exactly ONE
+   successor grant (the manual Retry turn as first probe; the daily
+   probe minting the first successor — never a bulk drain), a stale
+   sibling non-billing 429 arriving after closure records evidence
+   without downgrading it (only the closure-holder's report
+   transitions), an ACP-closed account's daily probe runs through the
+   provider-native ACP runner shape, and a refresh-token rotation
+   migrates registrations and moves the active episode to the new key
+   (the scheduler write invokes the re-admission hook) — including that the `surface-billing` trip arms the
+   retryable billing-closed pause (banner surfaced, `canRetryNow`
+   satisfied, manual-origin callback firing the `closureProbe` consult —
+   the path is reachable, not just documented) and that the webhook
+   interpreter's conditional ack lives on the extension route
+   (`/webhook/github/space` via `GitHubEventExtension`, the legacy service
+   handler pinned caller-less),
+   **bound at mint to
+   the FIFO head** (an unbound A2 cannot steal B1's grant), batching disabled
+   while saturated-or-probing (a granted delivery is single-identity),
+   consumed at prompt yield, ended by its own turn's clean completion (a second pre-arm completion
+   arriving mid-probe must NOT release), re-armed by its 429, and released by
+   non-limit termination; the lease applies only to an unconsumed grant (a
+   running probe is never lease-expired into stacking concurrent probes); a
+   clean completion **mints the successor grant and wakes the next queued
+   delivery** until the backlog is exhausted (the drain is pushed, not
+   rediscovered), each successor mint rewriting the persisted probing row
+   (deleted only when no successor remains — a mid-drain restart
+   reconstructs the successor, not an open account); a reset-bearing report **upgrades an active ladder episode**
+   to non-probe-clearable reset state; an authoritative episode is never
+   extended by a reset-less report; `reportRefinedReset` is episode-token
+   correlated (stale/delayed refinements discarded; a matching one converts to
+   authoritative and revokes an outstanding probe grant), and a refinement
+   recorded against a consumed grant retires with the episode on the
+   probe's clean completion while its 429 consumes it atomically inside
+   the re-arm (the new episode arms authoritative at the refined
+   deadline — no newer-episode token discard, no ladder fallback);
+   `chargeResetArmed` is
+   consumed only by the outstanding probe's completion; evidence expiry at arm
+   time; the
+   clean-completion flag derived from turn classification, not iteration
+   fulfillment; **keying** — **credential-centric**: distinct effective
+   credential digests produce distinct keys; endpoint/region differences do
+   NOT for built-in endpoint variants (same credential through a built-in
+   provider's endpoints X and Y shares one key — X's limit
+   gates Y, per the keying contract — while custom endpoints carry their
+   `baseUrl` in the key); absent `providerConfig` ≡
+   effectively-default; stored-credential rotation changes the key; the
+   same literal key on two different provider families produces TWO keys
+   (the upstream namespace — one upstream's limit never gates the other);
+   **credentialless keying** — two credentialless custom-endpoint records
+   with the same `baseUrl` (distinct `custom:<endpointId>` runtime ids)
+   share one family-namespaced key, and distinct base URLs or commands stay
+   distinct; **idempotent registration** — a parked job
+   re-consulting every probe tick never duplicates its uuid, grant identity is
+   the composite `(sessionId, messageUuid)`, drain order is global arrival
+   order (cross-session FIFO: A1, B1, A2), deregistration of a bound
+   unconsumed grant's holder revokes and re-binds/wakes the next eligible
+   identity atomically (defer, removePending, archive, destroy, and
+   provider-change migration alike; a consumed grant stays with its
+   running turn), scan-past-manual never lets a
+   retained row consume a wake, user defer AND row removal (`removePending`)
+   both deregister atomically, and the enqueued wake arm requeues the existing
+   job to `retryAt = now`; reconstruction excludes archived sessions and
+   archiving retires marked rows; a query-mode flip to immediate re-admits
+   retained registrations; a clear that never leaves an outstanding probe
+   (empty backlog, or a drain that empties through non-clean exits) consumes
+   `chargeResetArmed` on the first clean turn started after it; the marker is retained
+   through promotion and clears at **every admitted prompt yield**
+   (granted or grantless — migration-re-admitted rows hold no grant) or
+   terminal exit, so reconstruction
+   still sees promoted-but-unstarted rows; the LLM classifier skips while its
+   selected account is saturated; registration add/lookup/lazy cleanup;
+   timer lifecycle (destroy clears;
+   unref'd); clock and jitter injection throughout (the pilot-9 purity
+   convention: every time check against an injected `now`).
+4. **Interpreter — persist:** a send during a live turn skips the provider
+   gate (steer candidate — the claim-level `liveTurnSteer` bypass governs, and
+   the yield-boundary check admits only input the unresolved turn waits on; a
+   steer queued for the NEXT turn consults there);
+   provider-saturated `message.send` → row persisted
+   `'deferred'`, **no** `message_delivery` job, no `setQueuedIfIdle`,
+   `messages.statusChanged` published, `message.persisted` published **with
+   `skipQueryStart: true`** (composer draft cleared; title generation deferred —
+   `needsWorkspaceInit: false`, re-flagged after **any terminal outcome of a
+   delivery whose queueing suppressed it** — success (granted probe turn or
+   provider-change migration alike) or non-limit failure, where a
+   success-only rule would leave the session permanently untitled with no
+   later arrival to schedule the job); the title-job interpreter — denial at
+   `handleSessionTitleGeneration` parks at the saturation deadline (probe tick
+   while probing), no grant is held or consumed, admission only when fully
+   grant-aware (a bound title identity consumes its grant at query start and
+   resolves it on termination), the re-enqueued job succeeds once admitted, the title re-flag fires after
+   any terminal outcome of a delivery that suppressed it — probe success,
+   provider-change migration, and a queued first delivery dying to a
+   non-limit failure with no later message (the job is scheduled immediately
+   there, its own consult governing when it runs and the existing fallback
+   covering its failure, matching the any-terminal-outcome rule), and a
+   restart between prompt yield and terminal outcome still finds the
+   title job queued (the yield-boundary clear enqueues it in the same
+   transition that clears the marker — no unrecorded suppression
+   window),
+   title-query failures are
+   classified and reported with the title query's own effective account key,
+   and the Space background queries (evolution analysis/episode,
+   llm-workflow-selector) defer while saturated and report their limits,
+   registry registered; unsaturated → outbox path byte-for-byte today's behavior
+   (PR1 pins).
+5. **Interpreter — inject:** `provider_queue` arm settles the row deferred and
+   registers; the gate is skipped for a live-turn target (steer candidate,
+   same ordering as P1); precedence over deliver; parity of the earlier arms
+   (pipeline suite extension).
+6. **Interpreter — delivery-start parks (P3):** live-turn steers admit
+   unconditionally (`liveTurnSteer` fact — a parked steer would starve the
+   waiting turn); a turn-boundary lifecycle pin — a granted probe resolves at
+   its turn's terminal result while the SDK query stays alive for later prompts.
+   V2 — saturated claim → job
+   requeued at `retryAt`, session restored to idle if persist had queued it, no
+   `driveDeliveryTurn` call; after clear, re-claim delivers; a parked-job wave
+   variant (N jobs requeued to one deadline) pins the probing re-park at the probe
+   tick — one delivers per probe resolution, not N at the deadline. Boundary
+   (`ensureQueryStarted`, carrying the delivery identity) — a saturated denial
+   settles the row back to `'deferred'` with the `queue_reason` marker and
+   registers it, for every direct-start path (V1 `startQueryAndEnqueue`,
+   `deliverRowsViaMemoryQueue`, V1 `deliverInjectedMessage`); a grant-holding
+   delivery passes. **The `AskUserQuestion` answer restart admits too** —
+   an answer arriving after its query stopped IS a fresh provider call
+   (`ensureQueryStarted()` precedes the tool-result enqueue,
+   ask-user-question-handler.ts:553-568) and therefore consults: a
+   DENIED restart starts no query at all — and the test asserts the
+   persisted answer record (keyed by `toolUseId`) is written BEFORE the
+   `ensureQueryStarted` call, so the park exists even if the denial
+   arrives mid-start; the wake — or restart reconstruction, scanning the
+   answer records — re-runs the submission (a restart during the outage
+   does not drop the submitted answer); admitted (open or
+   grant-holding), it starts and injects as today; a context-reset restart
+   path stays exempt.
+   **Parked-row linkage** — the P3 park stamps the marker on
+   the parked `'enqueued'` row, and restart reconstruction registers marker rows
+   in both states, so a post-restart claim wave still meets a minted probe
+   grant. **The prompt-yield check splits too**: a batch legitimately
+   built while the account read open (claim and `buildDeliveryBatch` both
+   passed) can reach the authoritative yield check after a sibling armed
+   saturation — at that boundary the head's grant (if any) covers the head
+   alone, and the tails are split into per-member rows/jobs exactly as the
+   park split below (markers, registrations, FIFO sequence), never left
+   riding the head's single-identity prompt. **Batch jobs split on park**: a multi-message V2 batch created
+   while the account was open but claimed after saturation armed parks and
+   registers only its head — the remaining `batchUuids` may not ride the
+   head's grant (probing forbids it), and merely narrowing the job would
+   strand the tails (`'enqueued'`, no jobs, no markers, no registrations);
+   the park therefore splits the batch into per-member jobs/rows, each
+   stamped and registered in the head's FIFO sequence order, so the drain
+   re-batches them naturally once open. **Marker exit** — the marker survives promotion and clears at
+   **every admitted prompt yield, granted or grantless** (a row re-admitted
+   onto an already-open account after a provider or credential change starts
+   with no grant, and keying the clear to grant consumption would leave its
+   marker reconstructable after a crash mid-turn, dispatching the
+   already-running delivery again), terminal transitions, or an explicit
+   user defer of a parked row (`deferPending` → `deferEnqueuedUserMessage`) —
+   promotion itself never clears it (a restart after deferred→enqueued must
+   still find the row); a later wake must never undo the user's defer.
+7. **Interpreter — retry consult (P4):** saturated auto-retry returns the
+   widened `parked` callback outcome — the watchdog relinquishes its timer
+   without startup retries and **publishes a pause-clearing resume variant**
+   (`TaskAgentManager.limitedSessionsByTask` removes a session only on
+   `session.rate_limit_resume`, task-agent-manager.ts:390-410 — an unmatched
+   pause would keep the parent task restricted and its injections hitting
+   `parentTaskLimited` after the registry already owns the row) while
+   signaling the provider-queued state distinctly, settles the row
+   deferred with the marker through the atomic consumed-to-deferred
+   transition (a plain defer on a consumed row changes nothing and
+   registers an undeliverable identity), writing the row's original
+   admission origin (the yield-clear persists it; the P4 marker matches
+   the arm that queued it), registers; fallback-switched session (different provider)
+   unaffected; the **provider-retry branch** classifies before deciding
+   the retry — a bracketed GLM limit reports to the registry at attempt 0, a
+   consult denial falls through to the existing `:1258` assessment (the watchdog
+   arms; no bare skip-and-return), and each recursive re-entry consults admission.
+8. **Interpreter — wake and provider change:** **exactly one publish per
+   clear, to the grant-bound identity's session** (never one per registered
+   session — the broadcast shape is gone); a turn-boundary grant-revalidation
+   pin (a grant whose lease lapses during SDK startup does not start a turn);
+   the handler re-runs the full P1 admission for the bound uuid only — if that
+   row's session switched to manual mode after queueing it is skipped and
+   retained (grant re-binds next eligible), delivered only by manual
+   promotion; a **multi-session shared-credential change**
+   (`providers.update` resync and `auth.login`/`auth.logout`) re-admits every
+   registered session on the old fingerprint — including never-loaded
+   sessions with jobless deferred rows — deregistering from the old key and
+   re-admitting under the new one; a **model switch** with rows queued behind
+   the old provider deregisters them and immediately re-admits against the new
+   key (no waiting on the old provider's wake; no newer-message overtake).
+9. **Scenario — the GLM herd, mocked SDK:** two sessions, one provider; A's query
+   429s with a GLM-bracket message → registry armed (charge 1) → B's subsequent
+   `message.send` queues at persist → probe/timer clears → the granted delivery
+   passes P1 and the claim consult end-to-end → row deferred→enqueued→
+   submitted→consumed → exactly one provider query start for B (stubbed start
+   count); a many-session variant pins the release pace (N queued → one start,
+   then one per probe resolution). Restart variant: fresh registry (no
+   saturation) → the daemon-level marker scan (which finds rows of sessions
+   never lazily loaded) re-registers the queued rows → with several sessions
+   reconstructed, exactly one probe starts, the rest wait → the probe 429s →
+   re-arms at the RESTORED charge plus one (the persisted charge is the
+   floor, a fresh arm advances it) — the bounded-recovery and
+   restart-serialization
+   pins; an enqueued-row wake pin — the existing job is requeued to
+   `retryAt = now`, never left at its stale deadline. A saturation-row
+   variant: restart during an armed episode with NOTHING yet queued — the
+   persisted marker row reconstructs the saturated (or closed) state, the
+   first post-restart send queues instead of passing, and the eventual
+   probe's 429 re-arms at the persisted charge PLUS ONE — a new arm from
+   the cleared/probing state advances the charge per the charging
+   contract, so a continuing limit escalates across restarts; the
+   persisted charge is the episode's FLOOR (a restart never resets the
+   ladder to step one), and only a clean probe completion resets it (the
+   caveat-1 pin: no post-restart herd, no ladder restart). A probing-row variant:
+   restart while an empty-backlog pending grant exists, or mid-probe —
+   the persisted probing record reconstructs `probing` (not open),
+   re-mints the grant bound to the serialized durable identity or
+   pending, and the first post-restart consult queues at the tick
+   instead of admitting concurrently; a restart into an UNEXPIRED
+   authoritative episode or a closure mints nothing (reconstruction
+   re-enters the persisted state — no probe until the episode expires or
+   the record is probing); the classifier on a probing account with a
+   pending grant claims it ephemeraly instead of skipping (no
+   pending-expiry loop); a goalAutomation-driven createFromEvidence
+   parks under its durable job identity (the invocation context is
+   threaded, not assumed); an orphaned override-keyed closure loses its
+   timer and row when its last configuration owner deregisters; the
+   credentialless keying pins
+   identity-header digests (same base URL, different `Authorization`
+   headers — two keys, credential-backed and credentialless alike); a
+   probing row restart after a refinement arrived but before the running
+   probe terminates still re-arms at the authoritative refined deadline
+   (the refinement persists with the row); a provider-wake load of a never-loaded session
+   does not fire the blanket deferred replay (only the bound identity
+   moves); an OAuth re-key moves the probing record, grant, and
+   in-flight associations with the registrations. An ACP variant pins the
+   symmetric lifecycle wiring: saturation armed from an ACP limit clears and the
+   ACP probe's completion is reported (no permanently-probing ACP provider).
+10. **No-regression:** the pre-existing agent-session / delivery / inject suites
+    pass unchanged except the PR1 pins deliberately flipped in PR3 — the parity
+    proof, as in every pilot.
+
+## Boundary caveats (recorded, per pilot convention)
+
+1. **Restart reconstructs saturation from a one-row marker, not just queue
+   linkage.** The `queue_reason` marker rebuilds registrations, but a
+   restart during saturation with NOTHING yet registered (the first 429
+   arrived, no sibling has queued) finds no marker and starts OPEN — every
+   new send passes admission before any response re-arms, recreating the
+   post-restart herd the single-discovery-probe promise excludes. Arming
+   therefore persists **one saturation row per account key** (key, kind,
+   `untilMs` or `closed`, charge, the clearability provenance
+   (`authoritative` vs ladder) with `armedAtMs`, and the resolvable
+   `configRef` snapshot
+   alongside the closed kind — the restart's daily health probe needs a
+   buildable request, which a digest alone cannot provide — written on
+   arm, updated on refine, transitioned to a probing
+   record at clear (rewritten atomically on every successor mint —
+   deleted only when a clean probe resolves with NO successor remaining;
+   reconstructed probing re-mints the grant, bound to the serialized
+   identity if durable-and-registered, else pending; part of the PR3
+   migration family), and
+   reconstruction re-enters saturation/closure/probing from it. What stays
+   in-memory-only is the fine-grained grant/registration state; the
+   episode's deadline was already durable information the moment it was
+   computed, and one row per limited account is the whole cost.
+2. **The persist seam still ignores the session's own cooldown.** The busy check at
+   `message-persistence.ts:181-182` excludes `rate_limit_cooldown`; a message sent
+   during the session's own cooldown still persists `'enqueued'` and parks at claim
+   (today's behavior, now pinned). Folding session-cooldown into gate 2 is a
+   one-line extension of P1 with its own pins — deliberately not smuggled into this
+   chain's parity extraction.
+3. **The wake path trusts the claim-time consult.** A wake that races a
+   re-saturation promotes rows to `'enqueued'` whose jobs then park (P3) — one
+   bounded job churn per race, never a provider call. Acceptable by design;
+   the alternative (wake-time CAS on saturation) duplicates the consult.
+4. **`provider_queue` at inject does not precede session-scoped defers.** A session
+   in its own cooldown defers with today's reason and is not wake-registered; its
+   own watchdog owns recovery. Recorded so the gate list is not read as a complete
+   saturation policy — same caveat class as pilot 7's parked-task asymmetry.
+5. **The account key is still coarser than model-level, and coarser than
+   endpoints by design.** The fingerprint distinguishes **effective
+   credentials only** (an `apiKey` override is a different account;
+   `baseUrl`/region overrides are NOT key components for built-in endpoint
+   variants — the same credential through a built-in provider's X and Y
+   is one pool per the keying contract, while a custom endpoint's
+   `baseUrl` IS its key authority, per the family-namespace rule), and per-model caps under one
+   account share a saturation record. Every registry method takes the same
+   effective account key (computed once per query beside `resolvedProviderId`),
+   so no caller can mix bare-provider and account-scoped records.
+6. **`inFlight` is bookkeeping until caps exist.** v1 never gates on it
+   (`configuredCap` is null); it exists so the cap follow-up changes one constant
+   plus a settings reader, and so the probe rule has a completion signal.
+7. **The steer bypass is scoped to input the live turn waits on.** A steer fed
+   into a live turn adds no provider call — it rides the turn's existing
+   request via `feedDeliverySteer` — so it admits unconditionally
+   (`liveTurnSteer` fact); parking it while the unresolved turn waits on that
+   input would deadlock the turn whose completion could clear saturation. But
+   a steer arriving while the session is merely *processing* (not
+   input-blocked) queues in the persistent `MessageQueue` and becomes the
+   **next** turn's prompt — it starts a provider call, so the bypass must not
+   cover it. The authoritative admission check at the prompt-yield boundary
+   (the grant-consumption site) therefore applies to **every non-internal
+   prompt**, and a denial is a **typed result, not a silent requeue**:
+   `feedDeliverySteer`'s caller awaits a queue acknowledgment, and a
+   steer claimed by the feed but denied at yield cannot simply "return
+   to the queue" — the delivery handler has claimed a job and holds a
+   row, so the denial propagates a typed `provider_denied` result back
+   through the feed acknowledgment, and the handler parks exactly as any
+   claimed delivery would: the row settles to `'deferred'` with the
+   `queue_reason` marker (and its admission arm), the claimed job takes
+   the P3 park shape, and the composite identity registers — leaving the
+   steer claimed-but-unlinked would strand it with no provider wake to
+   revive it. A steer with no live turn (session idle) is an ordinary
+   turn-role delivery and consults normally. Recorded to preempt a "why
+   doesn't steer check" review round.
+8. **P3's consult does not touch `rate_limit_cooldown` session state** — a
+   parked-for-provider job leaves the session idle, not cooldown; the session's
+   watchdog never learns about sibling 429s. That isolation is deliberate (the
+   session has no episode to recover); the observability follow-up owns surfacing
+   provider state to the UI.
+9. **Webhook durability has no upstream backstop** (recorded for the
+   split delivery-semantics chain; not a C5-PR3 deliverable). A non-2xx webhook
+   acknowledgment is failure *signaling*, not a retry queue — GitHub records
+   the delivery as failed and redelivers only on manual or API-driven action.
+   The design's ladder is therefore: the conditional ack's in-process commit
+   retries absorb transient local persistence failures, and the
+   **reconciliation sweep** — a periodic job (token-gated: it reads the hook's
+   delivery list via the GitHub API) that re-ingests payloads of deliveries
+   GitHub marked failed after our non-2xx — closes the window for
+   token-bearing installations. A token-less webhook-only installation has no
+   sweep and no upstream retry: an event whose inbox commit survives the
+   in-process retries is lost, recorded here rather than claimed as durable.
+   The saturated-period inbox itself is unaffected — once the commit lands,
+   the delivery-id replay key and the wake drain own recovery from there.
+
+## ADR classification
+
+*SUPERSEDED 2026-08-25 (ADR 0004 revision — one direct pipeline per business
+path): the "composed with the blessed `decisionRun` combinator" framing below
+predates the revision. Implement P1–P4 decision points as direct superpipe
+compositions; the resource-ownership point (registry as class-owned state with
+injected clock/jitter; pipelines receive snapshots) stands unchanged.*
+
+- P1/P2 are **P3 guard/validation gates + P7 functional sandwich** composed with
+   the blessed `decisionRun` combinator — the ADR's named landing spot for Phase 2.
+  P3/P4 are point decisions over the same pure core (sanctioned; no pipeline
+  ceremony at claim boundaries).
+- The registry is a class-owned state store with injected clock/jitter — pipelines
+  receive snapshots only (resource-ownership rule). Not `stagedRun`: no multi-write
+  transactional effect sequences exist here; each interpreter site owns its single
+  write through existing guarded mechanisms (delivery-status transitions, job
+  requeue).
+- Hot-path: GO by the ADR benchmark (per-message frequency class, ~2 µs core).
+- Promotion rule: if a second provider-scoped admission surface appears (the
+  configured-cap follow-up is the named candidate), extract any recurring raw shape
+  per the rule of three; v1 adds no new combinator.
+
+## References
+
+- ADR 0004 Roadmap Phase 2 and pilot conventions: the Phase 2 roadmap entry
+  and pilot records 4/7/9 (gate/point-decision/caveat patterns) are archived in
+  `docs/adr/history/0004-pilots.md`; the normative decision rules are Decision
+  items 1–8 of `docs/adr/0004-superpipe-pipelines.md`.
+- Survey: `docs/reports/providers-area-survey.md` — C5 (ranked chains), area map
+  row "Concurrency limits", GLM 429 causes.
+- Classifier + ladder: `packages/daemon/src/lib/agent/limit-error-classifier.ts`,
+  `fallback-recovery.ts`, `rate-limit-watchdog-gates.ts` (#2661, #2664).
+- Message pipeline seams: `message-persistence.ts`, `message-delivery-pipeline.ts`,
+  `message-ownership-gates.ts`, `message-delivery.handler.ts`,
+  `delivery-status-routing.ts`, `query-mode-handler.ts`.
+- Concurrency-gate precedent: `sdk-startup-gate.ts` (#2552).

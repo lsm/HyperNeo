@@ -320,7 +320,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
         }
       }
       if (latestTodos) {
-        const label = rows[0]?.label ?? 'Agent';
+        const label = rows[0]?.label ?? '';
         result.push({ label, todos: latestTodos });
       }
     }

@@ -1,4 +1,4 @@
-import type { ActorRef, ActorStatus } from '../../../../messaging/src/types';
+import type { ActorRef, ActorStatus } from '../../../../messaging/src/types.ts';
 import type {
   NodeExecution,
   Session,
@@ -7,18 +7,18 @@ import type {
   SpaceLongHorizonAgent,
   SpaceWorkflow,
 } from '@hyperneo/shared';
-import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository';
-import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
-import type { SessionRepository } from '../../storage/repositories/session-repository';
-import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
+import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
+import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository.ts';
+import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
+import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
-} from '../../storage/repositories/space-long-horizon-agent-repository';
-import type { SpaceRepository } from '../../storage/repositories/space-repository';
-import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
-import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session';
+} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
   { actorId: 'system:runtime', handle: '@system-runtime', roles: ['runtime'] },

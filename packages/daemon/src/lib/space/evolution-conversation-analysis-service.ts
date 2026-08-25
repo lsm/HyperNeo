@@ -1,20 +1,20 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type {
   CreateEvidenceRefParams,
   EvidenceRef,
   EvolutionScope,
   SpaceTask,
 } from '@hyperneo/shared';
-import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
-import type { SpaceRepository } from '../../storage/repositories/space-repository';
-import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
-import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
-import { getAvailableModels } from '../model-service';
-import { Logger } from '../logger';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service';
-import { inferProviderForModel } from '../providers/registry';
+import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
+import { getAvailableModels } from '../model-service.ts';
+import { Logger } from '../logger.ts';
+import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
+import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 
 const CONVERSATION_ANALYSIS_VERSION = 1;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.5;

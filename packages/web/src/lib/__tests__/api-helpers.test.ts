@@ -600,6 +600,66 @@ describe('api-helpers', () => {
     });
   });
 
+  describe('providers', () => {
+    describe('listProviderRemoteModels', () => {
+      it('should request providers.listRemoteModels with id and options', async () => {
+        const mockHub = {
+          request: vi.fn().mockResolvedValue({
+            models: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+          }),
+        };
+        (
+          connectionManager as unknown as {
+            getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+            getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+          }
+        ).getHubIfConnected.mockReturnValue(mockHub);
+
+        const result = await apiHelpers.listProviderRemoteModels('k1', { command: 'devin acp' });
+
+        expect(result).toEqual({ models: [{ id: 'kimi-k3', name: 'Kimi K3' }] });
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.listRemoteModels',
+          { id: 'k1', options: { command: 'devin acp' } },
+          { timeout: 30000 }
+        );
+      });
+
+      it('should pass options through as undefined when omitted', async () => {
+        const mockHub = {
+          request: vi.fn().mockResolvedValue({ models: [] }),
+        };
+        (
+          connectionManager as unknown as {
+            getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+            getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+          }
+        ).getHubIfConnected.mockReturnValue(mockHub);
+
+        await apiHelpers.listProviderRemoteModels('k1');
+
+        expect(mockHub.request).toHaveBeenCalledWith(
+          'providers.listRemoteModels',
+          { id: 'k1', options: undefined },
+          { timeout: 30000 }
+        );
+      });
+
+      it('should throw ConnectionNotReadyError when not connected', async () => {
+        (
+          connectionManager as unknown as {
+            getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
+            getHub: { mockResolvedValue: (arg: unknown) => Promise<void> };
+          }
+        ).getHubIfConnected.mockReturnValue(null);
+
+        await expect(apiHelpers.listProviderRemoteModels('k1')).rejects.toThrow(
+          'Not connected to server'
+        );
+      });
+    });
+  });
+
   describe('settings operations', () => {
     describe('updateGlobalSettings', () => {
       it('should update global settings using getHub (async)', async () => {

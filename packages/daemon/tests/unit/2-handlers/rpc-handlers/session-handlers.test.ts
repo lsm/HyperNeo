@@ -961,6 +961,16 @@ describe('Session RPC Handlers — models.list', () => {
             db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
             return row.id;
           },
+          markDeliveryFailedByUuid: (_sid: string, uuid: string) => {
+            const row = db
+              .prepare(
+                `SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND send_status = 'enqueued'`
+              )
+              .get('sess-1', uuid) as { id: string } | undefined;
+            if (!row) return null;
+            db.prepare(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`).run(row.id);
+            return row.id;
+          },
         }),
       };
       const sessionManager = {
@@ -1030,6 +1040,31 @@ describe('Session RPC Handlers — models.list', () => {
           .get('db-failed') as { send_status: string };
         expect(row.send_status).toBe('failed');
       }
+    });
+
+    it('rolls the row back to failed when the post-reopen status broadcast rejects (Codex #5)', async () => {
+      eventBus.publish = mock(async (event: string) => {
+        if (event === 'messages.statusChanged') throw new Error('subscriber rejected');
+        return { delivered: 0, failures: [] };
+      });
+
+      await expect(
+        messageHubData.handlers.get('session.messages.retry')!(
+          { sessionId: 'sess-1', messageDbId: 'db-failed' },
+          {}
+        )
+      ).rejects.toThrow('subscriber rejected');
+
+      const row = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get('db-failed') as { send_status: string };
+      expect(row.send_status).toBe('failed');
+      const job = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+        )
+        .get(MESSAGE_DELIVERY, 'retry-me') as { n: number };
+      expect(job.n).toBe(0);
     });
   });
 });
@@ -1185,6 +1220,248 @@ describe('Session RPC Handlers — session.update voice adoption', () => {
   it('no longer registers the retired reconciliation RPCs', async () => {
     expect(messageHubData.handlers.get('session.stripVoiceBaseline')).toBeUndefined();
     expect(messageHubData.handlers.get('session.mergeVoiceDraftBackup')).toBeUndefined();
+  });
+});
+
+describe('Session RPC Handlers — session.update model curation', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let updateSession: ReturnType<typeof mock>;
+  let existingModel: string;
+  let existingProvider: string | undefined;
+
+  const anthropicModels = [
+    { id: 'sonnet', name: 'Sonnet', alias: 'sonnet', provider: 'anthropic', contextWindow: 200000 },
+    { id: 'opus', name: 'Opus', alias: 'opus', provider: 'anthropic', contextWindow: 200000 },
+    { id: 'haiku', name: 'Haiku', alias: 'haiku', provider: 'anthropic', contextWindow: 200000 },
+    {
+      id: 'opus',
+      name: 'Opus via Copilot',
+      alias: 'opus',
+      provider: 'anthropic-copilot',
+      contextWindow: 128000,
+    },
+    {
+      id: 'copilot-sonnet',
+      name: 'Copilot Sonnet',
+      alias: 'copilot-sonnet',
+      provider: 'anthropic-copilot',
+      contextWindow: 128000,
+    },
+    {
+      id: 'gpt-5.4',
+      name: 'GPT 5.4',
+      alias: 'gpt-5.4',
+      provider: 'anthropic-codex',
+      contextWindow: 400000,
+    },
+  ] as ModelInfo[];
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    existingModel = 'sonnet';
+    existingProvider = 'anthropic';
+    updateSession = mock(async () => {});
+
+    setModelsCache(new Map());
+    resetProviderRegistry();
+    resetProviderFactory();
+
+    const sessionManager = {
+      getSession: mock(() => null),
+      getSessionFromDB: mock(() => ({
+        id: 's1',
+        config: { model: existingModel, provider: existingProvider },
+      })),
+      updateSession,
+    } as unknown as SessionManager;
+
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  afterEach(() => {
+    setModelsCache(new Map());
+    resetProviderRegistry();
+    resetProviderFactory();
+  });
+
+  it('rejects a config.model write that moves the session onto a curated-out model', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(handler!({ sessionId: 's1', config: { model: 'opus' } }, {})).rejects.toThrow(
+      "Model 'opus' is curated out for provider 'anthropic'"
+    );
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows changing to a curated-in model', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'haiku' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'haiku' } });
+  });
+
+  it('allows rewriting the pinned session model verbatim on a curated-out session', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'opus', maxTokens: 123 } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: { model: 'opus', maxTokens: 123 },
+    });
+  });
+
+  it('rejects moving a pinned session onto a different curated-out model', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(handler!({ sessionId: 's1', config: { model: 'haiku' } }, {})).rejects.toThrow(
+      "Model 'haiku' is curated out for provider 'anthropic'"
+    );
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows metadata-only writes on a curated-out session', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { title: 'Pinned' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { metadata: { title: 'Pinned' } });
+  });
+
+  it('rejects an unknown model write under a curated provider, mirroring create', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(
+      handler!({ sessionId: 's1', config: { model: 'claude-future-model' } }, {})
+    ).rejects.toThrow("Model 'claude-future-model' is curated out for provider 'anthropic'");
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows an unknown model write whose ID is a curated entry', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [
+      { id: 'sonnet' },
+      { id: 'claude-future-model' },
+    ]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'claude-future-model' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'claude-future-model' } });
+  });
+
+  it('keeps config.model writes ungated when no curation is configured', async () => {
+    setModelsCache(new Map([['global', anthropicModels]]));
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'opus' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'opus' } });
+  });
+
+  it('rejects a provider-only change that pairs the kept model with a provider that curates it out', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'copilot-sonnet' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(
+      handler!({ sessionId: 's1', config: { provider: 'anthropic-copilot' } }, {})
+    ).rejects.toThrow("Model 'opus' is curated out for provider 'anthropic-copilot'");
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows a provider-only change when the kept model is curated in for the new provider', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'opus' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { provider: 'anthropic-copilot' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { provider: 'anthropic-copilot' } });
+  });
+
+  it('rejects a curated-out model write on a session with no stored provider', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'sonnet';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(handler!({ sessionId: 's1', config: { model: 'opus' } }, {})).rejects.toThrow(
+      "Model 'opus' is curated out for provider 'anthropic'"
+    );
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows a verbatim model rewrite on a providerless session pinned to a curated-out model', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'opus';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'opus', maxTokens: 456 } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', {
+      config: { model: 'opus', maxTokens: 456 },
+    });
+  });
+
+  it('rejects a cross-family model-only update on a providerless session using the incoming model provider', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.1' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'sonnet';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await expect(handler!({ sessionId: 's1', config: { model: 'gpt-5.4' } }, {})).rejects.toThrow(
+      "Model 'gpt-5.4' is curated out for provider 'anthropic-codex'"
+    );
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows a cross-family model-only update when the incoming model is curated in', async () => {
+    getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }, { id: 'haiku' }]);
+    getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4' }]);
+    setModelsCache(new Map([['global', anthropicModels]]));
+    existingModel = 'sonnet';
+    existingProvider = undefined;
+
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', config: { model: 'gpt-5.4' } }, {});
+
+    expect(updateSession).toHaveBeenCalledWith('s1', { config: { model: 'gpt-5.4' } });
   });
 });
 

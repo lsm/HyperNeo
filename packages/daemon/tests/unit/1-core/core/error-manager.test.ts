@@ -289,9 +289,11 @@ describe('ErrorManager', () => {
 
       await errorManager.broadcastError(sessionId, error);
 
-      expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
-      expect(internalPublishAsyncSpy.mock.calls[0][0]).toBe('session.error');
-      expect(internalPublishAsyncSpy.mock.calls[0][1]).toMatchObject({
+      const sessionErrorCalls = internalPublishAsyncSpy.mock.calls.filter(
+        (call) => call[0] === 'session.error'
+      );
+      expect(sessionErrorCalls.length).toBe(1);
+      expect(sessionErrorCalls[0][1]).toMatchObject({
         sessionId,
         error: error.userMessage,
       });
@@ -311,7 +313,10 @@ describe('ErrorManager', () => {
 
       expect(result.message).toBe(errorMessage);
       expect(result.category).toBe(ErrorCategory.MESSAGE);
-      expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
+      const sessionErrorCalls = internalPublishAsyncSpy.mock.calls.filter(
+        (call) => call[0] === 'session.error'
+      );
+      expect(sessionErrorCalls.length).toBe(1);
     });
 
     it('should use custom user message when provided', async () => {
@@ -337,7 +342,10 @@ describe('ErrorManager', () => {
       );
 
       expect(result.message).toBe('String error');
-      expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
+      const sessionErrorCalls = internalPublishAsyncSpy.mock.calls.filter(
+        (call) => call[0] === 'session.error'
+      );
+      expect(sessionErrorCalls.length).toBe(1);
     });
   });
 
@@ -634,9 +642,11 @@ describe('ErrorManager', () => {
         metadata
       );
 
-      expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
-      expect(internalPublishAsyncSpy.mock.calls[0][0]).toBe('session.error');
-      const emittedData = internalPublishAsyncSpy.mock.calls[0][1];
+      const sessionErrorCalls = internalPublishAsyncSpy.mock.calls.filter(
+        (call) => call[0] === 'session.error'
+      );
+      expect(sessionErrorCalls.length).toBe(1);
+      const emittedData = sessionErrorCalls[0][1];
 
       expect(emittedData.sessionId).toBe(sessionId);
       expect(emittedData.error).toBe('Custom message');

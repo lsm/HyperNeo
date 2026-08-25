@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/model switching, file/git operations, MCP servers, checkpoints, and Space multi-agent workflows.
 
-- **Runtime:** Bun 1.3.14 (pinned in root `package.json`)
+- **Runtimes:** Bun 1.3.14 (pinned release runtime, root `package.json`) and Deno 2.9.x (supported alternative for the daemon; see `docs/supported-runtimes.md`)
 - **Backend:** Hono, Claude Agent SDK, SQLite
 - **Frontend:** Preact + Signals + Vite + Tailwind; use Preact conventions, not React-specific APIs
 - **Transport:** custom MessageHub RPC/pub-sub protocol over WebSocket
@@ -32,6 +32,9 @@ Workspace aliases resolve directly to source: `@hyperneo/shared`, `@hyperneo/dae
 ```bash
 # Development — always isolate the DB in a worktree
 make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
+
+# Daemon under Deno (dual support) — same DB isolation rule; needs `bun install` first
+cd packages/daemon && DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db bun run dev:deno
 
 # Quality
 bun run check        # lint, types, knip, session/schema/test-quality guards
@@ -59,6 +62,7 @@ Prefer unit/component tests; add E2E coverage only when explicitly requested or 
 - Zero comments in `.ts`/`.tsx` sources: no line, block, or JSDoc comments — enforced by `bun run check:no-comments` (CI). Exempt functional directives only: shebangs, `/// <reference>`, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore`, coverage ignores (`v8`/`istanbul`/`c8`).
 - Oxlint rejects explicit `any`, unused variables, and `console.*` in application code. Entry points and tests are exempt; conditional startup logging uses `const logInfo = verbose ? console.log : () => {};`.
 - Make surgical changes: preserve surrounding idioms and avoid unrelated cleanup.
+- For new work in `packages/daemon` and `packages/web`, business logic paths compose as ONE direct superpipe pipeline (ADR 0004, `docs/adr/0004-superpipe-pipelines.md`): named for the business operation, mixing decision/transform/effect stages, `!dep` halts for early exits. Never hand-roll imperative gate cascades when a pipeline fits, and never pre-classify a flow as decision-vs-staged — compose directly; the existing `decisionRun`/`stagedRun` combinators may be used where they fit, but nothing requires choosing a category.
 - The daemon DB has a PID lock. Always provide a unique `DB_PATH` when running from a worktree.
 - Daemon startup deletes `process.env.CLAUDECODE` so SDK subprocesses can launch inside Claude Code.
 - Credential discovery in `packages/daemon/src/lib/config.ts`: environment → `~/.claude/.credentials.json` → macOS Keychain → `~/.claude/settings.json` environment block.

@@ -1,14 +1,14 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
-import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
-import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
-import { runMigration171 } from './m171-backfill-post-approval-review-channels';
-import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
-import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
-import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
-import { runMigration196 as runMigration196External } from './m196-scope-reviewer-bash-patterns';
-import { runMigration198 } from './m198-session-counters';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates.ts';
+import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates.ts';
+import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents.ts';
+import { runMigration171 } from './m171-backfill-post-approval-review-channels.ts';
+import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents.ts';
+import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools.ts';
+import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions.ts';
+import { runMigration196 as runMigration196External } from './m196-scope-reviewer-bash-patterns.ts';
+import { runMigration198 } from './m198-session-counters.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug.ts';
 import {
   deriveArtifactKey,
   isArtifactShape,
@@ -17,17 +17,20 @@ import {
   type ArtifactShape,
 } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { createEvolutionTables } from './evolution';
-import { createLongHorizonAgentTables } from './long-horizon-agents';
-import { runMigration206 } from './m206-restamp-reviewer-depth-tiers';
-import { runMigration207 } from './m207-restamp-reviewer-review-modes';
-import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields';
-import { runMigration209 } from './m209-drop-inbox-agent-fk';
-import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import { createEvolutionTables } from './evolution.ts';
+import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
+import { runMigration206 } from './m206-restamp-reviewer-depth-tiers.ts';
+import { runMigration207 } from './m207-restamp-reviewer-review-modes.ts';
+import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields.ts';
+import { runMigration209 } from './m209-drop-inbox-agent-fk.ts';
+import { runMigration213 } from './m213-inactivity-watchdog.ts';
+import { runMigration214 } from './m214-backfill-session-agent-provenance.ts';
+import { runMigration215 } from './m215-space-agent-model-pool.ts';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
-} from './migration-space-reclaim';
+} from './migration-space-reclaim.ts';
 
 export function runMigrations(
   db: BunDatabase,
@@ -478,6 +481,12 @@ export function runMigrations(
   rewrite(migrationMarkerKey(211), () => runMigration211(db));
 
   rewrite(migrationMarkerKey(212), () => runMigration212(db));
+
+  run(migrationMarkerKey(213), () => runMigration213(db));
+
+  run(migrationMarkerKey(214), () => runMigration214(db));
+
+  run(migrationMarkerKey(215), () => runMigration215(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

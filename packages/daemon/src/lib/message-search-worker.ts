@@ -1,6 +1,6 @@
-import { Database as BunDatabase } from '../storage/sqlite-compat';
-import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search';
-import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
+import { Database as BunDatabase } from '../storage/sqlite-compat.ts';
+import type { MessageSearchParams, MessageSearchResponse } from '../storage/message-search.ts';
+import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository.ts';
 
 type SearchWorkerRequest = {
   id: string;

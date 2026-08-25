@@ -17,7 +17,7 @@ import { gunzipSync } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { getDataDir } from '../data-dir';
+import { getDataDir } from '../data-dir.ts';
 
 const isVerbose = process.env.HYPERNEO_VERBOSE;
 // oxlint-disable-next-line no-console

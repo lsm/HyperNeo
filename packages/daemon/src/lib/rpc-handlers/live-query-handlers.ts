@@ -16,15 +16,15 @@ import {
   sendStatusToDeliveryStatus,
 } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
-import type { TableChangeScope } from '../../storage/reactive-database';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters';
-import { Logger } from '../logger';
-import { hashString32 } from '../runtime-hash';
-import { mapActiveTurnEntryRow } from './activity-preview';
+import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
+import type { TableChangeScope } from '../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters.ts';
+import { Logger } from '../logger.ts';
+import { hashString32 } from '../runtime-hash.ts';
+import { mapActiveTurnEntryRow } from './activity-preview.ts';
 
-export { buildActiveTurnSummariesFromRows } from './activity-preview';
+export { buildActiveTurnSummariesFromRows } from './activity-preview.ts';
 
 export interface NamedQuery {
   sql: string;
@@ -209,8 +209,8 @@ function mapActorMessageProjectionRow(row: Record<string, unknown>): Record<stri
 
 function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
-  const role = String(row.role ?? 'system');
-  const label = String(row.label ?? 'Agent');
+  const role = row.role == null ? '' : String(row.role);
+  const label = row.label == null ? '' : String(row.label);
   const kind =
     row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
   const taskId = String(row.taskId ?? '');
@@ -446,7 +446,7 @@ function mapSpaceTaskActivityRow(row: Record<string, unknown>): Record<string, u
         ? 'Task Agent'
         : kind === 'github'
           ? 'GitHub'
-          : formatTaskActivityLabel(rawLabel, 'Agent'),
+          : formatTaskActivityLabel(rawLabel, ''),
     role: rawRole,
     messageCount: Number(row.messageCount ?? 0),
   };
@@ -675,8 +675,8 @@ sdk_rows AS (
     NULL AS eventRef,
     json_object(
       'kind', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE 'worker' END,
-      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent') END,
-      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name, 'agent') END,
+      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, '') END,
+      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name, '') END,
       'sessionId', sm.session_id,
       'nodeExecutionId', ne.id,
       'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
@@ -685,8 +685,8 @@ sdk_rows AS (
     CASE
       WHEN sm.message_type = 'user' THEN json_object(
         'kind', 'worker',
-        'label', COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, 'Agent'),
-        'role', COALESCE(ne.agent_name, sm.provenance_agent_name, 'agent'),
+        'label', COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, ''),
+        'role', COALESCE(ne.agent_name, sm.provenance_agent_name, ''),
         'sessionId', sm.session_id,
         'nodeExecutionId', ne.id,
         'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
@@ -1177,7 +1177,7 @@ answer_candidates AS (
       WHERE json_extract(je.value, '$.type') = 'text'
         AND COALESCE(json_extract(je.value, '$.text'), '') != ''
     ), 1, 500) AS body,
-    COALESCE(sa.name, ne.agent_name, sp.provenance_agent_name, 'Agent') AS sourceLabel,
+    COALESCE(sa.name, ne.agent_name, sp.provenance_agent_name) AS sourceLabel,
     'agent' AS sourceKind,
     tsm.session_id AS sourceId,
     CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
@@ -1220,7 +1220,7 @@ retry_rows AS (
     ELSE 'API retry' END AS body,
     -- Carry the owning agent so the renderer can scope a retry burst to one
     -- worker instead of folding retries from different sessions together.
-    COALESCE(sa.name, ne.agent_name, sp.provenance_agent_name, 'Agent') AS sourceLabel,
+    COALESCE(sa.name, ne.agent_name, sp.provenance_agent_name) AS sourceLabel,
     'agent' AS sourceKind,
     tsm.session_id AS sourceId,
     CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
@@ -1727,18 +1727,16 @@ all_sessions AS (
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
       -- Post-approval workers have no node_executions row (sne is NULL), so
-      -- fall through to the session's promptProvenance.agentName rather than
-      -- the display placeholder 'agent'. sa resolves via provenance.agentId.
-      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
+      -- fall through to the session's promptProvenance.agentName. sa resolves
+      -- via provenance.agentId.
+      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
-      -- Fall back to a stable string when no node_executions row is
-      -- available (e.g. workflow-run cleanup detached the row after the
-      -- session emitted messages) — otherwise the mapper retypes the
-      -- author as 'system', misattributing genuine node-agent activity.
-      -- promptProvenance.agentName covers execution-less post-approval workers.
-      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
+      -- promptProvenance.agentName covers execution-less workers (e.g.
+      -- post-approval sessions whose node_executions row was never created
+      -- or was detached after the session emitted messages).
+      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     cs.task_id,
     cs.task_title,
@@ -1998,16 +1996,13 @@ sdk_rows_raw AS (
     END AS kind,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
-      -- Fall back to a stable string when no node_executions row is
-      -- available — otherwise the mapper retypes the author as 'system',
-      -- misattributing genuine node-agent messages. The promptProvenance
-      -- fallback attributes execution-less post-approval workers (e.g. the
-      -- merger) correctly instead of the display placeholder 'agent'.
-      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
+      -- promptProvenance.agentName attributes execution-less workers (e.g.
+      -- the post-approval merger) whose node_executions row is absent.
+      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'), 'agent')
+      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
     tt.id AS taskId,
@@ -2268,11 +2263,11 @@ sdk_rows AS (
     END AS kind,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
-      ELSE COALESCE(sne.agent_name, 'agent')
+      ELSE COALESCE(sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS role,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      ELSE COALESCE(sa.name, sne.agent_name, 'agent')
+      ELSE COALESCE(sa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
     tt.id AS taskId,
@@ -2298,7 +2293,8 @@ sdk_rows AS (
     ON sne.task_id = tt.id
    AND sne.session_id = sm.session_id
    AND sne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
   WHERE (
     sm.conversation_turn_index >= rt.minTurn
     OR (

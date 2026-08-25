@@ -1069,7 +1069,9 @@ describe('deferred external event overflow cap', () => {
       cap: 100,
       ops,
     });
-    expect(folded).toBe(2);
+    expect(folded?.foldedRows).toBe(2);
+    expect(folded?.supersededUuids).toEqual(['u-0', 'u-1']);
+    expect(folded?.envelopeDbId).toBe('db-saved-1');
     expect(opsCalls).toEqual(['save', 'supersede']);
     expect(saved).toHaveLength(1);
     expect(saved[0]?.status).toBe('deferred');
@@ -1133,7 +1135,7 @@ describe('deferred external event overflow cap', () => {
       cap: 100,
       ops,
     });
-    expect(folded).toBe(0);
+    expect(folded).toBeNull();
     expect(saveCalls).toBe(0);
     expect(supersedeCalls).toBe(0);
   });

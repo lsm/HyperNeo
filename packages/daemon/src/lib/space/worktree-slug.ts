@@ -1,4 +1,4 @@
-import { slugify, resolveCollision } from './slug';
+import { slugify, resolveCollision } from './slug.ts';
 
 export function worktreeSlug(
   taskTitle: string,

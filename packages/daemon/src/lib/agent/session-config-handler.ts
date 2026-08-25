@@ -1,8 +1,8 @@
 import type { Session, McpServerConfig } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
-import { SettingsManager } from '../settings-manager';
-import { Logger } from '../logger';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
+import { SettingsManager } from '../settings-manager.ts';
+import { Logger } from '../logger.ts';
 
 export interface SessionConfigHandlerContext {
   readonly session: Session;

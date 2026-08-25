@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
-import type { Database } from '../../storage/database';
+import type { Database } from '../../storage/database.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 export function setupTestHandlers(messageHub: MessageHub, db: Database): void {

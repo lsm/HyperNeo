@@ -1,5 +1,5 @@
 import { NON_DELEGATING_GENERAL_PROMPT } from '@hyperneo/prompts';
-import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
+import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session.ts';
 import type {
   AgentDefinition,
   DeclarativeToolGuard,
@@ -19,15 +19,15 @@ import { isScopedBashToolEntry } from '@hyperneo/shared';
 import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
-} from '../../../storage/repositories/agent-memory-repository';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import { inferProviderForModel } from '../../providers/registry';
-import { Logger } from '../../logger';
-import { SUB_SESSION_FEATURES } from './seed-agents';
-import { deriveWorkerDisallowedTools } from './tool-policy';
+} from '../../../storage/repositories/agent-memory-repository.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import { inferProviderForModel } from '../../providers/registry.ts';
+import { Logger } from '../../logger.ts';
+import { SUB_SESSION_FEATURES } from './seed-agents.ts';
+import { deriveWorkerDisallowedTools } from './tool-policy.ts';
 import { createHash } from 'node:crypto';
 
-const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
+export const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
 export const NON_DELEGATING_GENERAL_AGENT: AgentDefinition = {
   description:
@@ -68,6 +68,7 @@ export interface SlotResolutionContext {
 
 export interface SlotOverrides {
   model?: string;
+  provider?: string;
   thinkingLevel?: SpaceWorkerAgent['thinkingLevel'];
   customPrompt?: string;
   replaceAgentPrompt?: boolean;
@@ -448,7 +449,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
   const provider = slotOverrides?.model
-    ? inferProviderForModel(model)
+    ? (slotOverrides?.provider ?? inferProviderForModel(model))
     : (customAgent.provider ?? inferProviderForModel(model));
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);

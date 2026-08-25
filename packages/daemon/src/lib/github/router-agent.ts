@@ -1,9 +1,9 @@
 import type { GitHubEvent, RoutingResult, SecurityCheckResult } from '@hyperneo/shared';
-import type { RoutingClassification } from './prompts/router-prompt';
-import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt';
-import { Logger } from '../logger';
-import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver';
-import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
+import type { RoutingClassification } from './prompts/router-prompt.ts';
+import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt.ts';
+import { Logger } from '../logger.ts';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 
 const logger = new Logger('router-agent');
 

@@ -7,36 +7,36 @@ import type {
   MessageImage,
 } from '@hyperneo/shared';
 import { generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Database } from '../../storage/database';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Database } from '../../storage/database.ts';
 import {
   AgentSession,
   type AgentSessionRuntimeOptions,
   RECENTLY_EXITED_ROOT_PID_RETENTION_MS,
-} from '../agent/agent-session';
-import type { AuthManager } from '../auth-manager';
-import type { SettingsManager } from '../settings-manager';
-import { WorktreeManager } from '../worktree-manager';
-import { Logger } from '../logger';
-import { listProcesses, type ProcessSnapshot } from '../process-watchdog';
-import type { SkillsManager } from '../skills-manager';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { JobQueueProcessor } from '../../storage/job-queue-processor';
-import { SESSION_TITLE_GENERATION } from '../job-queue-constants';
-import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler';
+} from '../agent/agent-session.ts';
+import type { AuthManager } from '../auth-manager.ts';
+import type { SettingsManager } from '../settings-manager.ts';
+import { WorktreeManager } from '../worktree-manager.ts';
+import { Logger } from '../logger.ts';
+import { listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
+import type { SkillsManager } from '../skills-manager.ts';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
+import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
+import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
 
-import { SessionCache } from './session-cache';
+import { SessionCache } from './session-cache.ts';
 import {
   SessionLifecycle,
   type SessionLifecycleConfig,
   type CreateSessionParams,
   type ArchiveResourcesTrigger,
   type DeleteResourcesTrigger,
-} from './session-lifecycle';
-import { ToolsConfigManager } from './tools-config';
-import { MessagePersistence } from './message-persistence';
-import { ReferenceResolver } from './reference-resolver';
+} from './session-lifecycle.ts';
+import { ToolsConfigManager } from './tools-config.ts';
+import { MessagePersistence } from './message-persistence.ts';
+import { ReferenceResolver } from './reference-resolver.ts';
 
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;

@@ -1,6 +1,6 @@
-import type { InternalEventBus } from '../internal-event-bus';
-import type { ExternalEventStore } from './external-event-store';
-import type { ExternalEvent } from './types';
+import type { InternalEventBus } from '../internal-event-bus.ts';
+import type { ExternalEventStore } from './external-event-store.ts';
+import type { ExternalEvent } from './types.ts';
 
 export type PublishOutcome = 'published' | 'duplicate_terminal' | 'retryable_duplicate';
 

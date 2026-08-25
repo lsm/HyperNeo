@@ -1,7 +1,8 @@
 import type { AuthStatus } from '@hyperneo/shared';
-import type { Config } from '../config';
-import type { Database } from '../storage/database';
-import { EnvManager } from './env-manager';
+import type { Config } from '../config.ts';
+import type { Database } from '../storage/database.ts';
+import { EnvManager } from './env-manager.ts';
+import { providerEnvCoordinator } from './providers/provider-env-enrollment.ts';
 
 export class AuthManager {
   private envManager: EnvManager;
@@ -13,30 +14,32 @@ export class AuthManager {
   async initialize(): Promise<void> {}
 
   async getAuthStatus(): Promise<AuthStatus> {
-    const oauthToken = this.envManager.getOAuthToken();
-    if (oauthToken) {
-      return {
-        method: 'oauth_token',
-        isAuthenticated: true,
-        source: 'env',
-        user: {},
-      };
-    }
+    return providerEnvCoordinator.runWithLease('auth-manager', () => {
+      const oauthToken = this.envManager.getOAuthToken();
+      if (oauthToken) {
+        return {
+          method: 'oauth_token',
+          isAuthenticated: true,
+          source: 'env',
+          user: {},
+        };
+      }
 
-    const apiKey = this.envManager.getApiKey();
-    if (apiKey) {
+      const apiKey = this.envManager.getApiKey();
+      if (apiKey) {
+        return {
+          method: 'api_key',
+          isAuthenticated: true,
+          source: 'env',
+        };
+      }
+
       return {
-        method: 'api_key',
-        isAuthenticated: true,
+        method: 'none',
+        isAuthenticated: false,
         source: 'env',
       };
-    }
-
-    return {
-      method: 'none',
-      isAuthenticated: false,
-      source: 'env',
-    };
+    });
   }
 
   async getCurrentApiKey(): Promise<string | null> {

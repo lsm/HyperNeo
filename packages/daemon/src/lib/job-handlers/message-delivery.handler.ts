@@ -1,18 +1,21 @@
-import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import {
+  routeDriveTurnOutcome,
+  routeFeedSteerOutcome,
+  routeSteerPromoteFallback,
+} from '../agent/handler-outcome-routing.ts';
 import {
   asMessageDeliveryPayload,
   buildBatchedDeliveryContent,
   type DeliveryLoadResult,
   flattenDeliveryText,
-  isUniqueConstraintError,
   MAX_ACP_STEER_PARKS,
-  MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
-} from '../agent/message-delivery';
-import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics';
-import { Logger } from '../logger';
+} from '../agent/message-delivery.ts';
+import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics.ts';
+import { Logger } from '../logger.ts';
 
 export interface MessageDeliveryHandlerDeps {
   jobQueue: JobQueueRepository;
@@ -114,24 +117,20 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         reportStage ? { reportStage } : undefined
       );
       const result = await turn;
-      if (result.outcome === 'blocked') {
-        deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
-        return { parked: 'sdk_resume_choice', retryAt: result.retryAt };
+      const route = routeDriveTurnOutcome(result);
+      if ('deadLetter' in route) {
+        throw new DeadLetterImmediatelyError(route.deadLetter);
       }
-      if (result.outcome === 'recovery_pending') {
-        deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
-        return { parked: 'limit_recovery', retryAt: result.retryAt };
+      if (route.reclaimSkip) {
+        metrics.recordReclaimSkip(route.reclaimSkip);
       }
-      if (result.outcome === 'aborted') {
+      if (route.settleSkipped) {
         await session.settleSkippedDelivery?.(payload.messageUuid);
-        return { outcome: 'aborted' };
       }
-      if (result.outcome === 'turn_terminated') {
-        metrics.recordReclaimSkip('turn_terminated');
-        await session.settleSkippedDelivery?.(payload.messageUuid);
-        return { outcome: 'completed', skipped: 'turn_terminated' };
+      if (route.mutation === 'requeue' && route.retryAt !== undefined) {
+        deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
       }
-      return { outcome: 'completed' };
+      return route.result;
     }
 
     if (alreadyConsumed) {
@@ -147,48 +146,46 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       signal,
       reportStage ? { reportStage } : undefined
     );
-    if (result.outcome === 'aborted') {
+    const needsParkBudget = result.outcome === 'park' || result.outcome === 'awaiting_acceptance';
+    const route = routeFeedSteerOutcome(result, {
+      parkCount: needsParkBudget ? deps.jobQueue.getParkCount(job.id) : 0,
+      waitingForInput: result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false,
+      now: Date.now(),
+    });
+    if ('deadLetter' in route) {
+      throw new DeadLetterImmediatelyError(route.deadLetter);
+    }
+    if (route.settleSkipped) {
       await session.settleSkippedDelivery?.(payload.messageUuid);
-      return { outcome: 'aborted' };
     }
-    if (result.outcome === 'park') {
-      const waitingForInput = session.isWaitingForInput?.() ?? false;
-      if (!waitingForInput && deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
-        throw new DeadLetterImmediatelyError(
-          'Steer parked past its budget — owning turn never unblocked'
-        );
-      }
-      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      if (waitingForInput) {
-        deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
-      } else {
-        deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
-      }
-      return { parked: waitingForInput ? 'turn_blocked_gate_open' : 'turn_blocked', retryAt };
-    }
-    if (result.outcome === 'awaiting_acceptance') {
-      if (deps.jobQueue.getParkCount(job.id) >= MAX_ACP_STEER_PARKS) {
-        throw new DeadLetterImmediatelyError(
-          'ACP steer awaited acceptance past its budget — subprocess never accepted'
-        );
-      }
-      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
-      return { parked: 'acp_awaiting_acceptance', retryAt };
-    }
-    if (result.outcome === 'promote') {
+    if (route.mutation === 'requeue' && route.retryAt !== undefined) {
+      deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
+    } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
+      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
+    } else if (route.mutation === 'requeueAs') {
       try {
-        deps.jobQueue.requeueAs(job.id, 'turn', Date.now(), job.claimToken);
-        return { outcome: 'superseded', promoted: 'turn' };
+        deps.jobQueue.requeueAs(
+          job.id,
+          route.requeueRole ?? 'turn',
+          route.retryAt ?? Date.now(),
+          job.claimToken
+        );
+        return route.result;
       } catch (err) {
-        if (isUniqueConstraintError(err)) {
-          const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-          deps.jobQueue.requeueAs(job.id, 'steer', retryAt, job.claimToken);
-          return { outcome: 'superseded', promoted: 'steer' };
+        const fallback = routeSteerPromoteFallback(err, { now: Date.now() });
+        if (!fallback) throw err;
+        if ('deadLetter' in fallback) {
+          throw new DeadLetterImmediatelyError(fallback.deadLetter);
         }
-        throw err;
+        deps.jobQueue.requeueAs(
+          job.id,
+          fallback.requeueRole ?? 'steer',
+          fallback.retryAt ?? Date.now(),
+          job.claimToken
+        );
+        return fallback.result;
       }
     }
-    return { outcome: 'consumed' };
+    return route.result;
   };
 }

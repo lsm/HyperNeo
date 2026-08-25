@@ -1,5 +1,7 @@
 # Survey: `sdk-message-repository.ts` — pilot-chain proposal (task #1249)
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Analysis-only survey for the superpipe program (ADR 0004). Base: `origin/dev` @
 `b6c5b36c2`. Target: `packages/daemon/src/storage/repositories/sdk-message-repository.ts`
 (2,199 lines) — the message persistence & projection core; every message in the
@@ -272,7 +274,8 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   a concurrent delivery change between snapshot and apply fails that row
   instead of executing stale timestamp/turn/sequence instructions — the
   read → plan → CAS-within-transaction → apply contract of ADR Phase 4
-  (`docs/adr/0004-superpipe-decision-pipelines.md:701–703`). Today's
+  (`docs/adr/history/0004-pilots.md`, archived Roadmap, Phase 4 row — "read →
+  plan → CAS within transaction → apply effects after commit"). Today's
   unconditional `WHERE id IN` update keeps this window theoretical only
   because the connection is synchronous and single-threaded; the
   plan/interpret boundary must not widen it.

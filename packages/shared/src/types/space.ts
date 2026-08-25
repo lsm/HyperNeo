@@ -1,7 +1,7 @@
-import type { ThinkingLevel } from '../types';
-import type { TaskRestriction } from './neo';
-import type { McpServerConfig } from './sdk-config';
-import type { SettingSource } from './settings';
+import type { ThinkingLevel } from '../types.ts';
+import type { TaskRestriction } from './neo.ts';
+import type { McpServerConfig } from './sdk-config.ts';
+import type { SettingSource } from './settings.ts';
 
 export type SpaceStatus = 'active' | 'archived';
 
@@ -105,6 +105,29 @@ export interface SpaceLongHorizonAgentGoal {
   createdAt: number;
   updatedAt: number;
 }
+
+export type SpaceGoalOwnerAgentState = 'active' | 'missing' | 'paused' | 'disabled' | 'archived';
+
+export interface SpaceGoalOwnerCandidate {
+  agentId: string;
+  relationship: SpaceLongHorizonAgentRelationship;
+  createdAt: number;
+}
+
+export type SpaceGoalOwnerResolution =
+  | {
+      action: 'resolved';
+      owner: SpaceGoalOwnerCandidate;
+      conflicts: SpaceGoalOwnerCandidate[];
+    }
+  | {
+      action: 'degraded';
+      reason: SpaceGoalOwnerAgentState;
+      owner: SpaceGoalOwnerCandidate;
+      conflicts: SpaceGoalOwnerCandidate[];
+    }
+  | { action: 'coordinator_fallback'; coordinatorAgentId: string }
+  | { action: 'no_recipient' };
 
 export interface SpaceLongHorizonAgentForgeScope {
   agentId: string;
@@ -750,6 +773,7 @@ export interface SpaceWorkerAgent {
   settingSources?: SettingSource[];
   templateName?: string | null;
   templateHash?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[];
   createdAt: number;
   updatedAt: number;
 }
@@ -793,6 +817,7 @@ export interface CreateSpaceWorkerAgentParams {
   settingSources?: SettingSource[] | null;
   templateName?: string | null;
   templateHash?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[];
 }
 
 export interface UpdateSpaceWorkerAgentParams {
@@ -808,6 +833,7 @@ export interface UpdateSpaceWorkerAgentParams {
   settingSources?: SettingSource[] | null;
   templateName?: string | null;
   templateHash?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
 }
 
 export interface SpaceWorkerAgentDriftEntry {
@@ -1081,6 +1107,13 @@ export interface EventInterest {
   label?: string;
 }
 
+export interface WorkerAgentModelPoolEntry {
+  model: string;
+  provider?: string;
+  maxConcurrent: number;
+  weight: number;
+}
+
 export interface WorkflowNodeAgent {
   agentId: string;
   name: string;
@@ -1270,7 +1303,7 @@ export interface ExportedWorkflowNode {
 }
 
 export interface ExportedSpaceWorkerAgent {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   type: 'agent';
   name: string;
   handle?: string;
@@ -1281,11 +1314,12 @@ export interface ExportedSpaceWorkerAgent {
   systemPrompt?: string;
   instructions?: string;
   tools?: string[];
-  settingSources?: import('./settings').SettingSource[];
+  settingSources?: import('./settings.ts').SettingSource[];
+  modelPool?: WorkerAgentModelPoolEntry[];
 }
 
 export interface ExportedSpaceWorkflow {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   type: 'workflow';
   name: string;
   description?: string;
@@ -1302,7 +1336,7 @@ export interface ExportedSpaceWorkflow {
 }
 
 export interface SpaceExportBundle {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   type: 'bundle';
   name: string;
   description?: string;

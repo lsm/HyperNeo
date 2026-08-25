@@ -1,5 +1,5 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
-import type { QueryLike } from './agent/query-like';
+import type { QueryLike } from './agent/query-like.ts';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import {
@@ -100,7 +100,19 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
 
 function getCuratedModelIds(providerId: string): Set<string> | undefined {
   const curatedModels = getProviderRegistry().getCuratedModels(providerId);
-  return curatedModels === undefined ? undefined : new Set(curatedModels.map((model) => model.id));
+  if (curatedModels === undefined) return undefined;
+  const curatedIds = new Set<string>();
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  for (const curated of curatedModels) {
+    curatedIds.add(curated.id);
+    if (!KimiProvider.isCapacityTaggedModelId(curated.id)) {
+      const canonical = findInModels(staticProviderModels, curated.id)?.id;
+      if (canonical) curatedIds.add(canonical);
+    }
+  }
+  return curatedIds;
 }
 
 function filterProviderModels(providerId: string, models: ModelInfo[]): ModelInfo[] {
@@ -337,6 +349,34 @@ function fallbackModelsFor(provider: Provider): ModelInfo[] {
   return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
 }
 
+function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) return models;
+  const knownIds = new Set(models.map((model) => model.id));
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  const missing = curatedModels.flatMap((curated) => {
+    if (knownIds.has(curated.id)) return [];
+    const known = findInModels(staticProviderModels, curated.id);
+    if (known) return [{ ...known }];
+    return [
+      {
+        id: curated.id,
+        name: curated.name ?? curated.id,
+        alias: '',
+        family: providerId,
+        provider: providerId,
+        contextWindow: 128000,
+        description: `Curated model ${curated.name ?? curated.id}`,
+        releaseDate: '',
+        available: true,
+      },
+    ];
+  });
+  return missing.length === 0 ? models : [...models, ...missing];
+}
+
 async function loadProviderModels(
   provider: Provider,
   options?: { forceRemote?: boolean }
@@ -345,10 +385,13 @@ async function loadProviderModels(
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
-    const models =
+    const discovered =
       options?.forceRemote && provider.listRemoteModels
         ? await provider.listRemoteModels({ force: true })
-        : await provider.getModels();
+        : null;
+    const models = discovered
+      ? withCuratedEntries(provider.id, discovered)
+      : await provider.getModels();
     if (
       models.length > 0 ||
       provider.hasCuratedModelList?.() ||
@@ -597,6 +640,64 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
   replaceProviderModelsInCache(providerId, result.models);
   clearProviderFailure(providerId);
   clearProviderRetry(providerId);
+}
+
+export type ProviderRecoveryOutcome = 'no-op' | 'recovered' | 'failed';
+
+export async function recoverDormantProvider(providerId: string): Promise<ProviderRecoveryOutcome> {
+  if (getProviderFailure(providerId)?.errorKind !== 'credential') return 'no-op';
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) return 'no-op';
+
+  clearProviderRetry(providerId);
+  provider.clearModelCache?.();
+
+  const generationAtStart = providerRetryGeneration;
+  const failureAtStart = getProviderFailure(providerId);
+  const probeSeq = ++modelLoadSequence;
+  const result = await raceProviderProbe(
+    loadProviderModels(provider),
+    PROVIDER_RETRY_PROBE_TIMEOUT_MS
+  );
+  if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    if (providerRetryGeneration === generationAtStart) {
+      armProviderRetryTimer(providerId);
+      return 'failed';
+    }
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    if (providerRetryGeneration !== generationAtStart) {
+      return getProviderFailure(providerId) ? 'failed' : 'no-op';
+    }
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      unavailableProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
+    return 'failed';
+  }
+  const currentFailure = getProviderFailure(providerId);
+  if (providerRetryGeneration !== generationAtStart && currentFailure !== failureAtStart) {
+    return currentFailure ? 'failed' : 'no-op';
+  }
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+  if (providerRetryGeneration !== generationAtStart) {
+    return 'recovered';
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  return 'recovered';
 }
 
 function isCacheStale(cacheKey: string): boolean {
@@ -892,7 +993,11 @@ export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo 
     for (const model of models) {
       for (const rawPrefix of model.providerAliasPrefixes ?? []) {
         const prefix = rawPrefix.toLowerCase();
-        if (normalized.startsWith(prefix) && (!bestPrefix || prefix.length > bestPrefix.length)) {
+        const boundary =
+          normalized === prefix ||
+          normalized.startsWith(`${prefix}-`) ||
+          normalized.startsWith(`${prefix}[`);
+        if (boundary && (!bestPrefix || prefix.length > bestPrefix.length)) {
           bestPrefix = { model, length: prefix.length };
         }
       }
@@ -1013,6 +1118,35 @@ export async function isValidModel(
   } catch {
     return false;
   }
+}
+
+export function isCuratedOutModel(
+  idOrAlias: string,
+  providerId: string,
+  cacheKey: string = 'global'
+): boolean {
+  const curatedIds = getCuratedModelIds(providerId);
+  if (curatedIds === undefined) {
+    return false;
+  }
+
+  const rawModels = readCachedModels(cacheKey);
+  const knownModel =
+    (rawModels &&
+      findInModels(
+        rawModels.filter((model) => model.provider === providerId),
+        idOrAlias
+      )) ??
+    findInModels(
+      STATIC_MODEL_METADATA.filter((model) => model.provider === providerId),
+      idOrAlias
+    );
+
+  if (knownModel) {
+    return !curatedIds.has(knownModel.id);
+  }
+
+  return !curatedIds.has(idOrAlias);
 }
 
 export async function resolveModelAlias(

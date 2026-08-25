@@ -1,7 +1,7 @@
 import type {
   PendingAgentMessageRecord,
   PendingMessageTargetKind,
-} from '../../../storage/repositories/pending-agent-message-repository';
+} from '../../../storage/repositories/pending-agent-message-repository.ts';
 
 export interface PendingQueueListing {
   targetName: string;

@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
   ListRemoteModelsOptions,
   ModelTier,
   Provider,
@@ -11,11 +12,12 @@ import type {
 } from '@hyperneo/shared/provider';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
+import { buildModelListUrl, fetchRemoteModelList } from './shared/model-list.js';
 import {
-  buildModelListUrl,
-  fetchRemoteModelList,
-  type RemoteModelListEntry,
-} from './shared/model-list.js';
+  mergeDiscoveredModels,
+  ProviderDiscoveryCache,
+  providerDiscoveryFingerprint,
+} from './shared/discovery-cache.js';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -123,7 +125,6 @@ export class KimiProvider implements Provider {
       provider: 'kimi',
       contextWindow: 262_144,
       providerAliases: ['KIMI', 'Kimi', 'kimi-k2.7-code', 'Kimi-K2.7-Code'],
-      providerAliasPrefixes: ['moonshot-'],
       preferContextWindowMetadata: true,
       thinkingModes: 'on',
       description: 'Kimi Code model from Moonshot Claude Code integration docs.',
@@ -135,9 +136,10 @@ export class KimiProvider implements Provider {
   private readonly env: NodeJS.ProcessEnv;
   private credentials: ProviderCredentials | null = null;
   private defaultRegion: KimiRegion = 'china';
+  private curatedModels: CuratedModel[] | undefined;
 
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
-  private readonly modelListCache = new Map<string, RemoteModelListEntry>();
+  private readonly discoveryCache = new ProviderDiscoveryCache();
   private static readonly PROBE_TTL_MS = 30_000;
 
   constructor(
@@ -151,7 +153,7 @@ export class KimiProvider implements Provider {
   setCredentials(credentials: ProviderCredentials): void {
     this.credentials = credentials;
     this.probeCache.clear();
-    this.modelListCache.clear();
+    this.discoveryCache.clear();
   }
 
   getCredentials(): ProviderCredentials | null {
@@ -159,7 +161,14 @@ export class KimiProvider implements Provider {
   }
 
   setDefaultRegion(region: KimiRegion): void {
+    if (region !== this.defaultRegion) {
+      this.discoveryCache.clear();
+    }
     this.defaultRegion = region;
+  }
+
+  clearModelCache(): void {
+    this.discoveryCache.clear();
   }
 
   getDefaultRegion(): KimiRegion {
@@ -194,9 +203,10 @@ export class KimiProvider implements Provider {
     return (
       id === 'k3' ||
       id === 'kimi-k3' ||
-      id === 'k3-256k' ||
-      id === 'kimi-k3-256k' ||
-      id.startsWith('moonshot-k3')
+      id === 'moonshot-k3' ||
+      id.startsWith('k3-') ||
+      id.startsWith('kimi-k3-') ||
+      id.startsWith('moonshot-k3-')
     );
   }
 
@@ -218,9 +228,30 @@ export class KimiProvider implements Provider {
       id === 'kimi-for-coding' ||
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
-      id === 'kimi-for-coding-highspeed' ||
-      id.startsWith('moonshot-')
+      id === 'kimi-for-coding-highspeed'
     );
+  }
+
+  private static isDiscoveredKimiModelId(modelId: string): boolean {
+    const id = KimiProvider.normalizeKimiModelId(modelId);
+    if (id.includes(':')) return false;
+    return (
+      id === 'kimi' ||
+      id === 'k3' ||
+      id.startsWith('kimi-') ||
+      id.startsWith('moonshot-') ||
+      id.startsWith('k3-')
+    );
+  }
+
+  static isCapacityTaggedModelId(modelId: string): boolean {
+    return /-(8|32|128)k$/i.test(KimiProvider.normalizeKimiModelId(modelId));
+  }
+
+  private static discoveredThinkingModesFor(modelId: string): 'granular' | 'on' | 'off' {
+    if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
+    if (KimiProvider.resolveContextWindow(modelId) < 65_536) return 'off';
+    return 'on';
   }
 
   static resolveKimiTitleThinkingConfig(
@@ -340,7 +371,46 @@ export class KimiProvider implements Provider {
       type: 'enabled',
       budget_tokens: 16_000,
     });
-    return KimiProvider.MODELS;
+    let models: ModelInfo[];
+    try {
+      const discovered = await this.listRemoteModels();
+      models = mergeDiscoveredModels(KimiProvider.MODELS, discovered);
+    } catch {
+      models = KimiProvider.MODELS;
+    }
+    return this.mergeCuratedModels(models);
+  }
+
+  setCuratedModels(models: CuratedModel[] | undefined): void {
+    this.curatedModels = models;
+  }
+
+  getCachedModels(): ModelInfo[] | null {
+    if (!this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(KimiProvider.MODELS);
+  }
+
+  private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
+    if (!this.curatedModels?.length) return models;
+    const merged = [...models];
+    const present = new Set(merged.map((model) => model.id));
+    for (const curated of this.curatedModels) {
+      if (!this.ownsModel(curated.id)) continue;
+      const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
+      if (info && !present.has(info.id)) {
+        merged.push(info);
+        present.add(info.id);
+      }
+    }
+    return merged;
+  }
+
+  private discoveryFingerprint(): string {
+    return providerDiscoveryFingerprint({
+      region: this.env.KIMI_REGION ?? this.defaultRegion,
+      baseUrl: this.resolveModelListBaseUrl(),
+      credentialKey: this.getApiKey(),
+    });
   }
 
   async listRemoteModels(options: ListRemoteModelsOptions = {}): Promise<ModelInfo[]> {
@@ -348,22 +418,31 @@ export class KimiProvider implements Provider {
     if (!apiKey) {
       throw new Error('Kimi API key not configured. Set KIMI_API_KEY or MOONSHOT_API_KEY.');
     }
+    const cacheable = options.baseUrl === undefined;
+    const fingerprint = this.discoveryFingerprint();
+    if (!options.force && cacheable) {
+      const cached = this.discoveryCache.get(fingerprint);
+      if (cached) return cached;
+    }
     const baseUrl = this.resolveModelListBaseUrl(options.baseUrl);
     const models = await fetchRemoteModelList({
       url: buildModelListUrl(baseUrl, 'openai-chat'),
       headers: { Authorization: `Bearer ${apiKey}` },
-      force: options.force,
-      cache: options.baseUrl === undefined ? this.modelListCache : undefined,
       fetchImpl: this.fetchImpl,
     });
     const knownModels = models
       .map((model) => this.toRemoteModelInfo(model))
       .filter((model): model is ModelInfo => model !== null);
-    return Array.from(new Map(knownModels.map((model) => [model.id, model])).values());
+    const discovered = Array.from(new Map(knownModels.map((model) => [model.id, model])).values());
+    if (cacheable) {
+      this.discoveryCache.set(fingerprint, discovered);
+    }
+    return this.mergeCuratedModels(discovered);
   }
 
   ownsModel(modelId: string): boolean {
     const id = KimiProvider.normalizeKimiModelId(modelId);
+    if (id.includes(':')) return false;
     return (
       id === 'kimi' ||
       id === 'k3' ||
@@ -374,7 +453,8 @@ export class KimiProvider implements Provider {
       id === 'kimi-k2.7-code' ||
       id === 'kimi-k2.7-code-highspeed' ||
       id === 'kimi-for-coding-highspeed' ||
-      id.startsWith('moonshot-')
+      id.startsWith('moonshot-') ||
+      KimiProvider.isDiscoveredKimiModelId(modelId)
     );
   }
 
@@ -385,20 +465,39 @@ export class KimiProvider implements Provider {
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {
     if (KimiProvider.isKimiK3Model(modelId)) return 'granular';
     if (KimiProvider.isKimiK2Point7Model(modelId)) return 'on';
+    if (
+      this.ownsModel(modelId) &&
+      !KimiProvider.hasOneMContextSuffix(modelId) &&
+      KimiProvider.resolveContextWindow(modelId) < 65_536
+    ) {
+      return 'off';
+    }
     return undefined;
   }
 
   private static canonicalizeModelId(modelId: string): string {
     const id = KimiProvider.normalizeKimiModelId(modelId);
-    if (id === 'k3-256k' || id === 'kimi-k3-256k' || id.startsWith('moonshot-k3-256k')) {
+    if (
+      id === 'k3-256k' ||
+      id === 'kimi-k3-256k' ||
+      id === 'moonshot-k3-256k' ||
+      id.startsWith('moonshot-k3-256k-')
+    ) {
       return 'k3-256k';
     }
-    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) return 'kimi-k3[1m]';
+    if (
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'moonshot-k3' ||
+      (id.startsWith('moonshot-k3-') && !KimiProvider.isCapacityTaggedModelId(modelId))
+    ) {
+      return 'kimi-k3[1m]';
+    }
+    if (KimiProvider.hasOneMContextSuffix(modelId)) return modelId;
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed')
       return 'kimi-k2.7-code-highspeed';
     if (id === 'kimi-k2.7-code') return 'kimi-k2.7-code';
-    if (id === 'kimi' || id === 'kimi-for-coding' || id.startsWith('moonshot-'))
-      return 'kimi-for-coding';
+    if (id === 'kimi' || id === 'kimi-for-coding') return 'kimi-for-coding';
     return modelId;
   }
 
@@ -421,29 +520,49 @@ export class KimiProvider implements Provider {
     } else {
       useLegacy = region !== 'global';
     }
-    if (id === 'k3-256k' || id === 'kimi-k3-256k' || id.startsWith('moonshot-k3-256k')) {
+    if (
+      id === 'k3-256k' ||
+      id === 'kimi-k3-256k' ||
+      id === 'moonshot-k3-256k' ||
+      id.startsWith('moonshot-k3-256k-')
+    ) {
       return useLegacy ? 'k3-256k' : 'kimi-k3-256k';
     }
-    if (id === 'k3' || id === 'kimi-k3' || id.startsWith('moonshot-k3')) {
+    if (
+      id === 'k3' ||
+      id === 'kimi-k3' ||
+      id === 'moonshot-k3' ||
+      (id.startsWith('moonshot-k3-') && !KimiProvider.isCapacityTaggedModelId(modelId))
+    ) {
       return (useLegacy ? 'k3' : 'kimi-k3') + (oneM ? '[1m]' : '');
+    }
+    if (oneM && KimiProvider.isDiscoveredKimiModelId(modelId)) {
+      return modelId;
     }
     if (id === 'kimi-k2.7-code-highspeed' || id === 'kimi-for-coding-highspeed') {
       return useLegacy ? 'kimi-for-coding-highspeed' : 'kimi-k2.7-code-highspeed';
     }
-    if (
-      id === 'kimi-k2.7-code' ||
-      id === 'kimi' ||
-      id === 'kimi-for-coding' ||
-      id.startsWith('moonshot-')
-    ) {
+    if (id === 'kimi-k2.7-code' || id === 'kimi' || id === 'kimi-for-coding') {
       return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
+    }
+    if (KimiProvider.isDiscoveredKimiModelId(modelId)) {
+      return modelId;
     }
     return useLegacy ? 'kimi-for-coding' : 'kimi-k2.7-code';
   }
 
   static resolveContextWindow(modelId: string): number {
     const canonical = KimiProvider.canonicalizeModelId(modelId);
-    if (KimiProvider.normalizeKimiModelId(canonical) === 'kimi-k3') return 1_048_576;
+    const normalized = KimiProvider.normalizeKimiModelId(canonical);
+    if (normalized === 'k3-256k' || normalized === 'kimi-k3-256k') return 262_144;
+    if (
+      normalized === 'kimi-k3' ||
+      (KimiProvider.hasOneMContextSuffix(modelId) && KimiProvider.isDiscoveredKimiModelId(modelId))
+    ) {
+      return 1_048_576;
+    }
+    const capacityMatch = /-(8|32|128)k$/.exec(normalized);
+    if (capacityMatch) return parseInt(capacityMatch[1], 10) * 1024;
     return 262_144;
   }
 
@@ -536,17 +655,46 @@ export class KimiProvider implements Provider {
         (identifier) => KimiProvider.normalizeKimiModelId(identifier) === normalized
       );
     });
-    if (exactMatch) return exactMatch;
+    const exactMatchLosesSuffix =
+      exactMatch !== undefined &&
+      KimiProvider.hasOneMContextSuffix(model.id) &&
+      !KimiProvider.hasOneMContextSuffix(exactMatch.id);
+    if (exactMatch && !exactMatchLosesSuffix) return exactMatch;
     let prefixMatch: { model: ModelInfo; length: number } | undefined;
     for (const candidate of KimiProvider.MODELS) {
       for (const rawPrefix of candidate.providerAliasPrefixes ?? []) {
         const prefix = KimiProvider.normalizeKimiModelId(rawPrefix);
-        if (normalized.startsWith(prefix) && (!prefixMatch || prefix.length > prefixMatch.length)) {
+        if (
+          (normalized === prefix || normalized.startsWith(`${prefix}-`)) &&
+          (!prefixMatch || prefix.length > prefixMatch.length)
+        ) {
           prefixMatch = { model: candidate, length: prefix.length };
         }
       }
     }
-    return prefixMatch?.model ?? null;
+    if (
+      prefixMatch &&
+      KimiProvider.isKimiK3Model(model.id) &&
+      !KimiProvider.isCapacityTaggedModelId(model.id)
+    ) {
+      return prefixMatch.model;
+    }
+    if (KimiProvider.isDiscoveredKimiModelId(model.id)) {
+      return {
+        id: model.id,
+        name: model.name ?? model.id,
+        alias: model.id,
+        family: 'kimi',
+        provider: this.id,
+        contextWindow: KimiProvider.resolveContextWindow(model.id),
+        preferContextWindowMetadata: true,
+        thinkingModes: KimiProvider.discoveredThinkingModesFor(model.id),
+        description: `${model.name ?? model.id} via Kimi`,
+        releaseDate: '',
+        available: true,
+      };
+    }
+    return null;
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatusInfo> {

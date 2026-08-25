@@ -1,4 +1,4 @@
-import { Database as BunDatabase } from '../../storage/sqlite-compat';
+import { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runScopedQuery, type ScopedDbQueryResult } from './scoped-query.ts';
 import type { DbScopeType } from './scope-config.ts';
 

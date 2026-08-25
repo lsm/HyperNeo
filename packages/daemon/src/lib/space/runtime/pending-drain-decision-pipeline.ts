@@ -1,10 +1,10 @@
-import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository';
-import { decisionRun } from './decision-pipeline';
+import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import { decisionRun } from './decision-pipeline.ts';
 import {
   type PendingDrainAdmission,
   type PendingQueueListing,
   selectDrainablePendingRows,
-} from './pending-drain-gates';
+} from './pending-drain-gates.ts';
 
 export type PendingDrainDecision =
   | { action: 'drain'; rows: PendingAgentMessageRecord[] }

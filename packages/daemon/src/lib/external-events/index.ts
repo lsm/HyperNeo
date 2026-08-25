@@ -17,40 +17,40 @@ export {
   parseDeferredExternalEventText,
   partitionDeferredExternalEventRows,
   planDeferredExternalEventOverflow,
-} from './deferred-event-digest';
-export { formatExternalEventEssence } from './event-essence';
+} from './deferred-event-digest.ts';
+export { formatExternalEventEssence } from './event-essence.ts';
 export {
   classifyExternalEventTier,
   EXTERNAL_EVENT_TOPIC_TIERS,
   type ExternalEventDeliveryTier,
   externalEventTopicSuffix,
-} from './event-tiers';
+} from './event-tiers.ts';
 export {
   ExternalEventExtensionConfigStore,
   ensureExternalEventExtensionConfigTables,
-} from './extension-config-store';
+} from './extension-config-store.ts';
 export {
   ExternalEventExtensionManager,
   type RegisteredRoute,
-} from './extension-manager';
+} from './extension-manager.ts';
 export {
   type ExternalEventPublishedPayload,
   type ExternalEventPublisher,
   ExternalEventService,
   type PublishOutcome,
   type PublishResult,
-} from './external-event-service';
+} from './external-event-service.ts';
 export {
   ExternalEventStore,
   ExternalEventValidationError,
-} from './external-event-store';
-export { isReceivingStatus, TopicTrie } from './topic-trie';
+} from './external-event-store.ts';
+export { isReceivingStatus, TopicTrie } from './topic-trie.ts';
 export {
   KNOWN_SOURCES,
   type ValidationResult,
   validateGlobPattern,
   validateSource,
-} from './topic-validator';
+} from './topic-validator.ts';
 export {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -70,4 +70,4 @@ export {
   type StoreResult,
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
-} from './types';
+} from './types.ts';

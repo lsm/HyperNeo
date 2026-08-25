@@ -1,7 +1,30 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from 'bun:test';
+import { vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+const embeddedServerControl = vi.hoisted(() => ({ failNextStart: false }));
+
+vi.mock('../../../../../src/lib/providers/anthropic-copilot/server', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../../../src/lib/providers/anthropic-copilot/server')
+    >();
+  return {
+    ...actual,
+    startEmbeddedServer: async (
+      ...args: Parameters<typeof actual.startEmbeddedServer>
+    ): ReturnType<typeof actual.startEmbeddedServer> => {
+      if (embeddedServerControl.failNextStart) {
+        embeddedServerControl.failNextStart = false;
+        throw new Error('port in use');
+      }
+      return actual.startEmbeddedServer(...args);
+    },
+  };
+});
+
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
 import {
   initializeProviders,
@@ -255,6 +278,40 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         'loadStoredGitHubToken' as never
       ).mockResolvedValue(undefined as never);
       expect(await p.isAvailable()).toBe(false);
+    });
+
+    it('does not discover a COPILOT_GITHUB_TOKEN injected after construction (overlapping lease window)', async () => {
+      const env: NodeJS.ProcessEnv = {};
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', env);
+      env.COPILOT_GITHUB_TOKEN = 'gho_lease_window_token';
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      expect(await p.isAvailable()).toBe(false);
+    });
+
+    it('keeps discovering construction-time env tokens after the live env changes', async () => {
+      const env: NodeJS.ProcessEnv = { COPILOT_GITHUB_TOKEN: 'gho_baseline_token' };
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', env);
+      delete env.COPILOT_GITHUB_TOKEN;
+      spyOn(
+        p as unknown as Record<string, unknown>,
+        'loadStoredGitHubToken' as never
+      ).mockResolvedValue(undefined as never);
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+        undefined as never
+      );
+      expect(await p.isAvailable()).toBe(true);
     });
   });
 
@@ -1151,6 +1208,155 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
   });
 
+  describe('setCredentials() credential mutation', () => {
+    function fakeRuntime(): { server: unknown; client: unknown; stops: string[] } {
+      const stops: string[] = [];
+      return {
+        stops,
+        server: {
+          url: 'http://127.0.0.1:45678',
+          stop: async () => {
+            stops.push('server');
+          },
+        },
+        client: {
+          stop: async () => {
+            stops.push('client');
+          },
+        },
+      };
+    }
+
+    function fakeModel(): Record<string, unknown> {
+      return {
+        id: 'gpt-4o',
+        name: 'GPT-4o (Copilot)',
+        alias: 'copilot-gpt-4o',
+        family: 'gpt',
+        provider: 'anthropic-copilot',
+        contextWindow: 128000,
+        description: 'GPT-4o via GitHub Copilot',
+        releaseDate: '2025-01-01',
+        available: true,
+      };
+    }
+
+    async function settle(): Promise<void> {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    it('keeps runtime caches when the same token is re-applied', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_same_token' });
+      const runtime = fakeRuntime();
+      (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
+      (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      p.setCredentials({ type: 'oauth', accessToken: 'gho_same_token' });
+      await settle();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(runtime.stops).toEqual([]);
+      expect(state['serverCache']).toBe(runtime.server);
+      expect(state['clientCache']).toBe(runtime.client);
+      expect(state['dynamicModelsCache']).toEqual([fakeModel()]);
+    });
+
+    it('clears dynamic model caches through clearModelCache()', () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+      (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] =
+        Date.now() + 60_000;
+
+      p.clearModelCache();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(state['dynamicModelsCache']).toBeNull();
+      expect(state['dynamicModelsCacheExpiresAt']).toBe(0);
+    });
+
+    it('tears down the embedded runtime on logout without rebuilding it', async () => {
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+      const runtime = fakeRuntime();
+      const createSpy = spyOn(
+        p as unknown as Record<string, unknown>,
+        'createServer' as never
+      ).mockImplementation(async () => fakeRuntime().server as never);
+      (p as unknown as Record<string, unknown>)['serverCache'] = runtime.server;
+      (p as unknown as Record<string, unknown>)['clientCache'] = runtime.client;
+      (p as unknown as Record<string, unknown>)['storedCredentialToken'] = 'gho_logged_out';
+      (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [fakeModel()];
+
+      await p.logout();
+      await settle();
+
+      const state = p as unknown as Record<string, unknown>;
+      expect(runtime.stops).toEqual(['server', 'client']);
+      expect(state['serverCache']).toBeUndefined();
+      expect(state['clientCache']).toBeUndefined();
+      expect(state['dynamicModelsCache']).toBeNull();
+      expect(state['storedCredentialToken']).toBeNull();
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
+    it('rebuilds the credential-bound runtime when the OAuth flow completes', async () => {
+      const authDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-oauth-reset-'));
+      const p = new AnthropicToCopilotBridgeProvider('/tmp', {}, authDir);
+      const runtime = fakeRuntime();
+      const replacement = fakeRuntime();
+      const internals = p as unknown as Record<string, unknown>;
+      spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+        async (credentialsVersion: number) => {
+          internals['clientCache'] = replacement.client;
+          internals['clientCredentialsVersion'] = credentialsVersion;
+          return replacement.server as never;
+        }
+      );
+      internals['serverCache'] = runtime.server;
+      internals['clientCache'] = runtime.client;
+      internals['dynamicModelsCache'] = [fakeModel()];
+      const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith('/login/device/code')) {
+          return new Response(
+            JSON.stringify({
+              device_code: 'device-code',
+              user_code: 'ABCD-1234',
+              verification_uri: 'https://github.com/login/device',
+              expires_in: 5,
+              interval: 0,
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(JSON.stringify({ access_token: 'gho_oauth_completed' }), {
+          status: 200,
+        });
+      });
+
+      try {
+        await p.startOAuthFlow();
+        for (let i = 0; i < 20 && runtime.stops.length < 2; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+
+        const state = p as unknown as Record<string, unknown>;
+        expect(runtime.stops).toEqual(['server', 'client']);
+        expect(state['serverCache']).toBe(replacement.server);
+        expect(state['clientCache']).toBe(replacement.client);
+        expect(state['dynamicModelsCache']).toBeNull();
+        expect(state['storedCredentialToken']).toBeNull();
+        expect(state['tokenCache']).toBeNull();
+      } finally {
+        fetchSpy.mockRestore();
+        fs.rmSync(authDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('ensureServerStarted() retry-after-failure', () => {
     it('clears serverStarting on rejection so the next call can retry', async () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
@@ -1159,7 +1365,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         async () => {
           callCount++;
           if (callCount === 1) throw new Error('transient failure');
-          return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+          return { url: 'http://127.0.0.1:9999', stop: async () => {} } as never;
         }
       );
 
@@ -1176,7 +1382,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
         async () => {
           createCount++;
-          return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+          return { url: 'http://127.0.0.1:9999', stop: async () => {} } as never;
         }
       );
 
@@ -1281,6 +1487,31 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       await expect(starting).rejects.toThrow('shutting down');
       expect(stopped).toBe(true);
       expect((provider as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
+    });
+
+    it('bounds the wait when an in-flight start never settles', async () => {
+      (provider as unknown as Record<string, unknown>)['serverStarting'] = new Promise(() => {});
+
+      jest.useFakeTimers();
+      try {
+        const shutdownPromise = provider.shutdown();
+        let settled = false;
+        void shutdownPromise.then(() => {
+          settled = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        jest.advanceTimersByTime(10_000);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await expect(shutdownPromise).resolves.toBeUndefined();
+        expect((provider as unknown as Record<string, unknown>)['shuttingDown']).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('is safe to call when server was never started', async () => {
@@ -1450,12 +1681,120 @@ describe('logout()', () => {
     await expect(p.logout()).rejects.toThrow('gh CLI');
   });
 
-  it('clears owned credentials even when an external source keeps the provider authenticated', async () => {
-    const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
-    p.setCredentials({ type: 'oauth', accessToken: 'gho_stored_tok' });
-    await expect(p.logout()).rejects.toThrow('COPILOT_GITHUB_TOKEN');
-    expect((p as unknown as Record<string, unknown>)['storedCredentialToken']).toBeNull();
-    expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
+  it('stops a late start and exits the restart loop once logged out', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    let createCalls = 0;
+    let serverStops = 0;
+    let releaseStart: (() => void) | undefined;
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      (() => {
+        createCalls++;
+        return new Promise((resolve) => {
+          releaseStart = () =>
+            resolve({
+              url: 'http://127.0.0.1:9999',
+              stop: async () => {
+                serverStops++;
+              },
+            });
+        });
+      }) as never
+    );
+
+    const restart = (
+      p as unknown as { restartServerForCurrentCredentials(): Promise<unknown> }
+    ).restartServerForCurrentCredentials();
+    for (let i = 0; i < 50 && !releaseStart; i++) {
+      await Promise.resolve();
+    }
+    expect(createCalls).toBe(1);
+
+    internals['loggedOut'] = true;
+    releaseStart?.();
+    await expect(restart).rejects.toThrow('shutting down');
+
+    expect(createCalls).toBe(1);
+    expect(serverStops).toBe(1);
+    expect(internals['serverCache']).toBeUndefined();
+  });
+
+  it('clears an abandoned startup on logout so a later login can restart the bridge', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    const abandoned = Promise.reject(new Error('never settles cleanly'));
+    abandoned.catch(() => {});
+    internals['serverStarting'] = abandoned;
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+      undefined as never
+    );
+    spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+      undefined as never
+    );
+
+    await p.logout();
+    expect(internals['serverStarting']).toBeUndefined();
+    expect(internals['loggedOut']).toBe(true);
+
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_new_login' });
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      async () => ({ url: 'http://127.0.0.1:9999', stop: async () => {} }) as never
+    );
+    await expect(p.ensureServerStarted()).resolves.toBe('http://127.0.0.1:9999');
+  });
+
+  it('does not clobber a replacement runtime when an abandoned restart settles after re-login', async () => {
+    const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+    const internals = p as unknown as Record<string, unknown>;
+    let createCalls = 0;
+    const pendingResolvers: Array<(server: unknown) => void> = [];
+    let replacementStops = 0;
+    spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+      (() => {
+        createCalls++;
+        return new Promise((resolve) => {
+          pendingResolvers.push(resolve);
+        });
+      }) as never
+    );
+
+    const abandoned = (
+      p as unknown as { restartServerForCurrentCredentials(): Promise<unknown> }
+    ).restartServerForCurrentCredentials();
+    for (let i = 0; i < 50 && pendingResolvers.length < 1; i++) {
+      await Promise.resolve();
+    }
+    expect(createCalls).toBe(1);
+
+    internals['loggedOut'] = true;
+    internals['serverStarting'] = undefined;
+
+    p.setCredentials({ type: 'oauth', accessToken: 'gho_relogin' });
+    expect(internals['loggedOut']).toBe(false);
+
+    const replacement = p.ensureServerStarted();
+    for (let i = 0; i < 50 && pendingResolvers.length < 2; i++) {
+      await Promise.resolve();
+    }
+    expect(createCalls).toBe(2);
+    const replacementServer = {
+      url: 'http://127.0.0.1:10000',
+      stop: async () => {
+        replacementStops++;
+      },
+    };
+    pendingResolvers[1]?.(replacementServer);
+    await expect(replacement).resolves.toBe('http://127.0.0.1:10000');
+
+    pendingResolvers[0]?.({ url: 'http://127.0.0.1:9999', stop: async () => {} });
+    await expect(abandoned).rejects.toThrow('shutting down');
+
+    for (let i = 0; i < 50; i++) {
+      await Promise.resolve();
+    }
+    expect(internals['serverCache']).toBe(replacementServer);
+    expect(replacementStops).toBe(0);
+    expect(createCalls).toBe(2);
   });
 
   it('stops the running bridge on logout', async () => {

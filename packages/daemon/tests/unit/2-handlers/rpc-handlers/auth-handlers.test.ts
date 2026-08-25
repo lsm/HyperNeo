@@ -4,6 +4,7 @@ import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handler
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
+import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
   recordClassifiedProviderFailure,
@@ -540,6 +541,43 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+    });
+
+    it('reads environment credentials for the logout early return only after a foreign lease window closes', async () => {
+      let envHasToken = false;
+      const seenWindowStates: boolean[] = [];
+      const credentialManager = {
+        getCredentials: mock(async () => null),
+        removeCredentials: mock(async () => {}),
+        hasEnvironmentCredentials: mock(() => {
+          seenWindowStates.push(envHasToken);
+          return envHasToken;
+        }),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({ logout: undefined });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.logout');
+      expect(handler).toBeDefined();
+
+      const token = await providerEnvCoordinator.acquire('anthropic.loadModelsFromSdk');
+      envHasToken = true;
+      const pending = handler!({ providerId: 'test-provider' }, {});
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(seenWindowStates).toEqual([]);
+
+      envHasToken = false;
+      providerEnvCoordinator.release(token);
+      const result = (await pending) as { success: boolean };
+
+      expect(seenWindowStates).toEqual([false]);
+      expect(result.success).toBe(false);
+      expect(providerEnvCoordinator.isLeaseHeld()).toBe(false);
     });
 
     it('returns managed-by-environment error when no provider logout or stored row exists', async () => {

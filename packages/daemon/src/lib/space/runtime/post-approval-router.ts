@@ -6,14 +6,17 @@ import type {
   UpdateSpaceTaskParams,
   PostApprovalRoute,
 } from '@hyperneo/shared';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import {
   interpolatePostApprovalTemplate,
   type PostApprovalTemplateContext,
-} from '../workflows/post-approval-template';
-import { Logger } from '../../logger';
-import { isSpawnSupersededError } from './workflow-node-execution-validation';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+} from '../workflows/post-approval-template.ts';
+import { Logger } from '../../logger.ts';
+import {
+  isSpawnSupersededError,
+  isTransientSpawnError,
+} from './workflow-node-execution-validation.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 
 const log = new Logger('post-approval-router');
 
@@ -48,9 +51,9 @@ export interface PostApprovalRouterDeps {
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
-  goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
+  goalService?: Pick<import('../goals/goal-service.ts').SpaceGoalService, 'handleTaskTerminal'>;
   evolutionScopeService?: Pick<
-    import('../evolution-scope-service').EvolutionScopeService,
+    import('../evolution-scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
 }
@@ -255,6 +258,13 @@ export class PostApprovalRouter {
     } catch (err) {
       if (isSpawnSupersededError(err)) {
         const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; the dispatch stays recorded as blocked for retry`;
+        log.warn(`PostApprovalRouter.route: ${reason}`);
+        clearPendingCompletionState(this.deps.taskRepo, task.id);
+        this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
+        return { mode: 'skipped', reason };
+      }
+      if (isTransientSpawnError(err)) {
+        const reason = `post-approval spawn for task ${task.id} deferred: ${err.message}; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
         clearPendingCompletionState(this.deps.taskRepo, task.id);
         this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });

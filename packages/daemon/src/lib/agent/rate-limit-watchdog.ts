@@ -1,5 +1,5 @@
 import type { FallbackModelEntry, MessageContent } from '@hyperneo/shared';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import {
   BACKOFF_LADDER_MS,
   type CooldownDecision,
@@ -7,10 +7,10 @@ import {
   computeCooldown,
   entryKey,
   selectNextFallback,
-} from './fallback-recovery';
-import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier';
-import type { LlmLimitAssessment } from './limit-error-llm-classifier';
-import type { ProcessingStateManager } from './processing-state-manager';
+} from './fallback-recovery.ts';
+import { cooldownFromReset, type LimitRetryHint } from './limit-error-classifier.ts';
+import type { LlmLimitAssessment } from './limit-error-llm-classifier.ts';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
 import {
   canRetryNow,
   decideRateLimitTrip,
@@ -18,7 +18,7 @@ import {
   type RateLimitWatchdogStatus,
   refinedResetAtMs,
   resolveWatchdogStatus,
-} from './rate-limit-watchdog-gates';
+} from './rate-limit-watchdog-gates.ts';
 
 export interface RateLimitWatchdogConfig {
   cooldownMs: number;

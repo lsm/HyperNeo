@@ -13,7 +13,7 @@
     "server:dev": "bun --watch src/index.ts",
     "build:old": "bun run build.ts",
     "start": "NODE_ENV=production bun src/server-prod.ts",
-    "typecheck": "tsc --build",
+    "typecheck": "bun ../../node_modules/typescript7/bin/tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --reporter dot --coverage"
@@ -45,6 +45,7 @@
     "happy-dom": "20.9.0",
     "tailwindcss": "4.2.4",
     "typescript": "6.0.3",
+    "typescript7": "npm:typescript@7.0.2",
     "vite": "8.0.10",
     "vitest": "4.1.5"
   }

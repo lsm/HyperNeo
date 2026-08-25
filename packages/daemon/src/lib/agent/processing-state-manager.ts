@@ -1,9 +1,9 @@
 import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SDKAssistantMessage, SDKMessage } from '@hyperneo/shared/sdk';
 import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
-import type { Database } from '../../storage/database';
-import { Logger } from '../logger';
+import type { Database } from '../../storage/database.ts';
+import { Logger } from '../logger.ts';
 
 type StreamingPhase = 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 
@@ -138,6 +138,10 @@ export class ProcessingStateManager {
 
   isTerminalIdleInFlight(): boolean {
     return this.terminalIdleTransitions > 0;
+  }
+
+  isTerminalIdlePending(): boolean {
+    return this.pendingTerminalIdleTransitions > 0;
   }
 
   async setIdle(opts?: {

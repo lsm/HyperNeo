@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   AppMcpServer,
@@ -7,8 +7,8 @@ import type {
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
 } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
-import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { SQLiteValue } from '../types.ts';
 
 const VALID_SOURCE_TYPES = new Set<AppMcpServerSourceType>(['stdio', 'sse', 'http']);
 const VALID_SOURCES = new Set<AppMcpServerSource>(['builtin', 'user', 'imported']);

@@ -1,4 +1,4 @@
-import { getDataDir } from '../../data-dir';
+import { getDataDir } from '../../data-dir.ts';
 import type {
   Provider,
   ProviderCapabilities,
@@ -19,7 +19,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { Logger } from '../../logger.js';
-import { buildCopilotEnv } from './bun-node-wrapper.js';
 import { COPILOT_ANTHROPIC_MODELS } from './models.js';
 
 const execFileAsync = promisify(execFile);
@@ -84,6 +83,24 @@ interface TokenCacheEntry {
 }
 
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
+const RUNTIME_SHUTDOWN_WAIT_MS = 10_000;
+
+function delay(ms: number): Promise<undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    timer.unref?.();
+  });
+}
+
+function awaitServerStartBounded(
+  starting: Promise<EmbeddedServer> | undefined
+): Promise<EmbeddedServer | undefined> {
+  if (!starting) return Promise.resolve(undefined);
+  return Promise.race([
+    starting.catch((): EmbeddedServer | undefined => undefined),
+    delay(RUNTIME_SHUTDOWN_WAIT_MS),
+  ]);
+}
 
 export class AnthropicToCopilotBridgeProvider implements Provider {
   readonly id = 'anthropic-copilot';
@@ -103,6 +120,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
   private shuttingDown = false;
   private loggedOut = false;
+  private restartGeneration = 0;
   private observedCuratedCatalog = false;
   private tokenCache: TokenCacheEntry | null = null;
   private storedCredentialToken: string | null = null;
@@ -125,12 +143,21 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     success: boolean;
   } | null = null;
 
+  private readonly credentialEnvBaseline: Readonly<{
+    COPILOT_GITHUB_TOKEN?: string;
+    GH_TOKEN?: string;
+  }>;
+
   constructor(
     private readonly cwd: string = process.cwd(),
     private readonly env: NodeJS.ProcessEnv = process.env,
     authDir?: string
   ) {
     this.authPath = path.join(authDir || getDataDir(), 'auth.json');
+    this.credentialEnvBaseline = Object.freeze({
+      COPILOT_GITHUB_TOKEN: env.COPILOT_GITHUB_TOKEN,
+      GH_TOKEN: env.GH_TOKEN,
+    });
   }
 
   setCredentials(credentials: ProviderCredentials): void {
@@ -450,9 +477,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       throw refusal;
     }
 
-    await this.serverStarting?.catch(() => {});
-    await this.stopServerAndClient();
     this.loggedOut = true;
+    const starting = this.serverStarting;
+    await awaitServerStartBounded(starting);
+    if (starting !== undefined && this.serverStarting === starting) {
+      this.serverStarting = undefined;
+    }
+    await this.stopServerAndClient();
   }
 
   private freshCachedExternalSource(): string | undefined {
@@ -463,10 +494,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async findExternalCredentialSource(): Promise<string | undefined> {
-    const envToken = this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN;
+    const envToken =
+      this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN || this.credentialEnvBaseline.GH_TOKEN;
     if (envToken) {
       if (envToken.startsWith('ghp_')) return undefined;
-      return this.env.COPILOT_GITHUB_TOKEN
+      return this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN
         ? EXTERNAL_SOURCE_LABELS['copilot-env']
         : EXTERNAL_SOURCE_LABELS['gh-env'];
     }
@@ -483,7 +515,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
-    await this.serverStarting?.catch(() => {});
+    await awaitServerStartBounded(this.serverStarting);
     await this.stopServerAndClient();
   }
 
@@ -547,13 +579,15 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
   }
 
   private async restartServerForCurrentCredentials(): Promise<EmbeddedServer> {
-    while (!this.shuttingDown) {
+    const generation = ++this.restartGeneration;
+    while (!this.shuttingDown && !this.loggedOut) {
+      if (generation !== this.restartGeneration) break;
       await this.stopServerAndClient();
-      if (this.shuttingDown) break;
+      if (this.shuttingDown || this.loggedOut || generation !== this.restartGeneration) break;
       const credentialsVersion = this.credentialsVersion;
       try {
         const server = await this.createServer(credentialsVersion);
-        if (this.shuttingDown) {
+        if (this.shuttingDown || this.loggedOut || generation !== this.restartGeneration) {
           await server.stop().catch(() => {});
           break;
         }
@@ -563,7 +597,11 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
         }
         await server.stop().catch(() => {});
       } catch (error) {
-        if (!this.shuttingDown && credentialsVersion === this.credentialsVersion) {
+        if (
+          !this.shuttingDown &&
+          !this.loggedOut &&
+          credentialsVersion === this.credentialsVersion
+        ) {
           throw error;
         }
       }
@@ -615,11 +653,16 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
     }
     if (stored) return { token: stored, source: 'auth-file' };
 
-    if (this.env.COPILOT_GITHUB_TOKEN) {
-      return { token: this.env.COPILOT_GITHUB_TOKEN, source: 'copilot-env' };
+    if (this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN) {
+      return {
+        token: this.credentialEnvBaseline.COPILOT_GITHUB_TOKEN,
+        source: 'copilot-env',
+      };
     }
 
-    if (this.env.GH_TOKEN) return { token: this.env.GH_TOKEN, source: 'gh-env' };
+    if (this.credentialEnvBaseline.GH_TOKEN) {
+      return { token: this.credentialEnvBaseline.GH_TOKEN, source: 'gh-env' };
+    }
 
     const ghCliToken = await this.tryGhCliToken();
     if (ghCliToken) return { token: ghCliToken, source: 'gh-cli' };
@@ -855,15 +898,25 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       if (token) {
         env.COPILOT_GITHUB_TOKEN = token;
       }
-      const client = new CopilotClient({
-        useStdio: true,
-        logLevel: 'error',
-        env: buildCopilotEnv(env),
-      });
-      await client.start();
-      if (credentialsVersion !== this.credentialsVersion) {
+      let client: CopilotClient;
+      try {
+        client = new CopilotClient({
+          useStdio: true,
+          logLevel: 'error',
+          env,
+        });
+        await client.start();
+      } catch (error) {
+        throw new Error(
+          `Failed to start GitHub Copilot client: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error }
+        );
+      }
+      if (credentialsVersion !== this.credentialsVersion || this.shuttingDown || this.loggedOut) {
         await client.stop().catch(() => {});
-        throw new Error('GitHub Copilot credentials changed during client startup');
+        throw new Error('GitHub Copilot client startup was superseded');
       }
       this.clientCache = client;
       this.clientCredentialsVersion = credentialsVersion;

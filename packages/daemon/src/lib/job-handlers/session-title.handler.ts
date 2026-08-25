@@ -1,5 +1,5 @@
-import type { Job } from '../../storage/repositories/job-queue-repository';
-import type { SessionLifecycle } from '../session/session-lifecycle';
+import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import type { SessionLifecycle } from '../session/session-lifecycle.ts';
 
 export async function handleSessionTitleGeneration(
   job: Job,

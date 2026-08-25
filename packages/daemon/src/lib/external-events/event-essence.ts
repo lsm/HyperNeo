@@ -1,4 +1,4 @@
-import type { ExternalEventPublishedPayload } from './external-event-service';
+import type { ExternalEventPublishedPayload } from './external-event-service.ts';
 
 export function formatExternalEventEssence(event: ExternalEventPublishedPayload): string {
   const payload = event.payload;

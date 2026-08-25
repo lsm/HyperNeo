@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   CreateSpaceGoalEventParams,
@@ -9,7 +9,7 @@ import type {
   SpaceGoalEventSource,
   SpaceGoalEventType,
 } from '@hyperneo/shared';
-import type { ReactiveDatabase } from '../reactive-database';
+import type { ReactiveDatabase } from '../reactive-database.ts';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
