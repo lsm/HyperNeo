@@ -93,11 +93,11 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/query-retry-routing.ts:classifyQueryRetryRoute`
 
 - **Current summary:** A 37-branch cascade that classifies a query failure into one of the `QueryRetryRoute` arms (`startup_timeout_retry`, `message_not_found_retry`, `transient_retry`, `provider_backoff`, `rate_limit_handoff`, `api_validation`, `aborted_noop`, `cleanup_noop`, `superseded_noop`, `terminal`). It is the classifier gate of the query-retry pipeline and is called by `query-runner.ts` on the error hot path.
-- **Proposed combinator:** Review correction — `classifyQueryRetryRoute` and `resolveDecision` compose as ONE directly named `decisionRun` (`route-query-retry`) for the business operation, not two separately-run pipelines. The classifier cascade and the finalizer switch become stage groups inside that single pipeline. The context carries `QueryRetryRouteInput` plus `route: QueryRetryRoute | null` and `decision: QueryRetryDecision | null`.
+- **Proposed combinator:** Review correction — `classifyQueryRetryRoute` and `resolveDecision` compose as ONE directly named pipeline (`route-query-retry`) for the business operation, not two separately-run pipelines. Note it is a **direct raw `superpipe` pipeline, not a `decisionRun`**: `decisionRun` hardcodes its halt predicate to `ctx.decision !== null` (`decision-pipeline.ts:11`), so classifier gates that set only `route` would never trigger the group halt and later gates — including the default terminal gate — would overwrite an earlier retry/no-op route. The direct pipeline declares its own `hasRoute`/`hasDecision` predicates and pipes `!hasRoute` after each classifier stage and `!hasDecision` after each finalizer stage.
 - **Input/output snapshot design:**
   - Input: `QueryRetryRouteInput` (`errorSignal`, `env`).
   - Output: `QueryRetryDecision` (route + finalizer).
-- **Pure core design:** The single pipeline runs two stage groups. First the classifier gates (each sets `route` and the pipeline halts the group once one fires):
+- **Pure core design:** The single pipeline runs two stage groups. Each classifier stage sets `route` when its predicate matches and is followed by a `!hasRoute` (`ctx.route !== null`) halt, so no later classifier — including the default terminal gate — can overwrite an earlier route:
   - `applySupersededClassifyGate`
   - `applyCleanupClassifyGate`
   - `applyStartupTimeoutClassifyGate`

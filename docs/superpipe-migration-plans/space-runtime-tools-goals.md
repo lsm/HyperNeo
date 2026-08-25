@@ -24,9 +24,9 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.publish` | Same semantics as tool `publish_task` and `onPublishTask` | `stagedRun` or `decisionRun` + shell | `routePublishTask` already exists; unification is the main win. |
 | `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onTaskCompleted` | Snapshot task/goal/scope/evidence, threshold check, optional job enqueue | `decisionRun` (admission), shell enqueues | No mid-flow effects; the only effect is the final job queue push. |
 | `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onSelfNag` | Snapshot scope/goal/policy/cursor/evidence, decide whether to enqueue self-nag | `decisionRun` (admission), shell enqueues | Same pattern as `onTaskCompleted`. |
-| `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope` | List schedules, pause/update/create schedule records | `stagedRun` | Effects on `ScheduleService`; should be wrapped in the optional `db` transaction. |
-| `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification` | Inside `runAtomic`; snapshot notification/goal, `decideClaimAdmission`, `apply`, update status | `stagedRun` inside `runAtomic` (or sync `superpipe` if `runAtomic` stays sync) | Atomic claim; effect stage is the goal update and notification status flip. |
-| `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | `stagedRun` inside `runAtomic` (or sync `superpipe`) | Most complex goal effect chain; needs snapshot/decide/effect/resnapshot. |
+| `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope` | List schedules, pause/update/create schedule records | Direct sync `superpipe` (`.end`) inside the optional `db` transaction (review correction: `stagedRun` is async-only) | Effects on `ScheduleService`; must commit atomically with the sync transaction. |
+| `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification` | Inside `runAtomic`; snapshot notification/goal, `decideClaimAdmission`, `apply`, update status | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Atomic claim; effect stage is the goal update and notification status flip. |
+| `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Most complex goal effect chain; needs gather/decide/effect stages. |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | `stagedRun` | Effects on `topicTrie` and repo; has in-memory rollback on repo failure. Compensation maps to `compensate`. |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:validateSubscriptionTargetTask` | Pure check: task exists, belongs to run, not terminal | `decisionRun` (or a `decide` stage inside the `registerSubscription` `stagedRun`) | Trivial target gate. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | `decisionRun` | Already called inside a per-target loop; replacing the if-cascade with a `decisionRun` makes the precedence testable. |
@@ -291,7 +291,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Pure core design**:
   - `decideReviewGoalOutcomeMode`: branches `discover` (no `notification_id` and no updates) or `claim`.
   - Inside `claim`, use `decideClaimAdmission` from `claim-admission-gates.ts`.
-- **Shell/effect wiring**: Effects: `goalService.listClaimableOutcomeNotifications`, `goalService.claimOutcomeNotification` (or, after migration, an inline `stagedRun` effect that applies the goal update and updates the notification status).
+- **Shell/effect wiring**: Effects: `goalService.listClaimableOutcomeNotifications`, `goalService.claimOutcomeNotification` (or, after migration, an inline effect that invokes the same sync claim pipeline).
 - **Step-by-step migration**:
   1. Define `stagedRun('review-goal-outcome', ...)`.
   2. `snapshot` validates `hasGoalUpdate` vs `disposition` rules.
@@ -299,7 +299,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   4. Branch `discover` → `snapshot` list notifications → `halt`.
   5. Branch `claim` → `snapshot` notification and goal; `decide` `claim-admission` (import existing `decisionRun`); `effect` `apply-goal-update` (when `mutatesGoalState`); `effect` `update-notification-status`; `halt`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
-- **Risks/caveats**: The `claimOutcomeNotification` call is currently inside `runAtomic` in `goal-service.ts`; after unification the atomicity should not be broken. Either keep `goalService.claimOutcomeNotification` as the effect primitive or migrate it to the same `stagedRun` and call it from both places.
+- **Risks/caveats**: The `claimOutcomeNotification` call is currently inside `runAtomic` in `goal-service.ts`; after unification the atomicity should not be broken. Either keep `goalService.claimOutcomeNotification` as the effect primitive or call the same sync claim pipeline from both places — never an async `stagedRun` inside the transaction.
 
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:get_task_detail` and `packages/daemon/src/lib/space/tools/space-agent-tools.ts:list_task_members`
 
@@ -468,7 +468,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope`
 
 - **Current summary**: Lists schedules for a scope, pauses stale ones, pauses all if the goal is gone, updates an existing schedule, or creates a new one based on the policy.
-- **Proposed combinator**: `stagedRun` (or `decisionRun` + transaction shell).
+- **Proposed combinator**: Direct sync `superpipe` pipeline (`.end`) inside the `db.transaction` shell (review correction: `stagedRun` is async-only; the sync SQLite transaction would commit when its Promise is returned).
 - **Input snapshot design**:
   ```ts
   interface SelfNagScheduleSyncState {
@@ -480,21 +480,21 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: `decideSelfNagScheduleSync` with branches: `pauseAllNoGoal`, `pauseNoCron`, `update`, `create`, `noOp`. Review correction: `pauseOrphans` is NOT a decision branch — it is not mutually exclusive with `update`/`create` (the current code first pauses stale schedules from a previous goal, then continues syncing the active goal's schedule; a scope can have both). It runs as a preliminary unconditional `effect` before `decide`, so a scope with both a stale schedule and a valid current policy still reaches `update`/`create`.
-- **Shell/effect wiring**: Effects call `scheduleService.pauseSchedule`, `updateSchedule`, `resumeSchedule`, `createGoalSchedule`. The shell should pass `db` and wrap the `stagedRun` in `db.transaction` when available.
+- **Shell/effect wiring**: Effects call `scheduleService.pauseSchedule`, `updateSchedule`, `resumeSchedule`, `createGoalSchedule`. Review correction — when `db` is supplied, the flow composes as a direct SYNCHRONOUS `superpipe` pipeline with `.end` executed inside `db.transaction(fn)()`: `stagedRun` executes through `endAsync`, so wrapping it in the synchronous SQLite transaction would commit as soon as the Promise is returned, leaving the normal tool paths (which pass `config.db`) with orphan pauses committed without the replacement schedule. When `db` is absent the same sync pipeline runs best-effort.
 - **Step-by-step migration**:
-  1. Define `stagedRun<SelfNagScheduleSyncState>('self-nag-schedule-sync', ...)`.
-  2. `snapshot` lists schedules, reads goal and policy.
-  3. `effect` `pause-orphan-schedules` pauses stale schedules unconditionally (preliminary, nonterminal).
-  4. `decide` selects the current-schedule branch.
-  5. Guarded `effect`s execute the schedule mutation.
-  6. `halt` returns `void` or `{ scheduleId }`.
-- **Tests**: `packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts` and any goal-automation schedule tests.
-- **Risks/caveats**: `scheduleService` operations are not currently CAS. The optional `db` transaction is the only atomicity mechanism. If `db` is absent, the flow is best-effort. The `stagedRun` effect stages must run inside the transaction and throw on failure; the transaction rolls back.
+  1. Define the direct sync pipeline `selfNagScheduleSyncRun` (`superpipe` + `.end`, effect functions synchronous).
+  2. Gather stage lists schedules, reads goal and policy.
+  3. Effect stage `pause-orphan-schedules` pauses stale schedules unconditionally (preliminary, nonterminal).
+  4. Decide stage selects the current-schedule branch (`!branchDecided` halt after).
+  5. Guarded effect stages execute the schedule mutation.
+  6. `.end` returns `void` or `{ scheduleId }`.
+- **Tests**: `packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts` and any goal-automation schedule tests. Add a row where a schedule mutation throws mid-flow with `db` present: no partial pause/update commits.
+- **Risks/caveats**: `scheduleService` operations are not currently CAS. The optional `db` transaction is the only atomicity mechanism. If `db` is absent, the flow is best-effort. All effect stages must run synchronously inside the transaction and throw on failure; the transaction rolls back.
 
 ### `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification`
 
 - **Current summary**: Inside `runAtomic`, loads notification and goal, checks authorization, identity, and revision, applies optional goal update, and flips the notification status.
-- **Proposed combinator**: `stagedRun` (or sync `superpipe` if `runAtomic` stays sync).
+- **Proposed combinator**: Direct sync `superpipe` pipeline with `.end`, executed inside the existing synchronous `runAtomic` (review correction: `stagedRun` is async-only — `endAsync` — and cannot run inside `db.transaction(fn)()` without committing before the effects finish).
 - **Input snapshot design**:
   ```ts
   interface ClaimOutcomeState {
@@ -506,21 +506,21 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: Reuse the existing `decideClaimAdmission` from `claim-admission-gates.ts` as the `decide` stage.
-- **Shell/effect wiring**: Effects: `params.apply(goal)` (if `mutatesGoalState`), `outcomeNotificationRepo.updateStatus`. The shell is the `runAtomic` block; the `stagedRun` runs inside it.
-- **Step-by-step migration**:
-  1. Replace the inline `decideClaimAdmission` call with a `stagedRun` that wraps it.
-  2. `snapshot` loads notification and goal, computes `authorizedAgentIds`.
-  3. `decide` runs `decideClaimAdmission`.
-  4. `effect` `apply-goal-update` (when `admit` and `mutatesGoalState`) calls `params.apply`.
-  5. `effect` `update-notification-status` calls `outcomeNotificationRepo.updateStatus`.
-  6. `halt` returns `ClaimOutcomeNotificationResult`.
+- **Shell/effect wiring**: Effects: `params.apply(goal)` (if `mutatesGoalState`), `outcomeNotificationRepo.updateStatus`. The shell is the `runAtomic` block; the sync pipeline runs inside it.
+- **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
+  1. Replace the inline `decideClaimAdmission` call with the sync `superpipe` pipeline that wraps it.
+  2. Gather stage loads notification and goal, computes `authorizedAgentIds`.
+  3. Decide stage runs `decideClaimAdmission` (`!decided` halt).
+  4. Effect stage `apply-goal-update` (when `admit` and `mutatesGoalState`) calls `params.apply`.
+  5. Effect stage `update-notification-status` calls `outcomeNotificationRepo.updateStatus`.
+  6. `.end` returns `ClaimOutcomeNotificationResult`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`.
 - **Risks/caveats**: Review correction — `stagedRun` always executes through `endAsync` and returns a Promise, while `runAtomic` invokes the synchronous `db.transaction(fn)()` wrapper. Passing an async pipeline to that wrapper commits as soon as the Promise is returned, so the apply/status-flip effects would run outside the transaction. Use a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic` (effect functions stay synchronous); merely converting `runAtomic` to an async variant cannot preserve atomicity without an async-capable database transaction primitive. The `params.apply` callback may be synchronous in current usage but is typed as a plain function; ensure it is not awaited if sync.
 
 ### `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal`
 
 - **Current summary**: Inside `runAtomic`, updates the task if needed, decides whether the new status is terminal, clears active task, records goal event, captures Forge evidence, calls goal automation, creates the next goal task if `autoTriggerNext`, and records an outcome notification.
-- **Proposed combinator**: `stagedRun` (or sync `superpipe` if `runAtomic` stays sync).
+- **Proposed combinator**: Direct sync `superpipe` pipeline with `.end`, executed inside the existing synchronous `runAtomic` (review correction: `stagedRun` is async-only — `endAsync` — and cannot run inside `db.transaction(fn)()` without committing before the effects finish).
 - **Input snapshot design**:
   ```ts
   interface HandleTaskTerminalState {
@@ -536,11 +536,11 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: Reuse `decideReportableTerminal` from `reportable-terminal-gates.ts` as one `decide` stage.
-- **Shell/effect wiring**: Effects: `taskRepo.updateTask`, `goalRepo.clearActiveTaskIfMatches`, `recordGoalEvent`, `evolutionScopeService.captureCompletedTaskEvidence`, `goalAutomationService.onTaskCompleted`, `createImmediateTaskInternal`, `recordOutcomeNotification`. The `runAtomic` shell must wrap the `stagedRun`.
-- **Step-by-step migration**:
-  1. Define `stagedRun<HandleTaskTerminalState>('handle-task-terminal', ...)`.
-  2. `snapshot` loads task and goal, computes `nextStatus`.
-  3. `decide` `is-terminal` returns `{ terminal: true/false }`. If `false`, `halt`.
+- **Shell/effect wiring**: Effects: `taskRepo.updateTask`, `goalRepo.clearActiveTaskIfMatches`, `recordGoalEvent`, `evolutionScopeService.captureCompletedTaskEvidence`, `goalAutomationService.onTaskCompleted`, `createImmediateTaskInternal`, `recordOutcomeNotification`. The `runAtomic` shell wraps the sync pipeline (a `stagedRun` here would return a Promise and commit the transaction before the effects finish).
+- **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
+  1. Define the direct sync pipeline `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effect functions).
+  2. Gather stage loads task and goal, computes `nextStatus`.
+  3. Decide stage `is-terminal` returns `{ terminal: true/false }`. If `false`, halt (`.end` returns early).
   4. `effect` `update-task` applies `transition.updates`.
   5. `resnapshot` task.
   6. `decide` `already-notified` checks existing notifications for this `terminalGeneration`.
@@ -632,15 +632,20 @@ The repo already has several proven pipelines. Use these as the model for each s
     permittedTargets: string[];
     spaceAgentAvailable: boolean;
     canSend: (fromNode: string, toNode: string) => boolean;
+    targetAgentNames: string[];
     decision: ResolveNodeAgentTargetsOutcome | null;
   }
   ```
-- **Pure core design**: `decideNodeAgentTargets` with gates: `starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`, `unknownTarget`, `unauthorized`, `resolved`.
+  Review correction: `targetAgentNames` is an explicit side field. The
+  current resolver first computes the resolved names and THEN applies the
+  shared `canSend` authorization to every resolved target — authorization
+  comes after resolution, so resolution must be nonterminal.
+- **Pure core design**: A direct `superpipe` pipeline (not a plain `decisionRun`): the resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) are NONTERMINAL — each populates `targetAgentNames` when it matches and is followed by a dedicated `!hasTargets` halt (`ctx.targetAgentNames.length > 0`), never the final-decision halt. Only the terminal stages set `decision`: `unknownTarget` (no resolution matched), `unauthorized` (`canSend` fails for any resolved target), `resolved` (carries the authorized `targetAgentNames`). A plain `decisionRun` would halt at the first deciding resolution gate and skip the shared authorization check entirely.
 - **Shell/effect wiring**: None; the result is consumed by `decideAgentMessageRouting` in `agent-message-routing-pipeline.ts`.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/node-agent-target-resolution-pipeline.ts`.
-  2. Replace `resolveNodeAgentTargets` with `decideNodeAgentTargets(input).decision`.
-  3. Update `agent-message-routing-pipeline.ts` to import the new `decisionRun`.
+  2. Replace `resolveNodeAgentTargets` with `runNodeAgentTargetResolution(input).decision`.
+  3. Update `agent-message-routing-pipeline.ts` to import the new pipeline.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts`.
 - **Risks/caveats**: The current `resolveNodeAgentTargets` is called in `agent-message-router.ts` and in tests. Change the export name to `decideNodeAgentTargets` and keep a deprecated re-export if needed for a transitional phase. The `decision` union should remain `ResolveNodeAgentTargetsOutcome`.
 

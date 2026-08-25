@@ -299,7 +299,12 @@ compensated. No site in this plan performs effects, so none uses it.
   1. `parseStructuredResetStage` — `rateLimitInfo` →
      `structuredReset`/`structuredRejected`.
   2. `parseTextResetStage` — `extractResetTimestamp(rawText, now)` → `parsed`.
-  3. `resolveBillingStage` — OR of `httpStatus===402`, `sdkErrorTag`,
+  3. `resolveBillingStage` — OR of `httpStatus===402`,
+     `sdkErrorTag === 'billing_error'` (review correction: the SDK tag
+     contributes only on that exact equality — treating raw `sdkErrorTag`
+     truthiness as an operand makes every non-empty tag, notably the common
+     `rate_limit` tag, billing-terminal when no reset is present and the
+     watchdog surfaces billing instead of scheduling its cooldown),
      `isStructuredBillingTerminal`, `isBillingTerminal(rawText, now)`, gated
      on `resetAtMs === null` (structured reset and parsed reset merge first:
      fold the `structuredReset ?? parsed?.resetAtMs ?? null` merge into the
@@ -459,9 +464,15 @@ compensated. No site in this plan performs effects, so none uses it.
   ring key needs the Bash arg key even on non-bash rows? No: compute the
   fingerprint only on the bash arm; the shell may compute it lazily and pass
   `prevRing` as undefined for non-bash (the pipeline's bash stages are
-  guarded) — run the pipeline, then interpret: write
-  `state.ledger.set(scope, decision.streak)`, run `sweepLedger`, delete
-  expired ring, and on `deny` log + return the `permissionDecision: 'deny'`
+  guarded) — run the pipeline, then interpret the ledger outcome (review
+  correction: when the decision carries `resetLedger`, DELETE the scope
+  from `state.ledger` — matching the current hook, which deletes the
+  session's ledger entry for the unmonitored/no-threshold branch; an
+  unconditional `set(scope, decision.streak)` would resurrect the old
+  streak after an intervening unmonitored tool call and can trigger a
+  false loop denial on return to the monitored tool), then `set(scope,
+  decision.streak)` only for allow decisions WITHOUT `resetLedger`, run
+  `sweepLedger`, delete expired ring, and on `deny` log + return the `permissionDecision: 'deny'`
   hook output with `permissionDecisionReason`. PostToolUse(Failure)
   callbacks keep calling `recordBashRingOutcome` directly (they are pure
   state folds on the ring, already leaf functions).
@@ -771,8 +782,13 @@ compensated. No site in this plan performs effects, so none uses it.
   `applyErrorMessageStage` (transform: `error instanceof Error ?
   error.message : String(error)`), `applyRateLimitExclusionGate`
   (`looksLikeRateLimit429` → `{ text: null }`), `applyJsonBodyGate`
-  (regex + JSON.parse + error-body render; parse failure falls through by
-  *not* deciding), `applyPlainStatusGate`, `applyInnerJsonGate` (outer
+  (regex + JSON.parse + error-body render; review correction: when the
+  structured `4xx {…}` regex MATCHES but `JSON.parse` fails, the gate
+  DECIDES `{ text: null }` — boxing a definitive null so the row cannot
+  fall through; the current function returns `null` immediately at that
+  point, and falling through would let `applyPlainStatusGate` match the
+  same text and reroute `400 {invalid json}` from the terminal-error path
+  to `api_validation`), `applyPlainStatusGate`, `applyInnerJsonGate` (outer
   JSON.parse + inner `4xx text` match), no final decider — unmatched leaves
   decision null → wrapper null. Terminal-message gates:
   `applyStartupTimeoutGate`, `applyConversationNotFoundGate`,
