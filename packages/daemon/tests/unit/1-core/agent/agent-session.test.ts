@@ -4,6 +4,7 @@ import type {
   ContextInfo,
   McpServerConfig,
   MessageHub,
+  Provider,
   RewindMode,
   SelectiveRewindResult,
   Session,
@@ -6410,10 +6411,14 @@ describe('AgentSession', () => {
     const hardContent = 'hard-content';
 
     async function makeHardeningSession(
-      sessionId: string
+      sessionId: string,
+      opts?: { provider?: Provider }
     ): Promise<{ db: Database; agentSession: AgentSession }> {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
+      if (opts?.provider) {
+        session.config.provider = opts.provider;
+      }
       db.createSession(session);
       db.getSDKMessageRepo().saveUserMessage(
         sessionId,
@@ -6533,6 +6538,88 @@ describe('AgentSession', () => {
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-superseded', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a kickoff already consumed by the SDK yield still signals consumption after the ack', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-consumed');
+      try {
+        agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        const consumed = waitForDeliveryConsumption('sess-a3a-turn-consumed', hardUuid);
+        const drive = agentSession.driveDeliveryTurn(
+          hardUuid,
+          hardContent,
+          null,
+          false,
+          () => true
+        );
+        const queue = agentSession.messageQueue;
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-turn-consumed', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        db.getSDKMessageRepo().markDeliveryConsumedByUuid('sess-a3a-turn-consumed', hardUuid);
+        queue.acknowledgeYielded(hardUuid);
+        db.getSDKMessageRepo().saveSDKMessage('sess-a3a-turn-consumed', {
+          type: 'result',
+          uuid: `${hardUuid}-result`,
+          session_id: 'sess-a3a-turn-consumed',
+          parent_tool_use_id: null,
+          subtype: 'success',
+          is_error: false,
+        } as unknown as SDKMessage);
+        await agentSession.stateManager.setIdle();
+        resolveQuery();
+        await expect(drive).resolves.toEqual({ outcome: 'completed' });
+        await expect(consumed.promise).resolves.toBeUndefined();
+        consumed.cancel();
+      } finally {
+        db.close();
+      }
+    });
+
+    it('an ACP kickoff submitted before the ack still counts as acknowledged', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-submitted', {
+        provider: 'acp',
+      });
+      try {
+        agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        const reportStage = mock(() => {});
+        const drive = agentSession.driveDeliveryTurn(
+          hardUuid,
+          hardContent,
+          null,
+          false,
+          () => true,
+          undefined,
+          undefined,
+          { reportStage }
+        );
+        const queue = agentSession.messageQueue;
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-turn-submitted', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        db.getSDKMessageRepo().markDeliverySubmittedByUuids('sess-a3a-turn-submitted', [hardUuid]);
+        queue.acknowledgeYielded(hardUuid);
+        await agentSession.stateManager.setIdle();
+        resolveQuery();
+        await expect(drive).rejects.toThrow('Turn ended without a response');
+        expect(reportStage).toHaveBeenCalledWith('sdk_admitted', expect.anything());
       } finally {
         db.close();
       }

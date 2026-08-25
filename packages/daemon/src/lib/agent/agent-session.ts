@@ -2255,7 +2255,7 @@ export class AgentSession
         if (
           !kickoffDiedBeforeConsumption &&
           (!claimGuard || claimGuard()) &&
-          this.messageDeliveryValid(messageUuid, alreadyConsumed)
+          this.acknowledgedDeliveryStillOwned(messageUuid)
         ) {
           kickoffAcknowledged = true;
           this.zeroProgressDeliveryFailures = null;
@@ -2697,6 +2697,14 @@ export class AgentSession
       loaded !== null &&
       (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
     );
+  }
+
+  private acknowledgedDeliveryStillOwned(messageUuid: string): boolean {
+    if (this.db.getSession(this.session.id)?.status === 'archived') return false;
+    const sendStatus = this.db
+      .getSDKMessageRepo()
+      .getDeliveryContent(this.session.id, messageUuid)?.sendStatus;
+    return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
   }
 
   private reclaimTurnAlreadySucceeded(messageUuid: string): boolean {
