@@ -25,6 +25,11 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
+import {
+  decideQueryRetry,
+  type QueryRetryEnvironment,
+  type QueryRetryErrorSignal,
+} from './query-retry-routing.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
@@ -905,14 +910,6 @@ export class QueryRunner {
 
       releaseStartupPermit('query_error');
 
-      if (this.ctx.isCleaningUp()) {
-        return;
-      }
-
-      if (this.ctx.getQueryGeneration() !== queryGeneration) {
-        return;
-      }
-
       const errorMessage = String(error);
       const isAbortError = error instanceof Error && error.name === 'AbortError';
       const isQueryInterrupted =
@@ -928,6 +925,52 @@ export class QueryRunner {
       const isTransientConnectionError = TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) =>
         errorMessage.includes(substr)
       );
+
+      const providerId = session.config.provider as string | undefined;
+      const isProviderSession = providerId && providerId !== 'anthropic' && providerId !== 'glm';
+      const limitAssessment = assessLimitError({ rawText: errorMessage });
+      const retrySignal: QueryRetryErrorSignal = {
+        rawText: errorMessage,
+        errorName: error instanceof Error ? error.name : undefined,
+        isStartupTimeout,
+        isConversationNotFound,
+        isMessageNotFound,
+        isTransientConnectionError,
+        isRetryableProviderError: isRetryableProviderError(errorMessage),
+        isRateLimit: limitAssessment.isLimit,
+        rateLimitHint: limitAssessment.isLimit
+          ? {
+              resetAtMs: limitAssessment.resetAtMs,
+              kind: limitAssessment.kind,
+              billingTerminal: limitAssessment.billingTerminal,
+            }
+          : null,
+        apiValidationText: this.parseApiValidationError(error)?.text ?? null,
+      };
+      const retryEnv: QueryRetryEnvironment = {
+        attempt: retryAttempt,
+        maxProviderRetries,
+        providerFamily: isProviderSession ? 'provider' : 'anthropic',
+        hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0,
+        hasQueuedPrompt: messageQueue.size() > 0,
+        lifecycle: {
+          processingStatus: stateManager.getState().status,
+          abortSignalAborted: this.ctx.queryAbortController?.signal.aborted === true,
+          isLimitRecoveryPending: this.ctx.isLimitRecoveryPending?.() ?? false,
+        },
+        isCleaningUp: this.ctx.isCleaningUp(),
+        isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
+        hasRateLimitHandoff: !!this.ctx.onRateLimitExhausted,
+        recoveryState,
+      };
+      const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
+
+      if (
+        routeDecision.route.action === 'superseded_noop' ||
+        routeDecision.route.action === 'cleanup_noop'
+      ) {
+        return;
+      }
 
       if (isStartupTimeout && session.sdkSessionId) {
         logger.error(
@@ -1215,126 +1258,47 @@ export class QueryRunner {
 
       messageQueue.clear();
 
-      const isProviderRetryExhausted =
-        retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
-
       if (!isAbortError) {
-        const apiValidationError = this.parseApiValidationError(error);
-        if (apiValidationError) {
-          stateManager.beginTerminalIdle();
-          await this.displayErrorAsAssistantMessage(apiValidationError.text, {
-            markAsError: true,
+        const processingState = stateManager.getState();
+        let decision = routeDecision;
+
+        if (decision.route.action === 'rate_limit_handoff') {
+          const handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
+            errorMessage,
+            this._lastConsumedUserMessage,
+            retrySignal.rateLimitHint ?? undefined
+          ));
+          recoveryState.rateLimitCooldownScheduled = handoffAccepted;
+          decision = decideQueryRetry({
+            errorSignal: retrySignal,
+            env: {
+              ...retryEnv,
+              rateLimitHandoffResult: handoffAccepted ? 'accepted' : 'declined',
+            },
           });
+        } else if (decision.route.action === 'terminal') {
+          recoveryState.rateLimitCooldownScheduled = false;
         }
-        const apiErrorHandled = apiValidationError !== null;
 
-        if (!apiErrorHandled) {
-          let category = ErrorCategory.SYSTEM;
-          const providerId = session.config.provider as string | undefined;
+        const { route, finalizer } = decision;
 
-          const isProviderSession =
-            providerId && providerId !== 'anthropic' && providerId !== 'glm';
-
-          if (
-            isProviderSession &&
-            (errorMessage.includes('401') ||
-              errorMessage.includes('403') ||
-              errorMessage.includes('unauthorized') ||
-              errorMessage.includes('Unauthorized') ||
-              errorMessage.includes('token expired') ||
-              errorMessage.includes('token_expired') ||
-              errorMessage.includes('not authenticated') ||
-              errorMessage.includes('invalid_api_key'))
-          ) {
-            category = ErrorCategory.PROVIDER_AUTH_ERROR;
-          } else if (
-            isProviderSession &&
-            (errorMessage.includes('ECONNREFUSED') ||
-              errorMessage.includes('ENOTFOUND') ||
-              errorMessage.includes('EHOSTUNREACH') ||
-              errorMessage.includes('service unavailable') ||
-              errorMessage.includes('503') ||
-              errorMessage.includes('502'))
-          ) {
-            category = ErrorCategory.PROVIDER_UNAVAILABLE;
-          } else if (
-            errorMessage.includes('401') ||
-            errorMessage.includes('unauthorized') ||
-            errorMessage.includes('invalid_api_key')
-          ) {
-            category = ErrorCategory.AUTHENTICATION;
-          } else if (
-            errorMessage.includes('ECONNREFUSED') ||
-            errorMessage.includes('ENOTFOUND') ||
-            errorMessage.includes('EHOSTUNREACH') ||
-            isTransientConnectionError
-          ) {
-            category = ErrorCategory.CONNECTION;
-          } else if (
-            errorMessage.includes('429') ||
-            errorMessage.includes('rate limit') ||
-            errorMessage.includes('402') ||
-            errorMessage.toLowerCase().includes('no quota') ||
-            errorMessage.toLowerCase().includes('quota exceeded') ||
-            errorMessage.toLowerCase().includes('insufficient_quota')
-          ) {
-            category = ErrorCategory.RATE_LIMIT;
-          } else if (errorMessage.includes('timeout')) {
-            category = ErrorCategory.TIMEOUT;
-          } else if (errorMessage.includes('model_not_found')) {
-            category = ErrorCategory.MODEL;
-          } else if (
-            errorMessage.includes('cannot be run as root') ||
-            errorMessage.includes('dangerously-skip-permissions') ||
-            errorMessage.includes('permission') ||
-            errorMessage.includes('Exit code: 1')
-          ) {
-            category = ErrorCategory.PERMISSION;
-          }
-
-          const processingState = stateManager.getState();
-
-          const limitAssessment = assessLimitError({ rawText: errorMessage });
-          recoveryState.rateLimitCooldownScheduled =
-            limitAssessment.isLimit &&
-            !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
-              resetAtMs: limitAssessment.resetAtMs,
-              kind: limitAssessment.kind,
-              billingTerminal: limitAssessment.billingTerminal,
-            }));
-          if (!recoveryState.rateLimitCooldownScheduled) {
+        if (route.action === 'api_validation') {
+          if (!finalizer.skipBeginTerminalIdle) {
             stateManager.beginTerminalIdle();
           }
-
-          const startupTimeoutUserMessage = isStartupTimeout
-            ? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-              `The SDK subprocess did not emit its first message within the startup window ` +
-              `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
-              `Try: resending your message, or increase the timeout with ` +
-              `HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
-            : isConversationNotFound
-              ? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-                `The previous session transcript was not found — this can happen after a provider switch, ` +
-                `workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
-                `Your message history in HyperNeo is preserved; only the AI context window is reset. ` +
-                `Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
-              : isMessageNotFound
-                ? `The AI session could not resume from the previous rewind point ` +
-                  `(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
-                  `contains that message UUID, likely after SDK compaction. Your message history in HyperNeo ` +
-                  `is preserved; only the AI context window is reset. Please resend your message.`
-                : isProviderRetryExhausted
-                  ? `The provider is temporarily unavailable. The request was retried ` +
-                    `${maxProviderRetries} time(s) without success. Please try again later.`
-                  : isTransientConnectionError && retryAttempt > 0
-                    ? 'Could not get a response. The connection was interrupted. Please try again.'
-                    : undefined;
-          if (!recoveryState.rateLimitCooldownScheduled) {
+          await this.displayErrorAsAssistantMessage(route.text, {
+            markAsError: true,
+          });
+        } else if (route.action === 'terminal') {
+          if (!finalizer.skipBeginTerminalIdle) {
+            stateManager.beginTerminalIdle();
+          }
+          if (!finalizer.skipErrorManager) {
             await errorManager.handleError(
               session.id,
               error as Error,
-              category,
-              startupTimeoutUserMessage,
+              route.category,
+              this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
               processingState,
               {
                 errorMessage,
@@ -1347,7 +1311,8 @@ export class QueryRunner {
             );
           }
         }
-        if (!recoveryState.rateLimitCooldownScheduled) {
+
+        if (!finalizer.skipCatchIdle) {
           await stateManager.setIdle();
         }
       }
@@ -1700,6 +1665,49 @@ export class QueryRunner {
     } catch {}
 
     return null;
+  }
+
+  private terminalUserMessageFor(
+    messageHint: string | undefined,
+    maxProviderRetries: number
+  ): string | undefined {
+    const { session } = this.ctx;
+    if (messageHint === 'startup_timeout') {
+      return (
+        `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+        `The SDK subprocess did not emit its first message within the startup window ` +
+        `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
+        `Try: resending your message, or increase the timeout with ` +
+        `HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+      );
+    }
+    if (messageHint === 'conversation_not_found') {
+      return (
+        `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+        `The previous session transcript was not found — this can happen after a provider switch, ` +
+        `workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
+        `Your message history in HyperNeo is preserved; only the AI context window is reset. ` +
+        `Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
+      );
+    }
+    if (messageHint === 'message_not_found') {
+      return (
+        `The AI session could not resume from the previous rewind point ` +
+        `(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
+        `contains that message UUID, likely after SDK compaction. Your message history in HyperNeo ` +
+        `is preserved; only the AI context window is reset. Please resend your message.`
+      );
+    }
+    if (messageHint === 'provider_exhausted') {
+      return (
+        `The provider is temporarily unavailable. The request was retried ` +
+        `${maxProviderRetries} time(s) without success. Please try again later.`
+      );
+    }
+    if (messageHint === 'transient_exhausted') {
+      return 'Could not get a response. The connection was interrupted. Please try again.';
+    }
+    return undefined;
   }
 
   async displayErrorAsAssistantMessage(
