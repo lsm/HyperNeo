@@ -1473,6 +1473,28 @@ describe('QueryLifecycleManager', () => {
       expect(startStreamingCalled).toBe(false);
       expect(mockContext.pendingRestartReason).toBe('settings.local.json');
     });
+
+    test('abandons the restart when a successor delivery is admitted while stop() awaits (B5e)', async () => {
+      mockContext = createMockContext({
+        pendingRestartReason: 'settings.local.json',
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+        queryPromise: Promise.resolve(),
+      });
+      let ownerCurrent = true;
+      (mockContext.stateManager as unknown as { isIdleOwnerCurrent: unknown }).isIdleOwnerCurrent =
+        mock(() => ownerCurrent);
+      manager = new QueryLifecycleManager(mockContext);
+      spyOn(manager, 'stop').mockImplementation(async () => {
+        ownerCurrent = false;
+      });
+
+      await manager.executeDeferredRestartIfPending({ queryGeneration: 0, turnToken: 1 });
+
+      expect(startStreamingCalled).toBe(false);
+      expect(mockContext.pendingRestartReason).toBe('settings.local.json');
+    });
   });
 
   describe('cleanup', () => {

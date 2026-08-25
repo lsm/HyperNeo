@@ -296,8 +296,15 @@ export class QueryLifecycleManager {
       }
 
       await this.stop();
+      if (!this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
+        this.logger.info('Restart abandoned: a successor delivery owns the session.');
+        throw new IdleRestartSupersededError();
+      }
 
-      await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      await this.ctx.stateManager.setIdle({
+        suppressDeliveryWaiters: true,
+        owner: options?.idleOwner,
+      });
       reachedSuppressedIdle = true;
 
       if (session.config.provider !== 'acp' && session.sdkSessionId) {
@@ -312,13 +319,17 @@ export class QueryLifecycleManager {
       }
 
       await this.ctx.clearModelsCache();
+      if (!this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
+        this.logger.info('Restart abandoned: a successor delivery owns the session.');
+        throw new IdleRestartSupersededError();
+      }
 
       await this.ctx.startStreamingQuery();
     } catch (error) {
+      if (error instanceof IdleRestartSupersededError) throw error;
       if (reachedSuppressedIdle) {
         this.ctx.stateManager.releaseIdleWaiters();
       }
-      if (error instanceof IdleRestartSupersededError) throw error;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Query restart failed: ${errorMessage}`);
     }
