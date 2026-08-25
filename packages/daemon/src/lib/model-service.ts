@@ -997,7 +997,8 @@ export function getCurrentCacheLoad(cacheKey: string = 'global'): Promise<void> 
 export function applyDiscoveredProviderModels(
   providerId: string,
   models: ModelInfo[],
-  cacheKey: string = 'global'
+  cacheKey: string = 'global',
+  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
 ): boolean {
   const curatedIds = getCuratedModelIds(providerId);
   let enriched = models;
@@ -1009,12 +1010,34 @@ export function applyDiscoveredProviderModels(
         (model) => model.provider === providerId
       );
       const byId = new Map(currentSlice.map((model) => [model.id, model]));
+      const persistedById = new Map(
+        persistedDiscovered.filter((entry) => entry.id).map((entry) => [entry.id, entry])
+      );
       const seeded: ModelInfo[] = [];
       for (const id of missing) {
         const found =
           byId.get(id) ??
-          STATIC_MODEL_METADATA.find((model) => model.provider === providerId && model.id === id);
-        if (found) seeded.push(found);
+          STATIC_MODEL_METADATA.find((model) => model.provider === providerId && model.id === id) ??
+          persistedById.get(id);
+        if (found) {
+          if ('family' in found) {
+            seeded.push(found as ModelInfo);
+          } else {
+            const base: ModelInfo = {
+              id: found.id,
+              name: found.name ?? found.id,
+              alias: found.id,
+              family: providerId,
+              provider: providerId,
+              contextWindow: 128000,
+              preferContextWindowMetadata: true,
+              description: `${found.name ?? found.id} via ${providerId}`,
+              releaseDate: '',
+              available: true,
+            };
+            seeded.push(base);
+          }
+        }
       }
       if (seeded.length > 0) enriched = [...seeded, ...models];
     }

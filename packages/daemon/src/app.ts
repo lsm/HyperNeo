@@ -150,8 +150,12 @@ async function applyStoredProviderCredentials(
       const providerCredentials = await provider.getCredentials?.();
       if (providerCredentials?.type === 'oauth' || providerCredentials?.type === 'api_key') {
         const stored = await credentialManager.getCredentials(provider.id);
-        if (stored && !sameCredentialIdentity(stored, providerCredentials)) {
-          const record = db.providers.getProviderByProviderId(provider.id);
+        const record = db.providers.getProviderByProviderId(provider.id);
+        const hasPersistedDiscovery = record && record.configJson?.includes('discoveredModels');
+        if (
+          (stored === null && hasPersistedDiscovery) ||
+          (stored && !sameCredentialIdentity(stored, providerCredentials))
+        ) {
           if (record) {
             const stripped = stripPersistedDiscovery(record.configJson);
             if (stripped !== record.configJson) {
