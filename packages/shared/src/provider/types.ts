@@ -96,6 +96,8 @@ export interface Provider {
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig;
 
+  ensureBridgeStarted?(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void>;
+
   translateModelIdForSdk?(modelId: string): string;
 
   getTitleGenerationModel?(): string;

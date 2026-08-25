@@ -168,6 +168,7 @@ describe('Codex Bridge (Online)', () => {
       );
     }
 
+    await provider.ensureBridgeStarted('gpt-5.4-mini', { workspacePath: process.cwd() });
     const cfg = provider.buildSdkConfig('gpt-5.4-mini', { workspacePath: process.cwd() });
     bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 

@@ -96,6 +96,16 @@ export type DeliveryRoleResolution = MessageDeliveryRole | 'explicit_role_reject
 export function resolveDeliveryRole(args: {
   existingActiveRole: MessageDeliveryRole | null;
   requestedRole?: MessageDeliveryRole;
+  uniqueConstraintHit: true;
+}): DeliveryRoleResolution;
+export function resolveDeliveryRole(args: {
+  existingActiveRole: MessageDeliveryRole | null;
+  requestedRole?: MessageDeliveryRole;
+  uniqueConstraintHit: false;
+}): MessageDeliveryRole;
+export function resolveDeliveryRole(args: {
+  existingActiveRole: MessageDeliveryRole | null;
+  requestedRole?: MessageDeliveryRole;
   uniqueConstraintHit: boolean;
 }): DeliveryRoleResolution {
   if (args.existingActiveRole) return args.existingActiveRole;

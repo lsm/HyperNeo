@@ -106,6 +106,8 @@ interface VisibleModelsPanelState {
   error: string | null;
   candidates: Array<{ id: string; name?: string }> | null;
   fingerprint?: string;
+  draftCheckedIds?: Set<string>;
+  cachedOnlyIds?: Set<string>;
 }
 
 const EMPTY_VISIBLE_MODELS_PANEL: VisibleModelsPanelState = {
@@ -145,6 +147,20 @@ function mergeVisibleModelCandidates(
   return [...merged.values()];
 }
 
+function getDefaultVisibleCheckedIds(
+  provider: EnrichedProvider,
+  visibleRows: Array<{ id: string }>,
+  cachedOnlyIds?: Set<string>
+): Set<string> {
+  const curatedList = readCuratedModels(provider);
+  if (curatedList !== undefined) {
+    return new Set(curatedList.map((model) => model.id));
+  }
+  return new Set(
+    visibleRows.filter((model) => !cachedOnlyIds?.has(model.id)).map((model) => model.id)
+  );
+}
+
 export function ProvidersSettings() {
   const [providers, setProviders] = useState<EnrichedProvider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,6 +197,7 @@ export function ProvidersSettings() {
     Record<string, VisibleModelsPanelState>
   >({});
   const visibleModelsGenRef = useRef<Record<string, number>>({});
+  const previousProvidersRef = useRef<EnrichedProvider[]>([]);
   const providersRef = useRef<EnrichedProvider[]>([]);
   providersRef.current = providers;
   const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(
@@ -274,6 +291,8 @@ export function ProvidersSettings() {
   }, []);
 
   useEffect(() => {
+    const previousById = new Map(previousProvidersRef.current.map((p) => [p.id, p]));
+    previousProvidersRef.current = providers;
     setVisibleModelsPanels((prev) => {
       let changed = false;
       const next: Record<string, VisibleModelsPanelState> = {};
@@ -283,9 +302,23 @@ export function ProvidersSettings() {
           changed = true;
           continue;
         }
+        if (previousById.get(id) !== provider) {
+          visibleModelsGenRef.current[id] = (visibleModelsGenRef.current[id] ?? 0) + 1;
+          if (panel.fetching) {
+            next[id] = EMPTY_VISIBLE_MODELS_PANEL;
+            changed = true;
+            continue;
+          }
+        }
         const fingerprint = getVisibleModelsFingerprint(provider);
         if (panel.fingerprint && panel.fingerprint !== fingerprint) {
-          next[id] = { ...panel, candidates: null, error: null, fingerprint: undefined };
+          next[id] = {
+            ...panel,
+            candidates: null,
+            error: null,
+            fingerprint: undefined,
+            draftCheckedIds: undefined,
+          };
           changed = true;
         } else {
           next[id] = panel;
@@ -561,6 +594,23 @@ export function ProvidersSettings() {
     }
   };
 
+  const isStaleVisibleModelsFetch = (
+    provider: EnrichedProvider,
+    generation: number,
+    fingerprint: string
+  ): boolean => {
+    if (generation !== visibleModelsGenRef.current[provider.id]) return true;
+    const currentProvider = providersRef.current.find((p) => p.id === provider.id);
+    if (!currentProvider || fingerprint !== getVisibleModelsFingerprint(currentProvider)) {
+      setVisibleModelsPanels((prev) => ({
+        ...prev,
+        [provider.id]: EMPTY_VISIBLE_MODELS_PANEL,
+      }));
+      return true;
+    }
+    return false;
+  };
+
   const handleFetchVisibleModels = async (provider: EnrichedProvider) => {
     const fingerprint = getVisibleModelsFingerprint(provider);
     const generation = (visibleModelsGenRef.current[provider.id] ?? 0) + 1;
@@ -578,38 +628,150 @@ export function ProvidersSettings() {
     const remote = await listProviderRemoteModels(provider.id, { ...options, force: true }).catch(
       (err) => ({ models: [], error: err })
     );
-    if (generation !== visibleModelsGenRef.current[provider.id]) return;
-    const currentProvider = providersRef.current.find((p) => p.id === provider.id);
-    if (!currentProvider || fingerprint !== getVisibleModelsFingerprint(currentProvider)) {
-      setVisibleModelsPanels((prev) => ({
-        ...prev,
-        [provider.id]: EMPTY_VISIBLE_MODELS_PANEL,
-      }));
-      return;
-    }
+    if (isStaleVisibleModelsFetch(provider, generation, fingerprint)) return;
     const curatedList = readCuratedModels(provider);
     if ('error' in remote) {
+      const candidates = mergeVisibleModelCandidates([curatedList]);
       setVisibleModelsPanels((prev) => ({
         ...prev,
         [provider.id]: {
           fetching: false,
           error:
             remote.error instanceof Error ? remote.error.message : 'Failed to fetch remote models',
-          candidates: mergeVisibleModelCandidates([curatedList]),
+          candidates,
           fingerprint,
+          draftCheckedIds: getDefaultVisibleCheckedIds(provider, candidates),
         },
       }));
     } else {
+      const cached = (await connectionManager
+        .getHubIfConnected()
+        ?.request('models.list', { useCache: true })
+        .catch(() => null)) as {
+        models?: Array<{ id?: unknown; display_name?: unknown; provider?: unknown }>;
+      } | null;
+      if (isStaleVisibleModelsFetch(provider, generation, fingerprint)) return;
+      const cachedProviderModels = (cached?.models ?? []).flatMap((model) =>
+        model.provider === provider.providerId && typeof model.id === 'string'
+          ? [
+              {
+                id: model.id,
+                ...(typeof model.display_name === 'string' ? { name: model.display_name } : {}),
+              },
+            ]
+          : []
+      );
+      const candidates = mergeVisibleModelCandidates([
+        curatedList,
+        remote.models,
+        cachedProviderModels,
+      ]);
+      const discoveryIds = new Set(
+        mergeVisibleModelCandidates([curatedList, remote.models]).map((model) => model.id)
+      );
+      const cachedOnlyIds = new Set(
+        candidates.map((model) => model.id).filter((id) => !discoveryIds.has(id))
+      );
       setVisibleModelsPanels((prev) => ({
         ...prev,
         [provider.id]: {
           fetching: false,
           error: null,
-          candidates: mergeVisibleModelCandidates([remote.models, curatedList]),
+          candidates,
           fingerprint,
+          draftCheckedIds: getDefaultVisibleCheckedIds(provider, candidates, cachedOnlyIds),
+          cachedOnlyIds,
         },
       }));
     }
+  };
+
+  const handleToggleVisibleModel = (provider: EnrichedProvider, modelId: string) => {
+    setVisibleModelsPanels((prev) => {
+      const panel = prev[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
+      const visibleRows = panel.candidates ?? readCuratedModels(provider) ?? [];
+      const checkedIds = new Set(
+        panel.draftCheckedIds ??
+          getDefaultVisibleCheckedIds(provider, visibleRows, panel.cachedOnlyIds)
+      );
+      if (checkedIds.has(modelId)) {
+        checkedIds.delete(modelId);
+      } else {
+        checkedIds.add(modelId);
+      }
+      return {
+        ...prev,
+        [provider.id]: {
+          ...panel,
+          fingerprint: panel.fingerprint ?? getVisibleModelsFingerprint(provider),
+          draftCheckedIds: checkedIds,
+        },
+      };
+    });
+  };
+
+  const handleSaveVisibleModels = async (provider: EnrichedProvider) => {
+    const panel = visibleModelsPanels[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
+    const visibleRows = panel.candidates ?? readCuratedModels(provider) ?? [];
+    const checkedIds =
+      panel.draftCheckedIds ??
+      getDefaultVisibleCheckedIds(provider, visibleRows, panel.cachedOnlyIds);
+    const models = visibleRows
+      .filter((model) => checkedIds.has(model.id))
+      .map((model) => ({ id: model.id, ...(model.name ? { name: model.name } : {}) }));
+
+    if (models.length === 0) {
+      const confirmed = confirm(
+        'Saving with no models selected will hide all models for this provider. Continue?'
+      );
+      if (!confirmed) return;
+    }
+
+    const configJson = mergeProviderConfig(provider.configJson, { models });
+    if (configJson.length > 64 * 1024) {
+      toast.error(
+        `${provider.displayName} curation is too large to store (${configJson.length} chars, limit 65536). Select fewer models.`
+      );
+      return;
+    }
+
+    setPendingId(provider.id);
+    try {
+      await updateProvider(provider.id, { configJson });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save curation');
+      setPendingId(null);
+      return;
+    }
+    const hub = connectionManager.getHubIfConnected();
+    if (hub) {
+      try {
+        const response = (await hub.request('models.list', {})) as {
+          models?: Array<{ id?: string; provider?: string }>;
+        };
+        if (provider.isEnabled) {
+          const providerModels = (response.models ?? []).filter(
+            (model) => model.provider === provider.providerId
+          );
+          const visibleIds = new Set(providerModels.map((model) => model.id));
+          const coherent =
+            models.every((model) => visibleIds.has(model.id)) &&
+            providerModels.every((model) => !!model.id && checkedIds.has(model.id));
+          if (!coherent) {
+            toast.warning(
+              `${provider.displayName} curation saved, but the refreshed model list does not match yet. Try fetching models again.`
+            );
+          }
+        }
+      } catch {
+        toast.warning(
+          `${provider.displayName} curation saved, but the refresh could not be verified.`
+        );
+      }
+    }
+    await loadProviders();
+    toast.success(`${provider.displayName} curation saved`);
+    setPendingId(null);
   };
 
   const healthDotClass = (status: string) => {
@@ -739,14 +901,25 @@ export function ProvidersSettings() {
                 const needsRefresh = auth?.needsRefresh;
                 const visiblePanel = visibleModelsPanels[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
                 const curatedList = readCuratedModels(provider);
-                const curatedIds =
+                const storedCuratedIds =
                   curatedList !== undefined
                     ? new Set(curatedList.map((model) => model.id))
                     : undefined;
                 const visibleRows = visiblePanel.candidates ?? curatedList ?? [];
-                const visibleCheckedCount = curatedIds
-                  ? visibleRows.filter((model) => curatedIds.has(model.id)).length
-                  : visibleRows.length;
+                const defaultCheckedIds = getDefaultVisibleCheckedIds(
+                  provider,
+                  visibleRows,
+                  visiblePanel.cachedOnlyIds
+                );
+                const draftCheckedIds = visiblePanel.draftCheckedIds ?? defaultCheckedIds;
+                const visibleCheckedCount = visibleRows.filter((model) =>
+                  draftCheckedIds.has(model.id)
+                ).length;
+                const hasUnsavedVisibleModels = Boolean(
+                  visiblePanel.draftCheckedIds !== undefined &&
+                    (draftCheckedIds.size !== defaultCheckedIds.size ||
+                      [...draftCheckedIds].some((id) => !defaultCheckedIds.has(id)))
+                );
 
                 return (
                   <div
@@ -1044,11 +1217,17 @@ export function ProvidersSettings() {
                                 variant="secondary"
                                 onClick={() => handleFetchVisibleModels(provider)}
                                 loading={visiblePanel.fetching}
-                                disabled={visiblePanel.fetching || !provider.isEnabled}
+                                disabled={
+                                  visiblePanel.fetching ||
+                                  !provider.isEnabled ||
+                                  hasUnsavedVisibleModels
+                                }
                                 title={
-                                  provider.isEnabled
-                                    ? 'Fetch remote model candidates'
-                                    : 'Enable this provider to fetch model candidates'
+                                  !provider.isEnabled
+                                    ? 'Enable this provider to fetch model candidates'
+                                    : hasUnsavedVisibleModels
+                                      ? 'Save or revert your selection before fetching again'
+                                      : 'Fetch remote model candidates'
                                 }
                               >
                                 Fetch models
@@ -1059,7 +1238,7 @@ export function ProvidersSettings() {
                             )}
                             {visibleRows.length === 0 ? (
                               <p class="text-xs text-gray-500 italic mt-2">
-                                {curatedIds
+                                {storedCuratedIds
                                   ? 'No visible models curated.'
                                   : visiblePanel.error
                                     ? 'No stored curation to display.'
@@ -1068,9 +1247,11 @@ export function ProvidersSettings() {
                             ) : (
                               <div>
                                 <p class="text-[11px] text-gray-500 mt-2">
-                                  {curatedIds
+                                  {storedCuratedIds
                                     ? `${visibleCheckedCount} of ${visibleRows.length} visible.`
-                                    : `${visibleRows.length} model${visibleRows.length === 1 ? '' : 's'} — all visible (no curation stored).`}
+                                    : hasUnsavedVisibleModels
+                                      ? `${visibleCheckedCount} of ${visibleRows.length} selected (unsaved).`
+                                      : `${visibleCheckedCount} of ${visibleRows.length} selected.`}
                                 </p>
                                 <div class="max-h-48 overflow-y-auto space-y-1 mt-1">
                                   {visibleRows.map((model) => (
@@ -1080,8 +1261,11 @@ export function ProvidersSettings() {
                                     >
                                       <input
                                         type="checkbox"
-                                        checked={curatedIds ? curatedIds.has(model.id) : true}
-                                        disabled
+                                        checked={draftCheckedIds.has(model.id)}
+                                        disabled={isPending || visiblePanel.fetching}
+                                        onChange={() =>
+                                          handleToggleVisibleModel(provider, model.id)
+                                        }
                                         class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
                                       />
                                       <span class="font-mono break-all">{model.id}</span>
@@ -1091,10 +1275,23 @@ export function ProvidersSettings() {
                                     </label>
                                   ))}
                                 </div>
+                                <div class="flex items-center justify-end mt-2">
+                                  <Button
+                                    size="xs"
+                                    variant="primary"
+                                    onClick={() => handleSaveVisibleModels(provider)}
+                                    loading={isPending}
+                                    disabled={isPending || !hasUnsavedVisibleModels}
+                                  >
+                                    Save curation
+                                  </Button>
+                                </div>
                               </div>
                             )}
                             <p class="text-[11px] text-gray-500 mt-1">
-                              Read-only preview — saving a selection arrives with curation editing.
+                              {visibleRows.length === 0
+                                ? 'Fetch candidates, then check the models you want to make visible.'
+                                : 'Check the models you want visible, then save.'}
                             </p>
                           </div>
                         )}
