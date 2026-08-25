@@ -386,6 +386,15 @@ export function peekProviderCatalogModels(
 
 const scopedCatalogStamps = new Map<string, string>();
 
+function peekSessionCatalogModels(cacheKey: string): ModelInfo[] | null {
+  const cached = modelsCache.get(cacheKey);
+  const at = cacheTimestamps.get(cacheKey);
+  if (!cached || cached.length === 0 || at === undefined || Date.now() - at >= CACHE_TTL) {
+    return null;
+  }
+  return cached;
+}
+
 function scopedCatalogStamp(providerId: string, sessionConfig: ProviderSessionConfig): string {
   return [
     providerId,
@@ -402,15 +411,8 @@ export async function ensureScopedProviderCatalogModels(
   sessionConfig: ProviderSessionConfig
 ): Promise<void> {
   const stamp = scopedCatalogStamp(providerId, sessionConfig);
-  const cached = modelsCache.get(sessionCacheKey);
-  const cachedAt = cacheTimestamps.get(sessionCacheKey);
-  if (
-    cached &&
-    cached.length > 0 &&
-    cachedAt !== undefined &&
-    Date.now() - cachedAt < CACHE_TTL &&
-    scopedCatalogStamps.get(sessionCacheKey) === stamp
-  ) {
+  const cached = peekSessionCatalogModels(sessionCacheKey);
+  if (cached && scopedCatalogStamps.get(sessionCacheKey) === stamp) {
     return;
   }
   const provider = getProviderRegistry().get(providerId);
@@ -972,6 +974,7 @@ export function clearModelsCache(cacheKey?: string): void {
     cacheTimestamps.delete(cacheKey);
     refreshInProgress.delete(cacheKey);
     refreshModes.delete(cacheKey);
+    scopedCatalogStamps.delete(cacheKey);
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
@@ -989,6 +992,7 @@ export function clearModelsCache(cacheKey?: string): void {
     refreshModes.clear();
     clearProviderModelCaches();
     pendingProviderSlices.clear();
+    scopedCatalogStamps.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
@@ -1386,23 +1390,24 @@ export function isCuratedOutModelAllowingExactId(
   const curatedIds = getCuratedModelIds(providerId);
   if (curatedIds !== undefined) {
     const lowerInput = idOrAlias.toLowerCase();
+    const scopedModels = cacheKey !== 'global' ? peekSessionCatalogModels(cacheKey) : null;
     for (const curatedId of curatedIds) {
       if (curatedId.toLowerCase() === lowerInput) {
+        if (scopedModels && !findInModels(scopedModels, idOrAlias)) {
+          return true;
+        }
         return false;
       }
     }
-    if (cacheKey !== 'global') {
-      const scopedModels = readCachedModels(cacheKey);
-      if (scopedModels && scopedModels.length > 0) {
-        const scopedCanonical = findInModels(scopedModels, idOrAlias)?.id;
-        if (scopedCanonical) {
-          for (const curatedId of curatedIds) {
-            if (findInModels(scopedModels, curatedId)?.id === scopedCanonical) {
-              return false;
-            }
+    if (scopedModels) {
+      const scopedCanonical = findInModels(scopedModels, idOrAlias)?.id;
+      if (scopedCanonical) {
+        for (const curatedId of curatedIds) {
+          if (findInModels(scopedModels, curatedId)?.id === scopedCanonical) {
+            return false;
           }
-          return true;
         }
+        return true;
       }
     }
     const canonicalInput = resolveCuratedCanonicalModelId(idOrAlias, providerId);

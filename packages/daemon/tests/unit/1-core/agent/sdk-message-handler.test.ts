@@ -2616,9 +2616,10 @@ describe('SDKMessageHandler', () => {
 
     it('does not persist the fallback when it changes during fallback resolution', async () => {
       const provider = new TranslatingMockProvider();
-      provider.ensureBridgeStarted = async () => {
-        await new Promise((resolve) => setTimeout(resolve, 8));
-      };
+      (provider as unknown as { ensureBridgeStarted: () => Promise<void> }).ensureBridgeStarted =
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        };
       getProviderRegistry().register(provider);
       getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
       mockSession.config = {

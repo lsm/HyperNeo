@@ -137,6 +137,7 @@ describe('OllamaProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith('http://scoped.ollama.test/api/tags', {
       headers: { Authorization: 'Bearer scoped-key' },
+      signal: expect.any(AbortSignal),
     });
     expect(models).toHaveLength(1);
     expect(models[0]).toMatchObject({ id: 'qwen3:14b', provider: 'ollama' });
@@ -177,6 +178,7 @@ describe('OllamaProvider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith('http://ollama.test/api/tags', {
       headers: { Authorization: 'Bearer session-key' },
+      signal: expect.any(AbortSignal),
     });
     expect(models).toHaveLength(1);
     expect(models[0]).toMatchObject({ id: 'qwen3:14b' });

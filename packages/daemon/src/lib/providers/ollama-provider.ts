@@ -172,7 +172,8 @@ export class OllamaProvider implements Provider {
       return await this.fetchModels(
         baseUrl ?? this.getBaseUrl(),
         false,
-        apiKey || this.getApiKey()
+        apiKey || this.getApiKey(),
+        DEFAULT_PROBE_TIMEOUT_MS
       );
     } catch {
       return this.fallbackModels();
@@ -287,10 +288,12 @@ export class OllamaProvider implements Provider {
   private async fetchModels(
     baseUrl = this.getBaseUrl(),
     updateCache = true,
-    apiKey = this.getApiKey()
+    apiKey = this.getApiKey(),
+    timeoutMs?: number
   ): Promise<ModelInfo[]> {
     const response = await this.fetchImpl(`${normalizeBaseUrl(baseUrl)}/api/tags`, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     if (response.status === 401 || response.status === 403) {
       const keyName = this.kind === 'cloud' ? 'OLLAMA_CLOUD_API_KEY' : 'OLLAMA_API_KEY';

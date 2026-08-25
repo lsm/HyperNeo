@@ -2902,6 +2902,65 @@ describe('Model Service', () => {
         true
       );
     });
+
+    it('requires an exact curated id to be exposed by the populated scoped catalog', () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3:14b' }]);
+      setModelsCache(
+        new Map<string, ModelInfo[]>([
+          [
+            'global',
+            [
+              {
+                id: 'qwen3:8b',
+                name: 'Qwen 3 8B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Qwen 3 8B',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+          [
+            'session-scoped-6',
+            [
+              {
+                id: 'qwen3:8b',
+                name: 'Qwen 3 8B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'anthropic',
+                contextWindow: 128000,
+                description: 'Qwen 3 8B',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModelAllowingExactId('qwen3:14b', 'ollama', 'session-scoped-6')).toBe(
+        true
+      );
+      expect(isCuratedOutModelAllowingExactId('qwen3:14b', 'ollama')).toBe(false);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3:8b' }]);
+      expect(isCuratedOutModelAllowingExactId('qwen3:8b', 'ollama', 'session-scoped-6')).toBe(
+        false
+      );
+    });
   });
 
   describe('getProviderCatalogModels', () => {
