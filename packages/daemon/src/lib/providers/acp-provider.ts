@@ -1,17 +1,17 @@
+import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
+  ModelTier,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
-  CuratedModel,
 } from '@hyperneo/shared/provider';
-import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
-import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.ts';
 import { AcpClient } from '../acp/acp-client.ts';
+import { buildAcpClientEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.ts';
+import { envValue } from '../spawn-env.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
-import { envValue, STARTUP_ENV_BASELINE } from '../spawn-env.ts';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -30,7 +30,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
     command,
     args,
     cwd: process.cwd(),
-    env: buildAcpSafeEnv(),
+    env: buildAcpClientEnv(),
     replaceEnv: true,
     requestTimeoutMs: timeoutMs,
   });
@@ -48,23 +48,6 @@ function parseContextWindow(value: string | undefined): number {
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ACP_CONTEXT_WINDOW;
 
   return Math.trunc(parsed);
-}
-
-export type AcpCredentialEnvBaseline = Readonly<Record<string, string>>;
-
-const ACP_ENV_KEYS_VAR = 'HYPERNEO_ACP_ENV_KEYS';
-
-export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
-  const baseline: Record<string, string> = {};
-  const configured = envValue(STARTUP_ENV_BASELINE, ACP_ENV_KEYS_VAR);
-  if (!configured) return baseline;
-  for (const entry of configured.split(',')) {
-    const key = entry.trim();
-    if (!key || key in baseline) continue;
-    const value = envValue(STARTUP_ENV_BASELINE, key);
-    if (value !== undefined) baseline[key] = value;
-  }
-  return baseline;
 }
 
 export class AcpProvider implements Provider {

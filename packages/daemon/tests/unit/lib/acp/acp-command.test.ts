@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildAcpClientEnv,
   buildAcpSafeEnv,
   getAcpCommandIdentity,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-command';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 describe('buildAcpSafeEnv', () => {
   test('keeps only safe environment variables without unrelated secrets', () => {
@@ -68,6 +70,50 @@ describe('buildAcpSafeEnv', () => {
       });
     }
   );
+});
+
+describe('buildAcpClientEnv', () => {
+  test('layers selected credentials and proxy TLS inputs over the sanitized baseline', () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'ambient-secret';
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN, MISSING_KEY',
+      MY_ACP_TOKEN: 'custom-token',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      ANTHROPIC_API_KEY: 'ambient-secret',
+    });
+    try {
+      const env = buildAcpClientEnv();
+
+      expect(env.PATH).toBeDefined();
+      expect(env.MY_ACP_TOKEN).toBe('custom-token');
+      expect(env.HTTPS_PROXY).toBe('http://proxy.internal:8080');
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.MISSING_KEY).toBeUndefined();
+      expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+    } finally {
+      if (previousApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousApiKey;
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
+
+  test('returns only the sanitized baseline when no credentials are selected', () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    const withoutSelector = { ...previousBaseline };
+    delete withoutSelector.HYPERNEO_ACP_ENV_KEYS;
+    _setStartupEnvBaselineForTesting({ ...withoutSelector, MY_ACP_TOKEN: 'custom-token' });
+    try {
+      const env = buildAcpClientEnv();
+
+      expect(env.MY_ACP_TOKEN).toBeUndefined();
+      expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
 });
 
 describe('parseAcpCommand', () => {

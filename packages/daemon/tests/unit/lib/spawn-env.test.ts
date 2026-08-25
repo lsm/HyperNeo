@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  _setStartupEnvBaselineForTesting,
   buildCommandEnv,
   buildDialogEnv,
   buildGitCommandEnv,
@@ -10,7 +11,6 @@ import {
   isRestrictedEnvName,
   refreshStartupEnvBaseline,
   STARTUP_ENV_BASELINE,
-  _setStartupEnvBaselineForTesting,
 } from '../../../src/lib/spawn-env';
 
 const SOURCE: Record<string, string> = {
@@ -206,7 +206,7 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GH_TOKEN).toBeUndefined();
   });
 
-  test('carries git commit identity variables but no other GIT_ inputs', () => {
+  test('carries git identity and SSH auth variables but no other GIT_ inputs', () => {
     const env = buildSdkRuntimeEnv({
       ...SOURCE,
       GIT_AUTHOR_NAME: 'Agent Bot',
@@ -219,8 +219,11 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_COMMITTER_NAME).toBe('Agent Bot');
     expect(env.GIT_COMMITTER_EMAIL).toBe('agent@example.com');
     expect(env.EMAIL).toBe('agent@example.com');
+    expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
+    expect(env.SSH_AGENT_PID).toBeUndefined();
+    expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
     expect(env.GIT_EXEC_PATH).toBeUndefined();
-    expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
   });
 });

@@ -1,11 +1,11 @@
-import type { UUID } from 'crypto';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   generateUUID,
-  THINKING_LEVEL_TOKENS,
   type MessageContent,
   type Session,
+  THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type {
   AcpConfigOption,
@@ -24,28 +24,33 @@ import type {
   AcpTerminalWaitForExitParams,
 } from '@hyperneo/shared/acp';
 import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { ErrorCategory } from '../error-manager.ts';
-import { updateProviderModelsInCache } from '../model-service.ts';
-import { getProviderRegistry } from '../providers/factory.ts';
-import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service.ts';
-import { getAcpCredentialEnvBaseline, AcpProvider } from '../providers/acp-provider.ts';
-import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
-import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
-import { assessLimitError } from '../agent/limit-error-classifier.ts';
+import type { UUID } from 'crypto';
 import type { AgentSession } from '../agent/agent-session.ts';
+import { assessLimitError } from '../agent/limit-error-classifier.ts';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
 import {
-  refreshQueryEnvFromProcess,
   type QueryRunnerContext,
+  refreshQueryEnvFromProcess,
   type TrackedAgentProcess,
 } from '../agent/query-runner.ts';
+import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
+import { ErrorCategory } from '../error-manager.ts';
+import { updateProviderModelsInCache } from '../model-service.ts';
+import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service.ts';
+import { AcpProvider } from '../providers/acp-provider.ts';
+import { getProviderRegistry } from '../providers/factory.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy.ts';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { AcpClient, type AcpClientOptions } from './acp-client.ts';
-import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command.ts';
 import { buildCommandEnv } from '../spawn-env.ts';
+import { AcpClient, type AcpClientOptions } from './acp-client.ts';
+import {
+  buildAcpSafeEnv,
+  getAcpCommandIdentityDigest,
+  getAcpCredentialEnvBaseline,
+  parseAcpCommand,
+} from './acp-command.ts';
 import { getAcpProcessTreeOwner } from './acp-process-tree.ts';
 import { AcpQueryAdapter } from './acp-query-adapter.ts';
 import {

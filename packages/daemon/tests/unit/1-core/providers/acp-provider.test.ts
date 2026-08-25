@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import {
-  AcpProvider,
-  getAcpCredentialEnvBaseline,
-} from '../../../../src/lib/providers/acp-provider';
-import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
+import { getAcpCredentialEnvBaseline } from '../../../../src/lib/acp/acp-command';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import {
   recordProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 describe('AcpProvider', () => {
   let provider: AcpProvider;

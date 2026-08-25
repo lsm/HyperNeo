@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 const calls: string[] = [];
 let clientOptions: AcpClientOptions | undefined;
@@ -66,8 +67,30 @@ describe('defaultAcpCommandProbe', () => {
 
     expect(clientOptions?.command).toBe('/Applications/Devin CLI/devin');
     expect(clientOptions?.args).toEqual(['acp']);
-    expect(clientOptions?.env).toEqual({ PATH: '/safe/bin', HOME: '/safe/home' });
+    expect(clientOptions?.env?.PATH).toBe('/safe/bin');
+    expect(clientOptions?.env?.HOME).toBe('/safe/home');
+    expect(clientOptions?.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(clientOptions?.replaceEnv).toBe(true);
+  });
+
+  test('carries selected credentials and proxy TLS inputs into the probe environment', async () => {
+    process.env = { PATH: '/safe/bin', HOME: '/safe/home' };
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'PROBE_TOKEN',
+      PROBE_TOKEN: 'probe-secret',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+    });
+    try {
+      await defaultAcpCommandProbe('devin acp');
+
+      expect(clientOptions?.env?.PROBE_TOKEN).toBe('probe-secret');
+      expect(clientOptions?.env?.HTTPS_PROXY).toBe('http://proxy.internal:8080');
+      expect(clientOptions?.env?.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
   });
 
   test('completes the initialize handshake without authenticating before resolving', async () => {

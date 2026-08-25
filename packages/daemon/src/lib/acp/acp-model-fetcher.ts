@@ -1,34 +1,14 @@
-import { AcpClient } from './acp-client.ts';
-import { buildAcpSafeEnv, parseAcpCommand } from './acp-command.ts';
-import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
-import { buildCommandEnv } from '../spawn-env.ts';
 import {
-  flattenModelChoices,
-  getAcpCredentialEnvBaseline,
   type AcpConfiguredModel,
   type AcpProvider,
+  flattenModelChoices,
 } from '../providers/acp-provider.ts';
+import { AcpClient } from './acp-client.ts';
+import { buildAcpClientEnv, parseAcpCommand } from './acp-command.ts';
+import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
 
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
 const FETCH_OVERALL_TIMEOUT_MS = 9000;
-
-function definedEnvEntries(
-  baseline: Readonly<Record<string, string | undefined>>
-): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(baseline)) {
-    if (value !== undefined) env[key] = value;
-  }
-  return env;
-}
-
-function buildAcpClientEnv(): Record<string, string> {
-  return {
-    ...buildAcpSafeEnv(),
-    ...buildCommandEnv(),
-    ...definedEnvEntries(getAcpCredentialEnvBaseline()),
-  };
-}
 
 export async function disposeAcpSessions(
   commandLine: string,

@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
+const LFS_EXT_LINE_PATTERN = /^ext-\d+-\S+ sha256:[0-9a-f]{64}$/;
 const LFS_PROBE_TIMEOUT_MS = 60_000;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
@@ -13,9 +14,11 @@ export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 function isLfsPointerContent(content: string): boolean {
   const lines = content.split('\n');
   if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
-  if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[1] ?? '')) return false;
-  if (!/^size \d+$/.test(lines[2] ?? '')) return false;
-  return lines.length <= 4 && (lines[3] === undefined || lines[3] === '');
+  let index = 1;
+  while (index < lines.length && LFS_EXT_LINE_PATTERN.test(lines[index])) index++;
+  if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[index] ?? '')) return false;
+  if (!/^size \d+$/.test(lines[index + 1] ?? '')) return false;
+  return lines.slice(index + 2).every((line) => line === '');
 }
 
 export async function indexContainsLfsPointer(

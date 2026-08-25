@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
-import { envValue } from '../spawn-env.ts';
+import { buildCommandEnv, envValue, STARTUP_ENV_BASELINE } from '../spawn-env.ts';
 
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
@@ -49,4 +49,39 @@ export function buildAcpSafeEnv(env: NodeJS.ProcessEnv = process.env): Record<st
       return value === undefined ? [] : [[key, value]];
     })
   );
+}
+
+export type AcpCredentialEnvBaseline = Readonly<Record<string, string>>;
+
+const ACP_ENV_KEYS_VAR = 'HYPERNEO_ACP_ENV_KEYS';
+
+export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
+  const baseline: Record<string, string> = {};
+  const configured = envValue(STARTUP_ENV_BASELINE, ACP_ENV_KEYS_VAR);
+  if (!configured) return baseline;
+  for (const entry of configured.split(',')) {
+    const key = entry.trim();
+    if (!key || key in baseline) continue;
+    const value = envValue(STARTUP_ENV_BASELINE, key);
+    if (value !== undefined) baseline[key] = value;
+  }
+  return baseline;
+}
+
+function definedEnvEntries(
+  baseline: Readonly<Record<string, string | undefined>>
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(baseline)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+export function buildAcpClientEnv(): Record<string, string> {
+  return {
+    ...buildAcpSafeEnv(),
+    ...buildCommandEnv(),
+    ...definedEnvEntries(getAcpCredentialEnvBaseline()),
+  };
 }

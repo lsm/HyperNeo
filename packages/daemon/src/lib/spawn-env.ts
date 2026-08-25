@@ -256,7 +256,12 @@ export function buildSdkRuntimeEnv(
   return {
     ...buildOsBaselineEnv(source),
     ...pickKeys(
-      [...PROXY_TLS_ENV_KEYS, ...SDK_USER_CONFIG_ENV_KEYS, ...GIT_IDENTITY_ENV_KEYS],
+      [
+        ...PROXY_TLS_ENV_KEYS,
+        ...SDK_USER_CONFIG_ENV_KEYS,
+        ...GIT_SSH_ENV_KEYS,
+        ...GIT_IDENTITY_ENV_KEYS,
+      ],
       source
     ),
   };
