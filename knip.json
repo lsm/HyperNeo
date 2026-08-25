@@ -82,6 +82,7 @@
     "@floating-ui/dom",
     "@vitest/coverage-v8",
     "use-sync-external-store",
-    "lucide-preact"
+    "lucide-preact",
+    "typescript7"
   ]
 }
