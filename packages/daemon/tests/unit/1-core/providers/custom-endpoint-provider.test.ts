@@ -418,8 +418,17 @@ describe('CustomEndpointProvider', () => {
       thinking: false,
       caching: false,
       maxContextTokens: 128000,
+      autoCompactPercent: 90,
       streamUsage: false,
     });
+  });
+
+  it('resolveModelCapabilities honors a stored autoCompactPercent delta', async () => {
+    const caps = resolveModelCapabilities({
+      id: 'x',
+      capabilities: { autoCompactPercent: 70 },
+    });
+    expect(caps.autoCompactPercent).toBe(70);
   });
 
   it('isAvailable returns true when baseUrl is set', async () => {

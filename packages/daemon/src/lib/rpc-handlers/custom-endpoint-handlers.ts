@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { CustomEndpointConfig, CustomEndpointType } from '@hyperneo/shared';
+import { AUTO_COMPACT_PERCENT_MAX, AUTO_COMPACT_PERCENT_MIN } from '@hyperneo/shared';
 import { customProviderIdFor } from '../providers/custom-endpoint-provider.js';
 import {
   buildModelListUrl,
@@ -131,6 +132,18 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
       throw new Error(`Custom endpoint '${config.id}': every model must have an id`);
     if (seen.has(model.id))
       throw new Error(`Custom endpoint '${config.id}': duplicate model id '${model.id}'`);
+    const pct = model.capabilities?.autoCompactPercent;
+    if (
+      pct !== undefined &&
+      (typeof pct !== 'number' ||
+        !Number.isFinite(pct) ||
+        pct < AUTO_COMPACT_PERCENT_MIN ||
+        pct > AUTO_COMPACT_PERCENT_MAX)
+    ) {
+      throw new Error(
+        `Custom endpoint '${config.id}': model '${model.id}' autoCompactPercent must be between ${AUTO_COMPACT_PERCENT_MIN} and ${AUTO_COMPACT_PERCENT_MAX}`
+      );
+    }
     seen.add(model.id);
   }
   if (config.defaultModelId && !seen.has(config.defaultModelId)) {
