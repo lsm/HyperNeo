@@ -94,7 +94,7 @@ export class ProviderService {
   private readonly logger = new Logger('provider-service');
   private readonly catalogCache = new WeakMap<
     RegisteredProvider,
-    { models: ModelInfo[]; at: number }
+    { models: ModelInfo[]; at: number; curatedRef: ReadonlyArray<unknown> | undefined }
   >();
 
   private async ensureProviderBridges(
@@ -261,8 +261,13 @@ export class ProviderService {
     providerId: string,
     provider: RegisteredProvider
   ): Promise<ModelInfo[]> {
+    const curatedNow = this.getRegistry().getCuratedModels(providerId);
     const cached = this.catalogCache.get(provider);
-    if (cached && Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS) {
+    if (
+      cached &&
+      cached.curatedRef === curatedNow &&
+      Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
+    ) {
       return cached.models;
     }
     let models: ModelInfo[];
@@ -271,15 +276,16 @@ export class ProviderService {
       if (fetched.length > 0 || provider.hasCuratedModelList?.()) {
         models = fetched;
       } else {
-        const curated = this.getRegistry().getCuratedModels(providerId);
         models =
-          curated !== undefined && curated.length === 0 ? fetched : fallbackModelsFor(provider);
+          curatedNow !== undefined && curatedNow.length === 0
+            ? fetched
+            : fallbackModelsFor(provider);
       }
     } catch {
       models = fallbackModelsFor(provider);
     }
     if (models.length > 0) {
-      this.catalogCache.set(provider, { models, at: Date.now() });
+      this.catalogCache.set(provider, { models, at: Date.now(), curatedRef: curatedNow });
     }
     return models;
   }

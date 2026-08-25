@@ -244,13 +244,19 @@ export interface QueryOptionsBuilderContext {
   readonly toolGuards?: DeclarativeToolGuard[];
 }
 
-const builtFallbackBySession = new WeakMap<object, string | undefined>();
-
-export function markBuiltFallbackModel(session: object, fallbackModel: string | undefined): void {
-  builtFallbackBySession.set(session, fallbackModel);
+export interface BuiltFallbackIdentity {
+  providerId: string;
+  primaryModel: string | undefined;
+  fallbackModel: string | undefined;
 }
 
-export function getBuiltFallbackModel(session: object): string | undefined {
+const builtFallbackBySession = new WeakMap<object, BuiltFallbackIdentity>();
+
+export function markBuiltFallbackIdentity(session: object, identity: BuiltFallbackIdentity): void {
+  builtFallbackBySession.set(session, identity);
+}
+
+export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity | undefined {
   return builtFallbackBySession.get(session);
 }
 
@@ -347,7 +353,11 @@ export class QueryOptionsBuilder {
     const configuredScopedRegion = config.providerConfig?.region;
     this.effectiveFallbackCaptured = true;
     this.effectiveFallbackModel = configuredFallbackModel;
-    markBuiltFallbackModel(this.ctx.session, configuredFallbackModel);
+    markBuiltFallbackIdentity(this.ctx.session, {
+      providerId,
+      primaryModel: config.model,
+      fallbackModel: configuredFallbackModel,
+    });
 
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();

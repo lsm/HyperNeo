@@ -54,7 +54,7 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import {
-  getBuiltFallbackModel,
+  getBuiltFallbackIdentity,
   shouldUseHyperNeoCompactFallback,
 } from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
@@ -1315,9 +1315,16 @@ export class SDKMessageHandler {
     if (message.scope === 'local') return;
     const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
-    const builtFallbackModel = getBuiltFallbackModel(session);
-    if (builtFallbackModel === undefined || builtFallbackModel !== fallbackModel) return;
     const providerId = session.config.provider ?? 'anthropic';
+    const builtIdentity = getBuiltFallbackIdentity(session);
+    if (
+      !builtIdentity ||
+      builtIdentity.providerId !== providerId ||
+      builtIdentity.primaryModel !== session.config.model ||
+      builtIdentity.fallbackModel !== fallbackModel
+    ) {
+      return;
+    }
     const configuredFallbackModel = session.config.fallbackModel;
     const primaryModelBeforeGuard = session.config.model;
     const scopedApiKeyBefore = session.config.providerConfig?.apiKey;

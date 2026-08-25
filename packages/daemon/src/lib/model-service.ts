@@ -1168,6 +1168,13 @@ export async function resolveVisibleCanonicalModelId(
 
   if (cachedId) {
     if (liveModels === null) return cachedId;
+    const lowerInput = idOrAlias.toLowerCase();
+    const exactLive = liveModels.find(
+      (model) =>
+        model.id.toLowerCase() === lowerInput ||
+        (model.alias ? model.alias.toLowerCase() === lowerInput : false)
+    );
+    if (exactLive) return exactLive.id;
     if (liveModels.some((model) => model.id === cachedId)) return cachedId;
     return findInModels(liveModels, idOrAlias)?.id ?? null;
   }

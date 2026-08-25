@@ -2584,6 +2584,66 @@ describe('Model Service', () => {
       await expect(isModelExcludedByCuration('shared-alias', 'ollama')).resolves.toBe(false);
       await expect(isModelExcludedByCuration('ollama-old', 'ollama')).resolves.toBe(true);
     });
+
+    it('prefers an exact live match over the cached alias mapping', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'kimi',
+        displayName: 'Kimi',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'kimi-k3[1m]',
+            name: 'Kimi K3',
+            alias: 'k3',
+            family: 'kimi',
+            provider: 'kimi',
+            contextWindow: 1000000,
+            description: 'Kimi K3',
+            releaseDate: '',
+            available: true,
+          },
+          {
+            id: 'moonshot-k3-128k',
+            name: 'Kimi K3 128k',
+            alias: 'moonshot-k3-128k',
+            family: 'kimi',
+            provider: 'kimi',
+            contextWindow: 128000,
+            description: 'Kimi K3 128k',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('kimi', [{ id: 'moonshot-k3-128k' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'kimi-k3[1m]',
+                name: 'Kimi K3',
+                alias: 'k3',
+                providerAliases: ['moonshot-k3-128k'],
+                family: 'kimi',
+                provider: 'kimi',
+                contextWindow: 1000000,
+                description: 'Kimi K3',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      await expect(isModelExcludedByCuration('moonshot-k3-128k', 'kimi')).resolves.toBe(false);
+    });
   });
 
   describe('getAvailableModels', () => {
