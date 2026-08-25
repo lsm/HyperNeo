@@ -18,10 +18,10 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:get_task_detail` | Identifier/lookup/space check/return | `decisionRun` | Pure target-resolution and return; no effects. |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:list_task_members` | Identifier/lookup/space check/workflow run check/list executions | `decisionRun` (admission), shell reads executions | Pure admission, then a read-only list. Can share the target gate with `get_task_detail`. |
 | `packages/daemon/src/lib/space/tools/node-agent-tools.ts:get_task` | Same pattern as `get_task_detail` | `decisionRun` (shared `task-target-resolution` core) | Node-agent and Space-agent lookups should converge on one `decisionRun`. |
-| `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:validateWorkflowModelOverrides` | Pure validation of a string map against workflow nodes/agents | `decisionRun` | No effects; returns normalized map or reject. |
-| `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.update` | Large if-cascade around status transitions, dependency block, override validation | `stagedRun` or `decisionRun` + staged shell | The routing core `routeTaskUpdate` is already a pure function; this path should reuse/extend the existing `space-tool-pipeline.ts` `decisionRun` and add a staged shell for runtime effects. |
+| `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:validateWorkflowModelOverrides` | Validation rules as ordinary helpers / direct early stages of the single `spaceTask.update` RPC pipeline (review correction round 22) | No effects; returns normalized map or reject. |
+| `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.update` | Large if-cascade around status transitions, dependency block, override validation | ONE direct RPC pipeline — override validation, `routeTaskUpdate` (shared plain helper or inline gates), and the effect flow composed together (review correction round 22: no `routeTaskUpdate` `decisionRun`, no imported tool decision runner before a staged shell) | Single composition for the whole update operation; parity with the tool path. |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.approvePendingCompletion` | Same semantics as `approve_pending_completion` tool | `stagedRun` shared core | Unify with the tool path. |
-| `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.publish` | Same semantics as tool `publish_task` and `onPublishTask` | `stagedRun` or `decisionRun` + shell | `routePublishTask` already exists; unification is the main win. |
+| `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.publish` | Same semantics as tool `publish_task` and `onPublishTask` | ONE direct mixed pipeline per caller operation (admission + `publishTask` effect + event emission) | `routePublishTask` already exists as shared plain logic; unification is the main win. |
 | `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onTaskCompleted` | Snapshot task/goal/scope/evidence, threshold check, optional job enqueue | One mixed decision/effect pipeline — admission gates plus the `enqueue` effect stage (review correction: an admission-only pipeline with shell interpretation preserves the hand-rolled outer split) | The job queue push is a stage of the same pipeline. |
 | `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onSelfNag` | Snapshot scope/goal/policy/cursor/evidence, decide whether to enqueue self-nag | One mixed decision/effect pipeline — admission gates plus the `enqueue` effect stage | Same pattern as `onTaskCompleted`. |
 | `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope` | List schedules, pause/update/create schedule records | Direct sync `superpipe` (`.end`) inside the optional `db` transaction (review correction: `stagedRun` is async-only) | Effects on `ScheduleService`; must commit atomically with the sync transaction. |
@@ -29,12 +29,12 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Most complex goal effect chain; needs gather/decide/effect stages. |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | Direct sync `superpipe` (`.end`) — review correction: `registerSubscription` completes synchronously and callers like `registerRunInterests` inspect `result.success` immediately in a loop; `stagedRun` (`endAsync`) would change that contract to a Promise and add await gaps between the interest-count snapshot and trie mutations | In-memory rollback on repo failure stays; the redispatch best-effort move (below) still applies. |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:validateSubscriptionTargetTask` | Pure check: task exists, belongs to run, not terminal | Ordinary pure helper or direct branches of the synchronous registration pipeline (review correction: not a separate `decisionRun`, and no `stagedRun` — see the corrected `registerSubscription` design) | Trivial target gate. |
-| `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | `decisionRun` | Already called inside a per-target loop; replacing the if-cascade with a `decisionRun` makes the precedence testable. |
-| `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets` | Pure multi-branch target resolution | `decisionRun` | Currently used to feed `agent-message-routing-pipeline.ts`. Make it a first-class `decisionRun` and the pipeline can read its `decision`. |
-| `packages/daemon/src/lib/space/runtime/activation-routing.ts:decideActivationRouting` | Pure multi-branch decision | `decisionRun` | Simple cascade; `decisionRun` is the right fit. |
+| `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | Ordinary pure helper or direct gates of the message-routing operation (review correction: no standalone runner — it runs once per target after `send` already entered message routing) | Precedence stays testable via direct helper unit tests. |
+| `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets` | Pure multi-branch target resolution | Resolution/authorization stages live directly in `agent-message-routing-pipeline.ts` (or stay an ordinary pure helper consumed there) — no standalone runner | Keeps one pipeline per message-routing operation. |
+| `packages/daemon/src/lib/space/runtime/activation-routing.ts:decideActivationRouting` | Pure multi-branch decision | Classification stages/plain helpers of the ONE complete `activateTargetSessionsForMessage` mixed pipeline (reset/activation/resnapshot/spawn effects included) | A standalone runner would execute three nested pipelines per activation while leaving the imperative cascade. |
 | `packages/daemon/src/lib/space/runtime/last-message-classifier.ts:classifyLastMessageForIdleAgent` | Pure multi-branch classification of last SDK message | `decisionRun` | First classification wins; map to gates. |
-| `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onArchiveTask` | Active-run guard, archive, emit | `decisionRun` (or `stagedRun`) shared with `archive_task` tool | Already a thin wrapper; unify with `routeArchiveTask` and the archive effect. |
-| `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onPublishTask` | Publish, emit | `decisionRun` (or `stagedRun`) shared with `publish_task` tool and RPC | Same as above. |
+| `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onArchiveTask` | Active-run guard, archive, emit | ONE complete mixed pipeline (routing + `archiveTask` effect + event emission), sharing `routeArchiveTask` as plain logic (review correction round 22) | Not a shared admission runner; the callback operation composes whole. |
+| `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onPublishTask` | Publish, emit | ONE complete mixed pipeline (routing + `publishTask` effect + event emission), sharing `routePublishTask` as plain logic (review correction round 22) | Same as above. |
 
 ---
 
@@ -100,7 +100,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   - `noDeferredRows`
   - `noSteerEssences`
   - `proceed`
-- **Shell/effect wiring**: The `TaskAgentManager` calls `runDirectSteerFlush({ sessionId, bufferedEntries })`. Effects call `db.getUserMessagesByStatus`, `db.saveUserMessage`, `deliverMessage`, `db.updateMessageStatus`, `publishMessageStatusChanged`. `passengerDbId` is a shared mutable box, similar to `SpawnAttemptBox` in `spawn-flow.ts`, because it must be visible to later effect/resnapshot stages.
+- **Shell/effect wiring**: The `TaskAgentManager` calls `runDirectSteerFlush({ sessionId, bufferedEntries })`. Effects call `db.getUserMessagesByStatus`, `db.saveUserMessage`, `deliverMessage`, `db.updateMessageStatus`, `publishMessageStatusChanged`. `passengerDbId` is a shared mutable box, similar to `SpawnAttemptBox` in `spawn-flow.ts`, because it must be visible to later effect/resnapshot stages. The saved steer row gets its OWN external mutable box for the same reason (review correction round 22: a `stagedRun` effect cannot return the row or persist a `steerDbId` assignment on its copied view).
 - **Step-by-step migration**:
   1. Move `deliverDirectSteerUnderCoordination` into `stagedRun('direct-steer-flush', (s) => [...])`.
   2. First `snapshot` gathers session, processing status, parent-task limited, deferred rows, and partitions entries.
@@ -117,32 +117,36 @@ The repo already has several proven pipelines. Use these as the model for each s
      implementation performs in this race, INCLUDING the
      `messages.statusChanged` publication for the consumed row — review
      correction: `discardPassengerCopy` publishes that event today and the
-     success-path publication in step 11 is never reached on this branch;
+     success-path publication in step 12 is never reached on this branch;
      without it LiveQuery subscribers keep displaying the discarded
      passenger as `deferred` until a later refresh) BEFORE halting — `stagedRun`
      unwinds compensations only on errors or `superseded`, not on a
      successful halt, so the registered `discardPassengerCopy` compensation
      would NOT run here and the copied row would remain `deferred` alongside
      its original source rows.
-  7. `effect` `save-steer-row` saves the steer message.
-  8. `effect` `enqueue-steer-delivery` calls `deliverMessage`. On throw, mark
+  7. `effect` `save-steer-row` saves the steer message and stores the saved
+     row (with its database ID) in the steer-row external mutable box.
+  8. `resnapshot` copies the saved steer row out of the external box into
+     ctx — the enqueue-failure handling and the status publications consume
+     the SAVED row, not the pre-save draft (review correction round 22).
+  9. `effect` `enqueue-steer-delivery` calls `deliverMessage`. On throw, mark
      the steer row `failed`, PUBLISH its `messages.statusChanged` transition
      (review correction round 15: the current code publishes the failed row;
-     step 11's publications are success-only and never reached here, so
+     step 12's publications are success-only and never reached here, so
      without it LiveQuery/runtime subscribers will not observe the failed
      row until a refresh), and trigger the passenger compensation.
-  9. `effect` `consume-source-rows` updates source row statuses.
-  10. `effect` `record-steer-metrics` calls `recordDirectSteerEnqueued()` and
+  10. `effect` `consume-source-rows` updates source row statuses.
+  11. `effect` `record-steer-metrics` calls `recordDirectSteerEnqueued()` and
       `recordDirectSteerEnqueuedClass(...)` for every steered class (review
       correction: these counters feed external-event queue health reporting
       and are asserted by the existing direct-steer suite; omitting them
       makes migrated deliveries disappear from telemetry).
-  11. `effect` `publish-status-transitions` publishes the steer row's
+  12. `effect` `publish-status-transitions` publishes the steer row's
       `enqueued` status and the `messages.statusChanged` event marking all
       source rows `consumed` (review correction: without these publications
       LiveQuery/runtime subscribers keep showing the source rows as
       `deferred` and miss the enqueued steer until a later refresh).
-  12. `halt` returns `{ enqueued: true, eventCount }`.
+  13. `halt` returns `{ enqueued: true, eventCount }`.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts` covers the existing behavior. Add a parity harness and per-stage unit tests (`task-agent-manager-direct-steer-pipeline.test.ts`) that mock `saveUserMessage`, `deliverMessage`, and `updateMessageStatus`.
 - **Risks/caveats**: This is the `#1398 continuation` site. The existing code intentionally stops if the session leaves `processing` while preserving passengers. A `stagedRun` must replicate that exact resnapshot timing. Do not add retries; the ADR forbids in-flow retry. Compensation is in-memory only; if the process dies between passenger save and consume, the passenger row is left `deferred` and will be reconciled by the normal flush path, which is acceptable.
 
@@ -199,13 +203,18 @@ The repo already has several proven pipelines. Use these as the model for each s
   2. `snapshot` copies input rows and cap.
   3. `decide` runs `planDeferredExternalEventRows` and branches `noOverflow` (halt with `null`) or `overflow`.
   4. `effect` `save-overflow-envelope` saves the fold row idempotently and
-     stores its return (`dbId` + UUID-adjusted message) in the shared
-     OverflowFoldState result box (review correction round 20: `stagedRun`
-     effect stages may return only `void`/`won`/`superseded`
-     (`staged-run.ts:405-412`) — discarding the saved object would leave the
-     halt unable to build `DeferredEventOverflowFoldResult`).
+     stores its return (`dbId` + UUID-adjusted message) in an EXTERNAL
+     MUTABLE BOX declared OUTSIDE the run, followed by a `resnapshot` stage
+     that copies the saved envelope back into ctx (review correction rounds
+     20/22: `stagedRun` effect stages may return only `void`/`won`/`superseded`
+     (`staged-run.ts:405-412`) AND receive a shallow-copied view
+     (`stripUnwind(view)`), so both a returned object and an assignment on
+     the shared `OverflowFoldState` are discarded — the same
+     external-box-plus-resnapshot design as the flush fold; without it the
+     halt cannot build `DeferredEventOverflowFoldResult`).
   5. `effect` `mark-overflow-superseded` marks the overflow rows.
-  6. `halt` returns the result.
+  6. `resnapshot` reads the saved envelope out of the external box into ctx.
+  7. `halt` returns the result.
 - **Tests**: Same `deferred-event-digest.test.ts` plus tests for the cap boundary and fold-vs-raw selection.
 - **Risks/caveats**: The two effects must be idempotent or transactionally guarded. If `markSuperseded` fails, a re-run will find the existing envelope by UUID and skip the save, but the source rows will not be superseded, potentially inflating the queue until the next attempt. A single repo primitive or transaction is preferred.
 
@@ -282,8 +291,17 @@ The repo already has several proven pipelines. Use these as the model for each s
      `record-dispatched-session` throw or CAS loss would make the task
      dispatchable again while the spawned session stayed live — a retry then
      creates a second orphan. After a successful spawn the claim is
-     NON-releasable; failure cleanup owns the session, not the claim).
-  9. `effect` `record-dispatched-session` converts the reservation into the
+     NON-releasable; failure cleanup owns the session, not the claim). The
+     spawn effect writes the spawned session ID and start time into an
+     EXTERNAL MUTABLE BOX (SpawnAttemptBox-style) — the effect view is a
+     shallow copy, so assigning `spawnedSessionId` on the shared state would
+     be discarded and `record-dispatched-session` would record a null ID;
+     the step-8 compensate reads the box DIRECTLY so it can terminate the
+     session even when the failure precedes the resnapshot.
+  9. `resnapshot` copies the spawned session ID and start time from the
+     external box into ctx (`spawnedSessionId`/`startedAt`) before the
+     dispatch record is written.
+  10. `effect` `record-dispatched-session` converts the reservation into the
      final `postApprovalSessionId`/`postApprovalStartedAt` via the same
      conditional CAS (the loser of the reservation race halts at step 7
      without ever spawning; if this CAS loses despite the reservation, the
@@ -297,7 +315,7 @@ The repo already has several proven pipelines. Use these as the model for each s
      and permanently blocks the approved task. Retain the claim only when
      session termination cannot be confirmed (crash window), where the
      expiring-claim fallback eventually unblocks).
-  10. `halt` returns `spawn` result.
+  11. `halt` returns `spawn` result.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), the spawn compensation path, AND the round-4 row: `record-dispatched-session` throwing terminates this caller's spawned session and then CONDITIONALLY RELEASES the claim after verified termination (task becomes dispatchable again); the claim is retained ONLY when termination cannot be confirmed — never left durably held with no live session, which would block every retry at `reserve-dispatch`.
 - **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task — hence the reservation-before-spawn step above; without it, a conditional `record-dispatched-session` alone protects the row but leaves the losing spawned session orphaned and active. The compensations are asymmetric by design: claim-release only pre-spawn, session-termination only post-spawn. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
 
@@ -377,7 +395,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**:
   - Tool shell: validates `callerRole === 'coordinator' | 'legacy_task_agent'`, sets `callerMayApprove`, runs the pipeline, maps to `jsonResult`.
   - RPC shell: sets `callerMayApprove = true`, runs the pipeline, returns the final task.
-  - Effects: `taskManager.setTaskStatus` (`approved` or `in_progress`), `runtime.dispatchPostApproval`, `taskManager.updateTask` (blocked reason or approval reason), `taskRepo.getTask` (resnapshot).
+  - Effects: `taskManager.setTaskStatus` (`approved` or `in_progress`), `runtime.dispatchPostApproval`, `taskManager.updateTask` (blocked reason or approval reason), `taskRepo.getTask` (resnapshot), and the final `space.task.updated` publication stage (review correction round 22 — see step 10).
 - **Step-by-step migration**:
   1. Extract the function into `packages/daemon/src/lib/space/runtime/approve-pending-completion-pipeline.ts`.
   2. `snapshot` loads task.
@@ -388,19 +406,23 @@ The repo already has several proven pipelines. Use these as the model for each s
   7. `effect` `record-blocked-reason` (when dispatch threw) updates `postApprovalBlockedReason`.
   8. Guarded `effect` `set-rejected` (when `reject`) calls `taskManager.setTaskStatus` then `updateTask` with reason.
   9. `halt` returns final `SpaceTask`.
-  10. Post-pipeline shell (review correction): BOTH shells publish
-      `space.task.updated` with the final refreshed task after approving OR
-      rejecting — the tool's `emitTaskUpdated` and the RPC's event
-      publication stay as shell effects; `SpaceStore` consumes the event to
-      update task lists and banners, so dropping it leaves rejected tasks
-      displayed in `review` and stale dispatch-failure metadata.
+  10. Guarded `effect` `publish-task-updated` emits `space.task.updated`
+      with the final refreshed task after approving OR rejecting (review
+      correction round 22: the publication is a stage of the SHARED
+      pipeline, not a shell effect — keeping the tool's `emitTaskUpdated`
+      and the RPC's event publication in the shells duplicates the same
+      business event per caller and lets a future caller of the shared
+      pipeline skip it, leaving `SpaceStore` stale: rejected tasks stay
+      displayed in `review` and dispatch-failure metadata goes missing).
+      The shells keep only caller-specific result mapping (`jsonResult` for
+      the tool, the final task for the RPC).
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add a shared test module for the pipeline that runs the same inputs through both shells, including a row asserting `approvalSource`/`approvalReason` survive both shells.
 - **Risks/caveats**: Unification is the main goal: do not leave the tool and RPC with slightly different error messages or preconditions. The dispatch-failure path must still leave the task `approved`; the pipeline must not roll that back. Audit metadata (`approvalSource`, `approvalReason`) must not be silently dropped by the approval-order change above.
 
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:review_goal_outcome`
 
 - **Current summary**: Two modes: (1) list claimable outcome notifications, (2) claim a notification and optionally apply a goal update. The claim path calls `goalService.claimOutcomeNotification`, which uses `decideClaimAdmission` and then applies the update.
-- **Proposed combinator**: `stagedRun` that reuses the existing `decisionRun` from `claim-admission-gates.ts`.
+- **Proposed combinator**: Outer staged flow for discovery/claim admission only; the claim branch performs ONE effect calling `goalService.claimOutcomeNotification` (review correction round 22: do NOT reuse/import the claim-admission `decisionRun` here — its gates live inside the service's atomic sync claim pipeline).
 - **Input snapshot design**:
   ```ts
   interface ReviewGoalOutcomeState {
@@ -474,7 +496,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:validateWorkflowModelOverrides`
 
 - **Current summary**: Validates `workflowModelOverrides` after the task has started; normalizes the map; checks the selected workflow exists and is not disabled; validates every key matches `nodeId:agentName`.
-- **Proposed combinator**: `decisionRun`.
+- **Proposed combinator**: Ordinary pure helpers / direct early stages INSIDE the single `spaceTask.update` RPC pipeline (review correction round 22: no standalone validation `decisionRun` — see the wiring below).
 - **Input snapshot design**:
   ```ts
   interface WorkflowOverrideValidationCtx {
@@ -489,12 +511,12 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring** (review correction): keep the workflow-override validation rules as ORDINARY PURE HELPERS or direct early stages INSIDE the single `spaceTask.update` RPC pipeline — do not create a standalone `decideWorkflowModelOverrides` runner that the shell invokes before its own direct pipeline, which would split validation, routing, and effects across composition boundaries. If `reject`, throw. If `valid`, apply the normalized value. Because `workflowManager.getWorkflow` is a snapshot read, pass the workflow in as part of the snapshot; do not call the manager inside the pipeline.
 - **Step-by-step migration** (review correction round 21): extract the validation rules as ordinary pure helpers / direct early stages INSIDE the single `spaceTask.update` RPC pipeline — do NOT create a standalone validation `decisionRun` module for the handler to invoke. The `throw` sites become rejection branches of that pipeline.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
-- **Risks/caveats**: The function is `async` but contains no awaits. Keep it sync in the `decisionRun`; if a future lookup becomes async, wrap in `stagedRun`.
+- **Risks/caveats**: The function is `async` but contains no awaits. Keep the validation helpers synchronous inside the update pipeline; if a future lookup becomes async, revisit the pipeline's stage boundaries then.
 
 ### `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.update`
 
 - **Current summary**: Validates input, workflow overrides, handles dependency-added blocked transitions, recovery transitions, stop/park for status, set_status, and field-only updates. Emits `space.task.updated`.
-- **Proposed combinator**: `stagedRun` whose first `decide` stage uses the existing `routeTaskUpdate` function (or a new `decisionRun` wrapper) and the existing `decideUpdateTask` from `space-tool-pipeline.ts`.
+- **Proposed combinator**: ONE direct RPC pipeline for `spaceTask.update` — workflow-override validation, routing (`routeTaskUpdate` as shared plain helper logic or inline gates), and effects compose in it; review correction round 22: no wrapping `routeTaskUpdate` in a new `decisionRun`, and no importing a tool decision runner into a staged run.
 - **Input snapshot design**:
   ```ts
   interface RpcTaskUpdateState {
@@ -567,15 +589,14 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onArchiveTask` and `onPublishTask`
 
 - **Current summary**: Thin callbacks passed to node-agent MCP. `onArchiveTask` checks active workflow run, then archives. `onPublishTask` just publishes.
-- **Proposed combinator**: `decisionRun` (or `stagedRun`) shared with the tool and RPC publish/archive paths.
+- **Proposed combinator**: Review correction round 22 — each callback (`onArchiveTask`, `onPublishTask`) composes as ONE complete mixed pipeline: routing (shared plain logic) → `archiveTask`/`publishTask` effect stage → event-emission stage. Shared admission runners with the central effects left in shells keep the callback operations split.
 - **Input snapshot design**: Same as `TaskPublishState` / `ArchiveTaskState` from `task-transition-routing.ts`.
-- **Pure core design**: Reuse `decideTaskPublish` and `decideTaskArchive`. `decideTaskArchive` should add the `runActive` check that `onArchiveTask` currently does inline.
-- **Shell/effect wiring**: `boundTaskManager.archiveTask` / `publishTask`, then emit `space.task.updated`.
+- **Pure core design**: Reuse `routePublishTask` and `routeArchiveTask` (the latter gains the `runActive` check) as SHARED PLAIN LOGIC — the routing predicates are stages of each caller's own pipeline, not separately-run runners.
+- **Shell/effect wiring**: The pipeline's effect stages call `boundTaskManager.archiveTask` / `publishTask`, then emit `space.task.updated`.
 - **Step-by-step migration**:
   1. Make `routeArchiveTask` the canonical archive admission core and add the active-run check to it.
-  2. Create `decideTaskArchive` `decisionRun`.
-  3. Replace `onArchiveTask` and `archive_task` tool with the shared core.
-  4. Replace `onPublishTask` with the shared `decideTaskPublish`.
+  2. Give `onArchiveTask` and the `archive_task` tool each a complete pipeline consuming that shared logic plus their archive/effect/emission stages.
+  3. Give `onPublishTask` a complete pipeline consuming `routePublishTask` plus its publish/effect/emission stages.
 - **Tests**: `packages/daemon/tests/unit/5-space/agent/task-agent-manager-*.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
 - **Risks/caveats**: `onArchiveTask` currently throws for active runs; `routeArchiveTask` already returns a `reject` for that. Ensure the error message matches.
 
@@ -765,7 +786,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: `decideSubscriptionTarget` (or `decideSubscriptionValidation`) with branches: `invalidTopic`, `missingRun`, `invalidTask`, `limitReached`, `proceed`.
-- **Shell/effect wiring**: Effects: `topicTrie.remove`, `topicTrie.insert`, `workflowEventSubscriptionRepo.upsert`, `redispatchRetainedExternalEvents`. The `compensate` on `persist-subscription` should remove the trie entry and re-insert `displaced`.
+- **Shell/effect wiring**: Effects: `topicTrie.remove`, `topicTrie.insert`, `workflowEventSubscriptionRepo.upsert`, `redispatchRetainedExternalEvents`. Review correction round 22: the sync `.end` pipeline has NO `stagedRun` compensation stack, so there is no `compensate` on `persist-subscription` to assign — if `workflowEventSubscriptionRepo.upsert` throws, the SHELL's explicit in-memory rollback removes the inserted trie entry and re-inserts `displaced` (steps below).
 - **Step-by-step migration**:
   1. Extract `validateSubscriptionTargetTask` into `packages/daemon/src/lib/space/runtime/subscription-target-gates.ts` as `decideSubscriptionTarget`.
   2. Define the direct SYNCHRONOUS pipeline `registerSubscriptionRun`
@@ -793,12 +814,12 @@ The repo already has several proven pipelines. Use these as the model for each s
      `cannot register more than 10 event interests` and
      `space-runtime-external-events.test.ts` asserts that exception.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-runtime-workflow-subscription-persistence.test.ts`. Add a row where `redispatchRetainedExternalEvents` throws: the subscription must remain both persisted and present in the trie.
-- **Risks/caveats**: `topicTrie` is in-memory shared state. The current manual rollback on repo error is exactly the in-memory compensation pattern. `workflowEventSubscriptionRepo.upsert` should be CAS-guarded or the `stagedRun` `compensate` must be able to undo the trie change. The limit check must be re-gathered between any write and the next read (the `existingInterests` snapshot already does this).
+- **Risks/caveats**: `topicTrie` is in-memory shared state. The current manual rollback on repo error is exactly the in-memory compensation pattern. `workflowEventSubscriptionRepo.upsert` should be CAS-guarded; the shell's explicit rollback undoes the trie change on failure. The limit check must be re-gathered between any write and the next read (the `existingInterests` snapshot already does this).
 
 ### `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting`
 
 - **Current summary**: Routes a parsed address to one of several actions: `deliverToCoordinator`, `deliverToSession`, `failSessionUnauthorized`, `deliverViaMessagingFacade`, `failUnsupported`, `failUnsupportedKind`, `deliverToWorker`, `failInvalidWorker`, `notFound`.
-- **Proposed combinator**: `decisionRun`.
+- **Proposed combinator**: Ordinary pure helper or ordered gates composed directly into the message-routing operation (review correction rounds 20–22: no standalone runner — see below).
 - **Input snapshot design**:
   ```ts
   interface GenericAddressRoutingCtx {
@@ -811,11 +832,11 @@ The repo already has several proven pipelines. Use these as the model for each s
     decision: GenericAddressRoutingDecision | null;
   }
   ```
-- **Pure core design**: `decideGenericAddressRouting` as a `decisionRun` with gates in the same order as the current if-cascade. The `decodeURIComponent` catch becomes a `failInvalidWorker` gate.
+- **Pure core design**: `decideGenericAddressRouting` stays an ordinary pure helper with branches in the same order as the current if-cascade (the `decodeURIComponent` catch is its `failInvalidWorker` branch), unit-tested directly.
 - **Shell/effect wiring**: None; the caller (`AgentMessageRouter.deliverGenericMessage`) interprets the decision. Keep the function pure.
 - **Step-by-step migration** (review correction round 21): keep this classifier as an ORDINARY PURE HELPER or compose its ordered gates as direct stages of the existing message-routing operation — do NOT create/invoke a standalone `generic-address-routing` runner, which would add one nested pipeline per target after `send` has already entered message routing.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/agent-message-routing-pipeline.test.ts` and `packages/daemon/tests/unit/5-space/agent/agent-message-router.test.ts`.
-- **Risks/caveats**: This is called once per target in `deliverGenericMessage`. `decisionRun` adds ~2 µs per call, negligible compared to the downstream delivery. Review correction round 20: keep `decideGenericAddressRouting` as an ORDINARY PURE HELPER (or compose its gates into the existing routing operation) — `send` has already run `decideAgentMessageRouting` when `delegateGeneric` chooses it, and `deliverGenericMessage` then invokes this classifier once per target, so a standalone runner would add one nested pipeline per target to one message-routing operation. Preserve the current `notFound` fall-through with `target`.
+- **Risks/caveats**: This is called once per target in `deliverGenericMessage`; keep it a plain helper so the per-target loop adds no pipeline overhead. Review correction round 20: keep `decideGenericAddressRouting` as an ORDINARY PURE HELPER (or compose its gates into the existing routing operation) — `send` has already run `decideAgentMessageRouting` when `delegateGeneric` chooses it, and `deliverGenericMessage` then invokes this classifier once per target, so a standalone runner would add one nested pipeline per target to one message-routing operation. Preserve the current `notFound` fall-through with `target`.
 
 ### `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets`
 
@@ -870,9 +891,9 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts`.
   2. Review correction round 21 — migrate the COMPLETE activation operation (`activateTargetSessionsForMessage`, which invokes this classification three times around reset, workflow activation, resnapshot, and spawn effects) to ONE mixed/resnapshot pipeline; these branches are its stages (not a standalone `activation-routing` `decisionRun`, which would execute three nested runners while leaving the imperative outer cascade intact).
-  3. Update `activation-routing.ts` to export the new `decideActivationRouting`.
+  3. Keep `decideActivationRouting` exported as the plain classification helper the complete activation pipeline's stages call.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts`.
-- **Risks/caveats**: The current `existing` fact object is normalized to `null`. Preserve that normalization in the `decisionRun` input adapter.
+- **Risks/caveats**: The current `existing` fact object is normalized to `null`. Preserve that normalization in the pipeline's input snapshot.
 
 ### `packages/daemon/src/lib/space/runtime/last-message-classifier.ts:classifyLastMessageForIdleAgent`
 
@@ -900,10 +921,8 @@ The repo already has several proven pipelines. Use these as the model for each s
 
 1. **Phase 0 — Pure decisionRun extractions (no effects)**
    - `last-message-classifier.ts`
-   - `activation-routing.ts`
-   - `agent-message-routing-gates.ts` (`decideGenericAddressRouting` and `resolveNodeAgentTargets`)
-   - `validateWorkflowModelOverrides`
-   - `goal-automation-admission-pipeline.ts` (`onTaskCompleted`, `onSelfNag`)
+   - `agent-message-routing-gates.ts` (`decideGenericAddressRouting` and `resolveNodeAgentTargets` as plain helpers/stages — no standalone runners)
+   - `validateWorkflowModelOverrides` (plain validation helpers destined for the `spaceTask.update` pipeline)
    - `task-target-resolution-pipeline.ts` (for `get_task` / `get_task_detail` / `list_task_members`)
 
 2. **Phase 1 — Shared task mutation decision/pipeline modules**
@@ -916,9 +935,11 @@ The repo already has several proven pipelines. Use these as the model for each s
    - `review-goal-outcome` / `claimOutcomeNotification`
    - `registerSubscription`
    - `syncGoalAutomationSelfNagScheduleForScope`
+   - `goal-automation-admission-pipeline.ts` (`onTaskCompleted`, `onSelfNag` — mixed pipelines with their `enqueue` effect stages; review correction round 22: NOT Phase-0 pure extractions, or the admission-only intermediate ships first)
 
 4. **Phase 3 — Heavyweight staged flows**
    - `post-approval-router.ts:route`
+   - `activateTargetSessionsForMessage` (the complete effectful activation operation; review correction round 22: not a Phase-0 classifier extraction)
    - `deliverDirectSteerUnderCoordination`
    - `handleTaskTerminal`
    - `send_message_to_task`
@@ -933,5 +954,5 @@ The repo already has several proven pipelines. Use these as the model for each s
 3. ~~**Post-approval router atomicity and CAS**~~ Resolved by review: yes — the tokenized `claimPostApprovalDispatch` reservation (with the verified-release rules in the steps above) is REQUIRED, not optional; retaining the current blind update lets two concurrent `route` calls both pass the snapshot, spawn separate live sessions, and overwrite the task row.
 4. **Deferred digest atomic primitive**: Should `foldDeferredExternalEventsAtFlush` and `foldDeferredExternalEventOverflow` be backed by a single `foldDeferredRows` repository primitive that supersedes and inserts under one transaction, rather than a multi-effect `stagedRun`?
 5. **Unification of tool and RPC shells**: Several task flows (`publish`, `approve`, `archive`, `update`) are duplicated between `space-agent-tools.ts`, `node-agent-tools.ts`, `space-task-handlers.ts`, and `task-agent-manager.ts`. Do we create a `space-task-operations.ts` module with shared shells, or keep the pipeline in one place and call it from each handler?
-6. **Hot-path `decideGenericAddressRouting`**: It is called once per target in a `for` loop. Is this loop small enough that the `decisionRun` overhead is acceptable? If targets can be large, consider a raw `superpipe` transform or keep it inline.
+6. ~~**Hot-path `decideGenericAddressRouting`**~~ Resolved by review: it stays an ordinary pure helper called inline in the per-target loop — no runner, so there is no overhead question.
 7. **Mid-turn steer resnapshot timing**: `deliverDirectSteerUnderCoordination` has a critical resnapshot between passenger save and steer save. How do we represent the `discardPassengerCopy` compensation in `stagedRun` so that it runs on any later stage failure, not just the steer save?

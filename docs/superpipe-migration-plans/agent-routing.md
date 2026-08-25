@@ -17,13 +17,13 @@ For each function below, the plan picks the combinator that matches the existing
 | --- | --- | --- |
 | `turn-end-routing.ts:routeTurnEnd` | Gates extend the existing `turn-end-pipeline.ts` `decisionRun` (no separate runner) | The routing cascade is the final gate group of the one SDK turn-end business path. |
 | `query-retry-routing.ts:classifyQueryRetryRoute` | Classifier gates of the single `route-query-retry` direct pipeline | Pure classifier with ten mutually exclusive retry/terminal arms; first match wins via self-guarding stages. |
-| `query-retry-routing.ts:resolveDecision` | Finalizer gates of the same `route-query-retry` pipeline | Maps a `QueryRetryRoute` to a `QueryRetryDecision`; the `rate_limit_handoff` `declined` branch re-runs the single pipeline with an amended env. |
+| `query-retry-routing.ts:resolveDecision` | Finalizer gates of the same `route-query-retry` pipeline | Maps a `QueryRetryRoute` to a `QueryRetryDecision`; the `rate_limit_handoff` `declined` branch recomputes INLINE via pure helpers (amended env) within the current run. |
 | `query-retry-routing.ts:decideProviderTerminalCategory` | None (pure core leaf) | Regex classifier used by the terminal gate; not a pipeline on its own. |
 | `query-retry-routing.ts:resolveTerminalMessageHint` | None (pure core leaf) | Hint producer used by the terminal gate; not a pipeline on its own. |
 | `delivery-turn-routing.ts:resolveSteerAdmission` | `decisionRun` (`steer-admission`) | `aborted`/`park`/`promote`/`awaiting_acceptance`/`feed` first-match cascade. |
-| `delivery-turn-routing.ts:planDeliveryRoleArbitration` | `decisionRun` (`delivery-role-arbitration`) | `reuse` vs `enqueue` decision with fallback role computation. |
-| `handler-outcome-routing.ts:routeDriveTurnOutcome` | `decisionRun` (`drive-turn-outcome`) | Maps `DriveTurnOutcome` to a `HandlerOutcomeRoute`. |
-| `handler-outcome-routing.ts:routeFeedSteerOutcome` | `decisionRun` (`feed-steer-outcome`) | Maps `FeedSteerOutcome` to a `HandlerOutcomeRoute` with park-budget gates. |
+| `delivery-turn-routing.ts:planDeliveryRoleArbitration` | Shared plain helper composed with the enqueue effect inside each complete delivery pipeline (`deliverMessage`, `persistAndEnqueueDelivery`; review correction) | `reuse` vs `enqueue` decision with fallback role computation. |
+| `handler-outcome-routing.ts:routeDriveTurnOutcome` | Route gates as direct stages of the complete drive-turn job-handler pipeline (review correction) | Maps `DriveTurnOutcome` to a `HandlerOutcomeRoute`; settlement/dead-letter/requeue effects stay in the same operation. |
+| `handler-outcome-routing.ts:routeFeedSteerOutcome` | Route gates as direct stages of the complete feed-steer job-handler pipeline (review correction) | Maps `FeedSteerOutcome` to a `HandlerOutcomeRoute` with park-budget gates; requeue effects stay in the same operation. |
 | `context-reset-planner.ts:planInjectContextReset` | Ordinary pure helper consumed by `message-delivery-pipeline.ts` (review correction: its own `decisionRun` would make every inject-delivery run execute an inner pipeline) | Six-guard sequential cascade that admits `clear_before_deliver` only when every guard passes. |
 | `context-reset-planner.ts:planTurnEndFlushContextReset` | Ordinary pure helper (review correction: called by `applyFlushContextResetGate` inside `message-turn-end-flush` — its own `decisionRun` would nest a pipeline per flush) | Three-guard cascade for `clear_then_flush` vs `flush_without_clear`. |
 | `message-ownership-gates.ts:resolveDeliveryRole` | Ordinary pure priority-table helper (review correction: not a `decisionRun` — it is called twice inside the arbitration pipeline and from other delivery paths; a runner here would nest pipeline executions per call) | Small priority table with TypeScript overloads. |
@@ -183,7 +183,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/delivery-turn-routing.ts:resolveSteerAdmission`
 
 - **Current summary:** Decides what to do with an incoming steer: `aborted` (claim superseded or invalid delivery), `park` (session queued), `promote` (session idle/waiting/cooldown/interrupted), `awaiting_acceptance` (ACP with pending ownership), or `feed` (default processing path). Called from `AgentSession.feedDeliverySteer` inside a `withSessionLock` block.
-- **Proposed combinator:** `decisionRun` named `steer-admission`.
+- **Proposed combinator:** Review correction round 22 — keep the admission gates as helpers or DIRECT STAGES of one complete `feed-delivery-steer` pipeline: `AgentSession.feedDeliverySteer` runs admission inside `withSessionLock` and then performs queue admission, acknowledgment waiting, teardown revalidation, requeue, and metrics imperatively; a standalone admission runner splits that single steer-feed business path at its routing boundary.
 - **Input/output snapshot design:**
   - Input: `{ claimCurrent: boolean; status: AgentProcessingState['status']; deliveryValid: boolean; hasLiveQuery: boolean; provider: string; queueOwnsMessage: boolean; }`.
   - Output: `SteerAdmissionDecision`.
@@ -195,7 +195,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyProcessingFeedGate` — `status === 'processing'`.
   - `applyQueuedParkGate` — `status === 'queued'`.
   - `applyPromoteGate` — default (idle/waiting_for_input/rate_limit_cooldown/interrupted).
-- **Shell/effect wiring:** The exported `resolveSteerAdmission(args)` wraps `steerAdmissionRun`. It returns `ctx.decision`. `AgentSession.feedDeliverySteer` consumes the decision to return `aborted`/`park`/`promote`/`awaiting_acceptance`/`feed` and then either admits the steer or not.
+- **Shell/effect wiring:** Keep `resolveSteerAdmission(args)` as an ordinary pure helper (or inline gates) consumed directly by a complete `feed-delivery-steer` pipeline whose later stages perform queue admission, acknowledgment waiting, teardown revalidation, requeue, and metrics — the whole steer-feed operation composes once.
 - **Step-by-step migration:**
   1. Define `SteerAdmissionCtx` and `steerAdmissionRun`.
   2. Port each branch to a gate.
@@ -233,7 +233,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/handler-outcome-routing.ts:routeDriveTurnOutcome`
 
 - **Current summary:** Maps a `DriveTurnOutcome` (`completed`, `blocked`, `recovery_pending`, `aborted`, `turn_terminated`) to a `HandlerOutcomeRoute` that the `MESSAGE_DELIVERY` job handler uses to decide requeue/mutation/result. Called from `message-delivery.handler.ts` after `session.driveDeliveryTurn`.
-- **Proposed combinator:** `decisionRun` named `drive-turn-outcome`.
+- **Proposed combinator:** Review correction round 22 — these route gates become DIRECT STAGES of the corresponding complete message-delivery job-handler pipelines (`message-delivery.handler.ts`), which also perform settlement, dead-lettering, and `requeue`/`requeueParked`/`requeueAs`; converting only the mappers into runners splits both job branches at their central mutation boundary.
 - **Input/output snapshot design:**
   - Input: `DriveTurnOutcome`.
   - Output: `HandlerOutcomeRoute`.
@@ -243,10 +243,10 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyAbortedGate` — `outcome === 'aborted'`.
   - `applyTurnTerminatedGate` — `outcome === 'turn_terminated'`.
   - `applyCompletedGate` — default.
-- **Shell/effect wiring:** Wrapper `routeDriveTurnOutcome(result)` returns `ctx.decision`. `message-delivery.handler.ts` checks for `deadLetter` (not produced by this path), applies `settleSkipped`, and calls `jobQueue.requeue` if needed.
+- **Shell/effect wiring:** Review correction round 22: no standalone wrapper — the gates are direct route stages of the complete drive-turn job-handler pipeline, whose later stages perform the `deadLetter` check (not produced by this path), `settleSkipped`, and `jobQueue.requeue` currently imperative in `message-delivery.handler.ts`.
 - **Step-by-step migration:**
-  1. Define `DriveTurnOutcomeCtx` and `driveTurnOutcomeRun`.
-  2. Port each branch to a gate.
+  1. Compose the complete drive-turn job-handler pipeline with the route gates as direct stages.
+  2. Port each branch to a stage; the settlement/dead-letter/requeue effects are later stages of the same pipeline.
 - **Tests:** `handler-outcome-routing.test.ts` is parity. Add `drive-turn-outcome-gates.test.ts` covering each outcome.
 - **Risks/caveats:** Trivial mapping, but the `HandlerOutcomeRoute` fields (e.g., `reclaimSkip: 'turn_terminated'`, `settleSkipped`) are consumed by `message-delivery.handler.ts`. Keep the object shapes identical.
 
@@ -255,7 +255,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/handler-outcome-routing.ts:routeFeedSteerOutcome`
 
 - **Current summary:** Maps a `FeedSteerOutcome` (`consumed`, `awaiting_acceptance`, `promote`, `park`, `aborted`) plus `parkCount`, `waitingForInput`, and `now` to a `HandlerOutcomeRoute`. Handles park budgets and ACP acceptance budgets, including dead-letter paths.
-- **Proposed combinator:** `decisionRun` named `feed-steer-outcome`.
+- **Proposed combinator:** Review correction round 22 — same composition as `routeDriveTurnOutcome`: the park/acceptance-budget gates are DIRECT stages of the complete feed-steer job-handler pipeline, not a standalone `feed-steer-outcome` `decisionRun` with the dead-letter/requeue effects left in `message-delivery.handler.ts`.
 - **Input/output snapshot design:**
   - Input: `{ outcome: FeedSteerOutcome; parkCount: number; waitingForInput: boolean; now: number; }`.
   - Output: `HandlerOutcomeRoute`.
@@ -268,10 +268,10 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyAwaitingAcceptanceRequeueParkedGate` — `outcome === 'awaiting_acceptance'`.
   - `applyPromoteGate` — `outcome === 'promote'`.
   - `applyConsumedGate` — default.
-- **Shell/effect wiring:** Wrapper `routeFeedSteerOutcome(result, args)` returns `ctx.decision`. `message-delivery.handler.ts` checks for `deadLetter`, applies `settleSkipped`, and calls `jobQueue.requeue`, `requeueParked`, or `requeueAs`.
+- **Shell/effect wiring:** No standalone wrapper — the gates are stages of the complete feed-steer job-handler pipeline, whose later stages apply the `deadLetter` check, `settleSkipped`, and `jobQueue.requeue`/`requeueParked`/`requeueAs` currently imperative in `message-delivery.handler.ts`.
 - **Step-by-step migration:**
-  1. Define `FeedSteerOutcomeCtx` and `feedSteerOutcomeRun`.
-  2. Port each branch to a gate. `MESSAGE_DELIVERY_PARK_MS` stays a module-level constant.
+  1. Compose the complete feed-steer job-handler pipeline with the budget gates as direct stages.
+  2. Port each branch to a stage; `MESSAGE_DELIVERY_PARK_MS` stays a module-level constant.
 - **Tests:** `handler-outcome-routing.test.ts` is parity. Add `feed-steer-outcome-gates.test.ts` covering `park` with and without `waitingForInput`, at and over `MAX_STEER_PARKS`, `awaiting_acceptance` at and over `MAX_ACP_STEER_PARKS`, `promote`, `aborted`, and `consumed`.
 - **Risks/caveats:** The park-budget thresholds (`MAX_STEER_PARKS`, `MAX_ACP_STEER_PARKS`) are the boundary between requeue and dead-letter. The `message-delivery.handler.ts` also has a pre-check for `MAX_ACP_STEER_PARKS` when `sendStatus === 'submitted'`; do not change that. `waitingForInput` bypasses the normal steer park budget, so the `applyParkWaitingInputGate` must fire before the budget gate.
 

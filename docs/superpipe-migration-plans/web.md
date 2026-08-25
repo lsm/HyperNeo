@@ -341,9 +341,6 @@ anywhere in this plan.
   `inferProviderFromModelId` returns `undefined` for no match (ordered rules,
   fall-through); `classifyModelFamily` returns `'sonnet'` as its default.
   Map pipeline ctx: `{ rawModels, classified: ModelInfo[] }`.
-
-- **Step-by-step migration.**
-  1. Extend `src/hooks/__tests__/useModelSwitcher.test.ts` (exists) with
 - **Pure core design.** Gates mirror the exact current rule order — the
   regexes (`qwen[\w.-]*:[1-9]\d{2,}b` before the looser `qwen[\w.-]*:`) and
   the `-cloud` suffix check are ordered constraints; each gate owns one rule
