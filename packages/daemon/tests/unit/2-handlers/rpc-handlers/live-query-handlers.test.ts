@@ -5326,11 +5326,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
           uuid: 'a1',
           message: { content: [{ type: 'text', text: 'hi' }] },
         });
-        insertSdkMessageAt('u-mid', sessionId, now + 1500, {
-          type: 'user',
-          uuid: 'u-mid',
-          message: { role: 'user', content: 'again' },
-        });
+        insertSdkMessageAt(
+          'u-mid',
+          sessionId,
+          now + 1500,
+          {
+            type: 'user',
+            uuid: 'u-mid',
+            message: { role: 'user', content: 'again' },
+          },
+          'user'
+        );
         for (const [sub, id] of [
           ['hook_started', 'hs'],
           ['hook_progress', 'hp'],
@@ -5365,11 +5371,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('compact feed admits the session-tail hook row of a hook-only working turn', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
-        insertSdkMessageAt('u1', sessionId, now + 1000, {
-          type: 'user',
-          uuid: 'u1',
-          message: { role: 'user', content: 'go' },
-        });
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          {
+            type: 'user',
+            uuid: 'u1',
+            message: { role: 'user', content: 'go' },
+          },
+          'user'
+        );
         for (const [sub, id] of [
           ['hook_started', 'hs'],
           ['hook_progress', 'hp'],
