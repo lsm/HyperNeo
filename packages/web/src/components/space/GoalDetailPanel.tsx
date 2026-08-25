@@ -69,9 +69,14 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
 
   useEffect(() => {
     setOwnerLoadFailed(false);
+    setOwnerBusy(false);
     setAssignOpen(false);
     setAssigneeId('');
   }, [spaceId, goalId]);
+
+  useEffect(() => {
+    if (owner) setOwnerLoadFailed(false);
+  }, [owner]);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,12 +216,29 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     if (owner.action === 'coordinator_fallback') {
       return (
         <div class="space-y-1">
-          <div class="flex items-center gap-2">
-            <StatusBadge tone="neutral" label="Unowned" />
-            <span class="text-sm text-gray-300">
-              Falls back to coordinator {agentLabel(owner.coordinatorAgentId)}
-            </span>
-          </div>
+          {(() => {
+            const coordinator = agents.find(
+              (item: SpaceLongHorizonAgent) => item.id === owner.coordinatorAgentId
+            );
+            if (!coordinator || coordinator.status !== 'active') {
+              return (
+                <div class="flex items-center gap-2">
+                  <StatusBadge tone="warning" label="Unowned" />
+                  <span class="text-sm text-amber-200">
+                    Coordinator fallback unavailable — assign an owner to restore ownership.
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <div class="flex items-center gap-2">
+                <StatusBadge tone="neutral" label="Unowned" />
+                <span class="text-sm text-gray-300">
+                  Falls back to coordinator {agentLabel(owner.coordinatorAgentId)}
+                </span>
+              </div>
+            );
+          })()}
         </div>
       );
     }
