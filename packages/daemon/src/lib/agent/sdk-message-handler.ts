@@ -952,6 +952,13 @@ export class SDKMessageHandler {
       await this.handleSystemMessage(message);
     }
 
+    if (isSDKResultMessage(message)) {
+      if (this.ctx.stateManager.getIsCompacting()) {
+        await this.ctx.stateManager.setCompacting(false);
+      }
+      await this.refreshContextUsage('turn-end');
+    }
+
     if (isTopLevelResult && isSDKResultSuccess(message)) {
       await this.handleResultMessage(message, activeMessageId);
     }
@@ -981,10 +988,6 @@ export class SDKMessageHandler {
     }
 
     if (isSDKResultMessage(message)) {
-      if (this.ctx.stateManager.getIsCompacting()) {
-        await this.ctx.stateManager.setCompacting(false);
-      }
-      await this.refreshContextUsage('turn-end');
       if (settlesArmedClearError) {
         this.clearIdleSuppression();
       }
@@ -1475,7 +1478,14 @@ export class SDKMessageHandler {
     if (!isSDKCompactBoundary(message)) return;
 
     await stateManager.setCompacting(false);
-    contextTracker.markCompactionTriggered();
+    const boundaryInfo = contextTracker.getContextInfo();
+    const boundaryCapacity =
+      boundaryInfo && boundaryInfo.totalCapacity > 0 ? boundaryInfo.totalCapacity : undefined;
+    contextTracker.markCompactionTriggered(
+      boundaryCapacity === undefined
+        ? undefined
+        : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
+    );
 
     void this.refreshContextUsage('compact-boundary');
   }
@@ -1493,6 +1503,11 @@ export class SDKMessageHandler {
     this.eventsSinceContextRefresh = 0;
 
     if (this.pendingContextRefresh) {
+      if (reason !== 'turn-end') {
+        return this.pendingContextRefresh;
+      }
+      const pending = this.pendingContextRefresh;
+      this.pendingContextRefresh = pending.then(() => this.refreshContextUsage('turn-end'));
       return this.pendingContextRefresh;
     }
 

@@ -302,7 +302,9 @@ export class ContextFetcher {
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
         budgetThreshold < capacity &&
-        (typeof autoCompactThreshold !== 'number' || autoCompactThreshold > budgetThreshold)
+        (response.isAutoCompactEnabled === false ||
+          typeof autoCompactThreshold !== 'number' ||
+          autoCompactThreshold > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;
         daemonBackstopActive = true;

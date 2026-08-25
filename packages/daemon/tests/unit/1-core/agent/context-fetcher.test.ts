@@ -242,6 +242,27 @@ describe('ContextFetcher.toContextInfo', () => {
 
     expect(earlierInfo.autoCompactThreshold).toBe(100000);
     expect(earlierInfo.daemonBackstopActive).toBe(false);
+
+    const disabledWithEarlierSdk = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 25,
+      model: 'custom-model',
+      autoCompactThreshold: 100000,
+      isAutoCompactEnabled: false,
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const disabledEarlierInfo = ContextFetcher.toContextInfo(disabledWithEarlierSdk, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      provider: 'custom:test',
+    });
+
+    expect(disabledEarlierInfo.autoCompactThreshold).toBe(180000);
+    expect(disabledEarlierInfo.daemonBackstopActive).toBe(true);
   });
 
   it('derives the threshold from reserved autocompact breakdown tokens without including the buffer as a usage row', () => {

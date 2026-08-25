@@ -21,9 +21,12 @@ import type {
   ValidationResult,
 } from '@hyperneo/shared';
 import {
+  AUTO_COMPACT_PERCENT_DEFAULT,
+  AUTO_COMPACT_PERCENT_MAX,
   isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
+  resolveAutoCompactPercent,
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
@@ -200,7 +203,8 @@ export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
-  modelId?: string | null
+  modelId?: string | null,
+  autoCompactPercent?: number | null
 ): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
@@ -217,9 +221,15 @@ export function buildProviderSettings(
     return undefined;
   }
 
+  const percent = resolveAutoCompactPercent(autoCompactPercent ?? undefined);
+  const autoCompactWindow =
+    percent > AUTO_COMPACT_PERCENT_DEFAULT && percent < AUTO_COMPACT_PERCENT_MAX
+      ? Math.ceil((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT)
+      : contextWindow;
+
   return {
     autoCompactEnabled: true,
-    autoCompactWindow: contextWindow,
+    autoCompactWindow,
   };
 }
 
@@ -431,7 +441,12 @@ export class QueryOptionsBuilder {
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention(
-        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
+        buildProviderSettings(
+          providerId,
+          modelInfo?.contextWindow,
+          this.ctx.session.config.model,
+          modelInfo?.autoCompactPercent
+        )
       ),
 
       includePartialMessages: config.includePartialMessages ?? isMessageDeliveryV2Enabled(),

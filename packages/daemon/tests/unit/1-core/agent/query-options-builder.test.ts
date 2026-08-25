@@ -976,6 +976,25 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('should stretch the armed window for percents above the SDK default so the trigger lands on target', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 95)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 211_112,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 91)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 202_223,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 100)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 200_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 90)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 200_000,
+      });
+    });
+
     it('should not disable SDK auto-compaction when context window is unavailable (avoid dead zone)', () => {
       expect(buildProviderSettings('openrouter')).toBeUndefined();
     });
