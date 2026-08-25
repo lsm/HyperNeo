@@ -62,6 +62,7 @@ Prefer unit/component tests; add E2E coverage only when explicitly requested or 
 - Zero comments in `.ts`/`.tsx` sources: no line, block, or JSDoc comments — enforced by `bun run check:no-comments` (CI). Exempt functional directives only: shebangs, `/// <reference>`, `@ts-*`, `biome-ignore`, `eslint-*`, `oxlint-*`, knip `@public`/`knip-ignore`, coverage ignores (`v8`/`istanbul`/`c8`).
 - Oxlint rejects explicit `any`, unused variables, and `console.*` in application code. Entry points and tests are exempt; conditional startup logging uses `const logInfo = verbose ? console.log : () => {};`.
 - Make surgical changes: preserve surrounding idioms and avoid unrelated cleanup.
+- Decision logic goes through SuperPipe (ADR 0004, `docs/adr/0004-superpipe-decision-pipelines.md`): before writing any gate/if-chain that decides runtime behavior, check the existing `decisionRun`/`stagedRun` pipelines under `packages/daemon/src/lib/space/runtime/` and extract a pure decision core there instead of inlining imperative branches in managers. Do not hand-roll spaghetti gate chains when a pipeline seam fits.
 - The daemon DB has a PID lock. Always provide a unique `DB_PATH` when running from a worktree.
 - Daemon startup deletes `process.env.CLAUDECODE` so SDK subprocesses can launch inside Claude Code.
 - Credential discovery in `packages/daemon/src/lib/config.ts`: environment → `~/.claude/.credentials.json` → macOS Keychain → `~/.claude/settings.json` environment block.
