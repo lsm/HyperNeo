@@ -12,7 +12,7 @@ export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 
 function isLfsPointerContent(content: string): boolean {
-  const lines = content.split('\n');
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
   if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
   let index = 1;
   while (index < lines.length && LFS_EXT_LINE_PATTERN.test(lines[index])) index++;

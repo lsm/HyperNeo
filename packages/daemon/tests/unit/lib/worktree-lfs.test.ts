@@ -21,7 +21,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 
 import { indexContainsLfsPointer } from '../../../src/lib/worktree-lfs';
 
-type ProbeCallback = (error: Error | null, stdout?: string, stderr?: string) => void;
+type ProbeResult = { stdout: string; stderr: string };
+type ProbeCallback = (error: Error | null, result?: ProbeResult) => void;
 
 const LFS_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
 const POINTER_OID = `oid sha256:${'a'.repeat(64)}`;
@@ -41,14 +42,17 @@ function stubGitProbes(
 function stubGrepCandidate(blobContent: string): void {
   stubGitProbes((file, args, callback) => {
     if (file === 'git' && args[0] === 'grep') {
-      callback(null, 'asset.bin\0', '');
+      callback(null, { stdout: 'asset.bin\0', stderr: '' });
       return;
     }
     if (file === 'git' && args[0] === 'show') {
-      callback(null, blobContent, '');
+      callback(null, { stdout: blobContent, stderr: '' });
       return;
     }
-    callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), '', '');
+    callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+      stdout: '',
+      stderr: '',
+    });
   });
 }
 
@@ -78,6 +82,21 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('accepts CRLF-delimited pointer blobs', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\r\n${POINTER_OID}\r\nsize 1234\r\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('accepts CRLF-delimited pointer blobs containing extension records', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\r\n${EXT_RECORD}\r\n${POINTER_OID}\r\nsize 1234\r\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('rejects lone-CR line endings in pointer blobs', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\r${POINTER_OID}\rsize 1234`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('rejects extension records with malformed digests', async () => {
     stubGrepCandidate(
       `${LFS_SIGNATURE}\next-0-counter sha256:not-a-digest\n${POINTER_OID}\nsize 1234\n`
@@ -103,10 +122,13 @@ describe('indexContainsLfsPointer', () => {
   test('returns false when no indexed candidate matches the signature', async () => {
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
-        callback(Object.assign(new Error('exit 1'), { code: 1 }), '', '');
+        callback(Object.assign(new Error('exit 1'), { code: 1 }), { stdout: '', stderr: '' });
         return;
       }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), '', '');
+      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+        stdout: '',
+        stderr: '',
+      });
     });
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
@@ -114,10 +136,16 @@ describe('indexContainsLfsPointer', () => {
   test('propagates probe failures other than empty grep results', async () => {
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
-        callback(Object.assign(new Error('index locked'), { code: 128 }), '', '');
+        callback(Object.assign(new Error('index locked'), { code: 128 }), {
+          stdout: '',
+          stderr: '',
+        });
         return;
       }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), '', '');
+      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+        stdout: '',
+        stderr: '',
+      });
     });
     await expect(indexContainsLfsPointer('/repo', {})).rejects.toThrow('index locked');
   });

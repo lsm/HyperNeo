@@ -1,5 +1,3 @@
-import { KimiProvider } from '../providers/kimi-provider.js';
-import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -27,31 +25,39 @@ import {
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
-import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
 } from '../model-service.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
-import { buildSdkRuntimeEnv, envValue, STARTUP_ENV_BASELINE } from '../spawn-env.ts';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
+import {
+  AMBIENT_AUTH_ENV_KEYS,
+  buildSdkRuntimeEnv,
+  envValue,
+  STARTUP_ENV_BASELINE,
+} from '../spawn-env.ts';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
@@ -59,14 +65,13 @@ import {
 import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -140,12 +145,6 @@ const FULL_BUILTIN_TOOL_LIST = [
 ];
 
 const AGENT_INVOCATION_TOOLS = ['Agent', 'Task', 'TaskOutput', 'TaskStop'];
-
-const AMBIENT_AUTH_ENV_KEYS = new Set([
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-]);
 
 function isNonDelegatingGeneralOverride(agents: Options['agents']): boolean {
   if (!agents || Object.keys(agents).length !== 1) return false;

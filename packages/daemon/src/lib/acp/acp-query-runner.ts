@@ -43,7 +43,7 @@ import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy.ts';
-import { buildCommandEnv } from '../spawn-env.ts';
+import { AMBIENT_AUTH_ENV_KEYS, buildCommandEnv } from '../spawn-env.ts';
 import { AcpClient, type AcpClientOptions } from './acp-client.ts';
 import {
   buildAcpSafeEnv,
@@ -496,10 +496,6 @@ export class AcpQueryRunner {
         };
         this.pendingAcpIdentityMetadata = true;
       }
-      const preCleanupAuth = {
-        ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
-        CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-      };
       const providerService = getProviderService();
       this.ctx.originalEnvVars = providerService.applyEnvVarsToProcessForSession({
         ...session,
@@ -578,11 +574,10 @@ export class AcpQueryRunner {
       const acpEnv = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
         refreshAutoCompactWindow: true,
         omitProviderManaged: true,
-        omitProviderManagedPreserveAuth: true,
       });
       const userEnv = getUserConfiguredAnthropicEnv();
       for (const [key, value] of Object.entries(userEnv)) {
-        if (key === 'ANTHROPIC_AUTH_TOKEN' && !value.startsWith('sk-ant-oat')) continue;
+        if (AMBIENT_AUTH_ENV_KEYS.has(key)) continue;
         acpEnv[key] = value;
       }
       for (const [key, value] of Object.entries(getAcpCredentialEnvBaseline())) {
@@ -590,12 +585,6 @@ export class AcpQueryRunner {
       }
       for (const [key, value] of Object.entries(buildCommandEnv())) {
         if (acpEnv[key] === undefined) acpEnv[key] = value;
-      }
-      if (preCleanupAuth.ANTHROPIC_AUTH_TOKEN?.startsWith('sk-ant-oat')) {
-        acpEnv.ANTHROPIC_AUTH_TOKEN = preCleanupAuth.ANTHROPIC_AUTH_TOKEN;
-      }
-      if (preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN) {
-        acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
       }
 
       const processTreeOwner = await getAcpProcessTreeOwner();

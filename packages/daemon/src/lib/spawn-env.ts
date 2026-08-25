@@ -154,6 +154,12 @@ const CONDITION_FORBIDDEN_ENV_KEYS = new Set([
   'AZURE_CONFIG_DIR',
 ]);
 
+export const AMBIENT_AUTH_ENV_KEYS = new Set([
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+]);
+
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
 export { PROXY_TLS_ENV_KEYS };
@@ -259,6 +265,7 @@ export function buildSdkRuntimeEnv(
       [
         ...PROXY_TLS_ENV_KEYS,
         ...SDK_USER_CONFIG_ENV_KEYS,
+        ...GIT_COMMAND_ENV_KEYS,
         ...GIT_SSH_ENV_KEYS,
         ...GIT_IDENTITY_ENV_KEYS,
       ],
