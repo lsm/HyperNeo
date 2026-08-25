@@ -2621,13 +2621,16 @@ export class AgentSession
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
+    if (claimGuard && !claimGuard()) {
+      return { outcome: 'aborted' };
+    }
     if (
-      (claimGuard && !claimGuard()) ||
       this.stateManager.getState().status !== 'processing' ||
       this.stateManager.isTerminalIdlePending() ||
       (this.messageQueue.getClearEpoch?.() ?? 0) !== action.clearEpoch
     ) {
-      return { outcome: 'aborted' };
+      this.reopenDeliveryForRetry(messageUuid);
+      throw new Error('Steer was invalidated by session teardown before the SDK consumed it');
     }
     deliveryMetrics.recordFeed(messageUuid);
     observer?.reportStage('sdk_admitted', { generation: action.generation });

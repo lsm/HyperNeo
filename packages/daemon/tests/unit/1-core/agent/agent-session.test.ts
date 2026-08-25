@@ -6452,7 +6452,7 @@ describe('AgentSession', () => {
       }
     }
 
-    it('a steer whose yielded acknowledgment is cleared by an interrupt aborts instead of consuming', async () => {
+    it('a steer whose yielded acknowledgment is cleared by an interrupt reopens for retry instead of consuming', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-cleared');
       try {
         const queue = agentSession.messageQueue;
@@ -6472,8 +6472,9 @@ describe('AgentSession', () => {
         expect(queue.hasYielded(hardUuid)).toBe(true);
         await agentSession.stateManager.setInterrupted();
         queue.clear();
-        const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'aborted' });
+        await expect(steerPromise).rejects.toThrow(
+          'Steer was invalidated by session teardown before the SDK consumed it'
+        );
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-cleared', hardUuid)?.sendStatus
         ).toBe('enqueued');
@@ -6543,7 +6544,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('a query-error clear during terminal-idle teardown aborts the steer instead of consuming', async () => {
+    it('a query-error clear during terminal-idle teardown reopens the steer for retry', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-terminal-idle');
       try {
         const queue = agentSession.messageQueue;
@@ -6562,8 +6563,9 @@ describe('AgentSession', () => {
         await generator.next();
         agentSession.stateManager.beginTerminalIdle();
         queue.clear();
-        const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'aborted' });
+        await expect(steerPromise).rejects.toThrow(
+          'Steer was invalidated by session teardown before the SDK consumed it'
+        );
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-terminal-idle', hardUuid)
             ?.sendStatus
@@ -6573,7 +6575,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('a bare reset clear without a status change aborts the steer instead of consuming', async () => {
+    it('a bare reset clear without a status change reopens the steer for retry', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-bare-clear');
       try {
         const queue = agentSession.messageQueue;
@@ -6592,8 +6594,9 @@ describe('AgentSession', () => {
         await generator.next();
         expect(agentSession.stateManager.getState().status).toBe('processing');
         queue.clear();
-        const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'aborted' });
+        await expect(steerPromise).rejects.toThrow(
+          'Steer was invalidated by session teardown before the SDK consumed it'
+        );
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-bare-clear', hardUuid)
             ?.sendStatus
