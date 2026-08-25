@@ -61,6 +61,15 @@ test('extreme weights keep scores finite and selection weighted', () => {
   expect(picked).toEqual(['huge', 'huge']);
 });
 
+test('extreme weights keep their configured ratio', () => {
+  const entries = [
+    { model: 'big', maxConcurrent: 1, weight: Number.MAX_VALUE },
+    { model: 'half', maxConcurrent: 1, weight: Number.MAX_VALUE / 2 },
+  ];
+  const picked = [0.5, 0.9].map((roll) => pickModelPoolEntry(entries, {}, () => roll)?.model);
+  expect(picked).toEqual(['big', 'half']);
+});
+
 test('empty pool returns null', () => {
   expect(pickModelPoolEntry([], {})).toBeNull();
 });

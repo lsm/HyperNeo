@@ -59,12 +59,15 @@ export function pickModelPoolEntry(
 ): WorkerAgentModelPoolEntry | null {
   if (entries.length === 0) return null;
   const eligible = scoreModelPoolEntries(entries, runningCounts).filter((item) => item.score > 0);
-  const total = eligible.reduce((sum, item) => sum + item.score, 0);
-  if (total <= 0) return null;
+  if (eligible.length === 0) return null;
+  const maxLeft = Math.max(...eligible.map((item) => item.left));
+  const maxWeight = Math.max(...eligible.map((item) => item.entry.weight));
+  const scores = eligible.map((item) => (item.left / maxLeft) * (item.entry.weight / maxWeight));
+  const total = scores.reduce((sum, score) => sum + score, 0);
   let cursor = random() * total;
-  for (const item of eligible) {
-    cursor -= item.score;
-    if (cursor <= 0) return item.entry;
+  for (let i = 0; i < eligible.length; i++) {
+    cursor -= scores[i];
+    if (cursor <= 0) return eligible[i].entry;
   }
   return eligible[eligible.length - 1].entry;
 }
