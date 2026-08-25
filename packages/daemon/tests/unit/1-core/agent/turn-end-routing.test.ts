@@ -11,14 +11,19 @@ import {
 
 const ctx = (overrides: Partial<TurnEndContext> = {}): TurnEndContext => ({
   queryMode: 'immediate',
-  inRateLimitCooldown: false,
-  limitRecoveryPending: false,
   ...overrides,
 });
 
 const withFlags = (overrides: Partial<TurnEndFlags> = {}): TurnEndFlags => ({
   ...resetTurnEndFlags,
   ...overrides,
+});
+
+const same = (
+  flags: TurnEndFlags
+): { nextFlags: TurnEndFlags; afterEffectsFlags: TurnEndFlags } => ({
+  nextFlags: flags,
+  afterEffectsFlags: flags,
 });
 
 const base: TurnEndPlan = {
@@ -32,6 +37,7 @@ const base: TurnEndPlan = {
   settleSuppressedWaiter: null,
   rearmSuppressedTimer: false,
   nextFlags: resetTurnEndFlags,
+  afterEffectsFlags: resetTurnEndFlags,
 };
 
 type Row = {
@@ -47,7 +53,8 @@ const result = (overrides: Partial<TurnEndResultEvent> = {}): TurnEndEvent => ({
   result: {
     isTopLevel: true,
     isSuccess: true,
-    isLimitEngaged: false,
+    isLimitError: false,
+    isLimitRecoveryEngaged: false,
     confirmsArmedClear: false,
     ...overrides,
   },
@@ -57,6 +64,9 @@ const session = (state: 'idle' | 'running' | 'requires_action'): TurnEndEvent =>
   kind: 'sessionState',
   state,
 });
+
+const success = { ...resetTurnEndFlags, lastResultWasSuccess: true };
+const failure = { ...resetTurnEndFlags, lastResultWasSuccess: false };
 
 describe('routeTurnEnd', () => {
   const ROWS: Row[] = [
@@ -69,7 +79,7 @@ describe('routeTurnEnd', () => {
         finishTurn: true,
         allowQueueReplay: true,
         resetThinkingTokens: true,
-        nextFlags: { ...resetTurnEndFlags, lastResultWasSuccess: true },
+        ...same(success),
       },
     },
     {
@@ -82,7 +92,7 @@ describe('routeTurnEnd', () => {
         finishTurn: true,
         allowQueueReplay: false,
         resetThinkingTokens: true,
-        nextFlags: { ...resetTurnEndFlags, lastResultWasSuccess: true },
+        ...same(success),
       },
     },
     {
@@ -92,17 +102,19 @@ describe('routeTurnEnd', () => {
         idleFence: true,
         earlySetIdle: true,
         resetThinkingTokens: true,
-        nextFlags: { ...resetTurnEndFlags, lastResultWasSuccess: false },
+        ...same(failure),
       },
     },
     {
       label: 'a non-idle session-state event arms the idle expectation',
       event: session('running'),
       expected: {
-        nextFlags: withFlags({
-          usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
-        }),
+        ...same(
+          withFlags({
+            usesSessionStateChangedTurnEnd: true,
+            expectsSessionStateIdleAfterResult: true,
+          })
+        ),
       },
     },
     {
@@ -113,7 +125,12 @@ describe('routeTurnEnd', () => {
         lastResultWasSuccess: true,
       },
       event: session('idle'),
-      expected: { finishTurn: true, allowQueueReplay: true, resetThinkingTokens: true },
+      expected: {
+        finishTurn: true,
+        allowQueueReplay: true,
+        resetThinkingTokens: true,
+        ...same(resetTurnEndFlags),
+      },
     },
     {
       label: 'manual mode blocks replay on a session-state idle finish',
@@ -124,7 +141,12 @@ describe('routeTurnEnd', () => {
       },
       event: session('idle'),
       ctx: { queryMode: 'manual' },
-      expected: { finishTurn: true, allowQueueReplay: false, resetThinkingTokens: true },
+      expected: {
+        finishTurn: true,
+        allowQueueReplay: false,
+        resetThinkingTokens: true,
+        ...same(resetTurnEndFlags),
+      },
     },
     {
       label: 'a session-state idle after an error does not replay',
@@ -134,16 +156,26 @@ describe('routeTurnEnd', () => {
         lastResultWasSuccess: false,
       },
       event: session('idle'),
-      expected: { finishTurn: true, allowQueueReplay: false, resetThinkingTokens: true },
+      expected: {
+        finishTurn: true,
+        allowQueueReplay: false,
+        resetThinkingTokens: true,
+        ...same(resetTurnEndFlags),
+      },
     },
     {
-      label: 'a suppressed success confirms and clears the suppression flags',
+      label: 'a suppressed success keeps suppression through awaited effects then clears it',
       flags: { suppressIdleOnNextResult: true },
       event: result({ confirmsArmedClear: true }),
       expected: {
         resetThinkingTokens: true,
         settleSuppressedWaiter: 'confirmed',
-        nextFlags: { ...resetTurnEndFlags, lastResultWasSuccess: true },
+        nextFlags: {
+          ...resetTurnEndFlags,
+          lastResultWasSuccess: true,
+          suppressIdleOnNextResult: true,
+        },
+        afterEffectsFlags: success,
       },
     },
     {
@@ -154,7 +186,7 @@ describe('routeTurnEnd', () => {
         resetThinkingTokens: true,
         clearSuppression: true,
         settleSuppressedWaiter: 'reset',
-        nextFlags: resetTurnEndFlags,
+        ...same(resetTurnEndFlags),
       },
     },
     {
@@ -174,6 +206,14 @@ describe('routeTurnEnd', () => {
           lastResultWasSuccess: true,
           usesSessionStateChangedTurnEnd: true,
           expectsSessionStateIdleAfterResult: true,
+          suppressIdleOnNextResult: true,
+          clearMessageInFlight: true,
+        },
+        afterEffectsFlags: {
+          ...resetTurnEndFlags,
+          lastResultWasSuccess: true,
+          usesSessionStateChangedTurnEnd: true,
+          expectsSessionStateIdleAfterResult: true,
           clearAwaitingTrailingIdle: true,
           clearMessageInFlight: true,
         },
@@ -182,22 +222,36 @@ describe('routeTurnEnd', () => {
     {
       label: 'an idle event with no prior result still finishes and replays',
       event: session('idle'),
-      expected: { finishTurn: true, allowQueueReplay: true, resetThinkingTokens: true },
+      expected: {
+        finishTurn: true,
+        allowQueueReplay: true,
+        resetThinkingTokens: true,
+        ...same(resetTurnEndFlags),
+      },
     },
     {
       label: 'a nested result defers finish and replay to the idle event',
       event: result({ isTopLevel: false, isSuccess: true }),
-      expected: {},
+      expected: { ...same(resetTurnEndFlags) },
     },
     {
-      label: 'rate-limit cooldown and recovery pending block finishTurn',
-      event: result(),
-      ctx: { inRateLimitCooldown: true, limitRecoveryPending: true },
+      label: 'a detected limit error with declined recovery marks failure and skips replay',
+      event: result({ isLimitError: true, isLimitRecoveryEngaged: false }),
       expected: {
         idleFence: true,
         earlySetIdle: true,
+        finishTurn: true,
+        allowQueueReplay: false,
         resetThinkingTokens: true,
-        nextFlags: { ...resetTurnEndFlags, lastResultWasSuccess: true },
+        ...same(failure),
+      },
+    },
+    {
+      label: 'an engaged limit recovery skips turn-end action and replay',
+      event: result({ isLimitError: true, isLimitRecoveryEngaged: true }),
+      expected: {
+        resetThinkingTokens: true,
+        ...same(failure),
       },
     },
     {
@@ -207,7 +261,7 @@ describe('routeTurnEnd', () => {
       expected: {
         setIdleSuppressed: true,
         resetThinkingTokens: true,
-        nextFlags: withFlags({ suppressIdleOnNextResult: true }),
+        ...same(withFlags({ suppressIdleOnNextResult: true })),
       },
     },
     {
@@ -218,7 +272,18 @@ describe('routeTurnEnd', () => {
         setIdleSuppressed: true,
         resetThinkingTokens: true,
         settleSuppressedWaiter: 'confirmed',
-        nextFlags: resetTurnEndFlags,
+        ...same(resetTurnEndFlags),
+      },
+    },
+    {
+      label: 'a clear-awaiting idle with clear-in-flight also clears the sent flag',
+      flags: { clearAwaitingTrailingIdle: true, clearMessageInFlight: true },
+      event: session('idle'),
+      expected: {
+        setIdleSuppressed: true,
+        resetThinkingTokens: true,
+        settleSuppressedWaiter: 'confirmed',
+        ...same(resetTurnEndFlags),
       },
     },
   ];

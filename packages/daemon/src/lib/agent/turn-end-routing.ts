@@ -19,7 +19,8 @@ export const resetTurnEndFlags: TurnEndFlags = {
 export type TurnEndResultEvent = {
   isTopLevel: boolean;
   isSuccess: boolean;
-  isLimitEngaged: boolean;
+  isLimitError: boolean;
+  isLimitRecoveryEngaged: boolean;
   confirmsArmedClear: boolean;
 };
 
@@ -38,12 +39,11 @@ export type TurnEndPlan = {
   settleSuppressedWaiter: 'confirmed' | 'reset' | null;
   rearmSuppressedTimer: boolean;
   nextFlags: TurnEndFlags;
+  afterEffectsFlags: TurnEndFlags;
 };
 
 export type TurnEndContext = {
   queryMode: 'immediate' | 'manual';
-  inRateLimitCooldown: boolean;
-  limitRecoveryPending: boolean;
 };
 
 function canReplay(
@@ -55,7 +55,8 @@ function canReplay(
 
 function makePlan(
   nextFlags: TurnEndFlags,
-  plan: Partial<Omit<TurnEndPlan, 'nextFlags'>> = {}
+  plan: Partial<Omit<TurnEndPlan, 'nextFlags' | 'afterEffectsFlags'>> = {},
+  afterEffectsFlags?: TurnEndFlags
 ): TurnEndPlan {
   return {
     idleFence: false,
@@ -69,6 +70,7 @@ function makePlan(
     rearmSuppressedTimer: false,
     ...plan,
     nextFlags,
+    afterEffectsFlags: afterEffectsFlags ?? nextFlags,
   };
 }
 
@@ -86,39 +88,47 @@ export function routeTurnEnd(
       });
     }
     const next = { ...flags, usesSessionStateChangedTurnEnd: true };
-    const clearTurnPending = next.clearAwaitingTrailingIdle || next.suppressIdleOnNextResult;
-    if (clearTurnPending) {
-      const settle = next.clearAwaitingTrailingIdle ? 'confirmed' : null;
-      return makePlan(
-        {
-          ...resetTurnEndFlags,
-          suppressIdleOnNextResult: next.suppressIdleOnNextResult,
-          clearMessageInFlight: next.clearMessageInFlight,
-        },
-        { setIdleSuppressed: true, resetThinkingTokens: true, settleSuppressedWaiter: settle }
-      );
+    if (next.clearAwaitingTrailingIdle) {
+      return makePlan(resetTurnEndFlags, {
+        setIdleSuppressed: true,
+        resetThinkingTokens: true,
+        settleSuppressedWaiter: 'confirmed',
+      });
+    }
+    if (next.suppressIdleOnNextResult) {
+      const kept = {
+        ...resetTurnEndFlags,
+        suppressIdleOnNextResult: next.suppressIdleOnNextResult,
+        clearMessageInFlight: next.clearMessageInFlight,
+      };
+      return makePlan(kept, { setIdleSuppressed: true, resetThinkingTokens: true });
     }
     const replay = canReplay(next.lastResultWasSuccess, ctx.queryMode);
-    const finish = !ctx.inRateLimitCooldown && !ctx.limitRecoveryPending;
     return makePlan(
       { ...resetTurnEndFlags },
-      { finishTurn: finish, allowQueueReplay: replay, resetThinkingTokens: true }
+      {
+        finishTurn: true,
+        allowQueueReplay: replay,
+        resetThinkingTokens: true,
+      }
     );
   }
-  const { isTopLevel, isSuccess, isLimitEngaged, confirmsArmedClear } = event.result;
+  const { isTopLevel, isSuccess, isLimitError, isLimitRecoveryEngaged, confirmsArmedClear } =
+    event.result;
   const settlesArmedClearError = confirmsArmedClear && !isSuccess;
-  const lastResultWasSuccess = isTopLevel
-    ? !isLimitEngaged && isSuccess
-    : flags.lastResultWasSuccess;
+  const lastResultWasSuccess = isTopLevel ? isSuccess && !isLimitError : flags.lastResultWasSuccess;
   const nextFlags = { ...flags, lastResultWasSuccess };
-  const plan: Partial<Omit<TurnEndPlan, 'nextFlags'>> = { resetThinkingTokens: isTopLevel };
-  if (isTopLevel && !isLimitEngaged && !flags.suppressIdleOnNextResult) {
+  const plan: Partial<Omit<TurnEndPlan, 'nextFlags' | 'afterEffectsFlags'>> = {
+    resetThinkingTokens: isTopLevel,
+  };
+  const canBeginIdle = isTopLevel && !isLimitRecoveryEngaged && !flags.suppressIdleOnNextResult;
+  if (canBeginIdle) {
     plan.idleFence = true;
     if (!flags.usesSessionStateChangedTurnEnd && !settlesArmedClearError) {
       plan.earlySetIdle = true;
     }
   }
-  if (isLimitEngaged) {
+  if (isLimitRecoveryEngaged) {
     return makePlan(nextFlags, plan);
   }
   if (settlesArmedClearError) {
@@ -128,24 +138,22 @@ export function routeTurnEnd(
     );
   }
   if (confirmsArmedClear) {
-    nextFlags.suppressIdleOnNextResult = false;
+    const after = { ...nextFlags, suppressIdleOnNextResult: false };
     if (nextFlags.usesSessionStateChangedTurnEnd && nextFlags.expectsSessionStateIdleAfterResult) {
-      nextFlags.clearAwaitingTrailingIdle = true;
+      after.clearAwaitingTrailingIdle = true;
       plan.rearmSuppressedTimer = true;
     } else {
-      nextFlags.clearMessageInFlight = false;
+      after.clearMessageInFlight = false;
       plan.settleSuppressedWaiter = 'confirmed';
     }
+    return makePlan(nextFlags, plan, after);
   }
   if (
     isTopLevel &&
     isSuccess &&
-    !confirmsArmedClear &&
     !flags.suppressIdleOnNextResult &&
     !flags.usesSessionStateChangedTurnEnd &&
-    !flags.expectsSessionStateIdleAfterResult &&
-    !ctx.inRateLimitCooldown &&
-    !ctx.limitRecoveryPending
+    !flags.expectsSessionStateIdleAfterResult
   ) {
     plan.finishTurn = true;
     plan.allowQueueReplay = canReplay(nextFlags.lastResultWasSuccess, ctx.queryMode);
