@@ -33,6 +33,7 @@ const base: TurnEndPlan = {
   allowQueueReplay: false,
   setIdleSuppressed: false,
   resetThinkingTokens: false,
+  cancelSuppressedTimer: false,
   clearSuppression: false,
   settleSuppressedWaiter: null,
   rearmSuppressedTimer: false,
@@ -67,6 +68,12 @@ const session = (state: 'idle' | 'running' | 'requires_action'): TurnEndEvent =>
 
 const success = { ...resetTurnEndFlags, lastResultWasSuccess: true };
 const failure = { ...resetTurnEndFlags, lastResultWasSuccess: false };
+
+const armedForIdle = (overrides: Partial<TurnEndFlags> = {}): TurnEndFlags => ({
+  ...resetTurnEndFlags,
+  usesSessionStateChangedTurnEnd: true,
+  ...overrides,
+});
 
 describe('routeTurnEnd', () => {
   const ROWS: Row[] = [
@@ -129,7 +136,11 @@ describe('routeTurnEnd', () => {
         finishTurn: true,
         allowQueueReplay: true,
         resetThinkingTokens: true,
-        ...same(resetTurnEndFlags),
+        nextFlags: armedForIdle({
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: true,
+        }),
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
     {
@@ -145,7 +156,11 @@ describe('routeTurnEnd', () => {
         finishTurn: true,
         allowQueueReplay: false,
         resetThinkingTokens: true,
-        ...same(resetTurnEndFlags),
+        nextFlags: armedForIdle({
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: true,
+        }),
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
     {
@@ -160,7 +175,11 @@ describe('routeTurnEnd', () => {
         finishTurn: true,
         allowQueueReplay: false,
         resetThinkingTokens: true,
-        ...same(resetTurnEndFlags),
+        nextFlags: armedForIdle({
+          expectsSessionStateIdleAfterResult: true,
+          lastResultWasSuccess: false,
+        }),
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
     {
@@ -169,6 +188,7 @@ describe('routeTurnEnd', () => {
       event: result({ confirmsArmedClear: true }),
       expected: {
         resetThinkingTokens: true,
+        cancelSuppressedTimer: true,
         settleSuppressedWaiter: 'confirmed',
         nextFlags: {
           ...resetTurnEndFlags,
@@ -184,6 +204,7 @@ describe('routeTurnEnd', () => {
       event: result({ isSuccess: false, confirmsArmedClear: true }),
       expected: {
         resetThinkingTokens: true,
+        cancelSuppressedTimer: true,
         clearSuppression: true,
         settleSuppressedWaiter: 'reset',
         ...same(resetTurnEndFlags),
@@ -200,6 +221,7 @@ describe('routeTurnEnd', () => {
       event: result({ confirmsArmedClear: true }),
       expected: {
         resetThinkingTokens: true,
+        cancelSuppressedTimer: true,
         rearmSuppressedTimer: true,
         nextFlags: {
           ...resetTurnEndFlags,
@@ -226,7 +248,8 @@ describe('routeTurnEnd', () => {
         finishTurn: true,
         allowQueueReplay: true,
         resetThinkingTokens: true,
-        ...same(resetTurnEndFlags),
+        nextFlags: armedForIdle(),
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
     {
@@ -261,7 +284,8 @@ describe('routeTurnEnd', () => {
       expected: {
         setIdleSuppressed: true,
         resetThinkingTokens: true,
-        ...same(withFlags({ suppressIdleOnNextResult: true })),
+        nextFlags: armedForIdle({ suppressIdleOnNextResult: true }),
+        afterEffectsFlags: withFlags({ suppressIdleOnNextResult: true }),
       },
     },
     {
@@ -272,7 +296,8 @@ describe('routeTurnEnd', () => {
         setIdleSuppressed: true,
         resetThinkingTokens: true,
         settleSuppressedWaiter: 'confirmed',
-        ...same(resetTurnEndFlags),
+        nextFlags: armedForIdle({ clearAwaitingTrailingIdle: true }),
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
     {
@@ -283,7 +308,8 @@ describe('routeTurnEnd', () => {
         setIdleSuppressed: true,
         resetThinkingTokens: true,
         settleSuppressedWaiter: 'confirmed',
-        ...same(resetTurnEndFlags),
+        nextFlags: armedForIdle({ clearAwaitingTrailingIdle: true, clearMessageInFlight: true }),
+        afterEffectsFlags: resetTurnEndFlags,
       },
     },
   ];

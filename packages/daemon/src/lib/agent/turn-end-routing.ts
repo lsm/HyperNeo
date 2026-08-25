@@ -35,6 +35,7 @@ export type TurnEndPlan = {
   allowQueueReplay: boolean;
   setIdleSuppressed: boolean;
   resetThinkingTokens: boolean;
+  cancelSuppressedTimer: boolean;
   clearSuppression: boolean;
   settleSuppressedWaiter: 'confirmed' | 'reset' | null;
   rearmSuppressedTimer: boolean;
@@ -65,6 +66,7 @@ function makePlan(
     allowQueueReplay: false,
     setIdleSuppressed: false,
     resetThinkingTokens: false,
+    cancelSuppressedTimer: false,
     clearSuppression: false,
     settleSuppressedWaiter: null,
     rearmSuppressedTimer: false,
@@ -89,11 +91,15 @@ export function routeTurnEnd(
     }
     const next = { ...flags, usesSessionStateChangedTurnEnd: true };
     if (next.clearAwaitingTrailingIdle) {
-      return makePlan(resetTurnEndFlags, {
-        setIdleSuppressed: true,
-        resetThinkingTokens: true,
-        settleSuppressedWaiter: 'confirmed',
-      });
+      return makePlan(
+        next,
+        {
+          setIdleSuppressed: true,
+          resetThinkingTokens: true,
+          settleSuppressedWaiter: 'confirmed',
+        },
+        resetTurnEndFlags
+      );
     }
     if (next.suppressIdleOnNextResult) {
       const kept = {
@@ -101,16 +107,13 @@ export function routeTurnEnd(
         suppressIdleOnNextResult: next.suppressIdleOnNextResult,
         clearMessageInFlight: next.clearMessageInFlight,
       };
-      return makePlan(kept, { setIdleSuppressed: true, resetThinkingTokens: true });
+      return makePlan(next, { setIdleSuppressed: true, resetThinkingTokens: true }, kept);
     }
     const replay = canReplay(next.lastResultWasSuccess, ctx.queryMode);
     return makePlan(
-      { ...resetTurnEndFlags },
-      {
-        finishTurn: true,
-        allowQueueReplay: replay,
-        resetThinkingTokens: true,
-      }
+      next,
+      { finishTurn: true, allowQueueReplay: replay, resetThinkingTokens: true },
+      { ...resetTurnEndFlags }
     );
   }
   const { isTopLevel, isSuccess, isLimitError, isLimitRecoveryEngaged, confirmsArmedClear } =
@@ -120,6 +123,7 @@ export function routeTurnEnd(
   const nextFlags = { ...flags, lastResultWasSuccess };
   const plan: Partial<Omit<TurnEndPlan, 'nextFlags' | 'afterEffectsFlags'>> = {
     resetThinkingTokens: isTopLevel,
+    cancelSuppressedTimer: confirmsArmedClear,
   };
   const canBeginIdle = isTopLevel && !isLimitRecoveryEngaged && !flags.suppressIdleOnNextResult;
   if (canBeginIdle) {
