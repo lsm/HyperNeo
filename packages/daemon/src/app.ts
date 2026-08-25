@@ -460,17 +460,20 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         const { recoverDormantProvider } = await import('./lib/model-service.ts');
         return await recoverDormantProvider(providerId);
       },
-      onProviderChanged: (providerId) => {
-        const record = db.providers.getProviderByProviderId(providerId);
-        if (record) {
-          const stripped = stripPersistedDiscovery(record.configJson);
-          if (stripped !== record.configJson) {
-            db.providers.updateProvider(record.id, { configJson: stripped });
+      onProviderChanged: async (providerId, outcome) => {
+        const remaining = await providerRegistry.get(providerId)?.getCredentials?.();
+        const definitiveCredentialLoss = outcome === 'refreshed' || !remaining;
+        if (definitiveCredentialLoss) {
+          const record = db.providers.getProviderByProviderId(providerId);
+          if (record) {
+            const stripped = stripPersistedDiscovery(record.configJson);
+            if (stripped !== record.configJson) {
+              db.providers.updateProvider(record.id, { configJson: stripped });
+            }
           }
         }
-        void import('./lib/model-service.js').then(({ clearModelsCache }) => {
-          clearModelsCache();
-        });
+        const { clearModelsCache } = await import('./lib/model-service.js');
+        clearModelsCache();
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
