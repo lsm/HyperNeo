@@ -366,7 +366,8 @@ shard_paths() {
 			"$TEST_ROOT/lib/job-handlers" \
 			"$TEST_ROOT/lib/runtime-server.test.ts" \
 			"$TEST_ROOT/lib/runtime-spawn.test.ts" \
-			"$TEST_ROOT/lib/spawn-env.test.ts"
+			"$TEST_ROOT/lib/spawn-env.test.ts" \
+			"$TEST_ROOT/lib/worktree-lfs.test.ts"
 		migration_shard_paths 0
 		;;
 	handlers-migrations)
