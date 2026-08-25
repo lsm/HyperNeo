@@ -10,8 +10,22 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
+function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
+  return !!db
+    .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
+    .get(columnName);
+}
+
 export function runMigration214(db: BunDatabase): void {
   if (!tableExists(db, 'sessions') || !tableExists(db, 'node_executions')) return;
+  if (
+    !tableHasColumn(db, 'sessions', 'metadata') ||
+    !tableHasColumn(db, 'sessions', 'type') ||
+    !tableHasColumn(db, 'node_executions', 'agent_name') ||
+    !tableHasColumn(db, 'node_executions', 'agent_session_id')
+  ) {
+    return;
+  }
 
   const result = db
     .prepare(
