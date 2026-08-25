@@ -36,7 +36,8 @@ export interface AgentMessageRouterConfig {
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
-    explicitMessageId?: string
+    explicitMessageId?: string,
+    options?: { onConsumed?: () => void }
   ) => Promise<SpaceAgentInjectionOutcome>;
   taskNumber?: number | null;
   pendingMessageRepo?: PendingAgentMessageRepository;
@@ -286,7 +287,8 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failSessionUnauthorized') {
         return {
-          success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+          success:
+            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: `Session target ${decision.target} is not an authorized reply route for '${fromAgentName}'.`,
@@ -297,7 +299,8 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failUnsupported' || decision.action === 'failUnsupportedKind') {
         return {
-          success: delivered.length > 0 || failed.length > 0 ? 'partial' : false,
+          success:
+            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason:
@@ -320,10 +323,16 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, null);
-          if (outcome.delivered) {
+          if (outcome.state === 'delivered') {
             delivered.push({ agentName: 'space-agent', sessionId: `space:chat:${spaceId!}` });
-          } else {
+          } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
+          } else {
+            failed.push({
+              agentName: 'space-agent',
+              sessionId: `space:chat:${spaceId!}`,
+              error: outcome.error,
+            });
           }
         } catch (err) {
           failed.push({
@@ -338,10 +347,16 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, decision.sessionId);
-          if (outcome.delivered) {
+          if (outcome.state === 'delivered') {
             delivered.push({ agentName: 'space-agent', sessionId: decision.sessionId });
-          } else {
+          } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
+          } else {
+            failed.push({
+              agentName: 'space-agent',
+              sessionId: decision.sessionId,
+              error: outcome.error,
+            });
           }
         } catch (err) {
           failed.push({
@@ -679,10 +694,12 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
-          if (outcome.delivered) {
+          if (outcome.state === 'delivered') {
             delivered.push({ agentName, sessionId });
-          } else {
+          } else if (outcome.state === 'queued') {
             queued.push({ agentName, messageId: outcome.messageId });
+          } else {
+            failed.push({ agentName, sessionId, error: outcome.error });
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);

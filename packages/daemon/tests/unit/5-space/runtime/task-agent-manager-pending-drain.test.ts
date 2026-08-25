@@ -600,7 +600,7 @@ function makeSpaceAgentHarness(
       message: string,
       replyTo: string | null,
       rowId: string
-    ) => Promise<{ delivered: boolean; messageId: string }>;
+    ) => Promise<{ state: 'delivered' | 'queued' | 'failed'; messageId: string; error?: string }>;
     registry?: { get: (taskId: string) => string | null };
   } = {}
 ): SpaceAgentHarness {
@@ -630,7 +630,7 @@ function makeSpaceAgentHarness(
   const injector = mock(
     options.injectorImpl ??
       (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
-        delivered: true,
+        state: 'delivered',
         messageId: rowId,
       }))
   );
@@ -682,6 +682,30 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     expect(h.spyRepo.calls).toEqual([]);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+  });
+
+  it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
+    let settleQueuedRow: (() => void) | null = null;
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (_spaceId, _message, _replyTo, rowId, options) => {
+        settleQueuedRow = options?.onConsumed ?? null;
+        return { state: 'queued', messageId: rowId };
+      },
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'queued while coordinator idle' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+    expect(h.spyRepo.calls).not.toContain(`delivered:${row.id}`);
+    expect(settleQueuedRow).not.toBeNull();
+
+    settleQueuedRow?.();
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+    expect(h.spyRepo.calls).toContain(`delivered:${row.id}`);
   });
 
   it('drains only space_agent rows targeted at the space agent', async () => {
@@ -797,7 +821,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
         if (message.includes('fails first')) throw new Error('injector down');
-        return { delivered: true, messageId: rowId };
+        return { state: 'delivered', messageId: rowId };
       },
     });
     dbByTest.push(h.db);

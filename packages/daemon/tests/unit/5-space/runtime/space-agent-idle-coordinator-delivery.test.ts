@@ -111,6 +111,7 @@ import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import type { SpaceAgentInjectionOutcome } from '../../../../src/lib/space/runtime/space-agent-message-delivery';
 
 const SPACE_ID = 'sp-idle-coordinator';
 const SESSION_ID = `space:chat:${SPACE_ID}`;
@@ -166,7 +167,11 @@ interface IdleCoordinatorHarness {
   db: Database;
   agentSession: AgentSessionType;
   processor: InstanceType<typeof JobQueueProcessor>;
-  escalate: (messageId: string, text: string) => Promise<{ delivered: boolean; messageId: string }>;
+  escalate: (
+    messageId: string,
+    text: string,
+    depsOverride?: { onConsumed?: () => void }
+  ) => Promise<SpaceAgentInjectionOutcome>;
 }
 
 async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
@@ -211,7 +216,7 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
   );
   processor.start();
 
-  const escalate = (messageId: string, text: string) =>
+  const escalate = (messageId: string, text: string, depsOverride?: { onConsumed?: () => void }) =>
     deliverSpaceAgentMessage(
       {
         sdkMessageRepo: db.getSDKMessageRepo(),
@@ -219,6 +224,7 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
         publishStatusChanged: async () => {},
         jobQueue,
         stateManager: agentSession.stateManager,
+        onConsumed: depsOverride?.onConsumed,
       },
       {
         sessionId: SESSION_ID,
@@ -314,7 +320,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
 
     await admitPromptMessage(spawnedQueries[0], 'msg-wake-1');
     const outcome = await delivered;
-    expect(outcome).toEqual({ delivered: true, messageId: 'msg-wake-1' });
+    expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-wake-1' });
     expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus).toBe(
       'consumed'
     );
@@ -344,7 +350,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       const { db, agentSession } = harness;
 
       const outcome = await harness.escalate('msg-queued-1', 'escalation while coordinator idle');
-      expect(outcome).toEqual({ delivered: false, messageId: 'msg-queued-1' });
+      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-queued-1' });
       expect(
         db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-queued-1')?.sendStatus
       ).toBe('enqueued');
@@ -402,6 +408,47 @@ describe('idle coordinator message consumption (issue #2963)', () => {
           'consumed'
       );
       await completeTurn(db, agentSession, queuedMessageId);
+    });
+
+    it('propagates failure when the delivery job dead-letters during the window', async () => {
+      const harness = await makeIdleCoordinatorHarness();
+      track(harness, harness.agentSession.getSessionData().workspacePath);
+      const { db } = harness;
+
+      const pending = harness.escalate('msg-dead-1', 'escalation that dead-letters');
+      await waitFor(
+        () => db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-dead-1') !== null
+      );
+      db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, 'msg-dead-1');
+
+      const outcome = await pending;
+      expect(outcome.state).toBe('failed');
+      if (outcome.state === 'failed') {
+        expect(outcome.error).toContain('dead-lettered');
+      }
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-dead-1')?.sendStatus).toBe(
+        'failed'
+      );
+    });
+
+    it('settles a queued escalation through the delayed-consumption hook', async () => {
+      const harness = await makeIdleCoordinatorHarness();
+      track(harness, harness.agentSession.getSessionData().workspacePath);
+      const { db, agentSession } = harness;
+      let settled = false;
+
+      const outcome = await harness.escalate('msg-late-1', 'escalation consumed after ack', {
+        onConsumed: () => {
+          settled = true;
+        },
+      });
+      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-late-1' });
+      expect(settled).toBe(false);
+
+      await waitFor(() => spawnedQueries.length > 0);
+      await admitPromptMessage(spawnedQueries[0], 'msg-late-1');
+      await waitFor(() => settled);
+      await completeTurn(db, agentSession, 'msg-late-1');
     });
   });
 });

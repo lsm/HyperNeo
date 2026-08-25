@@ -988,7 +988,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
-    explicitMessageId?: string
+    explicitMessageId?: string,
+    injectorOptions?: { onConsumed?: () => void }
   ): Promise<SpaceAgentInjectionOutcome> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
     let session = await sessionManagerRef.getSessionAsync(sessionId);
@@ -1028,6 +1029,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           },
           jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
           stateManager: session.stateManager,
+          onConsumed: injectorOptions?.onConsumed,
         },
         {
           sessionId,
@@ -1049,7 +1051,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         .catch(() => {});
       await session.messageQueue.enqueueWithId(messageId, message);
     });
-    return { delivered: true, messageId };
+    return { state: 'delivered', messageId };
   };
 
   const taskAgentManager = new TaskAgentManager({

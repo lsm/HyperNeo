@@ -314,7 +314,7 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
       taskNumber: 236,
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
-        return { delivered: true, messageId: `msg-${spaceMessages.length}` };
+        return { state: 'delivered', messageId: `msg-${spaceMessages.length}` };
       },
     });
 
@@ -357,7 +357,7 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
       taskNumber: 236,
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
-        return { delivered: true, messageId: `msg-${spaceMessages.length}` };
+        return { state: 'delivered', messageId: `msg-${spaceMessages.length}` };
       },
     });
 
@@ -1888,7 +1888,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       spaceId: ctx.spaceId,
       spaceAgentInjector: async (_spaceId, message) => {
         spaceMessages.push(message);
-        return { delivered: true, messageId: `msg-${spaceMessages.length}` };
+        return { state: 'delivered', messageId: `msg-${spaceMessages.length}` };
       },
     });
 
@@ -1921,7 +1921,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       spaceId: ctx.spaceId,
       spaceAgentInjector: async (_spaceId, _message, replyToSessionId) => {
         injected.push(replyToSessionId);
-        return { delivered: true, messageId: `msg-${injected.length}` };
+        return { state: 'delivered', messageId: `msg-${injected.length}` };
       },
       replyRoutingLookup: () => 'session-origin',
     });
@@ -1945,12 +1945,73 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(injected).toEqual([null]);
   });
 
+  test('reports injector failure to the sender when an idle-coordinator delivery dead-letters', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      spaceAgentInjector: async () => ({
+        state: 'failed' as const,
+        messageId: 'msg-dead-lettered',
+        error: 'delivery dead-lettered while awaiting consumption',
+      }),
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@coordinator',
+      message: 'escalation that dead-letters',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      delivered: [],
+      failed: [
+        {
+          agentName: 'space-agent',
+          sessionId: `space:chat:${ctx.spaceId}`,
+          error: 'delivery dead-lettered while awaiting consumption',
+        },
+      ],
+      queued: undefined,
+      notFoundAgentNames: undefined,
+    });
+  });
+
+  test('counts a queued coordinator delivery as partial when a later @session target is unauthorized', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+      replyRoutingLookup: () => 'session-origin',
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: ['@coordinator', '@session:other-session'],
+      message: 'partial route with queued coordinator',
+    });
+
+    expect(result).toEqual({
+      success: 'partial',
+      delivered: [],
+      failed: [],
+      reason: "Session target @session:other-session is not an authorized reply route for 'coder'.",
+      unauthorizedAgentNames: ['@session:other-session'],
+      queued: [{ agentName: 'space-agent', messageId: 'msg-queued-coordinator' }],
+      notFoundAgentNames: undefined,
+    });
+  });
+
   test('rejects unauthorized @session targets with the exact reply-route error', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ delivered: true, messageId: 'msg-space-agent' }),
+      spaceAgentInjector: async () => ({ state: 'delivered', messageId: 'msg-space-agent' }),
       replyRoutingLookup: () => 'session-origin',
     });
 
@@ -1980,7 +2041,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       spaceId: ctx.spaceId,
       spaceAgentInjector: async (_spaceId, _message, replyToSessionId) => {
         injected.push(replyToSessionId ?? 'default');
-        return { delivered: true, messageId: `msg-${injected.length}` };
+        return { state: 'delivered', messageId: `msg-${injected.length}` };
       },
       replyRoutingLookup: () => 'session-origin',
     });
@@ -2307,7 +2368,7 @@ describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to o
       taskNumber: 42,
       spaceAgentInjector: async (spaceId, message, replyTo) => {
         injected.push({ spaceId, message, replyTo });
-        return { delivered: true, messageId: `msg-${injected.length}` };
+        return { state: 'delivered', messageId: `msg-${injected.length}` };
       },
       replyRoutingLookup: () => 'session-adhoc-member-1',
     });
@@ -2342,7 +2403,7 @@ describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to o
       taskNumber: 42,
       spaceAgentInjector: async (spaceId, message, replyTo) => {
         injected.push({ spaceId, message, replyTo });
-        return { delivered: true, messageId: `msg-${injected.length}` };
+        return { state: 'delivered', messageId: `msg-${injected.length}` };
       },
       replyRoutingLookup: () => null,
     });
@@ -2376,7 +2437,7 @@ describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to o
       taskId: 'task-123',
       spaceAgentInjector: async (spaceId, message, replyTo) => {
         injected.push({ spaceId, message, replyTo });
-        return { delivered: true, messageId: `msg-${injected.length}` };
+        return { state: 'delivered', messageId: `msg-${injected.length}` };
       },
     });
 
@@ -2407,7 +2468,7 @@ describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to o
     const router = makeRouter(ctx, workflowRunId, [], runChannels, {
       spaceId: ctx.spaceId,
       taskId: 'task-123',
-      spaceAgentInjector: async () => ({ delivered: true, messageId: 'msg-space-agent' }),
+      spaceAgentInjector: async () => ({ state: 'delivered', messageId: 'msg-space-agent' }),
       replyRoutingLookup: (agentName) => {
         lookupCalls.push(agentName ?? null);
         return agentName === 'coder' ? 'session-adhoc-coder' : null;
