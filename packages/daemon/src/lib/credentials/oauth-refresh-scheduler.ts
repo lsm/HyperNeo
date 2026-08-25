@@ -14,7 +14,10 @@ export interface OAuthRefreshSchedulerOptions {
   maxRetries?: number;
   registry?: ProviderRegistry;
   now?: () => number;
-  onProviderChanged?: (providerId: string, outcome: 'refreshed' | 'exhausted') => void;
+  onProviderChanged?: (
+    providerId: string,
+    outcome: 'refreshed' | 'exhausted'
+  ) => void | Promise<void>;
   recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
 }
 
@@ -30,7 +33,7 @@ export class OAuthRefreshScheduler {
   private readonly onProviderChanged?: (
     providerId: string,
     outcome: 'refreshed' | 'exhausted'
-  ) => void;
+  ) => void | Promise<void>;
   private readonly recoverDormantProvider?: (
     providerId: string
   ) => Promise<ProviderRecoveryOutcome>;
@@ -113,7 +116,7 @@ export class OAuthRefreshScheduler {
       }
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
-      this.onProviderChanged?.(provider.id, 'refreshed');
+      await this.onProviderChanged?.(provider.id, 'refreshed');
       return;
     }
 
@@ -121,7 +124,7 @@ export class OAuthRefreshScheduler {
     this.retryCounts.set(retryKey, retries);
     if (retries >= this.maxRetries) {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
-      this.onProviderChanged?.(provider.id, 'exhausted');
+      await this.onProviderChanged?.(provider.id, 'exhausted');
     }
   }
 

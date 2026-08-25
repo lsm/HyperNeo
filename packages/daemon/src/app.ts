@@ -461,19 +461,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return await recoverDormantProvider(providerId);
       },
       onProviderChanged: async (providerId, outcome) => {
-        const remaining = await providerRegistry.get(providerId)?.getCredentials?.();
-        const definitiveCredentialLoss = outcome === 'refreshed' || !remaining;
-        if (definitiveCredentialLoss) {
-          const record = db.providers.getProviderByProviderId(providerId);
-          if (record) {
-            const stripped = stripPersistedDiscovery(record.configJson);
-            if (stripped !== record.configJson) {
-              db.providers.updateProvider(record.id, { configJson: stripped });
+        try {
+          const remaining = await providerRegistry.get(providerId)?.getCredentials?.();
+          const definitiveCredentialLoss = outcome === 'refreshed' || !remaining;
+          if (definitiveCredentialLoss) {
+            const record = db.providers.getProviderByProviderId(providerId);
+            if (record) {
+              const stripped = stripPersistedDiscovery(record.configJson);
+              if (stripped !== record.configJson) {
+                db.providers.updateProvider(record.id, { configJson: stripped });
+              }
             }
           }
+          const { clearModelsCache } = await import('./lib/model-service.js');
+          clearModelsCache();
+        } catch (error) {
+          logError(
+            `[Daemon] Scheduled credential-change invalidation failed for ${providerId}:`,
+            error
+          );
         }
-        const { clearModelsCache } = await import('./lib/model-service.js');
-        clearModelsCache();
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
