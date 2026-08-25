@@ -122,6 +122,7 @@ function getVisibleModelsFingerprint(provider: EnrichedProvider): string {
     provider.baseUrl,
     provider.configJson,
     String(provider.available),
+    String(provider.updatedAt),
   ];
   return tokens.map((t) => t ?? '').join('|');
 }

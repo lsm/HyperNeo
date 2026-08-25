@@ -3085,23 +3085,37 @@ describe('Model Service', () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       getProviderRegistry().register({
-        id: 'remote-provider',
-        listRemoteModels: async () => [{ ...mockModels[0], provider: 'remote-provider' }],
+        id: 'anthropic',
+        listRemoteModels: async () => [],
         isAvailable: async () => true,
       } as unknown as ProviderLike);
-      getProviderRegistry().setCuratedModels('remote-provider', [
-        { id: 'sonnet' },
-        { id: 'curated-only', name: 'Curated Only' },
+      getProviderRegistry().setCuratedModels('anthropic', [
+        { id: 'opus' },
+        { id: 'totally-custom', name: 'Totally Custom' },
       ]);
 
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels(undefined, { forceRemote: true });
 
-      const visibleIds = getAvailableModels('global')
-        .filter((model) => model.provider === 'remote-provider')
-        .map((model) => model.id);
-      expect(visibleIds).toContain('sonnet');
-      expect(visibleIds).toContain('curated-only');
+      const visible = getAvailableModels('global').filter(
+        (model) => model.provider === 'anthropic'
+      );
+      const visibleIds = visible.map((model) => model.id);
+      expect(visibleIds).toContain('opus');
+      expect(visibleIds).toContain('totally-custom');
+
+      const opusEntry = visible.find((model) => model.id === 'opus');
+      expect(opusEntry).toEqual(
+        expect.objectContaining({ id: 'opus', family: 'opus', provider: 'anthropic' })
+      );
+      const customEntry = visible.find((model) => model.id === 'totally-custom');
+      expect(customEntry).toEqual(
+        expect.objectContaining({
+          id: 'totally-custom',
+          family: 'anthropic',
+          name: 'Totally Custom',
+        })
+      );
     });
 
     it('replaces a larger cache after successful forced discovery', async () => {

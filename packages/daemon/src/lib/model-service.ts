@@ -353,23 +353,27 @@ function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[
   const curatedModels = getProviderRegistry().getCuratedModels(providerId);
   if (curatedModels === undefined) return models;
   const knownIds = new Set(models.map((model) => model.id));
-  const missing = curatedModels.flatMap((curated) =>
-    knownIds.has(curated.id)
-      ? []
-      : [
-          {
-            id: curated.id,
-            name: curated.name ?? curated.id,
-            alias: '',
-            family: 'sonnet',
-            provider: providerId,
-            contextWindow: 128000,
-            description: `Curated model ${curated.name ?? curated.id}`,
-            releaseDate: '',
-            available: true,
-          },
-        ]
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
   );
+  const missing = curatedModels.flatMap((curated) => {
+    if (knownIds.has(curated.id)) return [];
+    const known = findInModels(staticProviderModels, curated.id);
+    if (known) return [{ ...known }];
+    return [
+      {
+        id: curated.id,
+        name: curated.name ?? curated.id,
+        alias: '',
+        family: providerId,
+        provider: providerId,
+        contextWindow: 128000,
+        description: `Curated model ${curated.name ?? curated.id}`,
+        releaseDate: '',
+        available: true,
+      },
+    ];
+  });
   return missing.length === 0 ? models : [...models, ...missing];
 }
 
