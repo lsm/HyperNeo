@@ -52,18 +52,14 @@ function stubGrepCandidate(blobContent: string): void {
   });
 }
 
-async function expectPointer(content: string, accepted: boolean): Promise<void> {
-  stubGrepCandidate(`${content}\n`);
-  await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(accepted);
-}
-
 describe('indexContainsLfsPointer', () => {
   beforeEach(() => {
     childProcessMocks.execFile.mockReset();
   });
 
   test('accepts a canonical pointer blob', async () => {
-    await expectPointer(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234`, true);
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
   test('accepts a canonical pointer blob without a trailing newline', async () => {
@@ -72,34 +68,36 @@ describe('indexContainsLfsPointer', () => {
   });
 
   test('accepts extension records between version and oid', async () => {
-    await expectPointer(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${POINTER_OID}\nsize 1234`, true);
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
   test('accepts multiple extension records between version and oid', async () => {
     const second = `ext-1-telemetry sha256:${'c'.repeat(64)}`;
-    await expectPointer(
-      `${LFS_SIGNATURE}\n${EXT_RECORD}\n${second}\n${POINTER_OID}\nsize 1234`,
-      true
-    );
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${second}\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
   test('rejects extension records with malformed digests', async () => {
-    await expectPointer(
-      `${LFS_SIGNATURE}\next-0-counter sha256:not-a-digest\n${POINTER_OID}\nsize 1234`,
-      false
+    stubGrepCandidate(
+      `${LFS_SIGNATURE}\next-0-counter sha256:not-a-digest\n${POINTER_OID}\nsize 1234\n`
     );
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
   test('rejects non-extension data between version and oid', async () => {
-    await expectPointer(`${LFS_SIGNATURE}\nsome unexpected line\n${POINTER_OID}\nsize 1234`, false);
+    stubGrepCandidate(`${LFS_SIGNATURE}\nsome unexpected line\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
   test('rejects trailing data after size', async () => {
-    await expectPointer(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\nextra\n`, false);
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\nextra\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
   test('rejects blobs that only carry the signature line', async () => {
-    await expectPointer(LFS_SIGNATURE, false);
+    stubGrepCandidate(LFS_SIGNATURE);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
   test('returns false when no indexed candidate matches the signature', async () => {
