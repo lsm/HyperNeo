@@ -779,24 +779,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             ? withCustomEndpointsLock
             : (fn: () => Promise<unknown>) => fn();
         return lock(async () => {
-          if (data.credentials && existing.kind !== 'custom_endpoint') {
-            try {
-              if (data.credentials.apiKey) {
-                await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
-                updates.authType = 'api_key';
-              } else if (data.credentials.oauthAccessToken) {
-                await credentialManager.storeOAuthTokens(existing.providerId, {
-                  accessToken: data.credentials.oauthAccessToken,
-                  refreshToken: data.credentials.oauthRefreshToken,
-                  expiresAt: data.credentials.oauthExpiresAt,
-                });
-                updates.authType = 'oauth';
-              }
-            } catch (err) {
-              rethrowKeychainError(err, 'update', existing.providerId);
-            }
-          }
-
           if (
             updates.configJson !== undefined &&
             existing.configJson !== updates.configJson &&
@@ -813,6 +795,24 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
             if (restoredConfig !== undefined) {
               updates.configJson = restoredConfig;
+            }
+          }
+
+          if (data.credentials && existing.kind !== 'custom_endpoint') {
+            try {
+              if (data.credentials.apiKey) {
+                await credentialManager.storeApiKey(existing.providerId, data.credentials.apiKey);
+                updates.authType = 'api_key';
+              } else if (data.credentials.oauthAccessToken) {
+                await credentialManager.storeOAuthTokens(existing.providerId, {
+                  accessToken: data.credentials.oauthAccessToken,
+                  refreshToken: data.credentials.oauthRefreshToken,
+                  expiresAt: data.credentials.oauthExpiresAt,
+                });
+                updates.authType = 'oauth';
+              }
+            } catch (err) {
+              rethrowKeychainError(err, 'update', existing.providerId);
             }
           }
 
