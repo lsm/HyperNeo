@@ -247,6 +247,7 @@ describe('useSpaceTaskMessages', () => {
             createdAt: 1,
             content: 'preview…',
             contentBytes: 5000,
+            contentHash: 111,
             contentTruncated: true,
             deliveryState: 'queued',
           },
@@ -270,6 +271,7 @@ describe('useSpaceTaskMessages', () => {
             createdAt: 1,
             content: 'preview…',
             contentBytes: 5000,
+            contentHash: 111,
             contentTruncated: true,
             deliveryState: 'delivered',
           },
@@ -298,6 +300,7 @@ describe('useSpaceTaskMessages', () => {
             createdAt: 1,
             content: 'preview…',
             contentBytes: 5000,
+            contentHash: 111,
             contentTruncated: true,
           },
         ],
@@ -320,6 +323,7 @@ describe('useSpaceTaskMessages', () => {
             createdAt: 1,
             content: 'new-preview…',
             contentBytes: 6000,
+            contentHash: 222,
             contentTruncated: true,
           },
         ],
@@ -329,6 +333,56 @@ describe('useSpaceTaskMessages', () => {
 
     expect(result.current.rows[0]).toMatchObject({
       content: 'new-preview…',
+      contentTruncated: true,
+    });
+  });
+
+  it('drops the expansion when a same-length message body changes (hash mismatch)', async () => {
+    const { result } = renderHook(() => useSpaceTaskMessages('task-abc'));
+    const subId = lastMessageSubscribeSubId();
+    act(() => {
+      fireEvent('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview…',
+            contentBytes: 5000,
+            contentHash: 111,
+            contentTruncated: true,
+          },
+        ],
+        version: 1,
+      });
+    });
+
+    mockRequest.mockResolvedValueOnce({ sdkMessage: 'full-content' });
+    await act(async () => {
+      await result.current.expandMessage('m1');
+    });
+
+    act(() => {
+      fireEvent('liveQuery.delta', {
+        subscriptionId: subId,
+        updated: [
+          {
+            id: 'm1',
+            taskId: 'task-abc',
+            createdAt: 1,
+            content: 'preview-2…',
+            contentBytes: 5000,
+            contentHash: 222,
+            contentTruncated: true,
+          },
+        ],
+        version: 2,
+      });
+    });
+
+    expect(result.current.rows[0]).toMatchObject({
+      content: 'preview-2…',
       contentTruncated: true,
     });
   });

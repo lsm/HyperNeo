@@ -37,6 +37,7 @@ export interface SpaceTaskThreadMessageRow {
   sessionMessageCount?: number;
   contentTruncated?: boolean;
   contentBytes?: number;
+  contentHash?: number;
 }
 
 interface ActiveTurnEntryRow {
@@ -100,6 +101,16 @@ function activeTurnRowPosition(id: string): [number, number] {
   return [Number.isNaN(rowId) ? 0 : rowId, Number.isNaN(blockIdx) ? 0 : blockIdx];
 }
 
+function isSameServerContent(
+  prev: SpaceTaskThreadMessageRow,
+  incoming: SpaceTaskThreadMessageRow
+): boolean {
+  if (typeof prev.contentHash === 'number' && typeof incoming.contentHash === 'number') {
+    return prev.contentHash === incoming.contentHash;
+  }
+  return prev.contentBytes === incoming.contentBytes;
+}
+
 function mergeIncomingRow(
   prev: SpaceTaskThreadMessageRow | undefined,
   incoming: SpaceTaskThreadMessageRow
@@ -108,12 +119,13 @@ function mergeIncomingRow(
     prev &&
     prev.contentTruncated === false &&
     incoming.contentTruncated === true &&
-    prev.contentBytes === incoming.contentBytes;
-  if (keepsExpansion) {
+    isSameServerContent(prev, incoming);
+  if (keepsExpansion && prev) {
     return {
       ...incoming,
       content: prev.content,
       contentBytes: prev.contentBytes,
+      contentHash: prev.contentHash,
       contentTruncated: false,
     };
   }
