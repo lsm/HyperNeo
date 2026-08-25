@@ -31,8 +31,8 @@ Inventory (verified by reading every file and grepping all call sites):
 | `lib/app-routing.ts:deriveAppExpectedPath` | decisionRun | per routing-signal change (signal effect) | low |
 | `lib/status-actions.ts:getCurrentAction` | decisionRun (+ purity shims) | per streaming tick (`useMemo` in `useChatComposerController`) | medium |
 | `lib/parse-group-message.ts:parseGroupMessage` | decisionRun | per message inside `useTurnBlocks` map (reducer body, not the loop) | low |
-| `hooks/useModelSwitcher.ts:inferProviderFromModelId` | decisionRun | per model on fetch (module-internal) | low |
-| `hooks/useModelSwitcher.ts:mapRawModelsToModelInfos` | raw P1 transform pipeline (per-model family via decisionRun) | per `models.list` fetch | low |
+| `hooks/useModelSwitcher.ts:inferProviderFromModelId` | ordinary pure helper (review correction: consumed by the `map-raw-models` pipeline; no runner per model) | per model on fetch (module-internal) | low |
+| `hooks/useModelSwitcher.ts:mapRawModelsToModelInfos` | one raw P1 transform pipeline (`map-raw-models`; family/provider classification as ordinary pure helpers inside its stages — review correction) | per `models.list` fetch | low |
 | `lib/node-click-resolver.ts:resolveNodeClick` | steer-style direct pipeline (transforms + final decide) | per node click | low |
 | `lib/task-banner.ts:resolveActiveTaskBanner` | decisionRun | per `SpaceTaskPane` render | low |
 | `lib/router.ts:getSpaceIdFromPath` (+ optional `classifySpaceRoute`) | decisionRun | popstate / init only | low |

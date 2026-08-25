@@ -59,7 +59,7 @@ Two structural rules applied throughout:
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | `decisionRun` composing both (new `loop-detector-pipeline.ts`) | `tool-call-loop-admission` |
 | `circuit-breaker-transitions.ts:extractErrorPattern` | `decisionRun` | `circuit-breaker-error-pattern` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | `decisionRun` | `circuit-breaker-trip-message` |
-| `fallback-recovery.ts:extractResetTimestamp` | Parsing stages of the `fallback-cooldown` pipeline (review correction: not a separately-run pipeline — nesting `fallback-reset-parse` inside `fallback-cooldown` splits the complete cooldown path across nested pipeline runs) |
+| `fallback-recovery.ts:extractResetTimestamp` | Ordinary pure helper over inline parse logic (review correction: no separate parse or cooldown pipelines — `computeCooldown` is consumed as a pure helper by `rate-limit-trip`) |
 | `fallback-recovery.ts:computeCooldown` | Ordinary pure helper for `rate-limit-trip`'s cooldown-resolution stage (review correction round 17: `fallback-cooldown` as a separate runner makes every no-hint trip execute a nested pipeline) |
 | `fallback-recovery.ts:resolveFallbackChain`, `classifyLimitKind` | none (leaves) | — |
 | `rate-limit-watchdog-gates.ts:decideRateLimitTrip` | `decisionRun` | `rate-limit-trip` |
@@ -586,8 +586,11 @@ compensated. No site in this plan performs effects, so none uses it.
   (`decideRateLimitTrip`), `rate-limit-watchdog.ts:535,545` (deferred
   cooldown after fallback re-entry failure). Pinned by
   `tests/unit/1-core/agent/fallback-recovery.test.ts`.
-- **proposed combinator.** `decisionRun('fallback-reset-parse', …)` and
-  `decisionRun('fallback-cooldown', …)`. `resolveFallbackChain` and
+- **proposed combinator.** Review correction: `computeCooldown` stays an
+  ORDINARY PURE HELPER (reset parsing inline as helper logic or direct stages
+  of `rate-limit-trip`'s cooldown-resolution stage) — no standalone
+  `fallback-cooldown` runner, because the watchdog would otherwise invoke an
+  inner pipeline on every no-reset-hint trip. `resolveFallbackChain` and
   `classifyLimitKind` stay leaves (see Scope).
 - **input/output snapshot design.**
   ```ts
@@ -943,7 +946,7 @@ Every step is independently shippable; each keeps the exported function
 signatures stable so consumers do not churn.
 
 1. **`fallback-recovery.ts` pipelines** (`fallback-reset-parse`,
-   `fallback-cooldown`) — foundation for steps 3 and 4; strongest existing
+   fallback cooldown helper) — foundation for steps 3 and 4; strongest existing
    pin suite; zero callers change.
 2. **`rate-limit-watchdog-gates.ts`** (`rate-limit-trip`) — consumes 1's
    `computeCooldown`/`cooldownFromReset`; #2779 already isolated the core.

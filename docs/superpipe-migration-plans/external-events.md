@@ -368,7 +368,7 @@ const formatEssencePipeline = superpipe<{ isDone: (ctx: FormatExternalEventEssen
 })('format-external-event-essence')
   .input(['ctx'])
   .pipe(buildBaseEssence, 'ctx', 'ctx')
-  .pipe(decideFieldSet, 'ctx', 'ctx') // can be a small decisionRun
+  .pipe(decideFieldSet, 'ctx', 'ctx') // ordinary pure helper
   .pipe(copyCommonFields, 'ctx', 'ctx')
   .pipe(copyEventTypeFields, 'ctx', 'ctx')
   .pipe(omitUndefinedAndStringify, 'ctx', 'ctx')
@@ -789,45 +789,40 @@ function decided(
   return { ...ctx, decision };
 }
 
-const classifyDirectSteerRun = decisionRun<ClassifyDirectSteerCtx>('classify-direct-steer', [
-  gateReviewSubmitted,
-  gateReviewCommentPolled,
-  gateCheckFailed,
-  gateMergeConflict,
-]);
-```
-
-- `gateReviewSubmitted`: if suffix is `review_submitted` and `state` is
-  `APPROVED` or `CHANGES_REQUESTED`, set `decision = 'review'`.
-- `gateReviewCommentPolled`: if suffix is `review_comment_polled` and actor is
-  a bot, set `decision = 'review'`.
-- `gateCheckFailed`: if suffix is `check_failed` and `conclusion` is not a
-  non-failure conclusion, set `decision = 'check'`.
-- `gateMergeConflict`: if suffix is `merge_conflict`, set `decision = 'merge_conflict'`.
-
-#### Shell/effect wiring
-
-```ts
 export function classifyExternalEventDirectSteer(
   input: DirectSteerClassificationInput
 ): DirectSteerEventClass | null {
-  return classifyDirectSteerRun({ input, decision: null }).decision;
+  if (suffix === 'review_submitted' && (state === 'APPROVED' || state === 'CHANGES_REQUESTED')) return 'review';
+  if (suffix === 'review_comment_polled' && actorIsBot) return 'review';
+  if (suffix === 'check_failed' && !isNonFailureConclusion(conclusion)) return 'check';
+  if (suffix === 'merge_conflict') return 'merge_conflict';
+  return null;
 }
 ```
 
+- Branch order mirrors the current precedence: `review_submitted` →
+  `review_comment_polled` → `check_failed` → `merge_conflict` → `null`. (Plain
+  ordered classifier — review correction: no `classifyDirectSteerRun`
+  `decisionRun`; classification runs per essence inside
+  `external-event-steer-admission`, so a runner would nest per buffered
+  event.)
+
+#### Shell/effect wiring
+
+None: the export keeps its exact signature; `partitionDirectSteerEssences`
+continues calling it as a plain function.
+
 #### Step-by-step migration
 
-1. Export each gate function.
-2. Replace the function body with the `decisionRun`.
-3. Update `external-event-steer-admission-pipeline.ts` to call the new runner
-   (signature unchanged).
+1. Replace the hand-rolled body with the ordered classifier above (behavior
+   identical); no runner, no wrapper changes.
 
 #### Tests
 
 - `tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts` already
   has a `classifyExternalEventDirectSteer` block. Keep it as parity.
-- Add `tests/unit/1-core/external-events/event-tiers-pipeline.test.ts` with
-  per-gate tests and a "first gate wins" test.
+- Add precedence rows (first matching branch wins, fall-through returns
+  `null`).
 
 #### Risks/caveats
 

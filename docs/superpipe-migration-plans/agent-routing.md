@@ -25,7 +25,7 @@ For each function below, the plan picks the combinator that matches the existing
 | `handler-outcome-routing.ts:routeDriveTurnOutcome` | `decisionRun` (`drive-turn-outcome`) | Maps `DriveTurnOutcome` to a `HandlerOutcomeRoute`. |
 | `handler-outcome-routing.ts:routeFeedSteerOutcome` | `decisionRun` (`feed-steer-outcome`) | Maps `FeedSteerOutcome` to a `HandlerOutcomeRoute` with park-budget gates. |
 | `context-reset-planner.ts:planInjectContextReset` | Ordinary pure helper consumed by `message-delivery-pipeline.ts` (review correction: its own `decisionRun` would make every inject-delivery run execute an inner pipeline) | Six-guard sequential cascade that admits `clear_before_deliver` only when every guard passes. |
-| `context-reset-planner.ts:planTurnEndFlushContextReset` | `decisionRun` (`turn-end-flush-context-reset`) | Three-guard cascade for `clear_then_flush` vs `flush_without_clear`. |
+| `context-reset-planner.ts:planTurnEndFlushContextReset` | Ordinary pure helper (review correction: called by `applyFlushContextResetGate` inside `message-turn-end-flush` — its own `decisionRun` would nest a pipeline per flush) | Three-guard cascade for `clear_then_flush` vs `flush_without_clear`. |
 | `message-ownership-gates.ts:resolveDeliveryRole` | Ordinary pure priority-table helper (review correction: not a `decisionRun` — it is called twice inside the arbitration pipeline and from other delivery paths; a runner here would nest pipeline executions per call) | Small priority table with TypeScript overloads. |
 
 ## Existing superpipe examples to emulate
@@ -294,7 +294,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyClearBeforeDeliverGate` (default)
 - **Shell/effect wiring:** Wrapper `planInjectContextReset(args)` returns `ctx.decision`. It is called by `message-delivery-pipeline.ts:applyInjectContextResetGate`, which sets the outer pipeline's `ctx.decision` to the plan. The actual context clear is performed by the delivery path, not this function.
 - **Step-by-step migration:**
-  1. Define `InjectContextResetCtx` and `injectContextResetRun`.
+  1. Extract the six guards as pure helper functions (review correction: no `InjectContextResetRun` runner — this planner stays an ordinary pure helper consumed by `message-inject-delivery`).
   2. Port each guard to a gate.
   3. Keep the wrapper exported.
 - **Tests:** `context-reset-planner.test.ts` is parity. Add `inject-context-reset-gates.test.ts` covering each guard and the "first false conjunct wins" precedence (e.g., `not_task_input` beats `session_busy`).
@@ -305,7 +305,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/context-reset-planner.ts:planTurnEndFlushContextReset`
 
 - **Current summary:** Three-guard cascade for turn-end flush context reset. Admits `clear_then_flush` only when the slot resets context, there is prior context, no active delivery job, and there is at least one task deliverable. Otherwise falls back to `flush_without_clear` (with an optional `active_delivery_job` reason).
-- **Proposed combinator:** `decisionRun` named `turn-end-flush-context-reset`.
+- **Proposed combinator:** Review correction — keep this planner as an ORDINARY PURE HELPER; the existing `message-turn-end-flush` pipeline's `applyFlushContextResetGate` calls it directly. Converting it to its own `decisionRun` makes every turn-end flush execute a nested pipeline; keep the three reset gates as pure logic here or inline them into `message-turn-end-flush`.
 - **Input/output snapshot design:**
   - Input: `{ slotResetsContext: boolean; hasPriorContext: boolean; hasActiveDeliveryJob: boolean; taskDeliverableCount: number; }`.
   - Output: `TurnEndFlushContextResetPlan`.
@@ -325,8 +325,8 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/message-ownership-gates.ts:resolveDeliveryRole`
 
 - **Current summary:** Small priority table that resolves which `MessageDeliveryRole` (`turn`/`steer`) to use. With `uniqueConstraintHit: true` it may return the sentinel `explicit_role_rejected`. It uses TypeScript overloads to distinguish the normal and constraint-hit return types. Called by `planDeliveryRoleArbitration`, `message-delivery.ts:deliverMessage`, and `message-delivery-outbox.ts:persistAndEnqueueDelivery`.
-- **Proposed combinator:** `decisionRun` named `delivery-role`.
-- **Input/output snapshot design:**
+- **Proposed combinator:** None (review correction) — retain the priority table as an ordinary pure helper; it is called twice inside the arbitration pipeline and from other delivery paths, so a runner would nest pipeline executions per call.
+- **Input/output snapshot design (helper signature):**
   - Input: `{ existingActiveRole: MessageDeliveryRole | null; requestedRole?: MessageDeliveryRole; uniqueConstraintHit: boolean; }`.
   - Output: `DeliveryRoleResolution = MessageDeliveryRole | 'explicit_role_rejected'` (or `MessageDeliveryRole` for the `uniqueConstraintHit: false` overload).
 - **Pure core design:**
@@ -357,7 +357,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 
 1. ~~**Should `routeTurnEnd` be folded into `turn-end-pipeline.ts`?**~~ Resolved by review: yes — the routing gates extend `turn-end-pipeline.ts` directly (one pipeline per business path); no separate `sdk-turn-end-routing` runner.
 2. ~~**Should `classifyQueryRetryRoute` and `resolveDecision` remain two separate `decisionRun`s or be one combined pipeline?**~~ Resolved by review: they compose as ONE `route-query-retry` pipeline invoked ONCE per operation; the `rate_limit_handoff` `declined` branch recomputes INLINE (pure helper stages, amended env) within that single run.
-3. ~~**How should the `rate_limit_handoff` `declined` recompute be modeled without a recursive call?**~~ Resolved with the combined pipeline above: the finalizer gate re-runs `routeQueryRetryRun` once with the amended environment; no wrapper recursion and no duplicated classifier gates.
-4. **Is `resolveDeliveryRole` too hot for `decisionRun` overhead?** It runs on every message enqueue. The `decisionRun` overhead is ~2 µs per call, but if deliveries become a bottleneck, this function may be a candidate to keep as a plain function or a raw `superpipe` transform with no gates. A microbenchmark should confirm.
+3. ~~**How should the `rate_limit_handoff` `declined` recompute be modeled without a recursive call?**~~ Resolved by review: the finalizer gate recomputes INLINE via pure helper stages (amended env) within the current single run — it never re-invokes `routeQueryRetryRun`, and no classifier gates are duplicated.
+4. ~~**Is `resolveDeliveryRole` too hot for `decisionRun` overhead?**~~ Moot after review: it remains a plain priority-table helper (also called twice inside arbitration), so no per-call combinator overhead exists. The `decisionRun` overhead is ~2 µs per call, but if deliveries become a bottleneck, this function may be a candidate to keep as a plain function or a raw `superpipe` transform with no gates. A microbenchmark should confirm.
 5. **Should the exported function names be kept as wrappers or replaced with `decideXxx` runners?** This plan preserves `routeTurnEnd`, `classifyQueryRetryRoute`, `resolveDecision` (private), `resolveSteerAdmission`, `planDeliveryRoleArbitration`, `routeDriveTurnOutcome`, `routeFeedSteerOutcome`, `planInjectContextReset`, `planTurnEndFlushContextReset`, and `resolveDeliveryRole` as the public API to avoid churning every caller. The internal `decideXxx` runners are private.
 6. **Are `message-ownership-gates.ts:planFlushDelivery` and `decideDeferAdmission` in scope?** They are not in the requested symbol list, but they are also pure admission functions used by `message-delivery-pipeline.ts`. They are natural follow-up migration targets after `resolveDeliveryRole`.

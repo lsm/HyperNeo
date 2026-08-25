@@ -28,7 +28,7 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification` | Inside `runAtomic`; snapshot notification/goal, `decideClaimAdmission`, `apply`, update status | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Atomic claim; effect stage is the goal update and notification status flip. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Most complex goal effect chain; needs gather/decide/effect stages. |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | Direct sync `superpipe` (`.end`) — review correction: `registerSubscription` completes synchronously and callers like `registerRunInterests` inspect `result.success` immediately in a loop; `stagedRun` (`endAsync`) would change that contract to a Promise and add await gaps between the interest-count snapshot and trie mutations | In-memory rollback on repo failure stays; the redispatch best-effort move (below) still applies. |
-| `packages/daemon/src/lib/space/runtime/space-runtime.ts:validateSubscriptionTargetTask` | Pure check: task exists, belongs to run, not terminal | `decisionRun` (or a `decide` stage inside the `registerSubscription` `stagedRun`) | Trivial target gate. |
+| `packages/daemon/src/lib/space/runtime/space-runtime.ts:validateSubscriptionTargetTask` | Pure check: task exists, belongs to run, not terminal | Ordinary pure helper or direct branches of the synchronous registration pipeline (review correction: not a separate `decisionRun`, and no `stagedRun` — see the corrected `registerSubscription` design) | Trivial target gate. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | `decisionRun` | Already called inside a per-target loop; replacing the if-cascade with a `decisionRun` makes the precedence testable. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets` | Pure multi-branch target resolution | `decisionRun` | Currently used to feed `agent-message-routing-pipeline.ts`. Make it a first-class `decisionRun` and the pipeline can read its `decision`. |
 | `packages/daemon/src/lib/space/runtime/activation-routing.ts:decideActivationRouting` | Pure multi-branch decision | `decisionRun` | Simple cascade; `decisionRun` is the right fit. |
@@ -287,7 +287,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:send_message_to_task`
 
 - **Current summary**: Resolves a task, validates it, resolves a target (`node_id` or `target`), handles long-horizon handles, worker targets, and session targets, and either injects into a live session, activates the node and re-injects, or queues a pending message.
-- **Proposed combinator**: `stagedRun` (with nested `decisionRun`s for sub-admissions).
+- **Proposed combinator**: ONE direct mixed pipeline `deliver-task-message` (review correction: target-admission and delivery-mode gates are direct stages — no nested `decisionRun`s).
 - **Input snapshot design**:
   ```ts
   interface DeliverTaskMessageState {
@@ -500,7 +500,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     `routeTaskUpdate` rejects as `review_to_done` because it was designed
     for the agent tool. Either keep that RPC branch ahead of the shared
     decision or parameterize it per caller; do not make the tool route an
-    unqualified source of truth for both. It already lives in `task-transition-routing.ts` as `routeTaskUpdate`. Wrap it in a `decisionRun` in `packages/daemon/src/lib/space/tools/task-update-routing-pipeline.ts`.
+    unqualified source of truth for both. It already lives in `task-transition-routing.ts` as `routeTaskUpdate`. Review correction: retain it as an ORDINARY PURE HELPER (or inline its routing gates) inside the single `spaceTask.update` RPC pipeline — do NOT wrap it in a separate `decisionRun` for callers to invoke, which would recreate the composition boundaries the corrected design removes.
   - The tool's `space-tool-pipeline.ts` should call this core after its autonomy gate, rather than calling `routeTaskUpdate` directly, so the gate order is shared.
 - **Shell/effect wiring**: The RPC handler's shell executes the selected branch:
   - `reject` → throw.
@@ -566,7 +566,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onTaskCompleted`
 
 - **Current summary**: After a task completes, checks goal active, scope, threshold, evidence count, then enqueues a `GOAL_AUTOMATION_EXECUTE` job.
-- **Proposed combinator**: `decisionRun` (admission) plus shell effect.
+- **Proposed combinator**: One mixed decision/effect pipeline (review correction: admission gates plus the `enqueue` effect stage compose directly in one named operation pipeline; no admission-only pipeline with an imperative `if (proceed) enqueue` outside).
 - **Input snapshot design**:
   ```ts
   interface CompletedTaskAutomationCtx {
@@ -592,7 +592,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onSelfNag`
 
 - **Current summary**: Given a goal/schedule/scope, checks goal active, scope, cron, evidence, then enqueues a self-nag job.
-- **Proposed combinator**: `decisionRun` (admission) plus shell effect.
+- **Proposed combinator**: One mixed decision/effect pipeline (review correction: admission gates plus the `enqueue` effect stage compose directly in one named operation pipeline; no admission-only pipeline with an imperative `if (proceed) enqueue` outside).
 - **Input snapshot design**: Similar to `onTaskCompleted` but with `scheduleId` and `selfNagCronExpression`.
 - **Pure core design**: `decideSelfNagAutomation` with branches: `disabled`, `missingScope`, `notApplicable`, `proceed`.
 - **Shell/effect wiring**: Same as `onTaskCompleted`; the shell enqueues when `proceed`.
@@ -648,7 +648,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Pure core design**: Inline the authorization, identity, and revision gates DIRECTLY into this claim pipeline (review correction round 17: wrapping `decideClaimAdmission`/its `claimAdmissionRun` executes a nested runner inside one atomic claim operation — import the gates themselves or retain admission as an ordinary pure helper), preceded by an already-applied gate (review correction: the current method checks `notification.status === params.dispositionStatus` BEFORE admission and returns `already_applied` after authorization and identity checks — without that gate, any non-`pending` notification is classified `deny/superseded` and an idempotent retry of a successfully applied outcome becomes an error). Halt rules (review correction): `decideClaimAdmission` ALWAYS returns a non-null decision, so a blanket `!decided` halt would exit for `admit` too and every admitted claim would no-op — halt ONLY on `deny`; `admit` and `already_applied` continue to their effect/return stages.
 - **Shell/effect wiring**: Effects: `params.apply(goal)` (if `mutatesGoalState`), `outcomeNotificationRepo.updateStatus`. The shell is the `runAtomic` block; the sync pipeline runs inside it.
 - **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
-  1. Replace the inline `decideClaimAdmission` call with the sync `superpipe` pipeline that wraps it.
+  1. Replace the inline `decideClaimAdmission` call with the sync `superpipe` pipeline whose gates IMPORT the authorization/identity/revision gate functions directly (review correction round 18: do NOT wrap-and-invoke `claimAdmissionRun` from inside this atomic pipeline — that nests a runner within one claim operation).
   2. Gather stage loads notification and goal, computes `authorizedAgentIds`.
   3. Decide stage runs the already-applied gate, then `decideClaimAdmission`;
      halt only on `deny` (never a blanket `!decided` — `admit` must continue).
@@ -799,7 +799,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets`
 
 - **Current summary**: Resolves a target string or array against the declared channel topology, permitted targets, peer agents, node groups, and authorization.
-- **Proposed combinator**: `decisionRun`.
+- **Proposed combinator**: Review correction — the resolution and authorization stages live DIRECTLY in `agent-message-routing-pipeline.ts` (or `resolveNodeAgentTargets` remains an ordinary pure helper consumed there); no standalone `decisionRun` for this section.
 - **Input snapshot design**:
   ```ts
   interface ResolveNodeAgentTargetsCtx {
