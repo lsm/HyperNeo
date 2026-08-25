@@ -30,6 +30,7 @@ vi.mock('../../../lib/utils', () => ({
   cn: (...args: (string | false | null | undefined)[]) => args.filter(Boolean).join(' '),
 }));
 
+import { connectionState } from '../../../lib/state';
 import { spaceStore } from '../../../lib/space-store';
 import { GoalDetailPanel } from '../GoalDetailPanel';
 
@@ -154,7 +155,7 @@ function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
 }
 
 async function chooseAssignee(value: string): Promise<void> {
-  const combo = screen.getByRole('combobox') as HTMLSelectElement;
+  const combo = screen.getByRole('combobox', { name: 'New goal owner' }) as HTMLSelectElement;
   combo.value = value;
   combo.dispatchEvent(new Event('change', { bubbles: true }));
   await waitFor(() =>
@@ -208,6 +209,7 @@ function resolvedOwner(
 
 describe('GoalDetailPanel', () => {
   beforeEach(() => {
+    connectionState.value = 'connected';
     mockSpaceId.value = 'space-1';
     mockGoals.value = [makeGoal()];
     mockTasks.value = [makeTask()];
@@ -405,22 +407,15 @@ describe('GoalDetailPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
 
     await waitFor(() => expect(mockAssignGoalOwner).toHaveBeenCalledWith('goal-1', 'agent-2'));
-    expect(mockToastSuccess).toHaveBeenCalledWith('Owner updated');
+    expect(mockToastSuccess).toHaveBeenCalledWith('Owner updated — previous owner superseded');
     await waitFor(() => expect(screen.getByText('Watchman (@watchman)')).toBeTruthy());
   });
 
-  it('reports superseded assignments when reassignment returns conflicts', async () => {
+  it('reports the replaced owner from the pre-assignment state on reassignment', async () => {
     mockLongHorizonAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
-    mockAssignGoalOwner.mockImplementation(async (goalId: string, agentId: string) => {
-      const owner = resolvedOwner(agentId, [
-        { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
-      ]);
-      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
-      return owner;
-    });
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
@@ -428,10 +423,42 @@ describe('GoalDetailPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
 
     await waitFor(() =>
-      expect(mockToastSuccess).toHaveBeenCalledWith(
-        'Owner updated — 1 prior owner assignment(s) superseded'
-      )
+      expect(mockToastSuccess).toHaveBeenCalledWith('Owner updated — previous owner superseded')
     );
+  });
+
+  it('refreshes the owner resolution when the owning agent changes status', async () => {
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    await waitFor(() => expect(screen.getByText('Owned')).toBeTruthy());
+
+    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
+      const owner: SpaceGoalOwnerResolution = {
+        action: 'degraded',
+        reason: 'paused',
+        owner: { agentId: 'agent-1', relationship: 'owner', createdAt: Date.now() },
+        conflicts: [],
+      };
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return owner;
+    });
+    mockLongHorizonAgents.value = [makeAgent({ status: 'paused' })];
+
+    await waitFor(() => expect(screen.getByText('Degraded')).toBeTruthy());
+    expect(mockFetchGoalOwner).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries the owner request after the transport reconnects', async () => {
+    connectionState.value = 'connecting';
+    mockFetchGoalOwner.mockRejectedValueOnce(new Error('Not connected'));
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Owner unavailable — refresh to retry.')).toBeTruthy()
+    );
+
+    connectionState.value = 'connected';
+    await waitFor(() => expect(screen.getByText('Scout (@scout)')).toBeTruthy());
+    expect(screen.queryByText('Owner unavailable — refresh to retry.')).toBeNull();
   });
 
   it('surfaces assignment errors as a toast', async () => {

@@ -1,6 +1,7 @@
-import type { SpaceGoal, SpaceGoalOwnerResolution, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { SpaceGoal, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';
+import { connectionState } from '../../lib/state';
 import { spaceStore } from '../../lib/space-store';
 import { getGoalStatusConfig } from '../../lib/goal-status';
 import { getPriorityIndicatorTone } from '../../lib/priority-tokens';
@@ -60,6 +61,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const owner =
     spaceStore.spaceId.value === spaceId ? (spaceStore.goalOwners.value.get(goalId) ?? null) : null;
   const agents = spaceStore.spaceId.value === spaceId ? spaceStore.longHorizonAgents.value : [];
+  const agentsVersion = agents.map((item) => `${item.id}:${item.status}`).join('|');
 
   useEffect(() => {
     let cancelled = false;
@@ -79,7 +81,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     return () => {
       cancelled = true;
     };
-  }, [spaceId, goalId]);
+  }, [spaceId, goalId, agentsVersion, connectionState.value]);
 
   if (!goal) {
     return (
@@ -127,19 +129,16 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
 
   const runOwnerAction = async (action: 'assign' | 'unassign') => {
     setOwnerBusy(true);
+    const previousOwner = owner;
     try {
       if (action === 'assign') {
         if (!assigneeId) return;
-        const result: SpaceGoalOwnerResolution = await spaceStore.assignGoalOwner(
-          goal.id,
-          assigneeId
-        );
-        const superseded =
-          result.action === 'resolved' || result.action === 'degraded'
-            ? result.conflicts.length
-            : 0;
-        if (superseded > 0) {
-          toast.success(`Owner updated — ${superseded} prior owner assignment(s) superseded`);
+        await spaceStore.assignGoalOwner(goal.id, assigneeId);
+        const replacedPrevious =
+          (previousOwner?.action === 'resolved' || previousOwner?.action === 'degraded') &&
+          previousOwner.owner.agentId !== assigneeId;
+        if (replacedPrevious) {
+          toast.success('Owner updated — previous owner superseded');
         } else {
           toast.success('Owner updated');
         }
@@ -351,6 +350,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                   <>
                     <select
                       value={assigneeId}
+                      aria-label="New goal owner"
                       onChange={(e) => setAssigneeId((e.target as HTMLSelectElement).value)}
                       class="rounded-lg border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-200"
                     >
