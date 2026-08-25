@@ -110,7 +110,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   6. Second `decide` aborts if the session left processing or became
      limited. Review correction: this branch must run a GUARDED CLEANUP
      EFFECT (`consume-passenger-copy`, the same status update the current
-     implementation performs in this race) BEFORE halting — `stagedRun`
+     implementation performs in this race, INCLUDING the
+     `messages.statusChanged` publication for the consumed row — review
+     correction: `discardPassengerCopy` publishes that event today and the
+     success-path publication in step 11 is never reached on this branch;
+     without it LiveQuery subscribers keep displaying the discarded
+     passenger as `deferred` until a later refresh) BEFORE halting — `stagedRun`
      unwinds compensations only on errors or `superseded`, not on a
      successful halt, so the registered `discardPassengerCopy` compensation
      would NOT run here and the copied row would remain `deferred` alongside
@@ -336,6 +341,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   7. `effect` `record-blocked-reason` (when dispatch threw) updates `postApprovalBlockedReason`.
   8. Guarded `effect` `set-rejected` (when `reject`) calls `taskManager.setTaskStatus` then `updateTask` with reason.
   9. `halt` returns final `SpaceTask`.
+  10. Post-pipeline shell (review correction): BOTH shells publish
+      `space.task.updated` with the final refreshed task after approving OR
+      rejecting — the tool's `emitTaskUpdated` and the RPC's event
+      publication stay as shell effects; `SpaceStore` consumes the event to
+      update task lists and banners, so dropping it leaves rejected tasks
+      displayed in `review` and stale dispatch-failure metadata.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add a shared test module for the pipeline that runs the same inputs through both shells, including a row asserting `approvalSource`/`approvalReason` survive both shells.
 - **Risks/caveats**: Unification is the main goal: do not leave the tool and RPC with slightly different error messages or preconditions. The dispatch-failure path must still leave the task `approved`; the pipeline must not roll that back. Audit metadata (`approvalSource`, `approvalReason`) must not be silently dropped by the approval-order change above.
 

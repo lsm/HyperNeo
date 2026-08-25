@@ -571,25 +571,16 @@ catch-all.
 #### Input/output snapshot design
 
 ```ts
-interface RenderDigestGroupCtx {
-  group: DigestGroup;
+interface RenderOpts {
   includeDate: boolean;
   snippetMaxChars: number;
   renderAllReviewBodies: boolean;
-  decision: string | null;
 }
 ```
 
 #### Pure core design
 
 ```ts
-function decided(
-  ctx: RenderDigestGroupCtx,
-  decision: string
-): RenderDigestGroupCtx {
-  return { ...ctx, decision };
-}
-
 function renderDigestGroup(group: DigestGroup, opts: RenderOpts): string {
   switch (group.kind) {
     case 'check': return renderCheck(group, opts);
@@ -602,47 +593,30 @@ function renderDigestGroup(group: DigestGroup, opts: RenderOpts): string {
 }
 ```
 
-Each gate:
-
-```ts
-export function gateCheck(ctx: RenderDigestGroupCtx): RenderDigestGroupCtx {
-  if (ctx.group.kind !== 'check') return ctx;
-  return decided(ctx, buildCheckGroupLine(ctx.group, ctx.includeDate, ctx.snippetMaxChars));
-}
-```
-
 #### Shell/effect wiring
 
-```ts
-function renderDigestGroup(
-  group: DigestGroup,
-  includeDate: boolean,
-  options: DigestRenderOptions = {}
-): string {
-  const ctx = {
-    group,
-    includeDate,
-    snippetMaxChars: options.snippetMaxChars ?? DIGEST_SNIPPET_MAX_CHARS,
-    renderAllReviewBodies: options.renderAllReviewBodies ?? false,
-    decision: null,
-  };
-  return renderDigestGroupRun(ctx).decision!;
-}
-```
+`renderGroups` inside `buildExternalEventDigestMessage` calls
+`renderDigestGroup(group, opts)` directly — no runner, no wrapper (review
+correction: the previous steps directing implementers to create
+`RenderDigestGroupCtx`, assemble a separate `decisionRun`, and invoke its
+runner from `buildExternalEventDigestMessage` recreated the nested
+composition boundary the proposed-combinator section rejects).
 
 #### Step-by-step migration
 
 1. Move each `case` body into an exported `buildXGroupLine` pure helper.
-2. Create the `RenderDigestGroupCtx` and the six `gate*` functions.
-3. Assemble the `decisionRun`.
-4. Replace the switch in `buildExternalEventDigestMessage` with the runner.
+2. Keep `renderDigestGroup` as the private exhaustive `switch` over
+   `group.kind` calling those helpers; the enclosing
+   `build-external-event-digest-message` pipeline calls it from its
+   `renderGroups` stage.
 
 #### Tests
 
 - `tests/unit/4-space-storage/storage/deferred-event-digest.test.ts` — add a
   `describe('renderDigestGroup')` block covering each `DigestGroupKind` and the
   `renderAllReviewBodies`/`snippetMaxChars` options.
-- Test gate order: once a gate sets `decision`, later gates must not run.
+- Test that every `DigestGroupKind` renders via the helper (exhaustive
+  switch; `other` catch-all).
 
 #### Risks/caveats
 
