@@ -88,6 +88,12 @@ export class DatabaseCore {
         );
       }
 
+      this.db.exec('PRAGMA cache_size = 2000');
+
+      this.db.exec('PRAGMA temp_store = 0');
+
+      this.db.exec('PRAGMA mmap_size = 0');
+
       createTables(this.db);
 
       configureMessageSearchFts(this.db);

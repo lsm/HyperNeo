@@ -101,31 +101,36 @@ describe('DatabaseCore', () => {
       expect(result.foreign_keys).toBe(1);
     });
 
-    it('should configure a 512 MiB page cache before migrations run', async () => {
+    it('should raise cache, temp store, and mmap limits while migrations run', async () => {
       dbCore = new DatabaseCore(dbPath);
+      const internals = dbCore as unknown as Record<string, unknown>;
+      const originalCreateBackup = internals.createBackup as () => void;
+      const windowPragmas: Record<string, number> = {};
+      internals.createBackup = () => {
+        const db = dbCore.getDb();
+        const readPragma = (name: string): number =>
+          (db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[name];
+        windowPragmas.cacheSize = readPragma('cache_size');
+        windowPragmas.tempStore = readPragma('temp_store');
+        windowPragmas.mmapSize = readPragma('mmap_size');
+        return originalCreateBackup.call(dbCore);
+      };
+
       await dbCore.initialize();
 
-      const db = dbCore.getDb();
-      const result = db.prepare('PRAGMA cache_size').get() as { cache_size: number };
-      expect(result.cache_size).toBe(-524288);
+      expect(windowPragmas.cacheSize).toBe(-524288);
+      expect(windowPragmas.tempStore).toBe(2);
+      expect(windowPragmas.mmapSize).toBeGreaterThanOrEqual(1073741824);
     });
 
-    it('should keep temporary sorts and index builds in memory', async () => {
+    it('should restore bounded runtime cache, temp store, and mmap defaults after migrations', async () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
       const db = dbCore.getDb();
-      const result = db.prepare('PRAGMA temp_store').get() as { temp_store: number };
-      expect(result.temp_store).toBe(2);
-    });
-
-    it('should raise the mmap read limit for large database rewrites', async () => {
-      dbCore = new DatabaseCore(dbPath);
-      await dbCore.initialize();
-
-      const db = dbCore.getDb();
-      const result = db.prepare('PRAGMA mmap_size').get() as { mmap_size: number };
-      expect(result.mmap_size).toBeGreaterThanOrEqual(1073741824);
+      expect(db.prepare('PRAGMA cache_size').get()).toEqual({ cache_size: 2000 });
+      expect(db.prepare('PRAGMA temp_store').get()).toEqual({ temp_store: 0 });
+      expect(db.prepare('PRAGMA mmap_size').get()).toEqual({ mmap_size: 0 });
     });
 
     it('should create database tables', async () => {
