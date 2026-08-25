@@ -841,6 +841,56 @@ describe('ProviderService', () => {
       expect(config).toBeNull();
     });
 
+    it('cancels healing when the provider is replaced during the catalog fetch', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class HealSwapMockProvider extends MockProvider {
+        constructor() {
+          super('heal-swap', 'Heal Swap Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'title-turbo';
+        }
+
+        buildSdkConfig(): ProviderSdkConfig {
+          throw new Error('stale provider instance');
+        }
+      }
+      class HealReplacementMockProvider extends MockProvider {
+        constructor() {
+          super('heal-swap', 'Heal Replacement', true, 'title-');
+        }
+
+        async ensureBridgeStarted(): Promise<void> {
+          globalRegistry.unregister('heal-swap');
+          globalRegistry.register(this);
+          globalRegistry.setCuratedModels('heal-swap', [{ id: 'title-1' }]);
+        }
+
+        override buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: {
+              ANTHROPIC_BASE_URL: 'https://replacement.api.com',
+              ANTHROPIC_MODEL: modelId,
+            },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      const replacement = new HealReplacementMockProvider();
+      const original = new HealSwapMockProvider();
+      original.ensureBridgeStarted = replacement.ensureBridgeStarted.bind(replacement);
+      globalRegistry.register(original);
+      globalRegistry.setCuratedModels('heal-swap', [{ id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig(
+        'heal-swap' as unknown as ProviderId
+      );
+
+      expect(config).toBeNull();
+    });
+
     it('cancels selection when the provider is replaced during bridge startup', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

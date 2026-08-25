@@ -544,14 +544,17 @@ async function loadProviderCatalogModels(
     const epochAtFetch = providerCatalogEpoch;
     try {
       provider.clearModelCache?.();
+      let timedOut = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const fetched = await Promise.race([
-        provider.getModels(),
+        provider.getModels().finally(() => {
+          if (timedOut) provider.clearModelCache?.();
+        }),
         new Promise<ModelInfo[]>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error('provider catalog discovery timed out')),
-            PROVIDER_CATALOG_DISCOVERY_TIMEOUT_MS
-          );
+          timer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error('provider catalog discovery timed out'));
+          }, PROVIDER_CATALOG_DISCOVERY_TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer));
       if (fetched.length > 0 || provider.hasCuratedModelList?.()) {

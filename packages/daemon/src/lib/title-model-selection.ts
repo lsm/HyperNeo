@@ -140,6 +140,7 @@ async function healFromCatalog(
   const { provider } = ctx;
   if (!provider) return null;
   const catalogModels = await getProviderCatalogModels(ctx.providerId, provider).catch(() => []);
+  if (ctx.registry.get(ctx.providerId) !== provider) return null;
   for (const model of catalogModels) {
     if (!(await curationAllows(ctx, model.id, catalogModels))) continue;
     try {
