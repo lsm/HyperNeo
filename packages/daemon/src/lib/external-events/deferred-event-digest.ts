@@ -42,7 +42,7 @@ export interface ExternalEventEssenceEntry {
   receivedAt?: number;
 }
 
-export type DeferredExternalEventEntry =
+type DeferredExternalEventEntry =
   | { kind: 'event'; essence: ExternalEventEssenceEntry }
   | { kind: 'fold'; events: ExternalEventEssenceEntry[]; droppedCount?: number };
 
@@ -248,7 +248,7 @@ function rowText(row: SDKUserMessage): string {
     .join('\n');
 }
 
-export function isSystemInjectedRow(row: SDKUserMessage): boolean {
+function isSystemInjectedRow(row: SDKUserMessage): boolean {
   const inputKind = (row as SDKUserMessage & { inputKind?: unknown }).inputKind;
   if (inputKind === 'system') return true;
   return inputKind === undefined && row.isSynthetic === true;
@@ -259,12 +259,12 @@ export function parseDeferredDeliveryRow(row: SDKUserMessage): DeferredExternalE
   return parseDeferredExternalEventText(rowText(row));
 }
 
-export function isDigestTierEntry(entry: DeferredExternalEventEntry): boolean {
+function isDigestTierEntry(entry: DeferredExternalEventEntry): boolean {
   if (entry.kind === 'fold') return true;
   return classifyExternalEventTier(entry.essence.topic) === 'digest';
 }
 
-export interface DeferredExternalEventPartition {
+interface DeferredExternalEventPartition {
   digestRows: DeferredDeliveryRow[];
   digestEvents: ExternalEventEssenceEntry[];
   droppedCount: number;
@@ -304,7 +304,7 @@ export function partitionDeferredExternalEventRows(
 
 export const DEFERRED_EXTERNAL_EVENT_ROW_CAP = 100;
 
-export const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
+const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
 
 const DIGEST_SNIPPET_MAX_CHARS = 160;
 
@@ -707,7 +707,7 @@ async function saveFoldRowIdempotently(
   return { dbId: await ops.saveRow(withUuid, sendStatus), message: withUuid };
 }
 
-export interface DeferredEventDigestFlushResult {
+interface DeferredEventDigestFlushResult {
   digestRow: DeferredDeliveryRow | null;
   remainder: DeferredDeliveryRow[];
   foldedCount: number;
@@ -743,7 +743,7 @@ export async function foldDeferredExternalEventsAtFlush(args: {
   };
 }
 
-export interface DeferredEventOverflowFold {
+interface DeferredEventOverflowFold {
   overflowRows: DeferredDeliveryRow[];
   events: ExternalEventEssenceEntry[];
   droppedCount: number;
