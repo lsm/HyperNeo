@@ -142,6 +142,7 @@ import {
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
 import { ContextTracker } from './context-tracker.ts';
+import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
 import {
   EventSubscriptionSetup,
@@ -2170,6 +2171,7 @@ export class AgentSession
           freshFeed,
           admittedBatchUuids,
           generation,
+          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
           responseObserver: armedObserver,
         };
       },
@@ -2217,6 +2219,7 @@ export class AgentSession
     const responseObserver = started.responseObserver;
     let kickoffAcknowledged = false;
     let kickoffDiedBeforeConsumption = false;
+    let kickoffAckInvalidated = false;
     try {
       if (started.acknowledgment) {
         const aborted = waitForDeliveryAbort(signal);
@@ -2251,7 +2254,18 @@ export class AgentSession
           this.reopenDeliveryForRetry(messageUuid);
           kickoffDiedBeforeConsumption = true;
         }
-        if (!kickoffDiedBeforeConsumption) {
+        const kickoffStatus = this.stateManager.getState().status;
+        const kickoffAcknowledgementValid =
+          !kickoffDiedBeforeConsumption &&
+          (kickoffStatus === 'processing' || kickoffStatus === 'idle') &&
+          !this.stateManager.isTerminalIdlePending() &&
+          (this.messageQueue.getClearEpoch?.() ?? 0) === started.clearEpoch &&
+          (!claimGuard || claimGuard()) &&
+          this.acknowledgedDeliveryStillOwned(messageUuid);
+        if (kickoffWinner === 'acknowledged' && !kickoffAcknowledgementValid) {
+          kickoffAckInvalidated = true;
+        }
+        if (kickoffAcknowledgementValid) {
           kickoffAcknowledged = true;
           this.zeroProgressDeliveryFailures = null;
           this.logger.debug(
@@ -2369,7 +2383,7 @@ export class AgentSession
         throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
       }
       if (completion.outcome === 'recoverable_error') {
-        if (!kickoffAcknowledged && !alreadyConsumed) {
+        if (!kickoffAcknowledged && !kickoffAckInvalidated && !alreadyConsumed) {
           const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
           if (terminal) throw terminal;
         }
@@ -2540,26 +2554,31 @@ export class AgentSession
     const action = await withSessionLock(
       this.session.id,
       async () => {
-        if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
-        const status = this.stateManager.getState().status;
-        if (status === 'processing') {
-          if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
-          if (!this.queryPromise) return { kind: 'promote' as const };
-          const generation = this.getQueryGeneration();
-          observer?.reportStage('query_ready', { generation });
-          if (
-            this.session.config.provider === 'acp' &&
-            this.messageQueue.hasPendingOrInFlight(messageUuid)
-          ) {
-            return { kind: 'awaiting_acceptance' as const };
-          }
-          const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
-            durable: true,
-          });
-          return { kind: 'feed' as const, acknowledgment, generation };
+        const decision = resolveSteerAdmission({
+          claimCurrent: claimGuard ? claimGuard() : true,
+          status: this.stateManager.getState().status,
+          deliveryValid: this.messageDeliveryValid(messageUuid),
+          hasLiveQuery: !!this.queryPromise,
+          provider: this.session.config.provider ?? '',
+          queueOwnsMessage: this.messageQueue.hasPendingOrInFlight(messageUuid),
+        });
+        if (decision.action === 'aborted') return { kind: 'aborted' as const };
+        if (decision.action === 'park') return { kind: 'park' as const };
+        if (decision.action === 'promote') return { kind: 'promote' as const };
+        const generation = this.getQueryGeneration();
+        observer?.reportStage('query_ready', { generation });
+        if (decision.action === 'awaiting_acceptance') {
+          return { kind: 'awaiting_acceptance' as const };
         }
-        if (status === 'queued') return { kind: 'park' as const };
-        return { kind: 'promote' as const };
+        const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+          durable: true,
+        });
+        return {
+          kind: 'feed' as const,
+          acknowledgment,
+          generation,
+          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
+        };
       },
       signal
     );
@@ -2602,9 +2621,23 @@ export class AgentSession
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
+    if (claimGuard && !claimGuard()) {
+      return { outcome: 'aborted' };
+    }
+    if (
+      this.stateManager.getState().status !== 'processing' ||
+      this.stateManager.isTerminalIdlePending() ||
+      (this.messageQueue.getClearEpoch?.() ?? 0) !== action.clearEpoch
+    ) {
+      this.reopenDeliveryForRetry(messageUuid);
+      throw new Error('Steer was invalidated by session teardown before the SDK consumed it');
+    }
     deliveryMetrics.recordFeed(messageUuid);
     observer?.reportStage('sdk_admitted', { generation: action.generation });
-    if (this.session.config.provider !== 'acp') {
+    const acknowledged = classifyAcknowledgedSteer({
+      provider: this.session.config.provider ?? '',
+    });
+    if (acknowledged === 'consumed') {
       this.markDeliveryConsumed(messageUuid);
       signalDeliveryConsumed(this.session.id, messageUuid);
       return { outcome: 'consumed' };
@@ -2686,6 +2719,14 @@ export class AgentSession
       loaded !== null &&
       (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
     );
+  }
+
+  private acknowledgedDeliveryStillOwned(messageUuid: string): boolean {
+    if (this.db.getSession(this.session.id)?.status === 'archived') return false;
+    const sendStatus = this.db
+      .getSDKMessageRepo()
+      .getDeliveryContent(this.session.id, messageUuid)?.sendStatus;
+    return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
   }
 
   private reclaimTurnAlreadySucceeded(messageUuid: string): boolean {

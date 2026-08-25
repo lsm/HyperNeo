@@ -140,6 +140,10 @@ export class ProcessingStateManager {
     return this.terminalIdleTransitions > 0;
   }
 
+  isTerminalIdlePending(): boolean {
+    return this.pendingTerminalIdleTransitions > 0;
+  }
+
   async setIdle(opts?: {
     suppressDeliveryWaiters?: boolean;
     suppressIdlePublish?: boolean;
