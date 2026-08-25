@@ -350,6 +350,138 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('owner-scoped idle transitions', () => {
+    test('admitDeliveryTurn mints monotonic turn tokens over the tracked query owner generation', () => {
+      expect(manager.getCurrentIdleOwner()).toEqual({ queryGeneration: 0, turnToken: 0 });
+      const first = manager.admitDeliveryTurn();
+      expect(first).toEqual({ queryGeneration: 0, turnToken: 1 });
+      manager.noteQueryOwnerGeneration(4);
+      const second = manager.admitDeliveryTurn();
+      expect(second).toEqual({ queryGeneration: 4, turnToken: 2 });
+      expect(manager.isIdleOwnerCurrent(first)).toBe(false);
+      expect(manager.isIdleOwnerCurrent(second)).toBe(true);
+      expect(manager.isIdleOwnerCurrent(undefined)).toBe(true);
+    });
+
+    test('a waiter armed with the current turn owner still resolves on a plain unfenced idle', async () => {
+      const owner = manager.admitDeliveryTurn();
+      const waiter = manager.waitForIdleTransition(undefined, undefined, owner);
+      let resolved = false;
+      void waiter.promise.then(() => {
+        resolved = true;
+      });
+
+      await manager.setIdle();
+
+      expect(resolved).toBe(true);
+    });
+
+    test('a same-query successor waiter admitted during the idle publication survives the drain (B5e)', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      let resolvePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+
+      manager.beginTerminalIdle();
+      const settlePromise = manager.setIdle();
+      await Promise.resolve();
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      resolvePublish();
+      emitMock.mockImplementation(async () => {});
+      await settlePromise;
+      await waiterA.promise;
+
+      expect(resolvedB).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+
+      await manager.setIdle();
+      await waiterB.promise;
+    });
+
+    test('a query replacement during the idle publication skips the onIdle callback and the successor waiter (B5e)', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      let resolvePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+
+      manager.beginTerminalIdle();
+      const settlePromise = manager.setIdle();
+      await Promise.resolve();
+      manager.noteQueryOwnerGeneration(7);
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      resolvePublish();
+      emitMock.mockImplementation(async () => {});
+      await settlePromise;
+      await waiterA.promise;
+
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(resolvedB).toBe(false);
+    });
+
+    test('the onIdle callback runs with the transition owner while it is still current', async () => {
+      let received: { queryGeneration: number; turnToken: number } | undefined;
+      manager.setOnIdleCallback(async (owner) => {
+        received = owner;
+      });
+      const owner = manager.admitDeliveryTurn();
+
+      await manager.setIdle({ owner });
+
+      expect(received).toEqual(owner);
+    });
+
+    test('beginTerminalIdle(owner) fires only the waiters owned by that delivery turn', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const ownerB = manager.admitDeliveryTurn();
+      let endedA = false;
+      let endedB = false;
+      manager.waitForIdleTransition(
+        undefined,
+        () => {
+          endedA = true;
+        },
+        ownerA
+      );
+      manager.waitForIdleTransition(
+        undefined,
+        () => {
+          endedB = true;
+        },
+        ownerB
+      );
+
+      manager.beginTerminalIdle(ownerA);
+      await Promise.resolve();
+
+      expect(endedA).toBe(true);
+      expect(endedB).toBe(false);
+    });
+  });
+
   describe('onIdleCallback ordering (deferred restart)', () => {
     test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
       let waiterResolvedAtCallback = true;

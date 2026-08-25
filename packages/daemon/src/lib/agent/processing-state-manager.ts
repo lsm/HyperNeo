@@ -7,27 +7,36 @@ import { Logger } from '../logger.ts';
 
 type StreamingPhase = 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 
+export interface IdleOwnerScope {
+  queryGeneration: number;
+  turnToken: number;
+}
+
+type IdleWaiter = {
+  id: number;
+  resolve: () => void;
+  gen?: number;
+  owner?: IdleOwnerScope;
+  fireEnd: () => void;
+  resolveOnce: () => void;
+  endOnce: () => void;
+};
+
 export class ProcessingStateManager {
   private processingState: AgentProcessingState = { status: 'idle' };
   private streamingPhase: StreamingPhase = 'initializing';
   private streamingStartedAt: number | null = null;
   private isCompacting = false;
   private logger: Logger;
-  private onIdleCallback?: () => Promise<void>;
-  private idleWaiters: Map<
-    number,
-    {
-      resolve: () => void;
-      gen?: number;
-      fireEnd: () => void;
-      resolveOnce: () => void;
-      endOnce: () => void;
-    }
-  > = new Map();
+  private onIdleCallback?: (owner?: IdleOwnerScope) => Promise<void>;
+  private idleWaiters: Map<number, IdleWaiter> = new Map();
   private nextIdleWaiterId = 0;
   private idleCallbackInFlight = false;
   private terminalIdleTransitions = 0;
   private pendingTerminalIdleTransitions = 0;
+  private pendingFenceStartTokens: number[] = [];
+  private queryOwnerGeneration = 0;
+  private turnOwnerToken = 0;
 
   constructor(
     private sessionId: string,
@@ -37,13 +46,35 @@ export class ProcessingStateManager {
     this.logger = new Logger(`ProcessingStateManager ${sessionId}`);
   }
 
-  setOnIdleCallback(callback: () => Promise<void>): void {
+  setOnIdleCallback(callback: (owner?: IdleOwnerScope) => Promise<void>): void {
     this.onIdleCallback = callback;
+  }
+
+  noteQueryOwnerGeneration(queryGeneration: number): void {
+    this.queryOwnerGeneration = queryGeneration;
+  }
+
+  admitDeliveryTurn(): IdleOwnerScope {
+    this.turnOwnerToken += 1;
+    return this.getCurrentIdleOwner();
+  }
+
+  getCurrentIdleOwner(): IdleOwnerScope {
+    return { queryGeneration: this.queryOwnerGeneration, turnToken: this.turnOwnerToken };
+  }
+
+  isIdleOwnerCurrent(owner?: IdleOwnerScope): boolean {
+    if (!owner) return true;
+    const current = this.getCurrentIdleOwner();
+    return (
+      owner.queryGeneration === current.queryGeneration && owner.turnToken === current.turnToken
+    );
   }
 
   waitForIdleTransition(
     episodeGen?: number,
-    onEnd?: () => void
+    onEnd?: () => void,
+    owner?: IdleOwnerScope
   ): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
@@ -67,7 +98,15 @@ export class ProcessingStateManager {
       fireEnd();
       resolveOnce();
     };
-    this.idleWaiters.set(id, { resolve, gen: episodeGen, fireEnd, resolveOnce, endOnce });
+    this.idleWaiters.set(id, {
+      id,
+      resolve,
+      gen: episodeGen,
+      owner,
+      fireEnd,
+      resolveOnce,
+      endOnce,
+    });
     return {
       promise,
       cancel: () => {
@@ -83,10 +122,28 @@ export class ProcessingStateManager {
     for (const [, w] of matching) w.endOnce();
   }
 
-  beginTerminalIdle(): void {
+  private waiterOwnedByTransition(
+    waiter: IdleWaiter,
+    owner: IdleOwnerScope | undefined,
+    fenceStartToken: number
+  ): boolean {
+    if (waiter.owner === undefined) return true;
+    if (owner !== undefined) {
+      return (
+        waiter.owner.queryGeneration === owner.queryGeneration &&
+        waiter.owner.turnToken === owner.turnToken
+      );
+    }
+    return waiter.owner.turnToken <= fenceStartToken;
+  }
+
+  beginTerminalIdle(owner?: IdleOwnerScope): void {
     this.terminalIdleTransitions += 1;
     this.pendingTerminalIdleTransitions += 1;
-    for (const waiter of this.idleWaiters.values()) waiter.fireEnd();
+    this.pendingFenceStartTokens.push(this.turnOwnerToken);
+    for (const waiter of this.idleWaiters.values()) {
+      if (this.waiterOwnedByTransition(waiter, owner, this.turnOwnerToken)) waiter.fireEnd();
+    }
   }
 
   restoreFromDatabase(): void {
@@ -148,24 +205,38 @@ export class ProcessingStateManager {
     suppressDeliveryWaiters?: boolean;
     suppressIdlePublish?: boolean;
     suppressIdleCallback?: boolean;
+    owner?: IdleOwnerScope;
   }): Promise<void> {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
+    const transitionOwner = opts?.owner ?? this.getCurrentIdleOwner();
+    const fenceStartToken = consumesTerminalFence
+      ? (this.pendingFenceStartTokens.shift() ?? this.turnOwnerToken)
+      : this.turnOwnerToken;
     if (consumesTerminalFence) {
       this.pendingTerminalIdleTransitions -= 1;
     } else if (!suppressDrain) {
       this.terminalIdleTransitions += 1;
     }
+    let claimed: IdleWaiter[] = [];
     if (!suppressDrain) {
-      for (const w of this.idleWaiters.values()) w.fireEnd();
+      claimed = [...this.idleWaiters.values()].filter((w) =>
+        this.waiterOwnedByTransition(w, opts?.owner, fenceStartToken)
+      );
+      for (const w of claimed) w.fireEnd();
     }
     try {
       await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
-      if (this.onIdleCallback && !opts?.suppressIdleCallback && !this.idleCallbackInFlight) {
+      if (
+        this.onIdleCallback &&
+        !opts?.suppressIdleCallback &&
+        !this.idleCallbackInFlight &&
+        this.isIdleOwnerCurrent(transitionOwner)
+      ) {
         this.idleCallbackInFlight = true;
         try {
-          await this.onIdleCallback();
+          await this.onIdleCallback(transitionOwner);
         } catch (error) {
           this.logger.error('Error in onIdle callback:', error);
         } finally {
@@ -174,9 +245,21 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        const waiters = [...this.idleWaiters.values()];
-        this.idleWaiters.clear();
-        for (const w of waiters) w.endOnce();
+        if (consumesTerminalFence) {
+          const claimedSet = new Set(claimed);
+          const drained = [...claimed];
+          for (const w of this.idleWaiters.values()) {
+            if (w.owner === undefined && !claimedSet.has(w)) drained.push(w);
+          }
+          for (const w of drained) {
+            this.idleWaiters.delete(w.id);
+            w.endOnce();
+          }
+        } else {
+          const waiters = [...this.idleWaiters.values()];
+          this.idleWaiters.clear();
+          for (const w of waiters) w.endOnce();
+        }
       }
       if (ownsTerminalTransition) {
         this.terminalIdleTransitions -= 1;

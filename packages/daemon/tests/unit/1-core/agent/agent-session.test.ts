@@ -2117,6 +2117,125 @@ describe('AgentSession', () => {
       }
     });
 
+    it('reconcileStrandedDeliveries skips both locked mutations when the idle owner goes stale while waiting for the lock', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        const markDeliveryFailedByUuid = mock(() => null);
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued'
+            ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
+            : [{ dbId: 'db-2', uuid: 'uuid-2', timestamp: 2 }]
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }));
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const holder = withSessionLock('test-session-id', async () => {
+          await gate;
+        });
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        const owner = agentSession.stateManager.getCurrentIdleOwner();
+        const reconcilePromise = agentSession.reconcileStrandedDeliveries(owner);
+        await settle();
+        await settle();
+        expect(enqueue).not.toHaveBeenCalled();
+
+        agentSession.incrementQueryGeneration();
+        release();
+        await holder;
+        await reconcilePromise;
+
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(markDeliveryFailedByUuid).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
+    it('reconcileStrandedDeliveries fences on the turn owner too — a successor delivery admission invalidates it', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        const markDeliveryFailedByUuid = mock(() => null);
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued'
+            ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
+            : [{ dbId: 'db-2', uuid: 'uuid-2', timestamp: 2 }]
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }));
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const holder = withSessionLock('test-session-id', async () => {
+          await gate;
+        });
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        const owner = agentSession.stateManager.getCurrentIdleOwner();
+        const reconcilePromise = agentSession.reconcileStrandedDeliveries(owner);
+        await settle();
+        await settle();
+
+        agentSession.stateManager.admitDeliveryTurn();
+        release();
+        await holder;
+        await reconcilePromise;
+
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(markDeliveryFailedByUuid).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
+    it('reconcileStrandedDeliveries with a still-current owner re-enqueues and settles as before', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        const markDeliveryFailedByUuid = mock(() => 'db-2');
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          getActiveDeliveryRole: mock(() => null),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued'
+            ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
+            : [{ dbId: 'db-2', uuid: 'uuid-2', timestamp: 2 }]
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }));
+
+        const owner = agentSession.stateManager.getCurrentIdleOwner();
+        const settledCount = await agentSession.reconcileStrandedDeliveries(owner);
+
+        expect(settledCount).toBe(2);
+        expect(enqueue).toHaveBeenCalledTimes(1);
+        expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
     it('replayAllPendingMessages bypasses the manual-mode guard that stops immediate-mode replay', async () => {
       agentSession.session.config.queryMode = 'manual';
       const inner = agentSession.queryModeHandler as unknown as {

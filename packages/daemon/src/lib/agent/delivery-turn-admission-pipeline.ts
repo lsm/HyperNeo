@@ -1,5 +1,6 @@
 import type { MessageContent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { IdleOwnerScope } from './processing-state-manager.ts';
 import type {
   DeliveryAdmissionReservation,
   FencedDeliveryBatchWriteResult,
@@ -17,6 +18,7 @@ export interface ArmedDeliveryResponseObserver {
 export interface DeliveryTurnEndHandle {
   promise: Promise<void>;
   cancel: () => void;
+  idleOwner: IdleOwnerScope;
 }
 
 interface ExistingQueueEntry {
@@ -38,6 +40,7 @@ export type DeliveryTurnAdmissionOutcome =
       generation: number;
       clearEpoch: number;
       responseObserver: ArmedDeliveryResponseObserver | null;
+      idleOwner: IdleOwnerScope;
     };
 
 export interface DeliveryTurnAdmissionDeps {
@@ -111,6 +114,7 @@ interface DeliveryTurnAdmissionCtx extends DeliveryTurnAdmissionInput {
   generationAtAnchor?: number;
   turnEndMarkerCleared?: boolean;
   turnEnd?: DeliveryTurnEndHandle;
+  idleOwner?: IdleOwnerScope;
   existing?: ExistingQueueEntry | null;
   freshFeed?: boolean;
   feedContent?: string | MessageContent[];
@@ -253,7 +257,9 @@ function reclaimTurnStateAfterStartup(ctx: DeliveryTurnAdmissionCtx): DeliveryTu
 
 function installTurnEndWaiter(ctx: DeliveryTurnAdmissionCtx): DeliveryTurnAdmissionCtx {
   if (ctx.outcome) return ctx;
-  ctx.turnEnd = ctx.deps.waitForTurnEnd();
+  const turnEnd = ctx.deps.waitForTurnEnd();
+  ctx.turnEnd = turnEnd;
+  ctx.idleOwner = turnEnd.idleOwner;
   return ctx;
 }
 
@@ -417,6 +423,7 @@ function assembleDrivingOutcome(ctx: DeliveryTurnAdmissionCtx): DeliveryTurnAdmi
       generation: generationAtAnchor,
       clearEpoch: ctx.deps.queueClearEpoch(),
       responseObserver: ctx.armedObserver ?? null,
+      idleOwner: ctx.idleOwner!,
     },
   };
 }
