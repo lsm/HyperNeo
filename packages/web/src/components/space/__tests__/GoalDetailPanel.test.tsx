@@ -639,6 +639,66 @@ describe('GoalDetailPanel', () => {
     await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledWith('goal-1'));
   });
 
+  it('keeps a reopened picker when a pre-navigation mutation settles after a round trip', async () => {
+    mockLongHorizonAgents.value = [
+      makeAgent(),
+      makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
+    ];
+    let resolveAssign: () => void = () => {};
+    mockAssignGoalOwner.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveAssign = resolve;
+        })
+    );
+    mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
+    const { rerender } = render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
+    await chooseAssignee('agent-2');
+    fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
+
+    rerender(<GoalDetailPanel spaceId="space-1" goalId="goal-2" />);
+    rerender(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
+    await chooseAssignee('agent-2');
+
+    resolveAssign();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole('combobox', { name: 'New goal owner' })).toBeTruthy();
+  });
+
+  it('refetches the owner when an agent handle changes', async () => {
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledTimes(1));
+
+    mockLongHorizonAgents.value = [makeAgent({ handle: 'coordinator' })];
+
+    await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledTimes(2));
+  });
+
+  it('ignores a stale fetch failure after an event-driven refresh', async () => {
+    let rejectFetch: (err: Error) => void = () => {};
+    mockFetchGoalOwner.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFetch = reject;
+        })
+    );
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    mockGoalOwners.value = new Map(mockGoalOwners.value).set('goal-1', resolvedOwner());
+    await waitFor(() => expect(screen.getByText('Scout (@scout)')).toBeTruthy());
+
+    rejectFetch(new Error('stale'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText('Scout (@scout)')).toBeTruthy();
+    expect(screen.queryByText('Owner unavailable — refresh to retry.')).toBeNull();
+  });
+
   it('refreshes the owner resolution when the owning agent changes status', async () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
     await waitFor(() => expect(screen.getByText('Owned')).toBeTruthy());

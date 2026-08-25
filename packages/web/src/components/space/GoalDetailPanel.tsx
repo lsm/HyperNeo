@@ -61,7 +61,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const owner =
     spaceStore.spaceId.value === spaceId ? (spaceStore.goalOwners.value.get(goalId) ?? null) : null;
   const agents = spaceStore.spaceId.value === spaceId ? spaceStore.longHorizonAgents.value : [];
-  const agentsVersion = agents.map((item) => `${item.id}:${item.status}`).join('|');
+  const agentsVersion = agents.map((item) => `${item.id}:${item.handle}:${item.status}`).join('|');
   const goalIdRef = useRef(goalId);
   const spaceIdRef = useRef(spaceId);
   const ownerMutationTokenRef = useRef(0);
@@ -69,6 +69,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   spaceIdRef.current = spaceId;
 
   useEffect(() => {
+    ownerMutationTokenRef.current += 1;
     setOwnerLoadFailed(false);
     setOwnerBusy(false);
     setAssignOpen(false);
@@ -90,7 +91,9 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           if (!cancelled) setOwnerLoadFailed(false);
         })
         .catch(() => {
-          if (!cancelled) setOwnerLoadFailed(true);
+          if (cancelled) return;
+          if (spaceStore.goalOwners.value.get(goalId)) return;
+          setOwnerLoadFailed(true);
         });
     }
     if (spaceStore.longHorizonAgents.value.length === 0) {
