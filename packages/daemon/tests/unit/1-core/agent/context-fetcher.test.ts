@@ -133,6 +133,7 @@ describe('ContextFetcher.toContextInfo', () => {
     const info = ContextFetcher.toContextInfo(response);
 
     expect(info.autoCompactThreshold).toBe(160000);
+    expect(info.sdkAutoCompactThreshold).toBe(160000);
     expect(info.isAutoCompactEnabled).toBe(true);
   });
 
@@ -153,6 +154,50 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.percentUsed).toBe(77);
     expect(info.breakdown.Messages).toEqual({ tokens: 210000, percent: 77.2 });
     expect(info.autoCompactThreshold).toBe(244800);
+    expect(info.sdkAutoCompactThreshold).toBe(180000);
+  });
+
+  it('keeps the SDK-reported threshold raw when display rescaling and budget override shrink it', () => {
+    const response = baseResponse({
+      totalTokens: 100000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 78,
+      model: 'custom-model',
+      autoCompactThreshold: 180000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 100000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 128000,
+      provider: 'custom:test',
+    });
+
+    expect(info.totalCapacity).toBe(128000);
+    expect(info.autoCompactThreshold).toBe(115200);
+    expect(info.sdkAutoCompactThreshold).toBe(180000);
+  });
+
+  it('leaves sdkAutoCompactThreshold undefined when the SDK reports none', () => {
+    const response = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      provider: 'custom:test',
+    });
+
+    expect(info.autoCompactThreshold).toBe(180000);
+    expect(info.sdkAutoCompactThreshold).toBeUndefined();
   });
 
   it('derives the threshold from reserved autocompact breakdown tokens without including the buffer as a usage row', () => {

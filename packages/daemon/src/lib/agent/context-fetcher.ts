@@ -269,7 +269,8 @@ export class ContextFetcher {
       capacity > 0
         ? Math.min(100, Math.max(0, Math.round((response.totalTokens / capacity) * 100)))
         : Math.max(0, Math.round(response.percentage));
-    let autoCompactThreshold = response.autoCompactThreshold;
+    const rawSdkAutoCompactThreshold = response.autoCompactThreshold;
+    let autoCompactThreshold = rawSdkAutoCompactThreshold;
     const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
       isAutocompactCategory(category.name)
     )?.tokens;
@@ -290,7 +291,6 @@ export class ContextFetcher {
       autoCompactThreshold = Math.floor(capacity * 0.9);
     }
     const enforcementProvider = modelMetadata?.provider;
-    let rawSdkAutoCompactThreshold = autoCompactThreshold;
     if (
       enforcementProvider &&
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
@@ -322,8 +322,7 @@ export class ContextFetcher {
       breakdown,
       apiUsage,
       autoCompactThreshold,
-      sdkAutoCompactThreshold:
-        typeof rawSdkAutoCompactThreshold === 'number' ? rawSdkAutoCompactThreshold : undefined,
+      sdkAutoCompactThreshold: rawSdkAutoCompactThreshold,
       isAutoCompactEnabled: response.isAutoCompactEnabled,
       messageBreakdown,
       lastUpdated: Date.now(),
