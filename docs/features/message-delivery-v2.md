@@ -597,11 +597,10 @@ into the change scope.
 ## 18. Direct-inject tier for external events (mid-turn steering)
 
 Tiered external-event delivery (task #1398) adds a `direct` tier on top of the
-turn-end digest fold: while a workflow sub-session is BUSY (processing / queued /
-waiting_for_input / interrupted), high-value GitHub events are steered into the
-live turn as an interleaved user message via the existing `message_delivery`
-steer role, instead of waiting for turn end. Everything else keeps the digest
-path unchanged.
+turn-end digest fold: while a workflow sub-session is exactly `processing`,
+high-value GitHub events are steered into the live turn as an interleaved user
+message via the existing `message_delivery` steer role, instead of waiting for
+turn end. Everything else keeps the digest path unchanged.
 
 - **Direct classes** (`classifyExternalEventDirectSteer` in
   `external-events/event-tiers.ts`): review verdicts
@@ -618,19 +617,17 @@ path unchanged.
   rate-limit sessions keep the plain defer path.
 - **Burst coalescing**: events buffer per `(session, event class)` and flush as
   ONE steer built by the digest renderer, so a 12-comment Codex pass becomes a
-  single steer, not twelve, bounded by cumulative expanded event count (not
-  row count) so a huge envelope cannot smuggle unbounded events past the cap.
+  single steer, not twelve, bounded by the cumulative DIRECT-class event
+  count (digest-tier passengers riding a fold do not consume capacity — they
+  are re-deferred at flush, so they never reach the model mid-turn).
   Upstream rate-limit fold rows (the `external_event_digest` envelopes
   SpaceRuntime emits past its 10/min delivery budget) participate too: a fold
   containing any direct-class event joins the burst with all of its events,
-  sparse fold entries are re-hydrated from the external-event store (render
-  fields included, not just classification fields) before classification, and
-  cooldowns are armed for every direct class the fold represents. A fold that
-  spans cooling and budgeted classes is partitioned (real row ids resolved by
-  uuid first): the budgeted events are re-enveloped for the steer while the
-  cooling events stay deferred for the turn-end digest, so a mixed fold cannot
-  ride a budgeted class past another class's rate cap; duplicate admissions of
-  the same message uuid are ignored. When the deferred backlog cap supersedes
+  and sparse fold entries whose classification fields are missing are
+  re-hydrated from the external-event store (lazily — only potentially-direct
+  topics that do not already classify, so digest-tier passengers cost no
+  lookups). Duplicate admissions of the same message uuid are ignored. When
+  the deferred backlog cap supersedes
   buffered rows into an early envelope, that envelope is itself admitted to
   the buffer, so cap-folded direct events still reach the mid-turn steer.
   Steers render review bodies up to `DIRECT_STEER_SNIPPET_MAX_CHARS`
@@ -651,16 +648,16 @@ path unchanged.
   provenance → session-state → direct-class → buffer-capacity gates); the only
   suppression is the buffer event-count bound below, which guards steer size
   (context window), not rate.
-- **Tunables** (module constants in `task-agent-manager.ts`, overridable via
-  `TaskAgentManagerConfig` for tests):
-  `DIRECT_STEER_DEBOUNCE_MS = 20_000` (trailing-edge burst window),
-  `DIRECT_STEER_MAX_BURST_WAIT_MS = 60_000` (hard cap so a drip cannot starve
-  the steer forever),
-  and `DIRECT_STEER_BUFFER_MAX_ENTRIES = 200` (steer size bound).
-- **Observability**: every injected steer and every buffer-cap suppression is
+- **Tunables**: `DIRECT_STEER_DEBOUNCE_MS = 20_000` (trailing-edge burst
+  window) and `DIRECT_STEER_MAX_BURST_WAIT_MS = 60_000` (hard cap so a drip
+  cannot starve the steer forever) are module constants in
+  `task-agent-manager.ts`, overridable via `TaskAgentManagerConfig` for tests;
+  `DIRECT_STEER_BUFFER_MAX_ENTRIES = 200` is a hard-coded steer size bound.
+- **Observability**: every enqueued steer and every buffer-cap suppression is
   logged and counted in the external-event queue-health snapshot
-  (`directSteerInjected`, `directSteerInjectedByClass`,
-  `directSteerSuppressedByCooldown`).
+  (`directSteerEnqueued`, `directSteerEnqueuedByClass`,
+  `directSteerSuppressedByBufferCap` — counted at delivery-job enqueue, not
+  SDK acceptance).
 - **Failure safety (single carrier)**: the steer row is persisted `enqueued`
   and the source rows are claimed (`consumed`) only after the steer delivery job
   is durably enqueued, with no await between reading and claiming them so the

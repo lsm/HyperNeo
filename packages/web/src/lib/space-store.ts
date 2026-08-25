@@ -96,6 +96,9 @@ export interface QueueHealthCounters {
   staleSessionSkips: number;
   pausedSpaceSkips: number;
   cooldownSkips: number;
+  directSteerEnqueued: number;
+  directSteerSuppressedByBufferCap: number;
+  directSteerEnqueuedByClass: Record<string, number>;
 }
 
 export interface QueueHealthGauges {

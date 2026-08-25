@@ -27,12 +27,29 @@ export interface ExternalEventSteerAdmissionCtx {
   parentTaskLimited: boolean;
   essences: ExternalEventEssenceEntry[];
   droppedEventCount?: number;
-  bufferedEventCount: number;
+  bufferedDirectEventCount: number;
   bufferMaxEntries: number;
+  hydrate: (essence: ExternalEventEssenceEntry) => ExternalEventEssenceEntry;
   decision: ExternalEventSteerAdmissionDecision | null;
 }
 
 export type ExternalEventSteerAdmissionInput = Omit<ExternalEventSteerAdmissionCtx, 'decision'>;
+
+const DIRECT_TOPIC_SUFFIXES: ReadonlySet<string> = new Set([
+  'review_submitted',
+  'review_comment_polled',
+  'check_failed',
+  'merge_conflict',
+]);
+
+function topicSuffix(topic: string): string {
+  const dot = topic.lastIndexOf('.');
+  return dot === -1 ? topic : topic.slice(dot + 1);
+}
+
+function potentiallyDirect(essence: ExternalEventEssenceEntry): boolean {
+  return DIRECT_TOPIC_SUFFIXES.has(topicSuffix(essence.topic));
+}
 
 export function directSteerClassesOf(
   essences: ExternalEventEssenceEntry[]
@@ -43,6 +60,17 @@ export function directSteerClassesOf(
     if (eventClass) classes.add(eventClass);
   }
   return [...classes];
+}
+
+export function enrichDirectSteerEssences(
+  essences: ExternalEventEssenceEntry[],
+  hydrate: (essence: ExternalEventEssenceEntry) => ExternalEventEssenceEntry
+): ExternalEventEssenceEntry[] {
+  return essences.map((essence) => {
+    if (classifyExternalEventDirectSteer(essence) !== null) return essence;
+    if (!potentiallyDirect(essence)) return essence;
+    return hydrate(essence);
+  });
 }
 
 function decided<Ctx extends { decision: unknown }>(
@@ -75,15 +103,20 @@ export function applySessionStateGate(
 export function applyDirectClassGate(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
-  return directSteerClassesOf(ctx.essences).length > 0
-    ? ctx
-    : decided(ctx, { action: 'notDirect' });
+  const enriched = enrichDirectSteerEssences(ctx.essences, ctx.hydrate);
+  const withEnriched = enriched === ctx.essences ? ctx : { ...ctx, essences: enriched };
+  return directSteerClassesOf(enriched).length > 0
+    ? withEnriched
+    : decided(withEnriched, { action: 'notDirect' });
 }
 
 export function applyBufferCapacityGate(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
-  return ctx.bufferedEventCount + ctx.essences.length <= ctx.bufferMaxEntries
+  const directCount = ctx.essences.filter(
+    (essence) => classifyExternalEventDirectSteer(essence) !== null
+  ).length;
+  return ctx.bufferedDirectEventCount + directCount <= ctx.bufferMaxEntries
     ? ctx
     : decided(ctx, { action: 'suppressBufferCap' });
 }

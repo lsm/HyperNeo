@@ -426,8 +426,8 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
       dbIds: [harness.rows[0]!.dbId],
       status: 'consumed',
     });
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(1);
-    expect(harness.metrics.getCounters().directSteerInjectedByClass.review).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueuedByClass.review).toBe(1);
   });
 
   it('coalesces a 12-comment review-bot burst into ONE steer', async () => {
@@ -452,7 +452,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
       .filter((row) => row.status !== 'enqueued')
       .map((row) => row.dbId);
     expect(sourceDbIds).toHaveLength(12);
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(1);
   });
 
   it('coalesces multi-check CI failures into one steer listing failing checks', async () => {
@@ -470,7 +470,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steerText).toContain('CI check "Build Binary (linux-x64)"');
     expect(steerText).toContain('CI check "Daemon Tests"');
     expect(steerJobs(harness.jobs)).toHaveLength(1);
-    expect(harness.metrics.getCounters().directSteerInjectedByClass.check).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueuedByClass.check).toBe(1);
   });
 
   it('expands an upstream rate-limit fold containing bot review comments into the steer', async () => {
@@ -498,7 +498,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steers).toHaveLength(1);
     expect(rowText(steers[0]!.message)).toContain('(12 events, PR #2828)');
     expect(steerJobs(harness.jobs)).toHaveLength(1);
-    expect(harness.metrics.getCounters().directSteerInjectedByClass.review).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueuedByClass.review).toBe(1);
     expect(harness.rows[0]?.status).toBe('consumed');
   });
 
@@ -593,10 +593,10 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
     await sleep(DEBOUNCE_MS + 60);
     expect(steerRows(harness.rows)).toHaveLength(1);
-    const injectedByClass = harness.metrics.getCounters().directSteerInjectedByClass;
+    const injectedByClass = harness.metrics.getCounters().directSteerEnqueuedByClass;
     expect(injectedByClass.check).toBe(1);
     expect(injectedByClass.merge_conflict).toBe(1);
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(1);
 
     await injectDefer(
       harness.manager,
@@ -610,7 +610,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     );
     await sleep(DEBOUNCE_MS + 40);
     expect(steerRows(harness.rows)).toHaveLength(2);
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(2);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(2);
   });
 
   it('bounds the buffer by expanded event count, not row count', async () => {
@@ -672,7 +672,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(allSteerText).toContain('Check Zero');
     expect(allSteerText).toContain('Check One');
     expect(allSteerText).toContain('Check 60');
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(1);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(1);
   });
 
   it('ignores duplicate buffer admissions for the same explicit message uuid', async () => {
@@ -1010,7 +1010,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     );
     expect(humanDeferredRows).toHaveLength(1);
     expect(harness.rows.find((row) => row.status === 'failed')).toBeDefined();
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(0);
   });
 
   it('does not steer human-injected messages even when they contain event-shaped JSON', async () => {
@@ -1029,7 +1029,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steerRows(harness.rows)).toHaveLength(0);
     expect(steerJobs(harness.jobs)).toHaveLength(0);
     expect(harness.rows[0]?.status).toBe('deferred');
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(0);
   });
 
   it('aborts the steer when the session leaves processing during passenger preservation', async () => {
@@ -1064,7 +1064,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     await sleep(DEBOUNCE_MS + 60);
 
     expect(steerRows(harness.rows)).toHaveLength(0);
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(0);
     const sourceRow = harness.rows.find((row) => rowText(row.message).includes('yield-review'));
     expect(sourceRow?.status).toBe('deferred');
     const humanMentioningRows = harness.rows.filter((row) =>
@@ -1087,7 +1087,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steerRows(harness.rows)).toHaveLength(0);
     expect(steerJobs(harness.jobs)).toHaveLength(0);
     expect(harness.rows[0]?.status).toBe('deferred');
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(0);
   });
 });
 
@@ -1110,7 +1110,7 @@ describe('TaskAgentManager direct-inject tier idle session', () => {
     expect(harness.memoryQueue).toHaveLength(1);
     expect(harness.memoryQueue[0]!.content).toContain('CHANGES_REQUESTED');
     expect(steerJobs(harness.jobs)).toHaveLength(0);
-    expect(harness.metrics.getCounters().directSteerInjected).toBe(0);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(0);
 
     await sleep(DEBOUNCE_MS + 30);
     expect(steerRows(harness.rows)).toHaveLength(0);

@@ -3666,10 +3666,7 @@ export class TaskAgentManager {
     const parsed = parseDeferredExternalEventText(args.messageText);
     if (!parsed) return;
     const droppedEventCount = parsed.kind === 'fold' ? parsed.droppedCount : undefined;
-    const essences = deferredExternalEventEntryEvents(parsed).map((essence) =>
-      this.hydrateDirectSteerEssence(essence)
-    );
-    const bufferedTotal = this.sessionBufferedEventCount(args.sessionId);
+    const essences = deferredExternalEventEntryEvents(parsed);
     const admission = decideExternalEventSteerAdmission({
       deliveryV2Enabled: isMessageDeliveryV2Enabled(),
       isSynthetic: args.isSynthetic,
@@ -3679,8 +3676,9 @@ export class TaskAgentManager {
       parentTaskLimited: args.parentTaskLimited,
       essences,
       ...(droppedEventCount ? { droppedEventCount } : {}),
-      bufferedEventCount: bufferedTotal,
+      bufferedDirectEventCount: this.sessionBufferedDirectEventCount(args.sessionId),
       bufferMaxEntries: DIRECT_STEER_BUFFER_MAX_ENTRIES,
+      hydrate: (essence: ExternalEventEssenceEntry) => this.hydrateDirectSteerEssence(essence),
     });
     const decision = admission.decision;
     if (decision === null) return;
@@ -3714,11 +3712,17 @@ export class TaskAgentManager {
     this.armDirectSteerTimer(key);
   }
 
-  private sessionBufferedEventCount(sessionId: string): number {
+  private sessionBufferedDirectEventCount(sessionId: string): number {
     let total = 0;
     for (const [key, entries] of this.directSteerBuffers) {
       if (!key.startsWith(`${sessionId}\u0000`)) continue;
-      total += entries.reduce((sum, item) => sum + item.essences.length, 0);
+      total += entries.reduce(
+        (sum, item) =>
+          sum +
+          item.essences.filter((essence) => classifyExternalEventDirectSteer(essence) !== null)
+            .length,
+        0
+      );
     }
     return total;
   }
@@ -3939,9 +3943,9 @@ export class TaskAgentManager {
     const sourceDbIds = steerable.map((entry) => entry.dbId);
     this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
     const steeredClasses = new Set(directSteerClassesOf(steerEssences));
-    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjected();
+    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueued();
     for (const eventClass of steeredClasses) {
-      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerInjectedClass(
+      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueuedClass(
         eventClass
       );
     }

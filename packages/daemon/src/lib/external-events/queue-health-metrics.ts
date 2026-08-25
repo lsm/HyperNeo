@@ -26,9 +26,9 @@ export interface QueueHealthCounters {
   staleSessionSkips: number;
   pausedSpaceSkips: number;
   cooldownSkips: number;
-  directSteerInjected: number;
+  directSteerEnqueued: number;
   directSteerSuppressedByBufferCap: number;
-  directSteerInjectedByClass: Record<string, number>;
+  directSteerEnqueuedByClass: Record<string, number>;
 }
 
 export interface QueueHealthGauges {
@@ -151,9 +151,9 @@ export class ExternalEventQueueMetrics {
   private staleSessionSkips = 0;
   private pausedSpaceSkips = 0;
   private cooldownSkips = 0;
-  private directSteerInjected = 0;
+  private directSteerEnqueued = 0;
   private directSteerSuppressedByBufferCap = 0;
-  private readonly directSteerInjectedByClass = new Map<string, number>();
+  private readonly directSteerEnqueuedByClass = new Map<string, number>();
 
   constructor(now: number = Date.now()) {
     this.since = now;
@@ -189,14 +189,14 @@ export class ExternalEventQueueMetrics {
     this.cooldownSkips += 1;
   }
 
-  recordDirectSteerInjected(): void {
-    this.directSteerInjected += 1;
+  recordDirectSteerEnqueued(): void {
+    this.directSteerEnqueued += 1;
   }
 
-  recordDirectSteerInjectedClass(eventClass: string): void {
-    this.directSteerInjectedByClass.set(
+  recordDirectSteerEnqueuedClass(eventClass: string): void {
+    this.directSteerEnqueuedByClass.set(
       eventClass,
-      (this.directSteerInjectedByClass.get(eventClass) ?? 0) + 1
+      (this.directSteerEnqueuedByClass.get(eventClass) ?? 0) + 1
     );
   }
 
@@ -242,9 +242,9 @@ export class ExternalEventQueueMetrics {
       staleSessionSkips: this.staleSessionSkips,
       pausedSpaceSkips: this.pausedSpaceSkips,
       cooldownSkips: this.cooldownSkips,
-      directSteerInjected: this.directSteerInjected,
+      directSteerEnqueued: this.directSteerEnqueued,
       directSteerSuppressedByBufferCap: this.directSteerSuppressedByBufferCap,
-      directSteerInjectedByClass: recordToObject(this.directSteerInjectedByClass),
+      directSteerEnqueuedByClass: recordToObject(this.directSteerEnqueuedByClass),
     };
   }
 

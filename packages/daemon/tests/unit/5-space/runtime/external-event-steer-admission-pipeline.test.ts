@@ -39,8 +39,9 @@ function input(
     inRateLimitCooldown: false,
     parentTaskLimited: false,
     essences: [REVIEW_ESSENCE],
-    bufferedEventCount: 0,
+    bufferedDirectEventCount: 0,
     bufferMaxEntries: 200,
+    hydrate: (essence) => essence,
     ...overrides,
   };
 }
@@ -102,14 +103,25 @@ describe('direct-steer admission pipeline', () => {
     const outcome = decideExternalEventSteerAdmission(
       input({
         essences: Array.from({ length: 10 }, (_, i) => ({ ...CHECK_ESSENCE, eventId: `chk-${i}` })),
-        bufferedEventCount: 195,
+        bufferedDirectEventCount: 195,
       })
     );
     expect(outcome.decision).toEqual({ action: 'suppressBufferCap' });
   });
 
+  it('digest-tier passengers do not consume capacity', () => {
+    const passengers = Array.from({ length: 250 }, (_, i) => ({
+      eventId: `pax-${i}`,
+      topic: 'github/lsm/hyperneo/pull_request/2828.polled',
+    }));
+    const outcome = decideExternalEventSteerAdmission(
+      input({ essences: [CHECK_ESSENCE, ...passengers], bufferedDirectEventCount: 199 })
+    );
+    expect(outcome.decision).toMatchObject({ action: 'admit', eventClass: 'check' });
+  });
+
   it('admits at exactly the capacity boundary', () => {
-    const outcome = decideExternalEventSteerAdmission(input({ bufferedEventCount: 199 }));
+    const outcome = decideExternalEventSteerAdmission(input({ bufferedDirectEventCount: 199 }));
     expect(outcome.decision).toMatchObject({ action: 'admit' });
   });
 
