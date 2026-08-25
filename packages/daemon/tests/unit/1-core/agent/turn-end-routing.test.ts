@@ -272,6 +272,16 @@ describe('routeTurnEnd', () => {
       },
     },
     {
+      label: 'a pre-recovery limit error with a matched clear only cancels the timer',
+      flags: { suppressIdleOnNextResult: true, clearMessageInFlight: true },
+      event: result({ isLimitError: true, isLimitRecoveryEngaged: null, confirmsArmedClear: true }),
+      expected: {
+        resetThinkingTokens: true,
+        cancelSuppressedTimer: true,
+        ...same(withFlags({ suppressIdleOnNextResult: true, clearMessageInFlight: true })),
+      },
+    },
+    {
       label: 'a detected limit error with declined recovery marks failure and skips replay',
       event: result({ isLimitError: true, isLimitRecoveryEngaged: false }),
       expected: {

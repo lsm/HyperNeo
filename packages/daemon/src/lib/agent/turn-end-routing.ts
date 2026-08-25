@@ -119,7 +119,10 @@ export function routeTurnEnd(
   const { isTopLevel, isSuccess, isLimitError, isLimitRecoveryEngaged, confirmsArmedClear } =
     event.result;
   if (isLimitRecoveryEngaged === null) {
-    return makePlan(flags, { resetThinkingTokens: isTopLevel });
+    return makePlan(flags, {
+      resetThinkingTokens: isTopLevel,
+      cancelSuppressedTimer: confirmsArmedClear,
+    });
   }
   const settlesArmedClearError = confirmsArmedClear && !isSuccess;
   const lastResultWasSuccess = isTopLevel ? isSuccess && !isLimitError : flags.lastResultWasSuccess;
