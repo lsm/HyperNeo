@@ -152,8 +152,9 @@ async function applyStoredProviderCredentials(
         const stored = await credentialManager.getCredentials(provider.id);
         const record = db.providers.getProviderByProviderId(provider.id);
         const hasPersistedDiscovery = record && record.configJson?.includes('discoveredModels');
+        const envCreds = credentialManager?.hasEnvironmentCredentials(provider.id) ?? false;
         if (
-          (stored === null && hasPersistedDiscovery) ||
+          (stored === null && hasPersistedDiscovery && !envCreds) ||
           (stored && !sameCredentialIdentity(stored, providerCredentials))
         ) {
           if (record) {
