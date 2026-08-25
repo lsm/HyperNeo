@@ -2294,5 +2294,42 @@ describe('ProvidersSettings', () => {
         expect(screen.getByTestId('visible-models-panel').textContent).not.toContain('kimi-k3')
       );
     });
+
+    it('keeps the draft when an unrelated provider record write arrives', async () => {
+      const p1 = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      const p2 = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [p1] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-k4')
+      );
+
+      fireEvent.click(
+        screen
+          .getByTestId('visible-models-panel')
+          .querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[0]
+      );
+
+      mockListProviders.mockResolvedValue({ providers: [p2] });
+      const eventHandler = mockOnEvent.mock.calls.find(
+        (call) => call[0] === 'providers.changed'
+      )?.[1];
+      await act(async () => {
+        eventHandler?.();
+      });
+      await waitFor(() => expect(mockListProviders).toHaveBeenCalledTimes(2));
+
+      const panelEl = screen.getByTestId('visible-models-panel');
+      expect(panelEl.textContent).toContain('kimi-k3');
+      expect(panelEl.textContent).toContain('1 of 2 selected (unsaved).');
+    });
   });
 });

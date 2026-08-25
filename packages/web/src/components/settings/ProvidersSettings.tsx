@@ -122,7 +122,6 @@ function getVisibleModelsFingerprint(provider: EnrichedProvider): string {
     provider.baseUrl,
     provider.configJson,
     String(provider.available),
-    String(provider.updatedAt),
   ];
   return tokens.map((t) => t ?? '').join('|');
 }
@@ -194,6 +193,7 @@ export function ProvidersSettings() {
     Record<string, VisibleModelsPanelState>
   >({});
   const visibleModelsGenRef = useRef<Record<string, number>>({});
+  const previousProvidersRef = useRef<EnrichedProvider[]>([]);
   const providersRef = useRef<EnrichedProvider[]>([]);
   providersRef.current = providers;
   const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(
@@ -287,6 +287,8 @@ export function ProvidersSettings() {
   }, []);
 
   useEffect(() => {
+    const previousById = new Map(previousProvidersRef.current.map((p) => [p.id, p]));
+    previousProvidersRef.current = providers;
     setVisibleModelsPanels((prev) => {
       let changed = false;
       const next: Record<string, VisibleModelsPanelState> = {};
@@ -295,6 +297,14 @@ export function ProvidersSettings() {
         if (!provider) {
           changed = true;
           continue;
+        }
+        if (previousById.get(id) !== provider) {
+          visibleModelsGenRef.current[id] = (visibleModelsGenRef.current[id] ?? 0) + 1;
+          if (panel.fetching) {
+            next[id] = EMPTY_VISIBLE_MODELS_PANEL;
+            changed = true;
+            continue;
+          }
         }
         const fingerprint = getVisibleModelsFingerprint(provider);
         if (panel.fingerprint && panel.fingerprint !== fingerprint) {
