@@ -358,6 +358,37 @@ describe('WorktreeManager', () => {
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
     });
 
+    it('should delete the created branch when LFS hydration fails', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs' && args[1] === 'ls-files') return 'asset.bin';
+        if (args[0] === 'lfs' && args[1] === 'pull') throw new Error('lfs download failed');
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
     it('should fall back to UUID branch name when branch -D is rejected (branch checked out elsewhere)', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);

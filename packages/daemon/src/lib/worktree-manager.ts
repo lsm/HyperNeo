@@ -736,6 +736,7 @@ export class WorktreeManager {
     const safeSessionId = sessionId.replace(/:/g, '-');
     const worktreePath = join(worktreesDir, safeSessionId);
     let branchName = customBranchName || `session/${safeSessionId}`;
+    let branchProvisioned = false;
 
     try {
       if (existsSync(worktreePath)) {
@@ -754,6 +755,7 @@ export class WorktreeManager {
           branchName = `session/${safeSessionId}`;
         }
       }
+      branchProvisioned = true;
 
       const worktreeAddGit = simpleGit(gitRoot).env({
         ...buildGitCommandEnv(),
@@ -783,6 +785,12 @@ export class WorktreeManager {
         } catch (cleanupError) {
           this.logger.error(' Failed to clean up worktree:', cleanupError);
         }
+      }
+
+      if (branchProvisioned) {
+        try {
+          await git.branch(['-D', branchName]);
+        } catch {}
       }
 
       throw new Error(
