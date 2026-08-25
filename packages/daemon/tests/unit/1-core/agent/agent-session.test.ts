@@ -6543,6 +6543,36 @@ describe('AgentSession', () => {
       }
     });
 
+    it('a query-error clear during terminal-idle teardown aborts the steer instead of consuming', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-terminal-idle');
+      try {
+        const queue = agentSession.messageQueue;
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const steerPromise = agentSession.feedDeliverySteer(
+          hardUuid,
+          hardContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-steer-terminal-idle', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        agentSession.stateManager.beginTerminalIdle();
+        queue.clear();
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-terminal-idle', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+      } finally {
+        db.close();
+      }
+    });
+
     it('a kickoff already consumed by the SDK yield still signals consumption after the ack', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-consumed');
       try {
@@ -6614,6 +6644,52 @@ describe('AgentSession', () => {
         await expect(drive).rejects.toThrow('Turn ended without a response');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-interrupted', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+        expect(
+          (
+            agentSession as unknown as {
+              zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null;
+            }
+          ).zeroProgressDeliveryFailures
+        ).toBeNull();
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a query-error clear during terminal-idle teardown never marks the kickoff consumed', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-terminal-idle');
+      try {
+        agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        const drive = agentSession.driveDeliveryTurn(
+          hardUuid,
+          hardContent,
+          null,
+          false,
+          () => true
+        );
+        const queue = agentSession.messageQueue;
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-turn-terminal-idle', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        agentSession.stateManager.beginTerminalIdle();
+        queue.clear();
+        for (let i = 0; i < 100; i++) {
+          await Promise.resolve();
+        }
+        await agentSession.stateManager.setIdle();
+        resolveQuery();
+        await expect(drive).rejects.toThrow('Turn ended without a response');
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-terminal-idle', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
         expect(

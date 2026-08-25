@@ -2257,6 +2257,7 @@ export class AgentSession
         const kickoffAcknowledgementValid =
           !kickoffDiedBeforeConsumption &&
           (kickoffStatus === 'processing' || kickoffStatus === 'idle') &&
+          !this.stateManager.isTerminalIdlePending() &&
           (!claimGuard || claimGuard()) &&
           this.acknowledgedDeliveryStillOwned(messageUuid);
         if (kickoffWinner === 'acknowledged' && !kickoffAcknowledgementValid) {
@@ -2613,7 +2614,11 @@ export class AgentSession
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
-    if ((claimGuard && !claimGuard()) || this.stateManager.getState().status !== 'processing') {
+    if (
+      (claimGuard && !claimGuard()) ||
+      this.stateManager.getState().status !== 'processing' ||
+      this.stateManager.isTerminalIdlePending()
+    ) {
       return { outcome: 'aborted' };
     }
     deliveryMetrics.recordFeed(messageUuid);
