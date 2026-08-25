@@ -57,7 +57,7 @@ Two structural rules applied throughout:
 | `limit-error-classifier.ts:resolveLimitKind`, `isBillingTerminal` | none (leaves) | — |
 | `repeated-tool-error-gates.ts:decideConsecutiveError` | `decisionRun` | `repeated-tool-error-gate` |
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | `decisionRun` composing both (new `loop-detector-pipeline.ts`) | `tool-call-loop-admission` |
-| `circuit-breaker-transitions.ts:extractErrorPattern` | `decisionRun` | `circuit-breaker-error-pattern` |
+| `circuit-breaker-transitions.ts:extractErrorPattern` | Ordinary pure helper consumed by the complete circuit-breaker check operation (review correction round 21: no standalone runner) |
 | `circuit-breaker-transitions.ts:buildTripMessage` | `decisionRun` | `circuit-breaker-trip-message` |
 | `fallback-recovery.ts:extractResetTimestamp` | Ordinary pure helper over inline parse logic (review correction: no separate parse or cooldown pipelines — `computeCooldown` is consumed as a pure helper by `rate-limit-trip`) |
 | `fallback-recovery.ts:computeCooldown` | Ordinary pure helper for `rate-limit-trip`'s cooldown-resolution stage (review correction round 17: `fallback-cooldown` as a separate runner makes every no-hint trip execute a nested pipeline) |
@@ -69,7 +69,7 @@ Two structural rules applied throughout:
 | `query-runner.ts:parseApiValidationError` | `decisionRun` (after extraction to a module) | `api-validation-parse` |
 | `query-runner.ts:terminalUserMessageFor` | `decisionRun` (after extraction to a module) | `terminal-user-message` |
 | `message-delivery-pipeline.ts:applyFlushFinalGate` | already `decisionRun` (`message-turn-end-flush`) | no change |
-| `ack-selection.ts:selectPersistedAckRow`, `selectYieldedAckRow` | `decisionRun` + call-site wiring | `ack-persisted-select`, `ack-yielded-select` |
+| `ack-selection.ts:selectPersistedAckRow`, `selectYieldedAckRow` | Priority tables as plain helpers/stages of complete yielded/persisted acknowledgment pipelines (review correction round 21: selection-only runners split each ack path at its effect boundary) |
 
 Overlaps with sibling plans: `query-retry-routing.ts`, the delivery routing
 cores, and the turn-end/ack apply chain belong to
@@ -359,7 +359,7 @@ compensated. No site in this plan performs effects, so none uses it.
   routing a recovery message. Extracted as a pure core in #2702; pinned by
   `tests/unit/1-core/agent/repeated-tool-error-gates.test.ts` +
   `repeated-tool-error-guardrail.test.ts`.
-- **proposed combinator.** `decisionRun('repeated-tool-error-gate', …)`.
+- **proposed combinator.** Review correction round 21: compose the COMPLETE error-observation operation as one pipeline — classification stages (the three arms) plus the effect stages the guardrail currently performs imperatively (state update, reset, Forge evidence emission on `intervene`, recovery-message routing). Keeping the classifier a runner while state/effects stay in the guardrail shell preserves the decision/effect split this migration removes.
 - **input/output snapshot design.**
   ```ts
   interface ConsecutiveErrorCtx {
@@ -548,13 +548,14 @@ compensated. No site in this plan performs effects, so none uses it.
   `applyImageSizeGate`, `applyConnectionGate`, `applyApiErrorGate`
   (`startsWith('api_error:')` with 429 special case), final
   `applyGenericReasonGate`.
-- **shell/effect wiring.** `ApiErrorCircuitBreaker` swaps the two direct
-  calls for the wrappers (`decideErrorPattern`, `decideTripMessage`); state
-  writes (`recentErrors`, `messageTimestampsByAgent`, `state`), the `trip()`
-  callback, and cooldown release stay in the class. `checkMessage` itself is
-  a candidate for a future mixed pipeline (rapid-fire → pattern → record →
-  trip) but that involves the async `onTrip` effect and belongs to a later
-  composition pass, not this plan.
+- **shell/effect wiring.** Review correction round 21: migrate the COMPLETE
+  breaker check path directly — keep the text classifiers as ordinary pure
+  helpers and compose rapid-fire check → pattern classification → occurrence
+  recording (`recentErrors`, `messageTimestampsByAgent`, `state`) → `trip()`
+  (with its async `onTrip` effect) → cooldown release as ONE mixed business
+  operation, instead of swapping only the classifiers for runners while
+  leaving recording/transitions/trip imperative (that splits every breaker
+  check at its central effects).
 - **step-by-step migration.** 1) Add both gate sets + pipelines in
   `circuit-breaker-transitions.ts`; keep the two functions as wrappers;
   2) no `api-error-circuit-breaker.ts` changes required (wrapper keeps
@@ -592,30 +593,18 @@ compensated. No site in this plan performs effects, so none uses it.
   `fallback-cooldown` runner, because the watchdog would otherwise invoke an
   inner pipeline on every no-reset-hint trip. `resolveFallbackChain` and
   `classifyLimitKind` stay leaves (see Scope).
-- **input/output snapshot design.**
-  ```ts
-  interface ResetParseCtx { errorMessage: string; now: number; decision: ParsedReset | null; }
-  interface CooldownCtx {
-    errorMessage: string;
-    cooldownRetryCount: number;
-    now: number;
-    jitterFn: () => number;
-    parsed: ParsedReset | null;   // transform stage output
-    decision: CooldownDecision | null;
-  }
-  ```
-- **pure core design.** Reset-parse gates: `applyIsoWithTzGate`,
-  `applyLocalDatetimeGate`, `applyEpochMillisGate`, `applyEpochSecondsGate`,
-  `applyRelativeDelayGate` — each iterates its matches and stamps the first
-  valid one; no final decider; wrapper returns `ctx.decision ?? null`
-  (semantics: `decisionRun` halts exactly when a strategy finds a valid
-  reset, which *is* the current short-circuit). Cooldown gates:
-  `applyParseStage` (transform: `extractResetTimestamp` as an ORDINARY PURE
-  HELPER over the inline parse gates — review correction: calling a
-  separately pipelined wrapper here recreates a nested pipeline for the
-  complete cooldown operation; keep reset parsing as an ordinary helper or
-  place its gates directly in this pipeline), then
-  `applyParsedResetGate` (stamps the free-wait decision) and final
+- **input/output snapshot design.** Plain helper signatures (review
+  correction round 21 — no decision contexts): `extractResetTimestamp(
+  errorMessage, now?): ParsedReset | null` and `computeCooldown(
+  errorMessage, count, now?, jitterFn?): CooldownDecision`.
+- **pure core design.** Reset parsing is ordered strategy logic inside the
+  helper: iso-with-tz → local datetime → epoch millis → epoch seconds →
+  relative delay, first valid match wins (the current short-circuit).
+  Cooldown rules consume that parse result directly: free-wait when a usable
+  reset was parsed, otherwise the backoff ladder (`applyParsedResetGate`
+  semantics become plain branches; ladder clamp + cap + jitter + floor in the
+  final branch). `rate-limit-trip`'s cooldown-resolution stage calls these
+  helpers directly — no inner reset/cooldown runner on the no-hint watchdog path. and final
   `applyBackoffLadderGate` (ladder clamp + cap + jitter + floor).
 - **shell/effect wiring.** No shell changes: all consumers call the wrappers,
   which keep the exact signatures (`computeCooldown(errorMessage, count,
@@ -907,7 +896,14 @@ compensated. No site in this plan performs effects, so none uses it.
   `applyEnqueuedGate`, `applySubmittedGate`, `applyDeferredGate` (note the
   *different* precedence vs persisted: submitted before deferred), final
   `applyNoneGate`.
-- **shell/effect wiring.** This is Chain C's C3b apply and is **gated on the
+- **shell/effect wiring.** Review correction round 21: each acknowledgment
+  business path (yielded AND persisted) composes as ONE complete pipeline —
+  the priority tables act as plain helpers/direct selection stages, followed
+  by the consumption, ownership-revalidation, and ALL publication effect
+  stages (`markDeliveryConsumed*`, `messages.statusChanged`,
+  `state.sdkMessages.delta`, `sdk.message`, tool-result-consumed,
+  `signalDeliveryConsumed`) inside the same operation — not a selection-only
+  runner with an outer imperative handler cascade. This is Chain C's C3b apply and is **gated on the
   pilot proposal's sequencing** (after the B5 series; coordination on open
   PRs touching `sdk-message-handler.ts`). When it lands:
   `handleMessageYielded` replaces its probe chain with row snapshots →

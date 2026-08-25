@@ -39,7 +39,7 @@ Inventory (verified by reading every file and grepping all call sites):
 | `lib/session-load-error.ts:classifySessionLoadError` | decisionRun | per failed session load (catch path) | low |
 | `lib/user-error.ts:sanitizeUserError` | decisionRun | error paths + outbound-queue flush loop | low |
 | `lib/session-utils.ts:getModelLabel` | decisionRun | test-only today (SessionsPage has local copy) | low |
-| `lib/provider-brand.ts:shortenModelName` | raw P1 transform pipeline | render body + per dropdown item | low-medium |
+| `lib/provider-brand.ts:shortenModelName` | ordinary pure helper (review correction: per dropdown item per render — a pipeline here is hot-inner-loop; memoization is a prerequisite if ever pipelined) | render body + per dropdown item | low-medium |
 
 Caller facts that drive the fits (from the call-site sweep):
 
@@ -639,16 +639,17 @@ anywhere in this plan.
   redundant brand-prefix strip (`Claude `, `Kimi K\d`, `MiniMax `,
   `Copilot `). Called in render bodies and per-item in model dropdowns
   (`NewChatModelPicker`, `SessionStatusBar`).
-- **Proposed combinator.** Raw P1 transform pipeline (ordered scrubs, not a
-  precedence decision — nothing here is first-match-wins).
-- **Input/output snapshot design.** Ctx = `{ name: string; provider?:
-  string; value: string }`; wrapper trims the empty early-out.
-- **Pure core design.** Stages: `stageStripVendorPrefix` (guarded on
-  `AGGREGATOR_PROVIDERS.has(provider)` — model the guard inside the stage
-  rather than `?dep`, since the provider key presence is the condition, not
-  output absence) → `stageStripTrailingProviderTag` →
-  `stageStripRedundantBrandPrefix` (`?dep`-friendly: skips cleanly when no
-  regex for the provider). `.end('value')`.
+- **Proposed combinator.** Ordinary pure helper — stays exactly as-is
+  (review correction round 21: no raw pipeline; both call sites invoke this
+  per dropdown item during rendering, so a pipeline here executes per item
+  per render, the hot-inner-loop placement the guidance excludes; if ever
+  pipelined, call-site memoization is a mandatory prerequisite).
+- **Input/output snapshot design.** Plain signature `(name, provider?) =>
+  string`; wrapper trims the empty early-out.
+- **Pure core design.** Ordered scrub logic (trim → openrouter vendor-prefix
+  strip guarded on `AGGREGATOR_PROVIDERS.has(provider)` → trailing
+  `(Provider)` tag strip → provider-keyed redundant brand-prefix strip),
+  unchanged.
 - **Shell/effect wiring.** None; pure.
 - **Step-by-step migration.**
   1. `src/lib/__tests__/provider-brand.test.ts` exists — pin each scrub in
@@ -730,9 +731,11 @@ anywhere in this plan.
   with UI-side interpretation. A direct mixed pipeline (ADR default) is the
   honest shape; porting 738 lines of stagedRun machinery for one caller is
   not.
-- **Proposed combinator.** Direct mixed pipeline, migrated in two
-  independently shippable steps: Step 1 admission `decisionRun`; Step 2 full
-  pipeline with async effect stages.
+- **Proposed combinator.** Direct mixed pipeline (review correction round
+  21: admission helpers + async effect stages land TOGETHER in one step —
+  do not ship an admission-only intermediate whose result the hook still
+  interprets through the imperative queue/reject/send bodies; keep the plain
+  helper logic until the complete mixed pipeline can land).
 - **Input/output snapshot design.** Step 1 ctx: `{ sessionId, content, images?,
   deliveryMode, sessionStatus, isSending, allowQueueWhileProcessing,` (review
   correction: `sessionId` MUST ride in the per-call context — both the direct

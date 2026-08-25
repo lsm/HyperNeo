@@ -220,10 +220,10 @@ None of the agent routing sites require `stagedRun` because none perform durable
     - `constrained = resolveDeliveryRole({ existingActiveRole: null, requestedRole, uniqueConstraintHit: true })`
     - `uniqueConstraintFallback = requestedRole === undefined && constrained !== 'explicit_role_rejected' ? constrained : null`
     - Decide `{ action: 'enqueue', role, uniqueConstraintFallback }`.
-- **Shell/effect wiring:** The wrapper `planDeliveryRoleArbitration(args)` returns `ctx.decision`. Callers then pass `role` (and `uniqueConstraintFallback` for the outbox) to `jobQueue.enqueue`. The actual SQLite enqueue and unique-constraint fallback handling live in the caller, not the pipeline.
+- **Shell/effect wiring:** The plain helper `planDeliveryRoleArbitration(args)` returns the arbitration result; each complete delivery pipeline then runs its own `jobQueue.enqueue` effect stage with unique-constraint handling (review correction: the enqueue must be a stage of the same delivery operation, not left in an imperative caller).
 - **Step-by-step migration:**
-  1. Define `DeliveryRoleArbitrationCtx` and `deliveryRoleArbitrationRun`.
-  2. Port the two branches to gates.
+  1. Extract the reuse/enqueue branch logic as ordinary helper gates (review correction round 21: no `DeliveryRoleArbitrationCtx`/`deliveryRoleArbitrationRun` runner).
+  2. Compose those helpers with the `jobQueue.enqueue` effect and unique-constraint handling INSIDE each complete delivery operation (`deliverMessage`, `persistAndEnqueueDelivery`) so the enqueue boundary is not split out of the business path.
   3. Keep calling `resolveDeliveryRole` as a helper.
 - **Tests:** `delivery-turn-routing.test.ts` covers all reuse/enqueue cases. Add `delivery-role-arbitration-gates.test.ts` testing `applyReuseGate` (existing active role wins over any requested role) and `applyEnqueueGate` for all `requestedRole` × `uniqueConstraintHit` combinations.
 - **Risks/caveats:** `resolveDeliveryRole` has TypeScript overloads. The `applyEnqueueGate` must call it with the correct `uniqueConstraintHit` flag. The `uniqueConstraintFallback` is only set when `requestedRole` is undefined and the constrained result is not `explicit_role_rejected`; preserve that logic exactly because `message-delivery-outbox.ts` relies on it to fall back from `turn` to `steer` on a unique constraint.
