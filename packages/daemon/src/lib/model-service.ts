@@ -423,13 +423,16 @@ export async function ensureScopedProviderCatalogModels(
   if (cached && scopedCatalogStamps.get(sessionCacheKey) === stamp) {
     return;
   }
-  const provider = getProviderRegistry().get(providerId);
-  if (!provider?.getModelsForSessionConfig) return;
   const dropScopedCatalog = () => {
     modelsCache.delete(sessionCacheKey);
     cacheTimestamps.delete(sessionCacheKey);
     scopedCatalogStamps.delete(sessionCacheKey);
   };
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider?.getModelsForSessionConfig) {
+    dropScopedCatalog();
+    return;
+  }
   try {
     const models = await provider.getModelsForSessionConfig(sessionConfig);
     modelsCache.set(sessionCacheKey, models);

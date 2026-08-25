@@ -3590,6 +3590,59 @@ describe('Model Service', () => {
         'scoped-gen-2',
       ]);
     });
+
+    it('clears a stale scoped catalog when the provider has no scoped discovery seam', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async () => {
+          scopedFetchCount += 1;
+          return [
+            {
+              id: 'scoped-ollama-model',
+              name: 'Scoped Ollama Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Ollama Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.register({
+        id: 'kimi',
+        displayName: 'Kimi',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('kimi', [{ id: 'moonshot-k3' }]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-11', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(scopedFetchCount).toBe(1);
+
+      await ensureScopedProviderCatalogModels('session-scoped-11', 'kimi', { region: 'china' });
+      expect(scopedFetchCount).toBe(1);
+      expect(getAvailableModels('session-scoped-11')).toEqual([]);
+      expect(isCuratedOutModelAllowingExactId('moonshot-k3', 'kimi', 'session-scoped-11')).toBe(
+        false
+      );
+    });
   });
 
   describe('resolveVisibleCanonicalModelId', () => {
