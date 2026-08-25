@@ -13,7 +13,8 @@ reference only; this ADR is the normative document.
 Runtime and domain classes accumulated long imperative cascades that interleave
 reads, decisions, and effects — gate order lived only in control flow, invisible
 to unit tests without the whole runtime. [superpipe](https://github.com/lsm/superpipe)
-(pinned exact `0.17.0`, daemon and web) is the composition engine: dependency-injected
+(pinned exact `0.17.0` in `packages/daemon`; `packages/web` adds the dependency
+when its first direct pipeline lands) is the composition engine: dependency-injected
 named stages, ctx threading, `!dep`/`?dep` control-flow prefixes, per-stage error
 handlers, output picking/merging, sync (`.end`) and async (`.endAsync`) executors,
 `withSignal` cancellation. It has been used for years on complex codebases; this
@@ -40,12 +41,16 @@ as decision vs staged vs transform; do not split one path across pipelines.
    (data-dependent early exit); `?dep` skips only its own optional stage when
    the dependency is undefined. `.end` for fully sync paths, `.endAsync` when a
    stage awaits.
-3. **Effects delegate atomicity.** Every effect stage writes through repository
-   primitives — CAS (`casStatus`, `casRunStatus`, `casExecutionStatus`), the
-   task-transition table, the spawn reservation — and is idempotent or
-   compensable. Blind read-modify-write inside a stage is banned. A pipeline
-   never owns atomicity; a failed CAS is a `superseded` outcome, not an error,
-   with no in-flow retry loops.
+3. **Effects delegate atomicity.** For persistent daemon writes, every effect
+   stage writes through repository primitives — CAS (`casStatus`,
+   `casRunStatus`, `casExecutionStatus`), the task-transition table, the spawn
+   reservation — and is idempotent or compensable. Blind read-modify-write
+   inside a stage is banned. A pipeline never owns atomicity; a failed CAS is a
+   `superseded` outcome, not an error, with no in-flow retry loops. Where no
+   repository primitive exists (web store/DOM effects, publishes, network
+   calls), the same discipline applies through the equivalent mechanism —
+   generation guards so stale results cannot apply, idempotent application, or
+   compensation — chosen per effect, not assumed away.
 4. **Sync profile where it matters.** Pipelines invoked from the run tick (or
    otherwise coupled to background timers) keep their decide-equivalent stages
    synchronous and pin the microtask profile in tests; the sync executor

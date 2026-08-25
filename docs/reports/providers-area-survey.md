@@ -185,6 +185,10 @@ stacked on daemon-side network I/O under a 10s RPC timeout.**
 (generation-guarded request/apply — "a stale response structurally cannot
 apply"). C2-PR2 is its 2nd real use after `useFetchModels`; extract the
 combinator on the 3rd (rule of three). No daemon pipeline needed.
+*SUPERSEDED 2026-08-25 (ADR 0004 revision): under direct-superpipe-first, these
+are proposed PLAIN compositions, not combinator uses — the rule-of-three count
+that matters is direct superpipe compositions; a `requestRun` proposal waits
+until ≈3 of those exist.*
 
 ---
 
@@ -400,6 +404,8 @@ behind their merge. No rebase risk for the acute chains.
    fallback in the interim.
 2. **C2 — provider-page refresh** (acute; 3 PRs above). PR2 is the
    `requestRun` second-use; PR3 protects every provider-page action.
+   *(requestRun counting superseded 2026-08-25 — see the ADR 0004 revision
+   note above; compose directly until ≈3 direct uses exist.)*
 3. **C3 — discovery + curation** (feature; 4 PRs above). Completes #2710's
    missing half.
 4. **C4 — availability hygiene sweep (small, optional):** make

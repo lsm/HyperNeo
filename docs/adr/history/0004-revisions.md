@@ -8,6 +8,105 @@ is `docs/adr/0004-superpipe-pipelines.md`.
 
 ---
 
+## Status
+
+Accepted — 2026-08-20. Validated by the superpipe pilot on `superpipe-pilot-1`:
+dead-machinery removal + parity harness (#2578), pure admission gates (#2582),
+delivery decision pipeline + interpreter (#2589), shared `decisionRun` combinator
+(#2591). Upstream library pinned exact at `superpipe@0.17.0`. This ADR records the
+adopted pattern, its boundaries, and the migration roadmap. It does not mandate
+immediate adoption elsewhere; each phase gets its own go/no-go.
+
+Validated further by pilot 3 (2026-08-21): `processRunTick` rewritten as a staged
+interpreter over three extracted cores plus a `decisionRun` admission pipeline —
+see "Pilot 3" below for boundary caveats.
+
+Validated further by pilot 5 (2026-08-21): the eight task-mutation MCP tools in
+`space-agent-tools.ts` interpreted as staged pipelines over extracted
+admission/routing cores — see "Pilot 5" below for the recorded asymmetries and
+the group roadmap.
+
+Validated further by pilot 4 (2026-08-21): the agent message-delivery chain —
+inject admission and turn-end flush as `decisionRun` pipelines, turn-outcome
+and reconcile as point decisions — with the closing PRs fixing the two live
+incident bugs the decision-table pins surfaced; see "Pilot 4" below for the two
+design lessons it added to the record.
+
+Validated further by pilot 6 / chain S (2026-08-23): the verified-stop ladder
+(`stopSessionVerified`) applied as a `stagedRun` interpreter over extracted
+gates — the combinator's first composed-then-swapped production flow. See
+"Pilot 6" below for the boundary caveats, the compensation deferral, and the
+closing sweep.
+
+Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
+seam applied as a staged interpreter over extracted cores and the
+lazy-activation path as an inline interpreter over its pure routing core —
+and the first production consumer of
+`casExecutionStatus` and the spawn reservation, whose superseded outcomes
+replace previously tolerated racy writes (the other Phase 0 primitives had
+already gained consumers just before the chain: transition-table enforcement
+#2682, `casStatus` #2684). See "Pilot 7" below for the pinned behavior deltas,
+the Pilot 3 spawn-seam race closure, and the boundary caveats.
+
+Validated further by pilot 9 / chain C (2026-08-23): the message-search FTS
+admission gates as a `decisionRun` core and the delivery-status family as a
+routing table under `src/storage/` — the first pilot whose cores live in the
+repository layer — with the second production FTS admission implementation
+(`SessionRepository.rebuildMessageSearchRows`) aligned to the extracted
+vocabulary and parity-pinned. See "Pilot 9" below for the lazy-fact caveats
+and the deliberate rebuild residual.
+
+Validated further by pilot 10 / chain A (2026-08-23): the `sdk_messages`
+read-projection layer of `SDKMessageRepository` extracted as pure transforms
+into `sdk-message-projections.ts` — the widened scope's P1 pure-transform form
+applied below the runtime, at the persistence boundary. See "Pilot 10" below
+for the policy-parameterization discipline the chain settled on and its
+closing sweep. (Pilot 8 is reserved for chain I, the pending-queue drain +
+injection shell, by Pilot 7's closing note; pilot 9 is chain C's.)
+
+Validated further by pilot 11 / chain B (2026-08-23): the `sdk_messages`
+write side — save admission as a pure core over a normalized input, badge
+maintenance as an instruction set, and the delivery-status flip as a
+plan/interpret whose per-instruction CAS guards apply inside one
+transaction (a Phase 4 relative at the storage layer: guarded effects
+inside the transaction, not after commit). See "Pilot 11" below for
+the coupled TS/SQL badge predicate, the per-variant admission placement
+divergence, and the closing sweep.
+
+Validated further by pilot 8 / chain I (2026-08-23): the pending-queue
+drain — admission gates and envelope transforms as pure cores, the drain
+admission as a `decisionRun`, two flush sites as its gather → decide →
+interpret consumers — and the injection shell around the Pilot 4 inject
+decision, which stays single-sourced in `decideInjectDelivery` while its
+delivery-row steps and v1/v2 branch moved to a steps module. See
+"Pilot 8" below for the boundary caveats, the envelope-detector
+retirement, and the remaining mini-pilot shelf for
+`task-agent-manager.ts`.
+
+Validated further by pilot 12 (2026-08-23, first web-side pilot — the UI
+chain's own "pilot 6", renumbered here to keep the ADR sequence unambiguous):
+the four hand-rolled LiveQuery subscription hook lifecycles pinned then
+migrated onto one pure machine, `live-query-lifecycle.ts` — composition stayed
+a plain function under the earn-the-layer rule, so the pilot validates the
+reduceRun shape (reducer + effects-executing facade) without yet promoting the
+combinator; see "Pilot 12" below for the rule-of-three count and the recorded
+config drift.
+
+Revised 2026-08-20 after owner review: scope widened from decision cores to pure
+pipelines generally — decisions, multi-step transforms (rendering/projection), and
+staged async flows (decide → effect → re-snapshot). The boundaries in
+"Where superpipe must not be used" still hold; "free-form effect executor"
+replaces the earlier blanket "effect executor".
+
+Revised 2026-08-21 after issue #2670 (stagedRun RFC): staged run pipelines are
+sanctioned — `stagedRun` composes snapshot/decide/effect/resnapshot stages, with
+effect stages permitted inside pipelines under atomicity-delegation conditions.
+Answers the RFC's five open questions; see "Staged run pipelines". The prior
+boundary is retained in substance: a pipeline still never owns atomicity.
+
+
+---
+
 ## Context
 
 HyperNeo's Space runtime classes accumulate cascades that interleave three concerns:

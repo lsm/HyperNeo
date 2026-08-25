@@ -960,7 +960,8 @@ note.
   recoveryState, timers — all in-memory; the startup gate is the in-memory
   analog of spawn reservation, no DB primitive warranted in a single process
   whose children die with the daemon). **But if the backoff arm is staged, its
-  two external effects require Phase 0 primitives** (ADR :148–153), matching
+  two external effects require Phase 0 primitives** (ADR 0004 Decision item 3 —
+  effects delegate atomicity), matching
   the arm's own design above: a durable reservation with an idempotency key for
   the persisted/published retry notice, and a conditional durable reservation
   plus idempotence-or-exact-compensation for the prompt queue injection —
@@ -1248,7 +1249,7 @@ note.
   idempotence or an exact-entry compensation, because a retried pass under the
   same still-current claim can otherwise double-admit — **plus a durable
   intent/reservation before admission**, since admission is an external
-  side effect under the ADR (:148–153) and a crash or failed compensation after
+  side effect under ADR 0004 Decision item 3 (effects delegate atomicity) and a crash or failed compensation after
   `admitWithId` leaves no durable record to deduplicate or reconcile a
   replay);
   `reconcileStrandedDeliveries` stale-submitted sweep (:1977–1997); MessageQueue
@@ -1345,8 +1346,9 @@ note.
   unconditional status update with no claim token or expected status, so a
   superseded claim can mark the replacement's members `submitted` and halt
   before admitting them, leaving rows the handler treats as already submitted.
-  **Guarded writes are mandatory, not an alternative to compensation**: per the
-  stagedRun contract (ADR :169–177) every persistent write uses an atomic
+  **Guarded writes are mandatory, not an alternative to compensation**: per
+  ADR 0004 Decision item 3 (and the archived stagedRun contract in
+  `docs/adr/history/0004-revisions.md`) every persistent write uses an atomic
   primitive carrying its read preconditions, with compensation an additional
   obligation — an unguarded update lets a stale pass mutate replacement-owned
   rows before any unwind, and its compensation can then overwrite newer state.
@@ -1361,7 +1363,8 @@ note.
   (internal-event-bus.ts:105–150) and a compensation can deliver `enqueued`
   before a slow subscriber finishes the earlier `submitted`. And
   if `ensureQueryStarted` stays inside the staged pass, **both obligations**
-  apply, not a choice between them (ADR :148–153, :201–219): a durable
+  apply, not a choice between them (ADR 0004 Decision items 3–4; archived
+  stagedRun conditions in `docs/adr/history/0004-revisions.md`): a durable
   conditional startup intent (the crash-recovery/dedup record) **and**
   idempotence or compensation for the spawned query — the
   in-memory startup permit provides neither, and compensation alone leaves no

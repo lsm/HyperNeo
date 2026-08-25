@@ -1,6 +1,6 @@
 # Provider-Concurrency Admission Gate — Design (ADR 0004 Phase 2, chain C5)
 
-> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path"). In particular, the "`decisionRun` admission gate" / "new `decisionRun` core" plan language (Purpose, the decision-points list, and the P1 gate table) is superseded: implement `decideMessageSendAdmission` and the other decision points as direct superpipe pipelines; the gate inventory, ordering, and decision content stand unchanged.
 
 Status: Proposed (design pass — doc only, no production code in this change)
 Date: 2026-08-23
@@ -2338,6 +2338,12 @@ by pre-existing suites):
    the delivery-id replay key and the wake drain own recovery from there.
 
 ## ADR classification
+
+*SUPERSEDED 2026-08-25 (ADR 0004 revision — one direct pipeline per business
+path): the "composed with the blessed `decisionRun` combinator" framing below
+predates the revision. Implement P1–P4 decision points as direct superpipe
+compositions; the resource-ownership point (registry as class-owned state with
+injected clock/jitter; pipelines receive snapshots) stands unchanged.*
 
 - P1/P2 are **P3 guard/validation gates + P7 functional sandwich** composed with
    the blessed `decisionRun` combinator — the ADR's named landing spot for Phase 2.
