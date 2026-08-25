@@ -9,6 +9,7 @@ import { Logger } from '../../logger.ts';
 import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
+import { buildGitCommandEnv } from '../../spawn-env.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -62,6 +63,7 @@ export class SpaceWorktreeManager {
         execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
           cwd: space.workspacePath,
           timeout: 30_000,
+          env: buildGitCommandEnv(),
         });
       } catch {
         rmSync(worktreePath, { recursive: true, force: true });
@@ -72,6 +74,7 @@ export class SpaceWorktreeManager {
       execFileSync('git', ['worktree', 'prune'], {
         cwd: space.workspacePath,
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
     } catch {}
 
@@ -80,12 +83,14 @@ export class SpaceWorktreeManager {
         cwd: space.workspacePath,
         encoding: 'utf8',
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
       if (branches.trim().length > 0) {
         this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
         execFileSync('git', ['branch', '-D', branchName], {
           cwd: space.workspacePath,
           timeout: 30_000,
+          env: buildGitCommandEnv(),
         });
       }
     } catch (err) {
@@ -105,6 +110,7 @@ export class SpaceWorktreeManager {
                 cwd: space.workspacePath,
                 timeout: 30_000,
                 stdio: 'pipe',
+                env: { ...buildGitCommandEnv(), GIT_LFS_SKIP_SMUDGE: '1' },
               }
             )
           ),
@@ -160,6 +166,7 @@ export class SpaceWorktreeManager {
       execFileSync('git', ['worktree', 'remove', record.path, '--force'], {
         cwd: space.workspacePath,
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
     } catch (err) {
       this.logger.warn(
@@ -172,6 +179,7 @@ export class SpaceWorktreeManager {
       execFileSync('git', ['branch', '-D', branchName], {
         cwd: space.workspacePath,
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
     } catch (err) {
       this.logger.warn(
@@ -235,6 +243,7 @@ export class SpaceWorktreeManager {
             execFileSync('git', ['branch', '-D', branchName], {
               cwd: space.workspacePath,
               timeout: 30_000,
+              env: buildGitCommandEnv(),
             });
           } catch {}
         }
@@ -250,6 +259,7 @@ export class SpaceWorktreeManager {
         execFileSync('git', ['worktree', 'prune'], {
           cwd: space.workspacePath,
           timeout: 30_000,
+          env: buildGitCommandEnv(),
         });
       } catch (err) {
         this.logger.warn(

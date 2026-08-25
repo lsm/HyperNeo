@@ -830,6 +830,7 @@ describe('AcpQueryRunner', () => {
 
     expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
     expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('acp-oauth-token');
+    expect(constructorOptions[0].replaceEnv).toBe(true);
   });
 
   test('launches sessions with the provider-configured command over the env command', async () => {

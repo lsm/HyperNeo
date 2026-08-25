@@ -4,6 +4,7 @@ import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt.ts';
 import { Logger } from '../logger.ts';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
+import { buildSdkRuntimeEnv } from '../spawn-env.ts';
 
 const logger = new Logger('router-agent');
 
@@ -199,40 +200,24 @@ Analyze the event and determine which room should handle it. Respond with valid 
 
     const userPrompt = this.buildRoutingPrompt(event, candidates);
 
-    const originalApiKey = process.env.ANTHROPIC_API_KEY;
-    const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    if (this.options.apiKeyType === 'oauth') {
-      process.env.CLAUDE_CODE_OAUTH_TOKEN = this.options.apiKey;
-    } else {
-      process.env.ANTHROPIC_API_KEY = this.options.apiKey;
-    }
+    const credentialEnv =
+      this.options.apiKeyType === 'oauth'
+        ? { CLAUDE_CODE_OAUTH_TOKEN: this.options.apiKey }
+        : { ANTHROPIC_API_KEY: this.options.apiKey };
 
-    let queryObj: ReturnType<typeof query>;
-    try {
-      queryObj = query({
-        prompt: userPrompt,
-        options: {
-          model: this.model,
-          cwd: '/tmp',
-          maxTurns: 1,
-          systemPrompt: ROUTER_AGENT_SYSTEM_PROMPT,
-          pathToClaudeCodeExecutable: resolveSDKCliPath(),
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-        },
-      });
-    } finally {
-      if (originalApiKey === undefined) {
-        delete process.env.ANTHROPIC_API_KEY;
-      } else {
-        process.env.ANTHROPIC_API_KEY = originalApiKey;
-      }
-      if (originalOAuthToken === undefined) {
-        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-      } else {
-        process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
-      }
-    }
+    const queryObj = query({
+      prompt: userPrompt,
+      options: {
+        model: this.model,
+        cwd: '/tmp',
+        maxTurns: 1,
+        systemPrompt: ROUTER_AGENT_SYSTEM_PROMPT,
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+        env: { ...buildSdkRuntimeEnv(), ...credentialEnv },
+      },
+    });
 
     try {
       let responseText = '';

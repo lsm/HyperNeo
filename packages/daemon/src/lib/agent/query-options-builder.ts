@@ -49,6 +49,7 @@ import {
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { buildSdkRuntimeEnv, STARTUP_ENV_BASELINE } from '../spawn-env.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import {
@@ -867,28 +868,21 @@ CRITICAL RULES:
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
-    const processProviderEnvVars = new Set(providerEnvVars);
-    processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
-    processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
 
-    const excludedEnvVars = new Set(['PORT', 'HYPERNEO_PORT', 'NEOKAI_PORT']);
-    const mergedEnv: Record<string, string> = Object.fromEntries(
-      Object.entries(process.env).filter(
-        (entry): entry is [string, string] =>
-          entry[1] !== undefined &&
-          !excludedEnvVars.has(entry[0]) &&
-          !processProviderEnvVars.has(entry[0])
-      )
-    );
+    const mergedEnv: Record<string, string> = buildSdkRuntimeEnv();
 
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
-      const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      const authToken = STARTUP_ENV_BASELINE.ANTHROPIC_AUTH_TOKEN;
       if (authToken?.startsWith('sk-ant-oat')) {
         mergedEnv.ANTHROPIC_AUTH_TOKEN = authToken;
       }
-      const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      const oauthToken = STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN;
       if (oauthToken) {
         mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      }
+      const apiKey = STARTUP_ENV_BASELINE.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        mergedEnv.ANTHROPIC_API_KEY = apiKey;
       }
     } else {
       const providerVars = [
@@ -901,6 +895,7 @@ CRITICAL RULES:
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'API_TIMEOUT_MS',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_OAUTH_TOKEN',
       ];
       for (const key of NON_ANTHROPIC_PREFIX_PROVIDER_VARS) {
         const value = sessionProviderEnvVars[key];
@@ -909,7 +904,7 @@ CRITICAL RULES:
         }
       }
       for (const key of providerVars) {
-        const value = process.env[key];
+        const value = STARTUP_ENV_BASELINE[key];
         if (value !== undefined && value !== '') {
           mergedEnv[key] = value;
         }
@@ -929,19 +924,6 @@ CRITICAL RULES:
         if (value !== undefined && !providerEnvVars.has(key)) {
           mergedEnv[key] = value;
         }
-      }
-    }
-
-    const proxyEnvVars = [
-      'HTTPS_PROXY',
-      'HTTP_PROXY',
-      'NODE_USE_ENV_PROXY',
-      'NODE_EXTRA_CA_CERTS',
-    ] as const;
-    for (const key of proxyEnvVars) {
-      const value = process.env[key];
-      if (value !== undefined) {
-        mergedEnv[key] = value;
       }
     }
 

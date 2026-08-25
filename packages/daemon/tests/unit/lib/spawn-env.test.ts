@@ -1,0 +1,172 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  buildCommandEnv,
+  buildDialogEnv,
+  buildGitCommandEnv,
+  buildGitSshEnv,
+  buildOsBaselineEnv,
+  buildSdkRuntimeEnv,
+  buildWorkflowConditionEnv,
+  isRestrictedEnvName,
+} from '../../../src/lib/spawn-env';
+
+const SOURCE: Record<string, string> = {
+  PATH: '/usr/local/bin:/usr/bin:/bin',
+  HOME: '/Users/agent',
+  USER: 'agent',
+  SHELL: '/bin/zsh',
+  TMPDIR: '/var/folders/ab/',
+  LANG: 'en_US.UTF-8',
+  DISPLAY: ':0',
+  WAYLAND_DISPLAY: 'wayland-0',
+  XDG_RUNTIME_DIR: '/run/user/1000',
+  HTTPS_PROXY: 'https://proxy.corp.example:8443',
+  https_proxy: 'http://legacy-proxy.corp.example:8080',
+  SSL_CERT_FILE: '/tmp/corp-ca.pem',
+  CURL_CA_BUNDLE: '/tmp/curl-ca.pem',
+  GIT_SSL_CAINFO: '/tmp/git-ca.pem',
+  GIT_EXEC_PATH: '/usr/libexec/git-core',
+  ANTHROPIC_API_KEY: 'anthropic-secret',
+  CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
+  GH_TOKEN: 'gh-secret',
+  SSH_AUTH_SOCK: '/tmp/ssh-agent.sock',
+  GIT_SSH_COMMAND: 'ssh -i /secret/id_ed25519',
+  GIT_LFS_SKIP_SMUDGE: '0',
+  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_KEY_0: 'http.extraHeader',
+  GIT_CONFIG_VALUE_0: 'Authorization: Bearer extra-secret',
+  GIT_CONFIG_KEY_1: 'core.hooksPath',
+  GIT_CONFIG_VALUE_1: '/tmp/hooks',
+  MY_TOOL_FLAG: '1',
+};
+
+describe('buildOsBaselineEnv', () => {
+  test('keeps OS/runtime keys and drops credentials and routing variables', () => {
+    const env = buildOsBaselineEnv(SOURCE);
+    expect(env.PATH).toBe(SOURCE.PATH);
+    expect(env.HOME).toBe(SOURCE.HOME);
+    expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.GH_TOKEN).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
+  });
+});
+
+describe('buildCommandEnv', () => {
+  test('adds proxy and TLS inputs on top of the OS baseline', () => {
+    const env = buildCommandEnv(SOURCE);
+    expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
+    expect(env.https_proxy).toBe(SOURCE.https_proxy);
+    expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
+    expect(env.CURL_CA_BUNDLE).toBe(SOURCE.CURL_CA_BUNDLE);
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+});
+
+describe('buildDialogEnv', () => {
+  test('includes GUI-session variables while excluding credentials', () => {
+    const env = buildDialogEnv(SOURCE);
+    expect(env.DISPLAY).toBe(SOURCE.DISPLAY);
+    expect(env.WAYLAND_DISPLAY).toBe(SOURCE.WAYLAND_DISPLAY);
+    expect(env.XDG_RUNTIME_DIR).toBe(SOURCE.XDG_RUNTIME_DIR);
+    expect(env.GH_TOKEN).toBeUndefined();
+  });
+});
+
+describe('buildGitCommandEnv', () => {
+  test('keeps safe git variables and excludes secret carriers and SSH/askpass inputs', () => {
+    const env = buildGitCommandEnv(SOURCE);
+    expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
+    expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.GIT_SSH_COMMAND).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+    expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
+  });
+});
+
+describe('buildGitSshEnv', () => {
+  test('adds SSH, askpass, and TLS client inputs plus reindexed http.extraHeader config only', () => {
+    const env = buildGitSshEnv(SOURCE);
+    expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
+    expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
+    expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
+    expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+    expect(env.GIT_CONFIG_VALUE_1).toBeUndefined();
+  });
+
+  test('drops the config block entirely when no http.extraHeader entry exists', () => {
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+  });
+});
+
+describe('buildSdkRuntimeEnv', () => {
+  test('carries user configuration and proxy/TLS inputs but never credentials', () => {
+    const env = buildSdkRuntimeEnv({
+      ...SOURCE,
+      ANTHROPIC_BASE_URL: 'https://router.corp.example',
+      API_TIMEOUT_MS: '300000',
+      CLAUDE_CODE_GIT_BASH_PATH: 'C:\\Program Files\\Git\\bin\\bash.exe',
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://router.corp.example');
+    expect(env.API_TIMEOUT_MS).toBe('300000');
+    expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env.GH_TOKEN).toBeUndefined();
+  });
+});
+
+describe('buildWorkflowConditionEnv', () => {
+  test('starts from the credential-free command baseline', () => {
+    const env = buildWorkflowConditionEnv(undefined, SOURCE);
+    expect(env.PATH).toBe(SOURCE.PATH);
+    expect(env.GH_TOKEN).toBeUndefined();
+    expect(env.MY_TOOL_FLAG).toBeUndefined();
+  });
+
+  test('injects only non-restricted allowedEnv names from the immutable source', () => {
+    const env = buildWorkflowConditionEnv(
+      ['MY_TOOL_FLAG', 'GH_TOKEN', 'ANTHROPIC_API_KEY'],
+      SOURCE
+    );
+    expect(env.MY_TOOL_FLAG).toBe('1');
+    expect(env.GH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+});
+
+describe('isRestrictedEnvName', () => {
+  test('matches credential, routing, and provider prefixes', () => {
+    expect(isRestrictedEnvName('ANTHROPIC_API_KEY')).toBe(true);
+    expect(isRestrictedEnvName('CLAUDE_CODE_OAUTH_TOKEN')).toBe(true);
+    expect(isRestrictedEnvName('GH_HOST')).toBe(true);
+    expect(isRestrictedEnvName('MY_SECRET_VALUE')).toBe(true);
+    expect(isRestrictedEnvName('PATH')).toBe(false);
+    expect(isRestrictedEnvName('MY_TOOL_FLAG')).toBe(false);
+  });
+});
+
+describe('startup baseline immutability', () => {
+  test('builders read the captured startup baseline, not live process.env mutations', () => {
+    const previous = process.env.SPAWN_ENV_PROBE_VAR;
+    process.env.SPAWN_ENV_PROBE_VAR = 'live-value';
+    try {
+      expect(buildCommandEnv().SPAWN_ENV_PROBE_VAR).toBeUndefined();
+      expect(buildCommandEnv(process.env).SPAWN_ENV_PROBE_VAR).toBe('live-value');
+    } finally {
+      if (previous === undefined) delete process.env.SPAWN_ENV_PROBE_VAR;
+      else process.env.SPAWN_ENV_PROBE_VAR = previous;
+    }
+  });
+});

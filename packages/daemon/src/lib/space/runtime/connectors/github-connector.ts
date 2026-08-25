@@ -1,6 +1,7 @@
 import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers.ts';
 import { parsePrUrl } from '../parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
+import { STARTUP_ENV_BASELINE } from '../../../spawn-env.ts';
 import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector.ts';
 
 const GITHUB_CONNECTOR_ID = 'github';
@@ -46,7 +47,7 @@ function validatePrLookupHost(prUrl: string): ConnectorOutcome | null {
   } catch {
     return null;
   }
-  const allowedHost = process.env.GH_HOST || 'github.com';
+  const allowedHost = STARTUP_ENV_BASELINE.GH_HOST || 'github.com';
   if (inputHost !== 'github.com' && inputHost !== allowedHost) {
     return {
       ok: false,
@@ -174,7 +175,7 @@ function makeGetCodexApprovalOp(spawnImpl: SpawnFn): ConnectorOp {
       inputHost = new URL(prUrl).hostname || undefined;
     } catch {}
     if (inputHost) {
-      const allowedHost = process.env.GH_HOST || 'github.com';
+      const allowedHost = STARTUP_ENV_BASELINE.GH_HOST || 'github.com';
       if (inputHost !== 'github.com' && inputHost !== allowedHost) {
         return {
           ok: false,

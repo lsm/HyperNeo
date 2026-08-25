@@ -13,6 +13,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { STARTUP_ENV_BASELINE } from '../../spawn-env.ts';
 import { validateWorkflowHookResult } from '../workflow-hook-validation.ts';
 import type { Connector } from './connectors/connector.ts';
 import {
@@ -162,32 +163,14 @@ function buildHookRestrictedEnv(
     extraEnv: connectorExtraEnv,
   } = resolvePermittedConnectorAuth(context.permittedExternalLookups);
 
-  for (const [key, value] of Object.entries(process.env) as [string, string | undefined][]) {
-    if (value === undefined) continue;
-
-    if (ALWAYS_ALLOWED_ENV_KEYS.has(key)) {
-      env[key] = value as string;
-      continue;
-    }
-
-    if (permittedConnectorEnvKeys.has(key)) {
-      env[key] = value as string;
-      continue;
-    }
-
-    if (connectorManagedEnvKeys.has(key)) continue;
-
-    const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
-    if (isPrefixRestricted) continue;
-
-    const isKeyRestricted = RESTRICTED_ENV_KEY_PATTERN.test(key);
-    if (isKeyRestricted) continue;
-
-    if (SSH_ENV_KEYS.has(key)) continue;
-
-    if (CREDENTIAL_PATH_ENV_KEYS.has(key)) continue;
-
-    env[key] = value as string;
+  const baselineEnvKeys = new Set<string>([
+    ...ALWAYS_ALLOWED_ENV_KEYS,
+    ...permittedConnectorEnvKeys,
+  ]);
+  for (const key of baselineEnvKeys) {
+    if (connectorManagedEnvKeys.has(key) && !permittedConnectorEnvKeys.has(key)) continue;
+    const value = STARTUP_ENV_BASELINE[key];
+    if (value !== undefined) env[key] = value;
   }
 
   for (const [key, value] of Object.entries(connectorExtraEnv)) {

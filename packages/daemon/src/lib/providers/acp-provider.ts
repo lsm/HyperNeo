@@ -49,9 +49,27 @@ function parseContextWindow(value: string | undefined): number {
   return Math.trunc(parsed);
 }
 
+export type AcpCredentialEnvBaseline = Readonly<{
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_AUTH_TOKEN?: string;
+  CLAUDE_CODE_OAUTH_TOKEN?: string;
+}>;
+
+const ACP_CREDENTIAL_ENV_BASELINE: AcpCredentialEnvBaseline = Object.freeze({
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+  CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+});
+
+export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
+  return ACP_CREDENTIAL_ENV_BASELINE;
+}
+
 export class AcpProvider implements Provider {
   readonly id = 'acp';
   readonly displayName = 'ACP Agent';
+
+  readonly credentialEnvBaseline: AcpCredentialEnvBaseline = ACP_CREDENTIAL_ENV_BASELINE;
 
   static readonly DEFAULT_CONTEXT_WINDOW = DEFAULT_ACP_CONTEXT_WINDOW;
   static readonly CONTEXT_WINDOW_ENV_VAR = ACP_CONTEXT_WINDOW_ENV_VAR;
@@ -92,10 +110,14 @@ export class AcpProvider implements Provider {
   private commandOverride: string | undefined;
   private curatedModels: AcpConfiguredModel[] | undefined;
 
+  private readonly env: NodeJS.ProcessEnv;
+
   constructor(
-    private readonly env: NodeJS.ProcessEnv = process.env,
+    env: NodeJS.ProcessEnv = process.env,
     private readonly commandProbe: AcpCommandProbe = defaultAcpCommandProbe
-  ) {}
+  ) {
+    this.env = Object.freeze({ ...env });
+  }
 
   isAvailable(): boolean {
     return !!this.getAcpCommand();

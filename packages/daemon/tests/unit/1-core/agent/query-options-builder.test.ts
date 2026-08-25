@@ -27,6 +27,10 @@ import { SkillRepository } from '../../../../src/storage/repositories/skill-repo
 import { createTables } from '../../../../src/storage/schema';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
+import {
+  STARTUP_ENV_BASELINE,
+  _setStartupEnvBaselineForTesting,
+} from '../../../../src/lib/spawn-env';
 
 describe('QueryOptionsBuilder', () => {
   let builder: QueryOptionsBuilder;
@@ -851,6 +855,24 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('always hands the SDK spawn an explicit sanitized env (verification row for nodeSpawn)', async () => {
+      const options = await builder.build();
+      expect(options.env).toBeDefined();
+      expect(options.env?.PATH).toBe(STARTUP_ENV_BASELINE.PATH);
+    });
+
+    it('excludes ambient secrets injected after the startup baseline was captured', async () => {
+      const previous = process.env.SPAWN_ENV_AMBIENT_SECRET;
+      process.env.SPAWN_ENV_AMBIENT_SECRET = 'post-startup-secret';
+      try {
+        const options = await builder.build();
+        expect(options.env?.SPAWN_ENV_AMBIENT_SECRET).toBeUndefined();
+      } finally {
+        if (previous === undefined) delete process.env.SPAWN_ENV_AMBIENT_SECRET;
+        else process.env.SPAWN_ENV_AMBIENT_SECRET = previous;
+      }
+    });
+
     it('should filter provider env overrides so provider cleanup owns the SDK env', async () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: {
@@ -882,17 +904,16 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should preserve env-only Anthropic auth tokens for native provider', async () => {
-      const previousAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-      process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-env-only-token';
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-env-only-token',
+      });
       try {
         const options = await builder.build();
         expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-env-only-token');
       } finally {
-        if (previousAuthToken === undefined) {
-          delete process.env.ANTHROPIC_AUTH_TOKEN;
-        } else {
-          process.env.ANTHROPIC_AUTH_TOKEN = previousAuthToken;
-        }
+        _setStartupEnvBaselineForTesting(previousBaseline);
       }
     });
 

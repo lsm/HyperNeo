@@ -19,6 +19,8 @@ import type {
 import { Logger } from './logger.ts';
 import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils.ts';
 import { gitStatusKind, parseNumstatMap, parsePorcelainStatus } from './worktree-git-output.ts';
+import { buildGitCommandEnv, buildGitSshEnv } from './spawn-env.ts';
+import { buildGitHubLookupEnv } from './space/runtime/gh-lookup-helpers.ts';
 
 export interface WorktreeInfo {
   path: string;
@@ -57,7 +59,7 @@ export class WorktreeManager {
 
   private getGit(repoPath: string): SimpleGit {
     if (!this.gitCache.has(repoPath)) {
-      this.gitCache.set(repoPath, simpleGit(repoPath));
+      this.gitCache.set(repoPath, simpleGit(repoPath).env(buildGitCommandEnv()));
     }
     return this.gitCache.get(repoPath)!;
   }
@@ -544,7 +546,13 @@ export class WorktreeManager {
       execFile(
         'gh',
         args,
-        { cwd, encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+        {
+          cwd,
+          encoding: 'utf8',
+          timeout: GH_TIMEOUT_MS,
+          maxBuffer: 4 * 1024 * 1024,
+          env: buildGitHubLookupEnv(),
+        },
         (error, stdout, stderr) => {
           const output = typeof stdout === 'string' ? stdout.trim() : '';
           if (output) {
@@ -735,11 +743,15 @@ export class WorktreeManager {
         }
       }
 
-      await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
+      const worktreeAddGit = simpleGit(gitRoot).env({
+        ...buildGitCommandEnv(),
+        GIT_LFS_SKIP_SMUDGE: '1',
+      });
+      await worktreeAddGit.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
 
       try {
-        const worktreeGit = this.getGit(worktreePath);
-        await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
+        const submoduleGit = simpleGit(worktreePath).env(buildGitSshEnv());
+        await submoduleGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */
       } catch {}
 
@@ -916,7 +928,7 @@ export class WorktreeManager {
   }
 
   async getCurrentBranch(worktreePath: string): Promise<string | null> {
-    const git = simpleGit(worktreePath);
+    const git = simpleGit(worktreePath).env(buildGitCommandEnv());
 
     try {
       const branch = (await git.raw(['branch', '--show-current'])).trim();

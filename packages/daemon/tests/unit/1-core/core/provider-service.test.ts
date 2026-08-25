@@ -2203,7 +2203,7 @@ function hasSameMethods(a: object, b: object): boolean {
 }
 
 describe('mergeProviderEnvVars', () => {
-  it('should spread provider env vars over process.env', async () => {
+  it('should spread provider env vars over the sanitized runtime baseline', async () => {
     const merged = mergeProviderEnvVars({
       OVERRIDE_VAR: 'provider',
       NEW_VAR: 'new',
@@ -2216,5 +2216,17 @@ describe('mergeProviderEnvVars', () => {
   it('should return a new object when provider env vars is empty', async () => {
     const merged = mergeProviderEnvVars({});
     expect(merged).not.toBe(process.env);
+  });
+
+  it('should not leak ambient secrets injected after the startup baseline', async () => {
+    const previous = process.env.MERGE_PROVIDER_AMBIENT_SECRET;
+    process.env.MERGE_PROVIDER_AMBIENT_SECRET = 'post-startup-secret';
+    try {
+      const merged = mergeProviderEnvVars({});
+      expect(merged.MERGE_PROVIDER_AMBIENT_SECRET).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.MERGE_PROVIDER_AMBIENT_SECRET;
+      else process.env.MERGE_PROVIDER_AMBIENT_SECRET = previous;
+    }
   });
 });

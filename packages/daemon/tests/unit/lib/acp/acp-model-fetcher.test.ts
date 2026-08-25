@@ -167,13 +167,14 @@ describe('fetchAcpModels', () => {
     expect(calls).toEqual(['initialize', 'authenticate', 'close']);
   });
 
-  test('disposes sessions using the ambient environment', async () => {
+  test('disposes sessions with a credential-bearing replacement environment', async () => {
     clientCanCloseSession = true;
 
     await disposeAcpSessions('devin acp', ['session-a'], undefined);
 
-    expect(clientOptions?.env).toBeUndefined();
-    expect(clientOptions?.replaceEnv).toBeFalsy();
+    expect(clientOptions?.env).toBeDefined();
+    expect(clientOptions?.replaceEnv).toBe(true);
+    expect(clientOptions?.env?.HOME).toBe(process.env.HOME);
   });
 
   test('closes the disposal client when its signal aborts', async () => {

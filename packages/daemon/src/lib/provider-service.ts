@@ -5,6 +5,7 @@ import type {
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
+import { buildSdkRuntimeEnv } from './spawn-env.ts';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { providerSessionConfigForSession } from './providers/session-config.js';
 import { selectTitleGenerationModel } from './title-model-selection.js';
@@ -855,7 +856,7 @@ export class ProviderService {
 }
 
 export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.ProcessEnv {
-  return { ...process.env, ...providerEnvVars };
+  return { ...buildSdkRuntimeEnv(), ...providerEnvVars } as NodeJS.ProcessEnv;
 }
 
 const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
@@ -889,6 +890,8 @@ const userConfiguredToolSearch = process.env.ENABLE_TOOL_SEARCH;
 const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
 const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+const userConfiguredAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+const userConfiguredOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
 export function getUserConfiguredAnthropicEnv(): Record<string, string> {
   const snapshot: Record<string, string> = {};
@@ -901,8 +904,8 @@ export function getUserConfiguredAnthropicEnv(): Record<string, string> {
     ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
     ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
-    ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
-    ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
+    ['ANTHROPIC_AUTH_TOKEN', userConfiguredAuthToken],
+    ['CLAUDE_CODE_OAUTH_TOKEN', userConfiguredOAuthToken],
   ];
   for (const [key, value] of entries) {
     if (value !== undefined) snapshot[key] = value;

@@ -9,6 +9,7 @@ import {
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 import type {
   WorkflowHook,
   WorkflowHookResult,
@@ -2106,7 +2107,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
   });
 
   test('github connector auth keys inject only when github is permitted', async () => {
-    process.env.GH_TOKEN = 'gh-secret';
+    _setStartupEnvBaselineForTesting({ ...process.env, GH_TOKEN: 'gh-secret' });
     const executor = new HookExecutor({ workspacePath: '/tmp' });
     const source = 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_TOKEN:-missing}\\" }"';
 
@@ -2139,15 +2140,18 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
       { ...baseContext, permittedExternalLookups: [] }
     );
 
-    delete process.env.GH_TOKEN;
+    _setStartupEnvBaselineForTesting(process.env);
 
     expect(permitted.result.message).toBe('gh-secret');
     expect(denied.result.message).toBe('missing');
   });
 
   test('non-TOKEN connector keys (GH_HOST/GH_CONFIG_DIR) are denied unless permitted', async () => {
-    process.env.GH_HOST = 'gh.enterprise.example';
-    process.env.GH_CONFIG_DIR = '/nonexistent/custom-gh';
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      GH_HOST: 'gh.enterprise.example',
+      GH_CONFIG_DIR: '/nonexistent/custom-gh',
+    });
     const executor = new HookExecutor({ workspacePath: '/tmp' });
     const source =
       'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_HOST:-missing}|${GH_CONFIG_DIR:-missing}\\" }"';
@@ -2179,8 +2183,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
       { ...baseContext, permittedExternalLookups: ['github'] }
     );
 
-    delete process.env.GH_HOST;
-    delete process.env.GH_CONFIG_DIR;
+    _setStartupEnvBaselineForTesting(process.env);
 
     expect(denied.result.message).toBe('missing|missing');
     expect(permitted.result.message).toContain('gh.enterprise.example');

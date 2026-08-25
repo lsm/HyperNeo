@@ -11,6 +11,7 @@ import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helper
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
 import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/script-utils';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
+import { _setStartupEnvBaselineForTesting } from '../../../../../src/lib/spawn-env';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';
 
@@ -924,8 +925,8 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
 
   test('host allow-list: a pr_url matching GH_HOST (GitHub Enterprise) passes through', async () => {
     const ghesUrl = 'https://ghes.corp.example/acme/corp/pull/42';
-    const original = process.env.GH_HOST;
-    process.env.GH_HOST = 'ghes.corp.example';
+    const originalBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({ ...originalBaseline, GH_HOST: 'ghes.corp.example' });
     try {
       const validate = createReviewPostedValidator(
         reviewSpawn(
@@ -941,8 +942,7 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       const result = await validate(ctx({ prUrl: ghesUrl, workflowRunCreatedAt: START_MS }));
       expect(result.type).toBe('allow');
     } finally {
-      if (original === undefined) delete process.env.GH_HOST;
-      else process.env.GH_HOST = original;
+      _setStartupEnvBaselineForTesting(originalBaseline);
     }
   });
 

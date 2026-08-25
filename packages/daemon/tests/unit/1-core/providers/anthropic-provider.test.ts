@@ -47,12 +47,12 @@ describe('AnthropicProvider', () => {
   describe('isAvailable', () => {
     it('should return true when ANTHROPIC_API_KEY is set', () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
-      expect(provider.isAvailable()).toBe(true);
+      expect(new AnthropicProvider().isAvailable()).toBe(true);
     });
 
     it('should return true when CLAUDE_CODE_OAUTH_TOKEN is set', () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-token';
-      expect(provider.isAvailable()).toBe(true);
+      expect(new AnthropicProvider().isAvailable()).toBe(true);
     });
 
     it('should return false when no credentials are set', () => {
@@ -67,13 +67,13 @@ describe('AnthropicProvider', () => {
     it('should prefer ANTHROPIC_API_KEY over OAuth token', () => {
       process.env.ANTHROPIC_API_KEY = 'api-key';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
-      expect(provider.getApiKey()).toBe('api-key');
+      expect(new AnthropicProvider().getApiKey()).toBe('api-key');
     });
 
     it('should return OAuth token when API key not set', () => {
       delete process.env.ANTHROPIC_API_KEY;
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
-      expect(provider.getApiKey()).toBe('oauth-token');
+      expect(new AnthropicProvider().getApiKey()).toBe('oauth-token');
     });
 
     it('should return undefined when neither is set', () => {
@@ -439,7 +439,7 @@ describe('AnthropicProvider', () => {
       expect(config.apiVersion).toBe('v1');
     });
 
-    it('should skip stored API key injection when any Anthropic auth env var is set', () => {
+    it('should skip stored API key injection when construction-time Anthropic auth env is set', () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
       const providerWithStoredKey = new AnthropicProvider();
       providerWithStoredKey.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
@@ -447,6 +447,7 @@ describe('AnthropicProvider', () => {
       const config = providerWithStoredKey.buildSdkConfig('default');
 
       expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
     });
   });
 
