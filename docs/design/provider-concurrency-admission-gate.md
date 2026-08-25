@@ -2355,9 +2355,10 @@ by pre-existing suites):
 
 ## References
 
-- ADR 0004 Roadmap Phase 2 and pilot conventions:
-  `docs/adr/0004-superpipe-pipelines.md` (Phase 2 entry; Decision items
-  1–7; pilots 4/7/9 for the gate/point-decision/caveat patterns).
+- ADR 0004 Roadmap Phase 2 and pilot conventions: the Phase 2 roadmap entry
+  and pilot records 4/7/9 (gate/point-decision/caveat patterns) are archived in
+  `docs/adr/history/0004-pilots.md`; the normative decision rules are Decision
+  items 1–8 of `docs/adr/0004-superpipe-pipelines.md`.
 - Survey: `docs/reports/providers-area-survey.md` — C5 (ranked chains), area map
   row "Concurrency limits", GLM 429 causes.
 - Classifier + ladder: `packages/daemon/src/lib/agent/limit-error-classifier.ts`,
