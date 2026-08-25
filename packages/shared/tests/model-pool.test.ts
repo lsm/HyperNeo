@@ -50,6 +50,17 @@ test('invalid caps are clamped to one slot', () => {
   expect(scored[0]?.cap).toBe(1);
 });
 
+test('extreme weights keep scores finite and selection weighted', () => {
+  const entries = [
+    { model: 'huge', maxConcurrent: 8, weight: Number.MAX_VALUE },
+    { model: 'tiny', maxConcurrent: 8, weight: 1 },
+  ];
+  const scored = scoreModelPoolEntries(entries, {});
+  expect(Number.isFinite(scored[0]?.score ?? NaN)).toBe(true);
+  const picked = [0.1, 0.9].map((roll) => pickModelPoolEntry(entries, {}, () => roll)?.model);
+  expect(picked).toEqual(['huge', 'huge']);
+});
+
 test('empty pool returns null', () => {
   expect(pickModelPoolEntry([], {})).toBeNull();
 });

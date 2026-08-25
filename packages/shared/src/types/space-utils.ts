@@ -47,7 +47,8 @@ export function scoreModelPoolEntries(
     const running = Math.max(0, Math.floor(runningCounts[modelPoolEntryKey(entry)] ?? 0));
     const left = Math.max(0, cap - running);
     const weight = Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 0;
-    return { entry, running, cap, left, score: left * weight };
+    const score = Math.min(left * weight, Number.MAX_SAFE_INTEGER);
+    return { entry, running, cap, left, score };
   });
 }
 
