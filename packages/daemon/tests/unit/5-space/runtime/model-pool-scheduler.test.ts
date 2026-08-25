@@ -190,6 +190,7 @@ describe('reservation lifecycle', () => {
       now: NOW,
     });
     expect(counts).toEqual({ sonnet: 1 });
-    expect(apply({ assignments })).toEqual({ deferred: true });
+    const capped = [{ model: 'sonnet', maxConcurrent: 1, weight: 100 }];
+    expect(apply({ assignments, agent: makeAgent(capped) })).toEqual({ deferred: true });
   });
 });
