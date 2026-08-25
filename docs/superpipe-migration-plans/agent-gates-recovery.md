@@ -818,8 +818,10 @@ compensated. No site in this plan performs effects, so none uses it.
   `query-runner.test.ts:5398-5454` with imports from the new module (those
   tests currently pin a *copy* of the pattern — a live footgun).
 - **tests.** New `api-validation-parse.test.ts`: the three arms, 429
-  exclusion (framed 429 that would otherwise match the plain arm), malformed
-  JSON body falling through to the plain arm where applicable, halt rows.
+  exclusion (framed 429 that would otherwise match the plain arm), a
+  malformed-JSON row asserting the DEFINITIVE-NULL halt (text matching the
+  structured `4xx {…}` regex whose `JSON.parse` fails must return `null`
+  immediately — never fall through to the plain arm), halt rows.
   New `terminal-user-message.test.ts`: every hint, unknown hint → undefined,
   interpolated constants (workspace, retries, timeout ms). Keep
   `query-runner.test.ts:3460`'s end-to-end notice row green.

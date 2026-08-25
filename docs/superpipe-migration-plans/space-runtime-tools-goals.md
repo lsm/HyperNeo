@@ -187,7 +187,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     startedAt: number | null;
   }
   ```
-- **Pure core design**: Extract a `decidePostApprovalRoute` `decisionRun` with branches: `notApproved`, `noRoutes`, `multiRoutes` (warning only), `alreadyRouted`, `missingWorkflow`, `emptyInstructions`, `proceed`.
+- **Pure core design**: Extract a `decidePostApprovalRoute` `decisionRun` with branches: `notApproved`, `noRoutes`, `alreadyRouted`, `missingWorkflow`, `emptyInstructions`, `proceed`. Review correction: `multiRoutes` is NOT a decision branch — the current router WARNS and then continues with the FIRST route; a terminal `multiRoutes` decision would halt the pipeline before `proceed`. Record it as a nonterminal side annotation (`warnings` array) stamped before the decide stage, and `proceed` carries `routes[0]`.
 - **Shell/effect wiring**: The `PostApprovalRouter` shell calls `stagedRun('post-approval-route', ...)` with `deps`. Effects call `resolveCompletionOutcome`, `taskRepo.updateTask`, `goalService.handleTaskTerminal`, `evolutionScopeService.captureCompletedTaskEvidence`, `spawner.spawnPostApprovalSubSession`, `clearPendingCompletionState`. The final `halt` returns `PostApprovalRouteResult`.
 - **Step-by-step migration**:
   1. `snapshot` gathers task (fresh), workflow, routes, liveness.
@@ -297,7 +297,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   2. `snapshot` loads task.
   3. `decide` admission.
   4. Guarded `effect` `set-approved` (when `approve`) calls `taskManager.setTaskStatus(task.id, 'approved')` — review correction: do NOT call this before `dispatchPostApproval` and then rely on dispatch to observe it; `dispatchPostApproval` skips its own status transition when it sees `approved`, and that transition is where `approvalSource`/`approvalReason` are stamped. Either keep `runtime.dispatchPostApproval` as the approval primitive (preferred — the pipeline records intent and dispatch performs the stamping) or include `approvalSource`/`approvalReason` in this initial write; the shared pipeline state must carry the source either way.
-  5. `effect` `dispatch-post-approval` calls `runtime.dispatchPostApproval`. On throw, resnapshot task.
+  5. `effect` `dispatch-post-approval` calls `runtime.dispatchPostApproval` with an IN-STAGE catch (review correction: a dispatch throw AFTER the task is committed `approved` is an EXPECTED post-commit failure in the current tool/RPC paths — they catch it, verify the approved status, and persist `postApprovalBlockedReason`; an uncaught effect throw would terminate and unwind the `stagedRun`, so the resnapshot and blocked-reason stages could never run). The stage stores the error in a `dispatchError` side box instead of rethrowing, and the guarded steps 6–7 branch on it.
   6. `resnapshot` task.
   7. `effect` `record-blocked-reason` (when dispatch threw) updates `postApprovalBlockedReason`.
   8. Guarded `effect` `set-rejected` (when `reject`) calls `taskManager.setTaskStatus` then `updateTask` with reason.
@@ -502,7 +502,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: Same as `onTaskCompleted`; the shell enqueues when `proceed`.
 - **Step-by-step migration**: Add `decideSelfNagAutomation` to the same `goal-automation-admission-pipeline.ts`.
 - **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
-- **Risks/caveats**: `resolveScopeForGoal` may return `null` if multiple scopes exist; the current `onSelfNag` takes an explicit `scopeId` if ambiguous. Preserve that branch.
+- **Risks/caveats**: Review correction — `resolveScopeForGoal` falls back to the FIRST scope (`listScopes(...)[0] ?? null`); multiple scopes do NOT make it return `null`. Do not add an ambiguous-scope rejection: when no explicit `scopeId` is supplied, the first scope is used, and legacy schedules without `goalAutomationScopeId` metadata depend on that fallback. Keep validating an explicitly supplied scope against the goal and space only.
 
 ### `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope`
 
@@ -557,7 +557,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   3. Decide stage runs the already-applied gate, then `decideClaimAdmission`;
      halt only on `deny` (never a blanket `!decided` — `admit` must continue).
   4. Effect stage `apply-goal-update` (when `admit` and `mutatesGoalState`) calls `params.apply`.
-  5. Effect stage `update-notification-status` calls `outcomeNotificationRepo.updateStatus`.
+  5. Effect stage `update-notification-status` calls `outcomeNotificationRepo.updateStatus` — GUARDED to `admit` only (review correction: the current method returns `already_applied` BEFORE any write; letting that branch reach this stage would re-write the status on an idempotent retry, bumping `updatedAt` and turning a successful retry into an error if the redundant write fails).
   6. `.end` returns `ClaimOutcomeNotificationResult`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`.
 - **Risks/caveats**: Review correction — `stagedRun` always executes through `endAsync` and returns a Promise, while `runAtomic` invokes the synchronous `db.transaction(fn)()` wrapper. Passing an async pipeline to that wrapper commits as soon as the Promise is returned, so the apply/status-flip effects would run outside the transaction. Use a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic` (effect functions stay synchronous); merely converting `runAtomic` to an async variant cannot preserve atomicity without an async-capable database transaction primitive. The `params.apply` callback may be synchronous in current usage but is typed as a plain function; ensure it is not awaited if sync.
@@ -595,6 +595,11 @@ The repo already has several proven pipelines. Use these as the model for each s
   10. `effect` `run-automation` (when `done`).
   11. `resnapshot` goal.
   12. `effect` `create-next-task` (when `autoTriggerNext`/`pendingNextRun`/`active`).
+      Review correction round 6: this stage is ALSO best-effort — the current
+      implementation catches creation failures at `goal-service.ts:445-461`
+      and continues to record the outcome notification; an uncaught stage
+      throw would abort and roll back the terminal bookkeeping transaction.
+      Keep the local catch/log boundary.
   13. `resnapshot` goal.
   14. `effect` `record-outcome-notification`.
   15. `halt` returns `{ goal, nextTask, terminalGeneration, notification }`.
@@ -625,7 +630,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Step-by-step migration**:
   1. Extract `validateSubscriptionTargetTask` into `packages/daemon/src/lib/space/runtime/subscription-target-gates.ts` as `decideSubscriptionTarget`.
   2. Define `stagedRun<RegisterSubscriptionState>('register-subscription', ...)`.
-  3. `snapshot` gathers run, task, displaced, existing interest count.
+  3. `snapshot` gathers run, task, displaced, existing interest count MINUS the displaced entry (review correction: the current implementation removes the exact existing entry BEFORE counting, so a replacement at capacity stays allowed; counting the displaced entry would trip `limitReached` on every re-register at the limit). Retain rollback of the displaced entry as before.
   4. `decide` runs target/topic/limit gates.
   5. `effect` `remove-existing-trie-entry` removes old entry.
   6. `effect` `insert-trie-entry` inserts the new one.

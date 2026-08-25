@@ -1057,12 +1057,13 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
    event-type branches, or is it safer to have each stage inspect `ctx.eventType`
    internally and return `ctx` unchanged when not applicable?
 
-2. **Normalizer dispatch granularity**: Should `normalizeGitHubWebhook` and
-   `normalizeGitHubPollingRow` be single `decisionRun` dispatchers that call
-   per-kind raw transforms, or should the entire pipeline (dispatch + kind
-   processing) be a single raw superpipe with a `decide` stage? The former keeps
-   signatures stable; the latter is more unified but may require `stagedRun`
-   semantics.
+2. ~~**Normalizer dispatch granularity**~~ Resolved by review: the entire
+   pipeline (dispatch + kind processing) is a single raw superpipe ingest
+   pipeline per business path, with dispatch as a stage — NOT a separately-run
+   `decisionRun` dispatcher plus per-kind pipelines (that splits one
+   ingestion business path across composition boundaries). `stagedRun` never
+   applies here: normalization is synchronous and effect-free. The exported
+   function signatures stay stable via thin wrappers over the single pipeline.
 
 3. **`classifyExternalEventDirectSteer` hot path**: The function is called once
    per essence. Should we benchmark the `decisionRun` overhead against the
