@@ -12,6 +12,7 @@ import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
+import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
@@ -134,7 +135,9 @@ describe('QueryRunner', () => {
       isRunningSpy.mockReturnValue(false);
     });
     sizeSpy = mock(() => 0);
-    enqueueWithIdSpy = mock(async () => {});
+    enqueueWithIdSpy = mock(async () => {
+      sizeSpy.mockReturnValue(sizeSpy() + 1);
+    });
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -1880,9 +1883,6 @@ describe('QueryRunner', () => {
     });
 
     it('restarts a stopped message queue before the startup-timeout retry', async () => {
-      setIdleSpy.mockImplementation(async () => {
-        stopSpy();
-      });
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       (
@@ -1892,6 +1892,7 @@ describe('QueryRunner', () => {
       ]);
 
       runner.start();
+      isRunningSpy.mockReturnValue(false);
       await ctx.queryPromise?.catch(() => {});
 
       expect(startSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -2240,10 +2241,14 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('pins: transient arm re-enqueues lastConsumedUserMessage ahead of its post-await guard (unfenced)', async () => {
+    it('pins: transient arm resnapshot suppresses re-enqueue when superseded during setIdle', async () => {
       const consumedUuid = 'stale-uuid';
       const consumedContent = [{ type: 'text' as const, text: 'OLD' }];
       buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      const replacementMessage = {
+        uuid: 'replacement-uuid',
+        content: [{ type: 'text' as const, text: 'NEW' }],
+      };
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
@@ -2254,30 +2259,24 @@ describe('QueryRunner', () => {
       runner.start();
       await idle.waitCalled();
       ctx.incrementQueryGeneration();
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage =
+        replacementMessage;
       idle.release();
       await ctx.queryPromise?.catch(() => {});
 
       expect(setIdleSpy).toHaveBeenCalled();
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
-      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
-        'test-session-id',
-        expect.objectContaining({
-          type: 'assistant',
-          message: expect.objectContaining({
-            content: expect.arrayContaining([
-              expect.objectContaining({
-                text: expect.stringContaining('The connection was interrupted'),
-              }),
-            ]),
-          }),
-        })
-      );
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(clearSpy).not.toHaveBeenCalled();
       expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(
         (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
-      ).toBeNull();
+      ).toBe(replacementMessage);
+      expect(
+        (runner as unknown as { _consumedUserMessages: Map<number, unknown> })._consumedUserMessages
+          .size
+      ).toBe(0);
     });
 
     it('pins: message-not-found resume-pointer consumption is NOT an unfenced window (stale generation reaches it with no intervening await)', async () => {
@@ -2298,10 +2297,157 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('pins: startup arm recurses after the publication await with no intervening guard (reachable window)', async () => {
-      buildSpy
-        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
-        .mockRejectedValueOnce(new Error('stop after retry'));
+    it('pins: startup arm revalidates after the publication await — a replacement during the publication does not launch another attempt', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as {
+        _consumedUserMessages: Map<number, unknown[]>;
+      };
+      runnerPrivate._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      ctx.incrementQueryGeneration();
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+        'consumed-uuid',
+        expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+        false,
+        { prepend: true }
+      );
+      expect(runnerPrivate._consumedUserMessages.has(1)).toBe(false);
+    });
+
+    it('pins: startup arm resnapshots the route across the setIdle await — an interrupt flip abandons before any shared mutation', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      getStateSpy.mockReturnValue({ status: 'interrupted' });
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm pre-recursion gate abandons when cleanup begins during the publication', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      let cleaningUp = false;
+      const ctx = createContext({ isCleaningUp: () => cleaningUp });
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      cleaningUp = true;
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm resnapshots the route across the setIdle await — a cleanup flip abandons before teardown', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let cleaningUp = false;
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        isCleaningUp: () => cleaningUp,
+      });
+      runner = new QueryRunner(ctx);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      cleaningUp = true;
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm revalidates immediately before recursion — a cleanup flip across the exit await does not launch another attempt', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let cleaningUp = false;
+      let releaseExit!: () => void;
+      const exitGate = new Promise<void>((resolve) => {
+        releaseExit = resolve;
+      });
+      let markTerminate!: () => void;
+      const terminateReached = new Promise<void>((resolve) => {
+        markTerminate = resolve;
+      });
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        markTerminate();
+      });
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        isCleaningUp: () => cleaningUp,
+        processExitedPromise: exitGate,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await terminateReached;
+      cleaningUp = true;
+      releaseExit();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm pre-recursion gate abandons when a completed interrupt stops the queue during the publication', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       (
@@ -2323,17 +2469,232 @@ describe('QueryRunner', () => {
       });
       runner.start();
       await displayCalled;
-      ctx.incrementQueryGeneration();
+      isRunningSpy.mockReturnValue(false);
       releaseDisplay();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(buildSpy).toHaveBeenCalledTimes(2);
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(
-        'consumed-uuid',
-        expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
-        false,
-        { prepend: true }
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm resnapshots live redeliverability — a queue cleared during the publication does not launch a futile recursion', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      sizeSpy.mockReturnValue(1);
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      sizeSpy.mockReturnValue(0);
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('pins: startup arm abandons before shared mutation when a completed interrupt consumes the abort controller on the self-stopped queue', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const controller = new AbortController();
+      controller.abort();
+      isRunningSpy.mockReturnValue(false);
+      const ctx = createContext({ queryAbortController: controller });
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.queryAbortController = null;
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm does not launch the retry against a queue stopped by a completed interrupt', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let releaseExit!: () => void;
+      const exitGate = new Promise<void>((resolve) => {
+        releaseExit = resolve;
+      });
+      let markTerminate!: () => void;
+      const terminateReached = new Promise<void>((resolve) => {
+        markTerminate = resolve;
+      });
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        markTerminate();
+      });
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        processExitedPromise: exitGate,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await terminateReached;
+      isRunningSpy.mockReturnValue(false);
+      releaseExit();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('provider/transient arm resnapshot and ownership checks (B3b)', () => {
+    let savedApiKey: string | undefined;
+    let savedBaseDelay: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      savedBaseDelay = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+      if (savedBaseDelay === undefined) {
+        delete process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      } else {
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = savedBaseDelay;
+      }
+    });
+
+    type RunnerPrivate = {
+      _lastConsumedUserMessage: { uuid: string; content: unknown[] } | null;
+      _consumedUserMessages: Map<number, Array<{ uuid: string; content: unknown[] }>>;
+      runQuery: (
+        queryGeneration: number,
+        retryAttempt: number,
+        recoveryState: { rateLimitCooldownScheduled: boolean }
+      ) => Promise<void>;
+    };
+
+    it('transient arm resnapshot suppresses re-enqueue when processing is interrupted during setIdle', async () => {
+      const consumedUuid = 'consumed-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'C' }];
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      getStateSpy.mockReturnValue({ status: 'processing' });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+      runnerPrivate._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+      runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+
+      let flip = true;
+      setIdleSpy.mockImplementation(async () => {
+        if (flip) {
+          flip = false;
+          getStateSpy.mockReturnValue({ status: 'interrupted' });
+        }
+      });
+
+      ctx.incrementQueryGeneration();
+      isRunningSpy.mockReturnValue(true);
+      await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
+    });
+
+    it('transient arm resnapshot suppresses close and recursion when superseded during displayErrorAsAssistantMessage', async () => {
+      const consumedUuid = 'consumed-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'C' }];
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      const closeSpy = mock(() => {});
+      const ctx = createContext({
+        queryObject: { close: closeSpy } as unknown as QueryLike,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+      runnerPrivate._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+      runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+
+      const originalDisplay = runner.displayErrorAsAssistantMessage.bind(runner);
+      runner.displayErrorAsAssistantMessage = mock(
+        async (text: string, options?: { markAsError?: boolean }) => {
+          ctx.incrementQueryGeneration();
+          await originalDisplay(text, options);
+        }
       );
+
+      ctx.incrementQueryGeneration();
+      isRunningSpy.mockReturnValue(true);
+      await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(ctx.queryObject).not.toBeNull();
+      expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
+    });
+
+    it('provider arm resnapshot suppresses close and re-enqueue when superseded during displayErrorAsAssistantMessage', async () => {
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+      const closeSpy = mock(() => {});
+      const ctx = createContext({
+        queryObject: { close: closeSpy } as unknown as QueryLike,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+      runnerPrivate._lastConsumedUserMessage = {
+        uuid: 'consumed-uuid',
+        content: [{ type: 'text' as const, text: 'C' }],
+      };
+      runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+      isRunningSpy.mockReturnValue(true);
+
+      const originalDisplay = runner.displayErrorAsAssistantMessage.bind(runner);
+      runner.displayErrorAsAssistantMessage = mock(
+        async (text: string, options?: { markAsError?: boolean }) => {
+          ctx.incrementQueryGeneration();
+          await originalDisplay(text, options);
+        }
+      );
+
+      ctx.incrementQueryGeneration();
+      await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(ctx.queryObject).not.toBeNull();
     });
   });
 
@@ -2695,6 +3056,7 @@ describe('QueryRunner', () => {
       markQueueStopped: () => void;
     } {
       const queueIsRunning = mock((): boolean => false);
+      let queueSize = 0;
       const queryObject = {
         close: mock((): void => {
           events.push('query.close');
@@ -2712,13 +3074,14 @@ describe('QueryRunner', () => {
             events.push('queue.start');
           }),
           clear: mock(() => {
+            queueSize = 0;
             events.push('queue.clear');
           }),
           stop: mock(() => {
             queueIsRunning.mockReturnValue(false);
             events.push('queue.stop');
           }),
-          size: mock((): number => 0),
+          size: mock((): number => queueSize),
           getGeneration: mock((): number => 0),
           enqueueWithId: mock(
             async (
@@ -2727,6 +3090,7 @@ describe('QueryRunner', () => {
               _internal?: boolean,
               options?: { prepend?: boolean }
             ): Promise<void> => {
+              queueSize += 1;
               events.push(`enqueue:${messageId}${options?.prepend ? ':prepend' : ''}`);
             }
           ),
@@ -3009,6 +3373,39 @@ describe('QueryRunner', () => {
       expect(notices[0]?.text).toContain('connection was interrupted');
     });
 
+    it('transient arm skips re-enqueue entirely when no user message was consumed', async () => {
+      const { events, notices } = await runLiturgyRow({
+        errorMessage: 'TypeError: fetch failed',
+        consumedEntries: [{ uuid: 'u9', content: 'map-only prompt' }],
+      });
+
+      expect(events).toEqual([
+        'queue.start',
+        'firstMsg.reset',
+        'build#1',
+        'timer.clear',
+        'firstMsg.reset',
+        'idle:suppress',
+        'display',
+        'query.close',
+        'exit.reset',
+        'build#2',
+        'queue.clear',
+        'terminal.begin',
+        'error.handle',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'env.restore',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
+      ]);
+      expect(notices.length).toBe(1);
+      expect(notices[0]?.markAsError).toBe(false);
+    });
+
     it('provider-backoff arm never idles and re-enqueues after the backoff guard', async () => {
       process.env.HYPERNEO_PROVIDER_MAX_RETRIES = '1';
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '1';
@@ -3046,6 +3443,41 @@ describe('QueryRunner', () => {
       expect(notices[0]?.markAsError).toBe(false);
       expect(notices[0]?.text).toContain('provider is temporarily unavailable');
       expect(process.env.ANTHROPIC_API_KEY).toBe('sk-original-key');
+    });
+
+    it('provider-backoff arm skips re-enqueue when no user message was consumed', async () => {
+      process.env.HYPERNEO_PROVIDER_MAX_RETRIES = '1';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '1';
+
+      const { events, notices } = await runLiturgyRow({
+        errorMessage: '503 Service Unavailable',
+        consumedEntries: [{ uuid: 'u8', content: 'map-only prompt' }],
+      });
+
+      expect(events).toEqual([
+        'queue.start',
+        'firstMsg.reset',
+        'build#1',
+        'timer.clear',
+        'firstMsg.reset',
+        'display',
+        'query.close',
+        'exit.reset',
+        'env.restore',
+        'build#2',
+        'queue.clear',
+        'terminal.begin',
+        'error.handle',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
+        'exit.reset',
+        'queue.stop',
+        'idle',
+      ]);
+      expect(notices.length).toBe(1);
+      expect(notices[0]?.markAsError).toBe(false);
     });
 
     it('unmatched AbortError arm clears only the queue', async () => {
@@ -4792,6 +5224,59 @@ describe('QueryRunner', () => {
       }
     });
 
+    describe('terminal & handoff route interpretation (B3d)', () => {
+      it('declined handoff with interrupted processing re-routes to aborted_noop instead of the terminal publication', async () => {
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          status: 'interrupted',
+          onRateLimit: () => false,
+        });
+        expectRoute(routeAllZero({ clear: 1, idle: 1, stop: 1 }));
+      });
+
+      it('declined handoff with an aborted controller re-routes to aborted_noop', async () => {
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          abortedController: true,
+          onRateLimit: () => false,
+        });
+        expectRoute(routeAllZero({ clear: 1, idle: 1, stop: 1 }));
+      });
+
+      it('accepted handoff records the scheduled cooldown on the recovery state', async () => {
+        const recoveryState = { rateLimitCooldownScheduled: false };
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          attempt: 0,
+          recoveryState,
+          onRateLimit: () => true,
+        });
+        expect(recoveryState.rateLimitCooldownScheduled).toBe(true);
+      });
+
+      it('declined handoff recomputes an incoming cooldown flag to false', async () => {
+        const recoveryState = { rateLimitCooldownScheduled: true };
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          attempt: 0,
+          recoveryState,
+          onRateLimit: () => false,
+        });
+        expect(recoveryState.rateLimitCooldownScheduled).toBe(false);
+      });
+
+      it('exhausted provider retries map the provider_exhausted hint to the retry-count user message', async () => {
+        await runLifecycleRow({
+          message: PROVIDER_5XX_MSG,
+          attempt: 3,
+          consumed: true,
+        });
+        expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy.mock.calls[0][2]).toBe(ErrorCategory.SYSTEM);
+        expect(handleErrorSpy.mock.calls[0][3]).toContain('3 time(s) without success');
+      });
+    });
+
     describe('superseded mid-arm checkpoint and finalizer teardown', () => {
       it('startup arm abandons the retry when a replacement takes the generation across the setIdle await', async () => {
         buildSpy.mockRejectedValue(new Error(STARTUP_TIMEOUT_MSG));
@@ -4871,6 +5356,101 @@ describe('QueryRunner', () => {
         expectRoute({ build: 1, handle: [0], idle: 0, clear: 0, stop: 0 });
         expect(ctx.queryAbortController).toBe(controller);
         expect(controller.signal.aborted).toBe(false);
+      });
+    });
+
+    describe('B3c finalizer post-await guards', () => {
+      const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
+      let previousProviderService: unknown;
+      let onRestore: (() => void) | null = null;
+
+      beforeEach(() => {
+        previousProviderService = (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY];
+        onRestore = null;
+        (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = {
+          restoreEnvVars: mock((_original: Record<string, unknown>) => {
+            onRestore?.();
+          }),
+        };
+      });
+
+      afterEach(() => {
+        (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = previousProviderService;
+      });
+
+      it('aborted_noop route suppresses setIdle when status becomes interrupted', async () => {
+        const error = new Error(ABORT_MSG);
+        error.name = 'AbortError';
+        buildSpy.mockRejectedValueOnce(error);
+        getStateSpy.mockReturnValue({ status: 'idle' });
+        onRestore = () => {
+          getStateSpy.mockReturnValue({ status: 'interrupted' });
+        };
+
+        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeAllZero({ clear: 1, stop: 1 }));
+      });
+
+      it('aborted_noop route suppresses setIdle when the abort controller is replaced', async () => {
+        const error = new Error(ABORT_MSG);
+        error.name = 'AbortError';
+        buildSpy.mockRejectedValueOnce(error);
+
+        let replacementController: AbortController | null = null;
+        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        onRestore = () => {
+          ctx.queryAbortController = new AbortController();
+          replacementController = ctx.queryAbortController;
+        };
+
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeAllZero({ clear: 1, stop: 1 }));
+        expect(ctx.queryAbortController).toBe(replacementController);
+      });
+
+      it('aborted_noop route suppresses setIdle when the query generation is bumped', async () => {
+        const error = new Error(ABORT_MSG);
+        error.name = 'AbortError';
+        buildSpy.mockRejectedValueOnce(error);
+
+        let generation = 1;
+        const ctx = createContext({
+          originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' },
+          getQueryGeneration: () => generation,
+          incrementQueryGeneration: () => ++generation,
+        });
+        onRestore = () => {
+          ctx.incrementQueryGeneration();
+        };
+
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeAllZero({ clear: 1, stop: 1 }));
+        expect(generation).toBe(3);
+      });
+
+      it('terminal route still idles when status becomes interrupted', async () => {
+        buildSpy.mockRejectedValueOnce(new Error(TERMINAL_AUTH_MSG));
+        getStateSpy.mockReturnValue({ status: 'idle' });
+        onRestore = () => {
+          getStateSpy.mockReturnValue({ status: 'interrupted' });
+        };
+
+        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeTerminal(ErrorCategory.AUTHENTICATION));
       });
     });
   });

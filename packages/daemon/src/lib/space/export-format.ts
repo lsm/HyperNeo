@@ -197,9 +197,9 @@ const exportedWorkflowNodeSchema = z.object({
     .optional(),
 });
 
-export const CURRENT_EXPORT_VERSION = 3 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3]);
-export type ExportVersion = 1 | 2 | 3;
+export const CURRENT_EXPORT_VERSION = 4 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4]);
+export type ExportVersion = 1 | 2 | 3 | 4;
 
 function asSupportedVersion(version: unknown): ExportVersion {
   return version as ExportVersion;
@@ -233,6 +233,19 @@ const exportedAgentBaseSchema = z.object({
   instructions: z.string().optional(),
   tools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
+  modelPool: z
+    .array(
+      z.object({
+        model: z.string().min(1),
+        provider: z.string().optional(),
+        maxConcurrent: z.number().int().min(1),
+        weight: z.number().min(0),
+      })
+    )
+    .refine((pool) => new Set(pool.map((entry) => entry.model)).size === pool.length, {
+      message: 'modelPool contains duplicate entries for the same model',
+    })
+    .optional(),
 });
 
 const exportedWorkflowBaseSchema = z.object({
@@ -291,6 +304,8 @@ export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
     exported.systemPrompt = agent.customPrompt;
   if (agent.tools !== undefined) exported.tools = agent.tools;
   if (agent.settingSources !== undefined) exported.settingSources = agent.settingSources;
+  if (agent.modelPool !== undefined && agent.modelPool.length > 0)
+    exported.modelPool = agent.modelPool;
   return exported;
 }
 
@@ -416,6 +431,9 @@ export function validateExportedAgent(data: unknown): ValidationResult<ExportedS
   const result = exportedAgentBaseSchema.safeParse(data);
   if (!result.success) {
     return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
+  }
+  if (version < 4 && result.data.modelPool !== undefined) {
+    return { ok: false, error: 'invalid: modelPool requires export version 4 or newer' };
   }
   return { ok: true, value: { version, ...result.data } };
 }

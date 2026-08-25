@@ -1,56 +1,75 @@
-import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type {
+  McpServerConfig,
+  MessageContent,
+  MessageHub,
+  MessageImage,
+  MessageInputKind,
+  MessageOrigin,
+  NodeExecution,
+  Session,
   Space,
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
-  NodeExecution,
-  MessageHub,
-  McpServerConfig,
-  MessageContent,
-  MessageImage,
-  MessageInputKind,
-  MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
-  Session,
 } from '@hyperneo/shared';
-import type { SkillsManager } from '../../skills-manager.ts';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
-import type { UUID } from 'crypto';
+import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
+import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import {
+  deliverMessage,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import {
+  type DeferredEventOverflowFoldResult,
+  buildDeferredEventDigestEnvelopeText,
+  buildExternalEventDigestMessage,
+  buildSyntheticExternalEventMessage,
   DEFERRED_EXTERNAL_EVENT_ROW_CAP,
+  deferredExternalEventEntryEvents,
+  type ExternalEventEssenceEntry,
   foldDeferredExternalEventOverflow,
   parseDeferredExternalEventText,
 } from '../../../lib/external-events/deferred-event-digest.ts';
+import {
+  decideExternalEventSteerAdmission,
+  type DirectSteerEventClass,
+} from './external-event-steer-admission-pipeline.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import type { SessionManager } from '../../session-manager.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import type { SessionManager } from '../../session-manager.ts';
+import type { SkillsManager } from '../../skills-manager.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
+import {
+  activateModelPoolReservation,
+  applyModelPoolToSlot,
+  type ModelPoolAssignmentMap,
+  raiseModelPoolDeferred,
+  releaseModelPoolReservation,
+  reserveModelPoolSlot,
+} from './model-pool-scheduler.ts';
+import type { SpaceRuntimeService } from './space-runtime-service.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -64,26 +83,54 @@ export interface VerifiedSessionStop {
   stopped: boolean;
   detail?: string;
 }
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
+
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
+import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import { Logger } from '../../logger.ts';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
+import { extractReplyToSessionId } from '../agent-message-envelope.ts';
+import {
+  buildCustomAgentTaskMessage,
+  DEFAULT_CUSTOM_AGENT_MODEL,
+  resolveAgentInit,
+} from '../agents/custom-agent.ts';
+import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers.ts';
-import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
-import { createGithubConnector } from './connectors/github-connector.ts';
-import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import {
-  assertExecutionValidAgainstWorkflow,
-  PermanentSpawnError,
-  SPAWN_BINDABLE_EXECUTION_STATUSES,
-  SPAWN_RESERVABLE_TASK_STATUSES,
-  SpawnSupersededError,
-  isSpawnSupersededError,
-  validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation.ts';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
+import { AgentMessageRouter } from './agent-message-router.ts';
+import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import { ChannelResolver } from './channel-resolver.ts';
+import { ChannelRouter } from './channel-router.ts';
+import { createGithubConnector } from './connectors/github-connector.ts';
+import { HookExecutor } from './hook-executor.ts';
+import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
+import {
+  deliverInjectedMessage,
+  flipDeliveryRowToDeferred,
+  reopenFailedDeliveryRow,
+  settleDeliveryRowStatus,
+} from './injection-delivery-steps.ts';
+import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
+import {
+  formatPendingRowForNodeAgent,
+  formatPendingRowForSpaceAgent,
+  isHumanPendingSource,
+} from './pending-envelope.ts';
+import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -96,45 +143,23 @@ import {
   buildSlotOverrides,
   findAvailableSessionId,
   resolveSpawnWorkspace,
+  resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
-import { ChannelResolver } from './channel-resolver.ts';
-import { ChannelRouter } from './channel-router.ts';
-import { AgentMessageRouter } from './agent-message-router.ts';
-import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import { HookExecutor } from './hook-executor.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
 } from './workflow-hook-engine.ts';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
-import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-agent.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
-import { Logger } from '../../logger.ts';
-import { extractReplyToSessionId } from '../agent-message-envelope.ts';
-import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
-import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 import {
-  formatPendingRowForNodeAgent,
-  formatPendingRowForSpaceAgent,
-  isHumanPendingSource,
-} from './pending-envelope.ts';
-import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
-import {
-  deliverInjectedMessage,
-  flipDeliveryRowToDeferred,
-  reopenFailedDeliveryRow,
-  settleDeliveryRowStatus,
-} from './injection-delivery-steps.ts';
+  assertExecutionValidAgainstWorkflow,
+  isSpawnSupersededError,
+  PermanentSpawnError,
+  SPAWN_BINDABLE_EXECUTION_STATUSES,
+  SPAWN_RESERVABLE_TASK_STATUSES,
+  SpawnSupersededError,
+  validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation.ts';
 
 const log = new Logger('task-agent-manager');
 
@@ -238,6 +263,51 @@ export interface TaskAgentManagerConfig {
   goalService?: import('../goals/goal-service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
+  directSteerDebounceMs?: number;
+  directSteerMaxBurstWaitMs?: number;
+}
+
+export const DIRECT_STEER_DEBOUNCE_MS = 20_000;
+
+export const DIRECT_STEER_MAX_BURST_WAIT_MS = 60_000;
+
+export const DIRECT_STEER_BUFFER_MAX_ENTRIES = 200;
+
+export const DIRECT_STEER_SNIPPET_MAX_CHARS = 2_000;
+
+function directSteerBufferKey(sessionId: string, eventClass: DirectSteerEventClass): string {
+  return `${sessionId}\u0000${eventClass}`;
+}
+
+const DIRECT_STEER_HYDRATABLE_FIELDS = [
+  'eventType',
+  'action',
+  'actor',
+  'body',
+  'title',
+  'state',
+  'checkName',
+  'conclusion',
+  'commentId',
+  'inReplyToId',
+  'path',
+  'line',
+  'reviewId',
+  'threadId',
+  'context',
+  'environment',
+  'description',
+] as const;
+
+interface DirectSteerBufferEntry {
+  steerEssences: ExternalEventEssenceEntry[];
+  passengerEssences: ExternalEventEssenceEntry[];
+  classes: DirectSteerEventClass[];
+  eventClass: DirectSteerEventClass;
+  messageId: string;
+  dbId: string;
+  receivedAt: number;
+  droppedEventCount?: number;
 }
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
@@ -300,6 +370,8 @@ export class TaskAgentManager {
     Array<(outcome: { status: 'resolved'; sessionId: string } | { status: 'failed' }) => void>
   >();
 
+  private modelPoolAssignments: ModelPoolAssignmentMap = new Map();
+
   private completionCallbacks: CompletionCallbackMap = new Map();
 
   private sessionListeners = new Map<string, () => void>();
@@ -312,9 +384,17 @@ export class TaskAgentManager {
   private rateLimitListenerUnsubs: Array<() => void> = [];
   private activityListenerUnsubs: Array<() => void> = [];
   private limitedSessionsByTask = new Map<string, Map<string, RateLimitSessionEntry>>();
+  private readonly directSteerBuffers = new Map<string, DirectSteerBufferEntry[]>();
+  private readonly directSteerTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly directSteerBurstStarts = new Map<string, number>();
+  private readonly directSteerDebounceMs: number;
+  private readonly directSteerMaxBurstWaitMs: number;
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
+    this.directSteerDebounceMs = this.config.directSteerDebounceMs ?? DIRECT_STEER_DEBOUNCE_MS;
+    this.directSteerMaxBurstWaitMs =
+      this.config.directSteerMaxBurstWaitMs ?? DIRECT_STEER_MAX_BURST_WAIT_MS;
     this.subscribeToTaskArchiveEvents();
     this.subscribeToRateLimitEvents();
     this.subscribeToActivityTracking();
@@ -601,7 +681,11 @@ export class TaskAgentManager {
     execution: NodeExecution,
     options: SpawnTaskAgentOptions = {}
   ): Promise<string> {
-    const spawnState = { reservationHeld: false, reservedExecution: false };
+    const spawnState: {
+      reservationHeld: boolean;
+      reservedExecution: boolean;
+      appliedSlot?: WorkflowNodeAgent;
+    } = { reservationHeld: false, reservedExecution: false };
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
       space,
@@ -611,12 +695,14 @@ export class TaskAgentManager {
       kickoff: options.kickoff ?? true,
     });
     if (outcome.status === 'error') {
+      releaseModelPoolReservation(this.modelPoolAssignments, execution);
       if (spawnState.reservedExecution) {
         this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       }
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
+      releaseModelPoolReservation(this.modelPoolAssignments, execution);
       if (spawnState.reservedExecution) {
         this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       }
@@ -717,6 +803,7 @@ export class TaskAgentManager {
   private buildSpawnExecutionFlowDeps(spawnState: {
     reservationHeld: boolean;
     reservedExecution: boolean;
+    appliedSlot?: WorkflowNodeAgent;
   }): SpawnExecutionFlowDeps {
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -804,71 +891,112 @@ export class TaskAgentManager {
         }
         return workspacePath;
       },
+      resolveSlot: (_space, workflow, execution, _task) =>
+        resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName) ?? null,
       createSpawnedSession: async (request) => {
-        const slotOverrides = buildSlotOverrides(request.slot, {
-          task: request.task,
-          node: request.node,
-          workflow: request.workflow,
-          workflowRun: request.workflowRun,
-        });
-
-        let init = resolveAgentInit({
-          task: request.task,
-          space: request.space,
-          agentManager: this.config.spaceAgentManager,
-          sessionId: request.sessionId,
-          workspacePath: request.workspacePath,
-          workflowRun: request.workflowRun,
-          workflow: request.workflow,
-          slotOverrides,
-          agentId: request.slot.agentId,
-        });
-
-        const customAgent = request.kickoff
-          ? this.config.spaceAgentManager.getById(request.slot.agentId)
-          : null;
-        if (request.kickoff && !customAgent) {
-          throw new PermanentSpawnError(`Agent not found: ${request.slot.agentId}`);
-        }
-
-        const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-          request.task.id,
-          request.sessionId,
-          request.execution.agentName,
-          request.space.id,
-          request.workflowRun.id,
-          request.workspacePath,
-          request.execution.workflowNodeId
-        );
-
-        init = assembleNodeAgentSessionInit({
-          baseInit: init,
-          title: formatWorkflowNodeSessionTitle(request.task, request.execution.agentName),
-          nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
-          agentMemoryMcpServers: this.buildAgentMemoryMcpServers(
-            request.space.id,
-            request.sessionId
-          ),
-        });
-
-        const actualSessionId = await this.createSubSession(
-          request.task.id,
-          request.sessionId,
-          init,
-          {
-            agentId: request.slot.agentId,
-            agentName: request.execution.agentName,
-            nodeId: request.execution.workflowNodeId,
-            deferFreshExecutionBind: true,
-            freshSessionOnly: true,
+        const customAgent = this.config.spaceAgentManager.getById(request.slot.agentId);
+        let slot = request.slot;
+        let poolProvider: string | undefined;
+        if (customAgent) {
+          const poolApplication = applyModelPoolToSlot({
+            slot: request.slot,
+            task: request.task,
+            node: request.node,
+            agent: customAgent,
+            spaceId: request.space.id,
+            assignments: this.modelPoolAssignments,
+            getSessionStatus: (sessionId: string) =>
+              this.agentSessionIndex.get(sessionId)?.getProcessingState().status,
+            now: Date.now(),
+          });
+          if ('deferred' in poolApplication) {
+            raiseModelPoolDeferred(customAgent.name, request.space.id);
           }
-        );
-
-        const spawned = this.getSubSession(actualSessionId);
-        if (!spawned) {
-          throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+          slot = poolApplication.slot;
+          poolProvider = poolApplication.provider;
         }
-        return actualSessionId;
+        spawnState.appliedSlot = slot;
+        const assignedModel =
+          slot.model ??
+          customAgent?.model ??
+          request.space.defaultModel ??
+          DEFAULT_CUSTOM_AGENT_MODEL;
+        const assignment = {
+          spaceId: request.space.id,
+          taskId: request.task.id,
+          model: assignedModel,
+        };
+        reserveModelPoolSlot(this.modelPoolAssignments, request.execution, assignment);
+
+        try {
+          const slotOverrides = {
+            ...buildSlotOverrides(slot, {
+              task: request.task,
+              node: request.node,
+              workflow: request.workflow,
+              workflowRun: request.workflowRun,
+            }),
+            ...(poolProvider ? { provider: poolProvider } : {}),
+          };
+
+          let init = resolveAgentInit({
+            task: request.task,
+            space: request.space,
+            agentManager: this.config.spaceAgentManager,
+            sessionId: request.sessionId,
+            workspacePath: request.workspacePath,
+            workflowRun: request.workflowRun,
+            workflow: request.workflow,
+            slotOverrides,
+            agentId: slot.agentId,
+          });
+
+          if (request.kickoff && !customAgent) {
+            throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
+          }
+
+          const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+            request.task.id,
+            request.sessionId,
+            request.execution.agentName,
+            request.space.id,
+            request.workflowRun.id,
+            request.workspacePath,
+            request.execution.workflowNodeId
+          );
+
+          init = assembleNodeAgentSessionInit({
+            baseInit: init,
+            title: formatWorkflowNodeSessionTitle(request.task, request.execution.agentName),
+            nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
+            agentMemoryMcpServers: this.buildAgentMemoryMcpServers(
+              request.space.id,
+              request.sessionId
+            ),
+          });
+
+          const actualSessionId = await this.createSubSession(
+            request.task.id,
+            request.sessionId,
+            init,
+            {
+              agentId: slot.agentId,
+              agentName: request.execution.agentName,
+              nodeId: request.execution.workflowNodeId,
+              deferFreshExecutionBind: true,
+              freshSessionOnly: true,
+            }
+          );
+
+          const spawned = this.getSubSession(actualSessionId);
+          if (!spawned) {
+            throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+          }
+          return actualSessionId;
+        } catch (err) {
+          releaseModelPoolReservation(this.modelPoolAssignments, request.execution);
+          throw err;
+        }
       },
       bindExecutionToSession: (execution, sessionId) => {
         const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
@@ -954,7 +1082,7 @@ export class TaskAgentManager {
           workspacePath: request.workspacePath,
           goal: linkedGoal,
           relevantScopeLessons,
-          slotOverrides: buildSlotOverrides(request.slot, {
+          slotOverrides: buildSlotOverrides(spawnState.appliedSlot ?? request.slot, {
             task: request.task,
             node: request.node,
             workflow: request.workflow,
@@ -980,6 +1108,9 @@ export class TaskAgentManager {
         await this.withSessionInjectLock(spawned.session.id, () =>
           this.injectMessageIntoSession(spawned, message)
         );
+      },
+      activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
+        activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
       },
     };
   }
@@ -2500,6 +2631,7 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     clearAllRetryableHookActionTimers();
+    this.clearDirectSteerState();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });
     }
@@ -3398,7 +3530,7 @@ export class TaskAgentManager {
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
-      const deferredDbId = settleDeliveryRowStatus(deliveryRows, {
+      const deferredDbId = await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
         message: sdkUserMessage,
         messageId,
@@ -3406,7 +3538,38 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
-      await this.enforceDeferredExternalEventCap(sessionId, message);
+      const capFold = await this.enforceDeferredExternalEventCap(sessionId, message);
+      const supersededThisRow =
+        capFold !== null && capFold.supersededUuids.includes(String(messageId));
+      if (capFold) {
+        this.pruneSupersededDirectSteerEntries(sessionId, capFold.supersededUuids);
+      }
+      if (!supersededThisRow) {
+        this.maybeBufferDirectSteer({
+          sessionId,
+          messageId,
+          deferredDbId,
+          messageText: message,
+          processingStatus: state.status,
+          inRateLimitCooldown,
+          parentTaskLimited: parentLimited,
+          inputKind,
+          isSynthetic: isSyntheticMessage,
+        });
+      }
+      if (capFold) {
+        this.maybeBufferDirectSteer({
+          sessionId,
+          messageId: String(capFold.envelopeMessage.uuid),
+          deferredDbId: capFold.envelopeDbId,
+          messageText: capFold.envelopeText,
+          processingStatus: state.status,
+          inRateLimitCooldown,
+          parentTaskLimited: parentLimited,
+          inputKind,
+          isSynthetic: isSyntheticMessage,
+        });
+      }
       return deferredDbId;
     }
     if (
@@ -3503,10 +3666,10 @@ export class TaskAgentManager {
   private async enforceDeferredExternalEventCap(
     sessionId: string,
     deferredMessageText: string
-  ): Promise<void> {
-    if (!parseDeferredExternalEventText(deferredMessageText)) return;
+  ): Promise<DeferredEventOverflowFoldResult | null> {
+    if (!parseDeferredExternalEventText(deferredMessageText)) return null;
     const { messages } = this.config.db.getUserMessagesByStatus(sessionId, 'deferred');
-    const foldedRows = await foldDeferredExternalEventOverflow({
+    const capFold = await foldDeferredExternalEventOverflow({
       sessionId,
       rows: messages,
       cap: DEFERRED_EXTERNAL_EVENT_ROW_CAP,
@@ -3535,13 +3698,365 @@ export class TaskAgentManager {
         },
       },
     });
-    if (foldedRows > 0) {
+    if (capFold) {
       log.warn(
         `TaskAgentManager: deferred external-event backlog exceeded ` +
           `${DEFERRED_EXTERNAL_EVENT_ROW_CAP} for session ${sessionId}; folded ` +
-          `${foldedRows} oldest rows into an early digest`
+          `${capFold.foldedRows} oldest rows into an early digest`
       );
     }
+    return capFold;
+  }
+
+  private pruneSupersededDirectSteerEntries(sessionId: string, supersededUuids: string[]): void {
+    if (supersededUuids.length === 0) return;
+    const gone = new Set(supersededUuids);
+    for (const [key, entries] of this.directSteerBuffers) {
+      if (!key.startsWith(`${sessionId}\u0000`)) continue;
+      const kept = entries.filter((entry) => !gone.has(entry.messageId));
+      if (kept.length === entries.length) continue;
+      if (kept.length === 0) this.directSteerBuffers.delete(key);
+      else this.directSteerBuffers.set(key, kept);
+    }
+  }
+
+  private maybeBufferDirectSteer(args: {
+    sessionId: string;
+    messageId: string;
+    deferredDbId: string;
+    messageText: string;
+    processingStatus: string;
+    inRateLimitCooldown: boolean;
+    parentTaskLimited: boolean;
+    inputKind: MessageInputKind;
+    isSynthetic: boolean;
+  }): void {
+    const parsed = parseDeferredExternalEventText(args.messageText);
+    if (!parsed) return;
+    const droppedEventCount = parsed.kind === 'fold' ? parsed.droppedCount : undefined;
+    const essences = deferredExternalEventEntryEvents(parsed);
+    const admission = decideExternalEventSteerAdmission({
+      deliveryV2Enabled: isMessageDeliveryV2Enabled(),
+      isSynthetic: args.isSynthetic,
+      inputKind: args.inputKind,
+      processingStatus: args.processingStatus,
+      inRateLimitCooldown: args.inRateLimitCooldown,
+      parentTaskLimited: args.parentTaskLimited,
+      essences,
+      ...(droppedEventCount ? { droppedEventCount } : {}),
+      bufferedDirectEventCount: this.sessionBufferedDirectEventCount(args.sessionId),
+      bufferMaxEntries: DIRECT_STEER_BUFFER_MAX_ENTRIES,
+      hydrate: (essence: ExternalEventEssenceEntry) => this.hydrateDirectSteerEssence(essence),
+    });
+    const decision = admission.decision;
+    if (decision === null) return;
+    if (decision.action === 'suppressBufferCap') {
+      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByBufferCap();
+      log.warn(
+        `TaskAgentManager: direct steer buffer for session ${args.sessionId} at its ` +
+          `${DIRECT_STEER_BUFFER_MAX_ENTRIES}-event capacity; event stays deferred`
+      );
+      return;
+    }
+    if (decision.action !== 'admit') return;
+    const {
+      eventClass,
+      steerEssences,
+      passengerEssences,
+      classes,
+      droppedEventCount: admittedDropped,
+    } = decision;
+    const settledRow = this.config.db
+      .getSDKMessageRepo()
+      .getMessageByStatusAndUuid(args.sessionId, 'deferred', args.messageId);
+    const claimDbId = settledRow?.dbId ?? args.deferredDbId;
+    const key = directSteerBufferKey(args.sessionId, eventClass);
+    const buffer = this.directSteerBuffers.get(key) ?? [];
+    if (buffer.some((item) => item.messageId === args.messageId)) return;
+    const now = Date.now();
+    buffer.push({
+      steerEssences,
+      passengerEssences,
+      classes,
+      eventClass,
+      messageId: args.messageId,
+      dbId: claimDbId,
+      receivedAt: now,
+      ...(admittedDropped ? { droppedEventCount: admittedDropped } : {}),
+    });
+    this.directSteerBuffers.set(key, buffer);
+    if (!this.directSteerBurstStarts.has(key)) this.directSteerBurstStarts.set(key, now);
+    this.armDirectSteerTimer(key);
+  }
+
+  private sessionBufferedDirectEventCount(sessionId: string): number {
+    let total = 0;
+    for (const [key, entries] of this.directSteerBuffers) {
+      if (!key.startsWith(`${sessionId}\u0000`)) continue;
+      total += entries.reduce((sum, item) => sum + item.steerEssences.length, 0);
+    }
+    return total;
+  }
+
+  private hydrateDirectSteerEssence(essence: ExternalEventEssenceEntry): ExternalEventEssenceEntry {
+    if (this.directSteerEssenceHydrated(essence) || !this.config.externalEventStore) {
+      return essence;
+    }
+    const record = this.config.externalEventStore.getById(essence.eventId);
+    const payload = record?.event.payload;
+    if (!record || !payload) return essence;
+    const hydrated: Record<string, unknown> = { ...essence };
+    let changed = false;
+    if (hydrated.occurredAt === undefined && typeof record.event.occurredAt === 'number') {
+      hydrated.occurredAt = record.event.occurredAt;
+      changed = true;
+    }
+    if (hydrated.externalUrl === undefined && typeof record.event.externalUrl === 'string') {
+      hydrated.externalUrl = record.event.externalUrl;
+      changed = true;
+    }
+    for (const field of DIRECT_STEER_HYDRATABLE_FIELDS) {
+      if (hydrated[field] !== undefined) continue;
+      const value = payload[field];
+      if (
+        (typeof value === 'string' && value.length > 0) ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      ) {
+        hydrated[field] = value;
+        changed = true;
+      }
+    }
+    return changed ? (hydrated as unknown as ExternalEventEssenceEntry) : essence;
+  }
+
+  private directSteerEssenceHydrated(essence: ExternalEventEssenceEntry): boolean {
+    return DIRECT_STEER_HYDRATABLE_FIELDS.every((field) => essence[field] !== undefined);
+  }
+
+  private armDirectSteerTimer(key: string): void {
+    const burstStart = this.directSteerBurstStarts.get(key);
+    if (burstStart === undefined) return;
+    const delay = Math.min(
+      this.directSteerDebounceMs,
+      Math.max(0, this.directSteerMaxBurstWaitMs - (Date.now() - burstStart))
+    );
+    const existing = this.directSteerTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.directSteerTimers.delete(key);
+      void this.flushDirectSteerBuffer(key).catch((err) => {
+        log.warn(
+          `TaskAgentManager: direct steer flush failed for session ${key.split('\u0000')[0]}: ` +
+            `${err instanceof Error ? err.message : String(err)}; rows stay deferred`
+        );
+      });
+    }, delay);
+    this.directSteerTimers.set(key, timer);
+  }
+
+  private async flushDirectSteerBuffer(key: string): Promise<void> {
+    const entries = this.directSteerBuffers.get(key) ?? [];
+    this.directSteerBuffers.delete(key);
+    this.directSteerBurstStarts.delete(key);
+    const pendingTimer = this.directSteerTimers.get(key);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.directSteerTimers.delete(key);
+    }
+    if (entries.length === 0) return;
+    const separator = key.indexOf('\u0000');
+    const sessionId = key.slice(0, separator);
+    await withSessionResetCoordination(sessionId, async () => {
+      await this.deliverDirectSteerUnderCoordination(sessionId, entries);
+    });
+  }
+
+  private async deliverDirectSteerUnderCoordination(
+    sessionId: string,
+    entries: DirectSteerBufferEntry[]
+  ): Promise<void> {
+    const session = this.getTrackedSession(sessionId);
+    if (!session) {
+      log.debug(
+        `TaskAgentManager: skipping direct steer — session ${sessionId} no longer tracked; ` +
+          `rows stay deferred`
+      );
+      return;
+    }
+    if (session.getProcessingState().status !== 'processing') {
+      log.debug(
+        `TaskAgentManager: skipping direct steer for session ${sessionId} — no longer ` +
+          `processing at flush time; rows stay deferred for turn-end delivery`
+      );
+      return;
+    }
+    if (this.parentTaskLimitedForSession(sessionId)) {
+      log.debug(
+        `TaskAgentManager: skipping direct steer for session ${sessionId} — parent task ` +
+          `became rate/usage-limited while the burst was pending; rows stay deferred`
+      );
+      return;
+    }
+    const { messages: deferredRows } = this.config.db.getUserMessagesByStatus(
+      sessionId,
+      'deferred'
+    );
+    const deferredUuids = new Set(deferredRows.map((row) => String(row.uuid)));
+    const steerable = entries.filter((entry) => deferredUuids.has(entry.messageId));
+    if (steerable.length === 0) {
+      log.debug(
+        `TaskAgentManager: direct steer for session ${sessionId} found no still-deferred ` +
+          `rows (turn likely ended first); rows already flushed`
+      );
+      return;
+    }
+    const steerEssences = steerable.flatMap((entry) => entry.steerEssences);
+    if (steerEssences.length === 0) {
+      log.debug(
+        `TaskAgentManager: direct steer for session ${sessionId} has no direct-class events ` +
+          `after filtering; rows stay deferred`
+      );
+      return;
+    }
+    const passengerEssences = steerable.flatMap((entry) => entry.passengerEssences);
+    const carriedDropped = steerable.reduce(
+      (sum, entry) => sum + (entry.droppedEventCount ?? 0),
+      0
+    );
+    let passengerDbId: string | null = null;
+    const discardPassengerCopy = (): void => {
+      if (!passengerDbId) return;
+      this.config.db.updateMessageStatus([passengerDbId], 'consumed');
+      void this.config.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId,
+          messageIds: [passengerDbId],
+          status: 'consumed',
+        })
+        .catch(() => {});
+      passengerDbId = null;
+    };
+    if (passengerEssences.length > 0) {
+      const passengerRow = buildSyntheticExternalEventMessage(
+        sessionId,
+        buildDeferredEventDigestEnvelopeText(
+          passengerEssences,
+          carriedDropped > 0 ? { carriedDroppedCount: carriedDropped } : undefined
+        )
+      );
+      try {
+        passengerDbId = this.config.db.saveUserMessage(sessionId, passengerRow, 'deferred');
+        await this.publishMessageStatusChanged(sessionId, passengerDbId, 'deferred');
+        log.debug(
+          `TaskAgentManager: re-deferred ${passengerEssences.length} digest-tier passenger ` +
+            `event(s) alongside a mid-turn steer for session ${sessionId}`
+        );
+      } catch (err) {
+        log.warn(
+          `TaskAgentManager: failed to preserve digest-tier passengers for session ` +
+            `${sessionId}: ${err instanceof Error ? err.message : String(err)}; ` +
+            `aborting the steer so no events are lost`
+        );
+        return;
+      }
+    }
+    const postPassengerSession = this.getTrackedSession(sessionId);
+    if (
+      !postPassengerSession ||
+      postPassengerSession.getProcessingState().status !== 'processing' ||
+      this.parentTaskLimitedForSession(sessionId)
+    ) {
+      log.debug(
+        `TaskAgentManager: direct steer for session ${sessionId} aborted — session left ` +
+          `processing or the parent task became limited while preserving passengers; ` +
+          `rows stay deferred`
+      );
+      discardPassengerCopy();
+      return;
+    }
+    const eventCount = steerEssences.length;
+    const steerText = buildExternalEventDigestMessage(steerEssences, {
+      title: 'Direct external events while you were working (injected mid-turn)',
+      snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
+      renderAllReviewBodies: true,
+      ...(passengerDbId || carriedDropped <= 0 ? {} : { droppedEventCount: carriedDropped }),
+    });
+    const message = buildSyntheticExternalEventMessage(sessionId, steerText);
+    const steerMessageId = String(message.uuid);
+    let steerDbId: string;
+    try {
+      steerDbId = this.config.db.saveUserMessage(sessionId, message, 'enqueued');
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager: failed to persist direct steer row for session ${sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}; rows stay deferred`
+      );
+      discardPassengerCopy();
+      return;
+    }
+    try {
+      deliverMessage(this.config.db.getJobQueueRepo(), sessionId, steerMessageId, {
+        origin: 'space_inject',
+        role: 'steer',
+      });
+    } catch (err) {
+      log.warn(
+        `TaskAgentManager: failed to enqueue direct steer delivery for session ${sessionId}: ` +
+          `${err instanceof Error ? err.message : String(err)}; discarding the steer row — ` +
+          `source rows stay deferred as the single carrier`
+      );
+      const failedDbId = this.config.db
+        .getSDKMessageRepo()
+        .markDeliveryFailedByUuid(sessionId, steerMessageId);
+      if (failedDbId) await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+      discardPassengerCopy();
+      return;
+    }
+    const sourceDbIds = steerable.map((entry) => entry.dbId);
+    this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
+    const steeredClasses = new Set(steerable.flatMap((entry) => entry.classes));
+    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueued();
+    for (const eventClass of steeredClasses) {
+      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueuedClass(
+        eventClass
+      );
+    }
+    log.info(
+      `TaskAgentManager: injected direct steer for session ${sessionId} covering ` +
+        `${eventCount} event(s) across ${steerable.length} row(s)`
+    );
+    await this.publishMessageStatusChanged(sessionId, steerDbId, 'enqueued');
+    await this.config.internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId,
+        messageIds: sourceDbIds,
+        status: 'consumed',
+      })
+      .catch(() => {});
+  }
+
+  private parentTaskLimitedForSession(sessionId: string): boolean {
+    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
+    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
+    return parentTask ? isRateOrUsageLimited(parentTask.status) : false;
+  }
+
+  private getTrackedSession(sessionId: string): AgentSession | null {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    if (indexed) return indexed;
+    for (const [, nodeMap] of this.subSessions) {
+      const session = nodeMap.get(sessionId);
+      if (session) return session;
+    }
+    return null;
+  }
+
+  private clearDirectSteerState(): void {
+    for (const timer of this.directSteerTimers.values()) clearTimeout(timer);
+    this.directSteerTimers.clear();
+    this.directSteerBuffers.clear();
+    this.directSteerBurstStarts.clear();
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {
@@ -4332,87 +4847,123 @@ export class TaskAgentManager {
     const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
-    const slotOverrides = buildSlotOverrides(matchedSlot, {
-      task,
-      node: matchedNode,
-      workflow,
-      workflowRun: workflowRun ?? undefined,
-    });
-
-    const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(matchedSlot.name)}`;
-    const sessionId = this.resolveSessionId(baseSessionId);
-
-    let init = resolveAgentInit({
-      task,
-      space,
-      agentManager: this.config.spaceAgentManager,
-      sessionId,
-      workspacePath,
-      workflowRun: workflowRun ?? undefined,
-      workflow,
-      slotOverrides,
-      agentId: matchedSlot.agentId,
-    });
-
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-      taskId,
-      sessionId,
-      matchedSlot.name,
-      spaceId,
-      workflowRunId ?? '',
-      workspacePath,
-      matchedNodeId
-    );
-    init = {
-      ...init,
-      title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
-      mcpServers: {
-        ...init.mcpServers,
-        'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-        'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
-          space,
-          sessionId
-        ),
-        ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
-      },
-    };
-
-    const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
-      agentId: matchedSlot.agentId,
-      agentName: matchedSlot.name,
-      nodeId: matchedNodeId,
-    });
-
-    const spawned = this.getSubSession(actualSessionId);
-    if (!spawned) {
-      throw new Error(
-        `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
-      );
+    const poolAgent = this.config.spaceAgentManager.getById(matchedSlot.agentId);
+    let slot = matchedSlot;
+    let poolProvider: string | undefined;
+    if (poolAgent) {
+      const poolApplication = applyModelPoolToSlot({
+        slot: matchedSlot,
+        task,
+        node: { id: matchedNodeId },
+        agent: poolAgent,
+        spaceId,
+        assignments: this.modelPoolAssignments,
+        getSessionStatus: (sessionId: string) =>
+          this.agentSessionIndex.get(sessionId)?.getProcessingState().status,
+        now: Date.now(),
+      });
+      if ('deferred' in poolApplication) {
+        raiseModelPoolDeferred(poolAgent.name, spaceId);
+      }
+      slot = poolApplication.slot;
+      poolProvider = poolApplication.provider;
     }
+    const assignedModel =
+      slot.model ?? poolAgent?.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+    const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
+    const assignment = { spaceId, taskId, model: assignedModel };
+    reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
 
-    spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
-      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
-    };
+    try {
+      const slotOverrides = {
+        ...buildSlotOverrides(slot, {
+          task,
+          node: matchedNode,
+          workflow,
+          workflowRun: workflowRun ?? undefined,
+        }),
+        ...(poolProvider ? { provider: poolProvider } : {}),
+      };
 
-    await this.ensureNodeAgentAttached(spawned, {
-      taskId,
-      subSessionId: actualSessionId,
-      agentName: matchedSlot.name,
-      spaceId,
-      workflowRunId: workflowRunId ?? '',
-      workspacePath,
-      workflowNodeId: matchedNodeId,
-      phase: 'spawn',
-    });
+      const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(slot.name)}`;
+      const sessionId = this.resolveSessionId(baseSessionId);
 
-    await this.withSessionInjectLock(spawned.session.id, () =>
-      this.injectMessageIntoSession(spawned, kickoffMessage)
-    );
+      let init = resolveAgentInit({
+        task,
+        space,
+        agentManager: this.config.spaceAgentManager,
+        sessionId,
+        workspacePath,
+        workflowRun: workflowRun ?? undefined,
+        workflow,
+        slotOverrides,
+        agentId: slot.agentId,
+      });
 
-    log.info(
-      `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
-    );
-    return { sessionId: actualSessionId };
+      const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+        taskId,
+        sessionId,
+        matchedSlot.name,
+        spaceId,
+        workflowRunId ?? '',
+        workspacePath,
+        matchedNodeId
+      );
+      init = {
+        ...init,
+        title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
+        mcpServers: {
+          ...init.mcpServers,
+          'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+          'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+            space,
+            sessionId
+          ),
+          ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
+        },
+      };
+
+      const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
+        agentId: matchedSlot.agentId,
+        agentName: matchedSlot.name,
+        nodeId: matchedNodeId,
+      });
+
+      const spawned = this.getSubSession(actualSessionId);
+      if (!spawned) {
+        throw new Error(
+          `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
+        );
+      }
+
+      spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
+        await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+      };
+
+      await this.ensureNodeAgentAttached(spawned, {
+        taskId,
+        subSessionId: actualSessionId,
+        agentName: matchedSlot.name,
+        spaceId,
+        workflowRunId: workflowRunId ?? '',
+        workspacePath,
+        workflowNodeId: matchedNodeId,
+        phase: 'spawn',
+      });
+
+      await this.withSessionInjectLock(spawned.session.id, () =>
+        this.injectMessageIntoSession(spawned, kickoffMessage)
+      );
+
+      log.info(
+        `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
+      );
+      activateModelPoolReservation(this.modelPoolAssignments, reservationKey, actualSessionId);
+      return { sessionId: actualSessionId };
+    } catch (err) {
+      releaseModelPoolReservation(this.modelPoolAssignments, reservationKey);
+      throw err;
+    }
   }
 
   private findLiveSubSessionForAgent(task: SpaceTask, agentName: string): string | null {

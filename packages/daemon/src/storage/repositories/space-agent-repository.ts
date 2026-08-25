@@ -20,8 +20,8 @@ export class SpaceAgentRepository {
       .prepare(
         `INSERT INTO space_agents
 					(id, space_id, name, handle, status, description, model, thinking_level, provider, tools, custom_prompt,
-					 setting_sources, template_name, template_hash, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					 setting_sources, template_name, template_hash, model_pool, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -38,6 +38,9 @@ export class SpaceAgentRepository {
         params.settingSources != null ? JSON.stringify(params.settingSources) : null,
         params.templateName ?? null,
         params.templateHash ?? null,
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null,
         now,
         now
       );
@@ -156,6 +159,14 @@ export class SpaceAgentRepository {
       fields.push('template_hash = ?');
       values.push(params.templateHash ?? null);
     }
+    if (params.modelPool !== undefined) {
+      fields.push('model_pool = ?');
+      values.push(
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null
+      );
+    }
 
     if (fields.length === 0) return this.getById(id);
 
@@ -237,6 +248,11 @@ export class SpaceAgentRepository {
       ) as SpaceWorkerAgent['settingSources'];
     }
 
+    let modelPool: SpaceWorkerAgent['modelPool'];
+    if (row.model_pool) {
+      modelPool = JSON.parse(row.model_pool as string) as SpaceWorkerAgent['modelPool'];
+    }
+
     return {
       id: row.id as string,
       spaceId: row.space_id as string,
@@ -253,6 +269,7 @@ export class SpaceAgentRepository {
       settingSources,
       templateName: (row.template_name as string | null | undefined) ?? null,
       templateHash: (row.template_hash as string | null | undefined) ?? null,
+      modelPool,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };

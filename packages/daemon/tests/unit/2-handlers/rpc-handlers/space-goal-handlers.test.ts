@@ -1,5 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, RequestHandler, SpaceGoalOwnerResolution } from '@hyperneo/shared';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { setupSpaceGoalHandlers } from '../../../../src/lib/rpc-handlers/space-goal-handlers.ts';
@@ -68,6 +72,12 @@ function makeHarness(repo: ReturnType<typeof makeRepoMock>) {
     longHorizonAgentRepo: repo,
   });
   return { handlers };
+}
+
+function makeEventBus() {
+  return {
+    publish: mock(async () => ({ delivered: 0, failures: [] })),
+  } as unknown as InternalEventBus<DaemonInternalEventMap>;
 }
 
 describe('spaceGoal owner handlers', () => {
@@ -190,6 +200,41 @@ describe('spaceGoal owner handlers', () => {
     );
     expect(unbound.owner.action).toBe('resolved');
     expect(repo.assignGoal).toHaveBeenCalledTimes(2);
+  });
+
+  it('publishes an ownerChanged event when ownership mutates', async () => {
+    const eventBus = makeEventBus();
+    const { hub, handlers } = createMockHub();
+    const goalService = {
+      getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
+    } as unknown as SpaceGoalService;
+    setupSpaceGoalHandlers(hub, {
+      goalService,
+      spaceManager: {
+        getSpace: mock(async () => ({ id: SPACE_ID })),
+      } as unknown as SpaceManager,
+      longHorizonAgentRepo: makeRepoMock({ action: 'no_recipient' }),
+      internalEventBus: eventBus,
+    });
+    await handlers.get('spaceGoal.assignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
+      makeContext('global')
+    );
+    expect(eventBus.publish).toHaveBeenCalledWith('spaceGoal.ownerChanged', {
+      sessionId: 'global',
+      spaceId: SPACE_ID,
+      goalId: GOAL_ID,
+    });
+    (eventBus.publish as ReturnType<typeof mock>).mockClear();
+    await handlers.get('spaceGoal.unassignOwner')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID },
+      makeContext('global')
+    );
+    expect(eventBus.publish).toHaveBeenCalledWith('spaceGoal.ownerChanged', {
+      sessionId: 'global',
+      spaceId: SPACE_ID,
+      goalId: GOAL_ID,
+    });
   });
 
   it('unassigns the current owner and clears ownership', async () => {

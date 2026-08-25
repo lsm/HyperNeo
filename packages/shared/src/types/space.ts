@@ -773,6 +773,7 @@ export interface SpaceWorkerAgent {
   settingSources?: SettingSource[];
   templateName?: string | null;
   templateHash?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[];
   createdAt: number;
   updatedAt: number;
 }
@@ -816,6 +817,7 @@ export interface CreateSpaceWorkerAgentParams {
   settingSources?: SettingSource[] | null;
   templateName?: string | null;
   templateHash?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[];
 }
 
 export interface UpdateSpaceWorkerAgentParams {
@@ -831,6 +833,7 @@ export interface UpdateSpaceWorkerAgentParams {
   settingSources?: SettingSource[] | null;
   templateName?: string | null;
   templateHash?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
 }
 
 export interface SpaceWorkerAgentDriftEntry {
@@ -1104,6 +1107,13 @@ export interface EventInterest {
   label?: string;
 }
 
+export interface WorkerAgentModelPoolEntry {
+  model: string;
+  provider?: string;
+  maxConcurrent: number;
+  weight: number;
+}
+
 export interface WorkflowNodeAgent {
   agentId: string;
   name: string;
@@ -1293,7 +1303,7 @@ export interface ExportedWorkflowNode {
 }
 
 export interface ExportedSpaceWorkerAgent {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   type: 'agent';
   name: string;
   handle?: string;
@@ -1305,10 +1315,11 @@ export interface ExportedSpaceWorkerAgent {
   instructions?: string;
   tools?: string[];
   settingSources?: import('./settings.ts').SettingSource[];
+  modelPool?: WorkerAgentModelPoolEntry[];
 }
 
 export interface ExportedSpaceWorkflow {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   type: 'workflow';
   name: string;
   description?: string;
@@ -1325,7 +1336,7 @@ export interface ExportedSpaceWorkflow {
 }
 
 export interface SpaceExportBundle {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   type: 'bundle';
   name: string;
   description?: string;

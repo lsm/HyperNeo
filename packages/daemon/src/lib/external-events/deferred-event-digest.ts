@@ -42,7 +42,7 @@ export interface ExternalEventEssenceEntry {
   receivedAt?: number;
 }
 
-export type DeferredExternalEventEntry =
+type DeferredExternalEventEntry =
   | { kind: 'event'; essence: ExternalEventEssenceEntry }
   | { kind: 'fold'; events: ExternalEventEssenceEntry[]; droppedCount?: number };
 
@@ -248,7 +248,7 @@ function rowText(row: SDKUserMessage): string {
     .join('\n');
 }
 
-export function isSystemInjectedRow(row: SDKUserMessage): boolean {
+function isSystemInjectedRow(row: SDKUserMessage): boolean {
   const inputKind = (row as SDKUserMessage & { inputKind?: unknown }).inputKind;
   if (inputKind === 'system') return true;
   return inputKind === undefined && row.isSynthetic === true;
@@ -259,12 +259,12 @@ export function parseDeferredDeliveryRow(row: SDKUserMessage): DeferredExternalE
   return parseDeferredExternalEventText(rowText(row));
 }
 
-export function isDigestTierEntry(entry: DeferredExternalEventEntry): boolean {
+function isDigestTierEntry(entry: DeferredExternalEventEntry): boolean {
   if (entry.kind === 'fold') return true;
   return classifyExternalEventTier(entry.essence.topic) === 'digest';
 }
 
-export interface DeferredExternalEventPartition {
+interface DeferredExternalEventPartition {
   digestRows: DeferredDeliveryRow[];
   digestEvents: ExternalEventEssenceEntry[];
   droppedCount: number;
@@ -304,7 +304,7 @@ export function partitionDeferredExternalEventRows(
 
 export const DEFERRED_EXTERNAL_EVENT_ROW_CAP = 100;
 
-export const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
+const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
 
 const DIGEST_SNIPPET_MAX_CHARS = 160;
 
@@ -349,13 +349,15 @@ function digestTimestamp(entry: ExternalEventEssenceEntry, includeDate = false):
   return `${includeDate ? `${iso.slice(5, 10)} ` : ''}${iso.slice(11, 16)} UTC`;
 }
 
-function digestSnippet(body: string | undefined): string | null {
+function digestSnippet(
+  body: string | undefined,
+  maxChars = DIGEST_SNIPPET_MAX_CHARS
+): string | null {
   if (!body) return null;
   const flattened = body.replace(/\s+/g, ' ').trim();
   if (flattened.length === 0) return null;
-  return flattened.length > DIGEST_SNIPPET_MAX_CHARS
-    ? `${flattened.slice(0, DIGEST_SNIPPET_MAX_CHARS)}…`
-    : flattened;
+  if (!Number.isFinite(maxChars)) return flattened;
+  return flattened.length > maxChars ? `${flattened.slice(0, maxChars)}…` : flattened;
 }
 
 function digestLinkSuffix(entry: ExternalEventEssenceEntry): string {
@@ -448,7 +450,17 @@ function digestActionLabel(entry: ExternalEventEssenceEntry): string {
   return ` (${entry.action})`;
 }
 
-function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
+interface DigestRenderOptions {
+  snippetMaxChars?: number;
+  renderAllReviewBodies?: boolean;
+}
+
+function renderDigestGroup(
+  group: DigestGroup,
+  includeDate: boolean,
+  options: DigestRenderOptions = {}
+): string {
+  const snippetMaxChars = options.snippetMaxChars ?? DIGEST_SNIPPET_MAX_CHARS;
   const events = group.events;
   const latest = events[events.length - 1];
   if (!latest) return '';
@@ -477,10 +489,24 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       );
     }
     case 'review': {
+      if (options.renderAllReviewBodies && count > 1) {
+        return events
+          .map((event) => {
+            const location = event.path
+              ? ` on ${event.path}${typeof event.line === 'number' ? `:L${event.line}` : ''}`
+              : '';
+            const snippet = digestSnippet(event.body, snippetMaxChars);
+            return (
+              `- Review comment by ${event.actor ?? 'unknown'} at ${digestTimestamp(event, includeDate)}${location}` +
+              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}${digestDetailSuffix(event)}`
+            );
+          })
+          .join('\n');
+      }
       const location = latest.path
         ? ` on ${latest.path}${typeof latest.line === 'number' ? `:L${latest.line}` : ''}`
         : '';
-      const snippet = digestSnippet(latest.body);
+      const snippet = digestSnippet(latest.body, snippetMaxChars);
       return (
         `- Review comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}${location}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
@@ -488,7 +514,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
       );
     }
     case 'pr_comment': {
-      const snippet = digestSnippet(latest.body);
+      const snippet = digestSnippet(latest.body, snippetMaxChars);
       return (
         `- PR comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
@@ -520,7 +546,7 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
         parts.push(`state: ${latest.state}${markers ? ` (${markers})` : ''}`);
       }
       if (latest.environment) parts.push(`environment: ${latest.environment}`);
-      const snippet = digestSnippet(latest.description ?? latest.body);
+      const snippet = digestSnippet(latest.description ?? latest.body, snippetMaxChars);
       if (snippet) parts.push(`"${snippet}"`);
       const structured = [latest.changedFields, latest.requiredStatusChecks]
         .filter((field): field is object => !!field)
@@ -543,7 +569,11 @@ function renderDigestGroup(group: DigestGroup, includeDate: boolean): string {
   }
 }
 
-function digestHeader(events: ExternalEventEssenceEntry[], droppedEventCount: number): string {
+function digestHeader(
+  events: ExternalEventEssenceEntry[],
+  droppedEventCount: number,
+  title?: string
+): string {
   const prNumbers = [
     ...new Set(
       events.map((entry) => entry.prNumber).filter((n): n is number => typeof n === 'number')
@@ -558,12 +588,17 @@ function digestHeader(events: ExternalEventEssenceEntry[], droppedEventCount: nu
   else if (repos.length === 1) scope = `, ${repos[0]}`;
   const total = events.length + droppedEventCount;
   const eventWord = total === 1 ? 'event' : 'events';
-  return `External events while you were working (${total} ${eventWord}${scope}):`;
+  return `${title ?? 'External events while you were working'} (${total} ${eventWord}${scope}):`;
 }
 
 export function buildExternalEventDigestMessage(
   events: ExternalEventEssenceEntry[],
-  options?: { droppedEventCount?: number }
+  options?: {
+    droppedEventCount?: number;
+    title?: string;
+    snippetMaxChars?: number;
+    renderAllReviewBodies?: boolean;
+  }
 ): string {
   if (events.length === 0) return '';
   const droppedEventCount = options?.droppedEventCount ?? 0;
@@ -595,7 +630,7 @@ export function buildExternalEventDigestMessage(
   const lines: string[] = [];
   for (const kind of DIGEST_GROUP_ORDER) {
     for (const group of groups.values()) {
-      if (group.kind === kind) lines.push(renderDigestGroup(group, includeDate));
+      if (group.kind === kind) lines.push(renderDigestGroup(group, includeDate, { ...options }));
     }
   }
   const footer =
@@ -604,7 +639,7 @@ export function buildExternalEventDigestMessage(
           `${droppedEventCount} older events were omitted from this summary (over the event bound) and may still need attention.`,
         ]
       : [];
-  return [digestHeader(ordered, droppedEventCount), ...lines, ...footer].join('\n');
+  return [digestHeader(ordered, droppedEventCount, options?.title), ...lines, ...footer].join('\n');
 }
 
 export function buildDeferredEventDigestEnvelopeText(
@@ -672,7 +707,7 @@ async function saveFoldRowIdempotently(
   return { dbId: await ops.saveRow(withUuid, sendStatus), message: withUuid };
 }
 
-export interface DeferredEventDigestFlushResult {
+interface DeferredEventDigestFlushResult {
   digestRow: DeferredDeliveryRow | null;
   remainder: DeferredDeliveryRow[];
   foldedCount: number;
@@ -708,7 +743,7 @@ export async function foldDeferredExternalEventsAtFlush(args: {
   };
 }
 
-export interface DeferredEventOverflowFold {
+interface DeferredEventOverflowFold {
   overflowRows: DeferredDeliveryRow[];
   events: ExternalEventEssenceEntry[];
   droppedCount: number;
@@ -758,21 +793,35 @@ function dedupeInPlaceByEventId(events: ExternalEventEssenceEntry[]): void {
   events.splice(0, events.length, ...deduped);
 }
 
+export interface DeferredEventOverflowFoldResult {
+  foldedRows: number;
+  supersededUuids: string[];
+  envelopeMessage: SDKUserMessage;
+  envelopeDbId: string;
+  envelopeText: string;
+}
+
 export async function foldDeferredExternalEventOverflow(args: {
   sessionId: string;
   rows: DeferredDeliveryRow[];
   cap: number;
   ops: DeferredEventDigestRowOps;
-}): Promise<number> {
+}): Promise<DeferredEventOverflowFoldResult | null> {
   const plan = planDeferredExternalEventOverflow(args.rows, args.cap);
-  if (!plan) return 0;
+  if (!plan) return null;
   const envelopeText = buildDeferredEventDigestEnvelopeText(
     plan.events,
     plan.droppedCount > 0 ? { carriedDroppedCount: plan.droppedCount } : undefined
   );
   const message = buildSyntheticExternalEventMessage(args.sessionId, envelopeText);
   const sourceDbIds = plan.overflowRows.map((row) => row.dbId);
-  await saveFoldRowIdempotently(args.ops, sourceDbIds, message, 'deferred');
+  const saved = await saveFoldRowIdempotently(args.ops, sourceDbIds, message, 'deferred');
   await args.ops.markSuperseded(sourceDbIds);
-  return plan.overflowRows.length;
+  return {
+    foldedRows: plan.overflowRows.length,
+    supersededUuids: plan.overflowRows.map((row) => String(row.uuid)),
+    envelopeMessage: saved.message,
+    envelopeDbId: saved.dbId,
+    envelopeText,
+  };
 }

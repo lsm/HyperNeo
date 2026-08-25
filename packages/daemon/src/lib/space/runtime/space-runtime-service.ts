@@ -169,7 +169,7 @@ export interface SpaceRuntimeServiceConfig {
 
 export class SpaceRuntimeService {
   private readonly runtime: SpaceRuntime;
-  private readonly queueHealthMetrics: ExternalEventQueueMetrics;
+  readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private started = false;
   private readonly unsubscribers: Array<() => void> = [];
   private taskAgentManager: TaskAgentManager | null = null;

@@ -481,6 +481,34 @@ describe('createMessageDeliveryHandler', () => {
     });
   });
 
+  describe('outcome-routing read laziness (A3a)', () => {
+    it('consumed and promote outcomes never read the park count', async () => {
+      const consumed = makeHarness({}, STEER_PAYLOAD);
+      consumed.session.feedResult = { outcome: 'consumed' };
+      const consumedResult = await consumed.handler(consumed.job, {});
+      expect(consumedResult).toEqual({ outcome: 'consumed' });
+      expect(consumed.jobQueue.getParkCount).not.toHaveBeenCalled();
+
+      const promoted = makeHarness({}, STEER_PAYLOAD);
+      promoted.session.feedResult = { outcome: 'promote' };
+      const promotedResult = await promoted.handler(promoted.job, {});
+      expect(promotedResult).toEqual({ outcome: 'superseded', promoted: 'turn' });
+      expect(promoted.jobQueue.getParkCount).not.toHaveBeenCalled();
+    });
+
+    it('park and awaiting_acceptance outcomes read the park count exactly once', async () => {
+      const parked = makeHarness({}, STEER_PAYLOAD);
+      parked.session.feedResult = { outcome: 'park' };
+      await parked.handler(parked.job, {});
+      expect(parked.jobQueue.getParkCount).toHaveBeenCalledTimes(1);
+
+      const awaiting = makeHarness({}, STEER_PAYLOAD);
+      awaiting.session.feedResult = { outcome: 'awaiting_acceptance' };
+      await awaiting.handler(awaiting.job, {});
+      expect(awaiting.jobQueue.getParkCount).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('identical tuples, different mutations (role × outcome)', () => {
     it('aborted settles identically from drive and feed', async () => {
       const turn = makeHarness();

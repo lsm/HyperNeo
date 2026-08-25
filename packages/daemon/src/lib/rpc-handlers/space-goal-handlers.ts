@@ -5,6 +5,7 @@ import type {
   SpaceGoalStatus,
 } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { decideGoalOwnershipMutationAdmission } from '../space/goals/goal-ownership-gates.ts';
 import type { PublicSpaceGoalUpdateParams, SpaceGoalService } from '../space/goals/goal-service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
@@ -16,10 +17,17 @@ export interface SpaceGoalHandlerDeps {
     SpaceLongHorizonAgentRepository,
     'getPrimaryGoalOwner' | 'assignGoal' | 'deleteGoalAssignmentByRelationship'
   >;
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
 
 export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHandlerDeps): void {
-  const { goalService, spaceManager, longHorizonAgentRepo } = deps;
+  const { goalService, spaceManager, longHorizonAgentRepo, internalEventBus } = deps;
+
+  function publishOwnerChanged(sessionId: string, spaceId: string, goalId: string): void {
+    internalEventBus
+      ?.publish('spaceGoal.ownerChanged', { sessionId, spaceId, goalId })
+      .catch(() => {});
+  }
 
   function resolveOwner(goalId: string, spaceId: string): SpaceGoalOwnerResolution {
     return longHorizonAgentRepo.getPrimaryGoalOwner(goalId, spaceId) as SpaceGoalOwnerResolution;
@@ -141,6 +149,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
     requireGoalInSpace(params.goalId, params.spaceId);
     assertOwnerMutationAuthorized(context);
     longHorizonAgentRepo.assignGoal(params.agentId, params.goalId);
+    publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     return { owner: resolveOwner(params.goalId, params.spaceId) };
   });
 
@@ -156,6 +165,7 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
         params.goalId,
         'owner'
       );
+      publishOwnerChanged(context.sessionId, params.spaceId, params.goalId);
     }
     return { owner: resolveOwner(params.goalId, params.spaceId) };
   });

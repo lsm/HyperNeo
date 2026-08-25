@@ -1,11 +1,12 @@
 import type {
-  SpaceWorkerAgent,
   SpaceTaskStatus,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgent,
   WorkflowRunStatus,
+  WorkerAgentModelPoolEntry,
 } from './space.ts';
 
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
@@ -23,6 +24,52 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
     `WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
       'At least one agent must be provided.'
   );
+}
+
+export function modelPoolEntryKey(entry: Pick<WorkerAgentModelPoolEntry, 'model'>): string {
+  return entry.model;
+}
+
+export interface ModelPoolPickInput {
+  entry: WorkerAgentModelPoolEntry;
+  running: number;
+  cap: number;
+  left: number;
+  score: number;
+}
+
+export function scoreModelPoolEntries(
+  entries: WorkerAgentModelPoolEntry[],
+  runningCounts: Readonly<Record<string, number>>
+): ModelPoolPickInput[] {
+  return entries.map((entry) => {
+    const cap = Math.max(1, Math.floor(Number(entry.maxConcurrent) || 1));
+    const running = Math.max(0, Math.floor(runningCounts[modelPoolEntryKey(entry)] ?? 0));
+    const left = Math.max(0, cap - running);
+    const weight = Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 0;
+    const score = Math.min(left * weight, Number.MAX_SAFE_INTEGER);
+    return { entry, running, cap, left, score };
+  });
+}
+
+export function pickModelPoolEntry(
+  entries: WorkerAgentModelPoolEntry[],
+  runningCounts: Readonly<Record<string, number>>,
+  random: () => number = Math.random
+): WorkerAgentModelPoolEntry | null {
+  if (entries.length === 0) return null;
+  const eligible = scoreModelPoolEntries(entries, runningCounts).filter((item) => item.score > 0);
+  if (eligible.length === 0) return null;
+  const maxLeft = Math.max(...eligible.map((item) => item.left));
+  const maxWeight = Math.max(...eligible.map((item) => item.entry.weight));
+  const scores = eligible.map((item) => (item.left / maxLeft) * (item.entry.weight / maxWeight));
+  const total = scores.reduce((sum, score) => sum + score, 0);
+  let cursor = random() * total;
+  for (let i = 0; i < eligible.length; i++) {
+    cursor -= scores[i];
+    if (cursor <= 0) return eligible[i].entry;
+  }
+  return eligible[eligible.length - 1].entry;
 }
 
 const WORKFLOW_RUN_EXECUTION_STATUS_LABELS: Record<WorkflowRunStatus | 'failed', string> = {

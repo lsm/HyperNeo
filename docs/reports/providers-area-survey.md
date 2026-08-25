@@ -1,10 +1,12 @@
 # Providers Area Survey + Bug Hunt — Chain Proposals (task #1258)
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Date: 2026-08-22. Base: `origin/dev` @ `e87cadcd7`. Analysis only — no production
 code changed. Paths abbreviated: **D** = `packages/daemon/src`, **W** =
 `packages/web/src`. All line numbers verified against the base commit. Taxonomy
 references (P1–P8, `requestRun`, `decisionRun`) follow ADR 0004
-(`docs/adr/0004-superpipe-decision-pipelines.md`).
+(`docs/adr/0004-superpipe-pipelines.md`).
 
 Owner-reported pain investigated:
 
@@ -183,6 +185,10 @@ stacked on daemon-side network I/O under a 10s RPC timeout.**
 (generation-guarded request/apply — "a stale response structurally cannot
 apply"). C2-PR2 is its 2nd real use after `useFetchModels`; extract the
 combinator on the 3rd (rule of three). No daemon pipeline needed.
+*SUPERSEDED 2026-08-25 (ADR 0004 revision): under direct-superpipe-first, these
+are proposed PLAIN compositions, not combinator uses — the rule-of-three count
+that matters is direct superpipe compositions; a `requestRun` proposal waits
+until ≈3 of those exist.*
 
 ---
 
@@ -398,6 +404,8 @@ behind their merge. No rebase risk for the acute chains.
    fallback in the interim.
 2. **C2 — provider-page refresh** (acute; 3 PRs above). PR2 is the
    `requestRun` second-use; PR3 protects every provider-page action.
+   *(requestRun counting superseded 2026-08-25 — see the ADR 0004 revision
+   note above; compose directly until ≈3 direct uses exist.)*
 3. **C3 — discovery + curation** (feature; 4 PRs above). Completes #2710's
    missing half.
 4. **C4 — availability hygiene sweep (small, optional):** make

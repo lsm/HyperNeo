@@ -6,6 +6,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
@@ -25,6 +26,12 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
+import {
+  decideQueryRetry,
+  type QueryRetryEnvironment,
+  type QueryRetryErrorSignal,
+  type QueryRetryRoute,
+} from './query-retry-routing.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
@@ -269,6 +276,34 @@ const REQUIRED_SPACE_CHAT_COORDINATION_TOOLS = [
   'suggest_workflow',
   'get_workflow_detail',
 ] as const;
+interface RetryTeardownState {
+  snapshotMsg: { uuid: string; content: string | MessageContent[] } | null;
+}
+
+interface RetryTeardownOptions {
+  nextAttempt: number;
+  recoveryState: { rateLimitCooldownScheduled: boolean };
+  resetStartupState?: boolean;
+  idleFirst?: boolean;
+  routeGuard?: {
+    expectedAction: QueryRetryRoute['action'];
+    retrySignal: QueryRetryErrorSignal;
+    retryEnv: QueryRetryEnvironment;
+    queueRunningAtEntry: boolean;
+    abandonLabel: string;
+  };
+  terminateProcesses?: boolean;
+  requeueLastConsumedFor?: string;
+  snapshotLastConsumed?: boolean;
+  notice?: string;
+  guardAfterExit?: boolean;
+  restartQueueIfStopped?: boolean;
+  requeueConsumedList?: boolean;
+  noticeAfterTeardown?: string;
+  backoffMs?: number;
+  snapshotRequeueLabel?: string;
+}
+
 export interface QueryRunnerContext {
   readonly session: Session;
   readonly db: Database;
@@ -509,6 +544,9 @@ export class QueryRunner {
       permit.release();
     };
 
+    let runAbortController: AbortController | null = null;
+    let isAbortError = false;
+
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
@@ -746,13 +784,13 @@ export class QueryRunner {
         return proc;
       };
 
-      const abortController = new AbortController();
-      this.ctx.queryAbortController = abortController;
+      runAbortController = new AbortController();
+      this.ctx.queryAbortController = runAbortController;
       {
         const startupGate = getSdkStartupGate();
         startupPermit = await startupGate.acquire({
           sessionId: session.id,
-          signal: abortController.signal,
+          signal: runAbortController.signal,
         });
         if (startupPermit.queuedBehind > 0) {
           logger.info(
@@ -763,7 +801,7 @@ export class QueryRunner {
         }
       }
       if (
-        abortController.signal.aborted ||
+        runAbortController.signal.aborted ||
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration
       ) {
@@ -826,8 +864,8 @@ export class QueryRunner {
                 .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
           );
 
-          if (!abortController.signal.aborted) {
-            abortController.abort();
+          if (runAbortController && !runAbortController.signal.aborted) {
+            runAbortController.abort();
           }
         }
       }, STARTUP_TIMEOUT_MS);
@@ -843,7 +881,10 @@ export class QueryRunner {
 
       let messageCount = 0;
 
-      for await (const message of this.createAbortableQuery(queryObject, abortController.signal)) {
+      for await (const message of this.createAbortableQuery(
+        queryObject,
+        runAbortController.signal
+      )) {
         if (startupTimeoutReached && messageCount === 0) {
           throw new Error('SDK startup timeout - query aborted');
         }
@@ -905,16 +946,8 @@ export class QueryRunner {
 
       releaseStartupPermit('query_error');
 
-      if (this.ctx.isCleaningUp()) {
-        return;
-      }
-
-      if (this.ctx.getQueryGeneration() !== queryGeneration) {
-        return;
-      }
-
       const errorMessage = String(error);
-      const isAbortError = error instanceof Error && error.name === 'AbortError';
+      isAbortError = error instanceof Error && error.name === 'AbortError';
       const isQueryInterrupted =
         isAbortError ||
         stateManager.getState().status === 'interrupted' ||
@@ -928,6 +961,53 @@ export class QueryRunner {
       const isTransientConnectionError = TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) =>
         errorMessage.includes(substr)
       );
+
+      const providerId = session.config.provider as string | undefined;
+      const isProviderSession = providerId && providerId !== 'anthropic' && providerId !== 'glm';
+      const limitAssessment = assessLimitError({ rawText: errorMessage });
+      const retrySignal: QueryRetryErrorSignal = {
+        rawText: errorMessage,
+        errorName: error instanceof Error ? error.name : undefined,
+        isStartupTimeout,
+        isConversationNotFound,
+        isMessageNotFound,
+        isTransientConnectionError,
+        isRetryableProviderError: isRetryableProviderError(errorMessage),
+        isRateLimit: limitAssessment.isLimit,
+        rateLimitHint: limitAssessment.isLimit
+          ? {
+              resetAtMs: limitAssessment.resetAtMs,
+              kind: limitAssessment.kind,
+              billingTerminal: limitAssessment.billingTerminal,
+            }
+          : null,
+        apiValidationText: this.parseApiValidationError(error)?.text ?? null,
+      };
+      const retryEnv: QueryRetryEnvironment = {
+        attempt: retryAttempt,
+        maxProviderRetries,
+        providerFamily: isProviderSession ? 'provider' : 'anthropic',
+        hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration)?.length ?? 0) > 0,
+        hasQueuedPrompt: messageQueue.size() > 0,
+        lifecycle: {
+          processingStatus: stateManager.getState().status,
+          abortSignalAborted: this.ctx.queryAbortController?.signal.aborted === true,
+          isLimitRecoveryPending: this.ctx.isLimitRecoveryPending?.() ?? false,
+        },
+        isCleaningUp: this.ctx.isCleaningUp(),
+        isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
+        hasRateLimitHandoff: !!this.ctx.onRateLimitExhausted,
+        recoveryState,
+      };
+      const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
+      const queueRunningAtEntry = messageQueue.isRunning();
+
+      if (
+        routeDecision.route.action === 'superseded_noop' ||
+        routeDecision.route.action === 'cleanup_noop'
+      ) {
+        return;
+      }
 
       if (isStartupTimeout && session.sdkSessionId) {
         logger.error(
@@ -947,127 +1027,58 @@ export class QueryRunner {
         );
       }
 
-      const startupRetryFutile =
+      if (
         isStartupTimeout &&
         retryAttempt === 0 &&
-        !this.canRedeliverPromptOnStartupRetry(queryGeneration);
-      if (startupRetryFutile) {
+        !retryEnv.hasConsumedPrompt &&
+        !retryEnv.hasQueuedPrompt
+      ) {
         logger.warn(
           'SDK startup timeout with no consumed or queued prompt: skipping the one-shot ' +
             'retry — a fresh attempt could not deliver anything.'
         );
       }
 
-      if (
-        !startupRetryFutile &&
-        isStartupTimeout &&
-        retryAttempt === 0 &&
-        !this.ctx.isCleaningUp() &&
-        stateManager.getState().status !== 'interrupted'
-      ) {
+      if (routeDecision.route.action === 'startup_timeout_retry') {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
-        await stateManager.setIdle({ suppressDeliveryWaiters: true });
-
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-
-        this.ctx.terminateTrackedAgentProcesses?.();
-
-        if (this.ctx.queryObject) {
-          try {
-            this.ctx.queryObject.close();
-          } catch {}
-          this.ctx.queryObject = null;
-        }
-
-        const exitPromise = this.ctx.processExitedPromise;
-        if (exitPromise) {
-          await Promise.race([
-            exitPromise,
-            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-          ]);
-          if (this.ctx.processExitedPromise === exitPromise) {
-            this.ctx.resetProcessExitedPromise();
-          }
-        }
-
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-
-        if (
-          !messageQueue.isRunning() &&
-          !this.ctx.isCleaningUp() &&
-          stateManager.getState().status !== 'interrupted'
-        ) {
-          messageQueue.start();
-        }
-
-        const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
-        if (consumed.length > 0) {
-          logger.warn(
-            `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
-          );
-          for (let i = consumed.length - 1; i >= 0; i--) {
-            const message = consumed[i];
-            messageQueue
-              .enqueueWithId(message.uuid, message.content, false, { prepend: true })
-              .catch(() => {});
-          }
-          this._consumedUserMessages.delete(queryGeneration);
-          this._lastConsumedUserMessage = null;
-        }
-
-        try {
-          await this.displayErrorAsAssistantMessage(
+        return await this.runRetryTeardown(queryGeneration, {
+          nextAttempt: 1,
+          recoveryState,
+          idleFirst: true,
+          routeGuard: {
+            expectedAction: 'startup_timeout_retry',
+            retrySignal,
+            retryEnv,
+            queueRunningAtEntry,
+            abandonLabel: 'Startup-timeout retry',
+          },
+          terminateProcesses: true,
+          guardAfterExit: true,
+          restartQueueIfStopped: true,
+          requeueConsumedList: true,
+          noticeAfterTeardown:
             `⚠️ The AI session is slow to start — no response after ` +
-              `${Math.round(STARTUP_TIMEOUT_MS / 1000)}s. Retrying once…`,
-            { markAsError: false }
-          );
-        } catch {}
-
-        return await this.runQuery(queryGeneration, 1, recoveryState);
+            `${Math.round(STARTUP_TIMEOUT_MS / 1000)}s. Retrying once…`,
+        });
       }
-      if (isMessageNotFound && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
+      if (routeDecision.route.action === 'message_not_found_retry') {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
-        const staleStartupTimer = this.ctx.startupTimeoutTimer;
-        if (staleStartupTimer) {
-          clearTimeout(staleStartupTimer);
-          this.ctx.startupTimeoutTimer = null;
-        }
-        this.ctx.firstMessageReceived = false;
-        await stateManager.setIdle({ suppressDeliveryWaiters: true });
-
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-
-        this.ctx.terminateTrackedAgentProcesses?.();
-
-        if (this.ctx.queryObject) {
-          try {
-            this.ctx.queryObject.close();
-          } catch {}
-          this.ctx.queryObject = null;
-        }
-
-        const exitPromise = this.ctx.processExitedPromise;
-        if (exitPromise) {
-          await Promise.race([
-            exitPromise,
-            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-          ]);
-          if (this.ctx.processExitedPromise === exitPromise) {
-            this.ctx.resetProcessExitedPromise();
-          }
-        }
-
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-        return await this.runQuery(queryGeneration, 1, recoveryState);
+        return await this.runRetryTeardown(queryGeneration, {
+          nextAttempt: 1,
+          recoveryState,
+          resetStartupState: true,
+          idleFirst: true,
+          routeGuard: {
+            expectedAction: 'message_not_found_retry',
+            retrySignal,
+            retryEnv,
+            queueRunningAtEntry,
+            abandonLabel: 'Message-not-found retry',
+          },
+          terminateProcesses: true,
+          guardAfterExit: true,
+        });
       }
 
       if (
@@ -1078,52 +1089,15 @@ export class QueryRunner {
         stateManager.getState().status !== 'interrupted'
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
-        const staleStartupTimer = this.ctx.startupTimeoutTimer;
-        if (staleStartupTimer) {
-          clearTimeout(staleStartupTimer);
-          this.ctx.startupTimeoutTimer = null;
-        }
-        this.ctx.firstMessageReceived = false;
-        await stateManager.setIdle({ suppressDeliveryWaiters: true });
-
-        const lastMsg = this._lastConsumedUserMessage;
-        if (lastMsg) {
-          logger.warn(
-            `Re-enqueueing user message ${lastMsg.uuid} for transient connection error retry.`
-          );
-          messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-          this._lastConsumedUserMessage = null;
-          this._consumedUserMessages.delete(queryGeneration);
-        }
-
-        try {
-          await this.displayErrorAsAssistantMessage('⚠️ The connection was interrupted. Retrying…', {
-            markAsError: false,
-          });
-        } catch {}
-
-        if (this.ctx.queryObject) {
-          try {
-            this.ctx.queryObject.close();
-          } catch {}
-          this.ctx.queryObject = null;
-        }
-
-        const exitPromise = this.ctx.processExitedPromise;
-        if (exitPromise) {
-          await Promise.race([
-            exitPromise,
-            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-          ]);
-          if (this.ctx.processExitedPromise === exitPromise) {
-            this.ctx.resetProcessExitedPromise();
-          }
-        }
-
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-        return await this.runQuery(queryGeneration, 1, recoveryState);
+        return await this.runRetryTeardown(queryGeneration, {
+          nextAttempt: 1,
+          recoveryState,
+          resetStartupState: true,
+          idleFirst: true,
+          requeueLastConsumedFor: 'transient connection error retry',
+          notice: '⚠️ The connection was interrupted. Retrying…',
+          guardAfterExit: true,
+        });
       }
 
       if (
@@ -1137,204 +1111,62 @@ export class QueryRunner {
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
             `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
         );
-
-        const startupTimer = this.ctx.startupTimeoutTimer;
-        if (startupTimer) {
-          clearTimeout(startupTimer);
-          this.ctx.startupTimeoutTimer = null;
-        }
-
-        this.ctx.firstMessageReceived = false;
-
-        const retryMsg = this._lastConsumedUserMessage;
-        this._lastConsumedUserMessage = null;
-        this._consumedUserMessages.delete(queryGeneration);
-
-        try {
-          await this.displayErrorAsAssistantMessage(
+        return await this.runRetryTeardown(queryGeneration, {
+          nextAttempt: retryAttempt + 1,
+          recoveryState,
+          resetStartupState: true,
+          snapshotLastConsumed: true,
+          notice:
             `⚠️ The provider is temporarily unavailable. Retrying ` +
-              `(attempt ${retryAttempt + 1}/${maxProviderRetries})…`,
-            { markAsError: false }
-          );
-        } catch {}
-
-        if (this.ctx.queryObject) {
-          try {
-            this.ctx.queryObject.close();
-          } catch {}
-          this.ctx.queryObject = null;
-        }
-
-        const exitPromise = this.ctx.processExitedPromise;
-        if (exitPromise) {
-          await Promise.race([
-            exitPromise,
-            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-          ]);
-          if (this.ctx.processExitedPromise === exitPromise) {
-            this.ctx.resetProcessExitedPromise();
-          }
-        }
-
-        const envVarsToRestore = this.ctx.originalEnvVars;
-        if (Object.keys(envVarsToRestore).length > 0) {
-          const { getProviderService: getProviderServiceForRetry } = await import(
-            '../provider-service.ts'
-          );
-          getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
-          this.ctx.originalEnvVars = {};
-        }
-
-        await sleep(delayMs);
-
-        if (
-          this.ctx.isCleaningUp() ||
-          !messageQueue.isRunning() ||
-          this.ctx.getQueryGeneration() !== queryGeneration ||
-          stateManager.getState().status === 'interrupted' ||
-          this.ctx.queryAbortController?.signal.aborted === true
-        ) {
-          logger.warn(
-            'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
-          );
-          return;
-        }
-
-        if (retryMsg) {
-          logger.warn(
-            `Re-enqueueing user message ${retryMsg.uuid} for provider error retry ` +
-              `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
-          );
-          messageQueue.enqueueWithId(retryMsg.uuid, retryMsg.content).catch(() => {});
-          this._lastConsumedUserMessage = null;
-          this._consumedUserMessages.delete(queryGeneration);
-        }
-
-        return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
+            `(attempt ${retryAttempt + 1}/${maxProviderRetries})…`,
+          backoffMs: delayMs,
+          snapshotRequeueLabel: `provider error retry (attempt ${retryAttempt + 1}/${maxProviderRetries})`,
+        });
       }
 
       messageQueue.clear();
 
-      const isProviderRetryExhausted =
-        retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
-
       if (!isAbortError) {
-        const apiValidationError = this.parseApiValidationError(error);
-        if (apiValidationError) {
-          stateManager.beginTerminalIdle();
-          await this.displayErrorAsAssistantMessage(apiValidationError.text, {
-            markAsError: true,
+        const processingState = stateManager.getState();
+        let decision = routeDecision;
+
+        if (decision.route.action === 'rate_limit_handoff') {
+          const handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
+            errorMessage,
+            this._lastConsumedUserMessage,
+            retrySignal.rateLimitHint ?? undefined
+          ));
+          recoveryState.rateLimitCooldownScheduled = handoffAccepted;
+          decision = decideQueryRetry({
+            errorSignal: retrySignal,
+            env: {
+              ...retryEnv,
+              rateLimitHandoffResult: handoffAccepted ? 'accepted' : 'declined',
+            },
           });
+        } else if (decision.route.action === 'terminal') {
+          recoveryState.rateLimitCooldownScheduled = false;
         }
-        const apiErrorHandled = apiValidationError !== null;
 
-        if (!apiErrorHandled) {
-          let category = ErrorCategory.SYSTEM;
-          const providerId = session.config.provider as string | undefined;
+        const { route, finalizer } = decision;
 
-          const isProviderSession =
-            providerId && providerId !== 'anthropic' && providerId !== 'glm';
-
-          if (
-            isProviderSession &&
-            (errorMessage.includes('401') ||
-              errorMessage.includes('403') ||
-              errorMessage.includes('unauthorized') ||
-              errorMessage.includes('Unauthorized') ||
-              errorMessage.includes('token expired') ||
-              errorMessage.includes('token_expired') ||
-              errorMessage.includes('not authenticated') ||
-              errorMessage.includes('invalid_api_key'))
-          ) {
-            category = ErrorCategory.PROVIDER_AUTH_ERROR;
-          } else if (
-            isProviderSession &&
-            (errorMessage.includes('ECONNREFUSED') ||
-              errorMessage.includes('ENOTFOUND') ||
-              errorMessage.includes('EHOSTUNREACH') ||
-              errorMessage.includes('service unavailable') ||
-              errorMessage.includes('503') ||
-              errorMessage.includes('502'))
-          ) {
-            category = ErrorCategory.PROVIDER_UNAVAILABLE;
-          } else if (
-            errorMessage.includes('401') ||
-            errorMessage.includes('unauthorized') ||
-            errorMessage.includes('invalid_api_key')
-          ) {
-            category = ErrorCategory.AUTHENTICATION;
-          } else if (
-            errorMessage.includes('ECONNREFUSED') ||
-            errorMessage.includes('ENOTFOUND') ||
-            errorMessage.includes('EHOSTUNREACH') ||
-            isTransientConnectionError
-          ) {
-            category = ErrorCategory.CONNECTION;
-          } else if (
-            errorMessage.includes('429') ||
-            errorMessage.includes('rate limit') ||
-            errorMessage.includes('402') ||
-            errorMessage.toLowerCase().includes('no quota') ||
-            errorMessage.toLowerCase().includes('quota exceeded') ||
-            errorMessage.toLowerCase().includes('insufficient_quota')
-          ) {
-            category = ErrorCategory.RATE_LIMIT;
-          } else if (errorMessage.includes('timeout')) {
-            category = ErrorCategory.TIMEOUT;
-          } else if (errorMessage.includes('model_not_found')) {
-            category = ErrorCategory.MODEL;
-          } else if (
-            errorMessage.includes('cannot be run as root') ||
-            errorMessage.includes('dangerously-skip-permissions') ||
-            errorMessage.includes('permission') ||
-            errorMessage.includes('Exit code: 1')
-          ) {
-            category = ErrorCategory.PERMISSION;
-          }
-
-          const processingState = stateManager.getState();
-
-          const limitAssessment = assessLimitError({ rawText: errorMessage });
-          recoveryState.rateLimitCooldownScheduled =
-            limitAssessment.isLimit &&
-            !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
-              resetAtMs: limitAssessment.resetAtMs,
-              kind: limitAssessment.kind,
-              billingTerminal: limitAssessment.billingTerminal,
-            }));
-          if (!recoveryState.rateLimitCooldownScheduled) {
+        if (route.action === 'api_validation') {
+          if (!finalizer.skipBeginTerminalIdle) {
             stateManager.beginTerminalIdle();
           }
-
-          const startupTimeoutUserMessage = isStartupTimeout
-            ? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-              `The SDK subprocess did not emit its first message within the startup window ` +
-              `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
-              `Try: resending your message, or increase the timeout with ` +
-              `HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
-            : isConversationNotFound
-              ? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-                `The previous session transcript was not found — this can happen after a provider switch, ` +
-                `workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
-                `Your message history in HyperNeo is preserved; only the AI context window is reset. ` +
-                `Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
-              : isMessageNotFound
-                ? `The AI session could not resume from the previous rewind point ` +
-                  `(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
-                  `contains that message UUID, likely after SDK compaction. Your message history in HyperNeo ` +
-                  `is preserved; only the AI context window is reset. Please resend your message.`
-                : isProviderRetryExhausted
-                  ? `The provider is temporarily unavailable. The request was retried ` +
-                    `${maxProviderRetries} time(s) without success. Please try again later.`
-                  : isTransientConnectionError && retryAttempt > 0
-                    ? 'Could not get a response. The connection was interrupted. Please try again.'
-                    : undefined;
-          if (!recoveryState.rateLimitCooldownScheduled) {
+          await this.displayErrorAsAssistantMessage(route.text, {
+            markAsError: true,
+          });
+        } else if (route.action === 'terminal') {
+          if (!finalizer.skipBeginTerminalIdle) {
+            stateManager.beginTerminalIdle();
+          }
+          if (!finalizer.skipErrorManager) {
             await errorManager.handleError(
               session.id,
               error as Error,
-              category,
-              startupTimeoutUserMessage,
+              route.category,
+              this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
               processingState,
               {
                 errorMessage,
@@ -1347,7 +1179,8 @@ export class QueryRunner {
             );
           }
         }
-        if (!recoveryState.rateLimitCooldownScheduled) {
+
+        if (!finalizer.skipCatchIdle) {
           await stateManager.setIdle();
         }
       }
@@ -1363,9 +1196,10 @@ export class QueryRunner {
           this.ctx.startupTimeoutTimer = null;
         }
 
-        const abortController = this.ctx.queryAbortController;
-        if (abortController) {
-          abortController.abort();
+        if (runAbortController) {
+          runAbortController.abort();
+        } else if (this.ctx.queryAbortController) {
+          this.ctx.queryAbortController.abort();
           this.ctx.queryAbortController = null;
         }
 
@@ -1391,12 +1225,19 @@ export class QueryRunner {
         }
 
         if (
+          this.ctx.getQueryGeneration() === queryGeneration &&
+          this.ctx.queryAbortController === runAbortController &&
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
           !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
-          stateManager.getState().status !== 'rate_limit_cooldown'
+          stateManager.getState().status !== 'rate_limit_cooldown' &&
+          !(isAbortError && stateManager.getState().status === 'interrupted')
         ) {
           await stateManager.setIdle();
+        }
+
+        if (this.ctx.queryAbortController === runAbortController) {
+          this.ctx.queryAbortController = null;
         }
 
         this._lastConsumedUserMessage = null;
@@ -1531,9 +1372,265 @@ export class QueryRunner {
     );
   }
 
-  private canRedeliverPromptOnStartupRetry(queryGeneration: number): boolean {
-    const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
-    return consumed.length > 0 || this.ctx.messageQueue.size() > 0;
+  private async runRetryTeardown(
+    queryGeneration: number,
+    options: RetryTeardownOptions
+  ): Promise<void> {
+    const { messageQueue, stateManager, logger } = this.ctx;
+
+    const abandon = (point: string): boolean => {
+      const routeGuard = options.routeGuard;
+      if (!routeGuard) {
+        if (this.isRunOwnershipLive(queryGeneration)) return false;
+        this.retrySupersededByReplacement(queryGeneration);
+        return true;
+      }
+      if (this.retrySupersededByReplacement(queryGeneration)) return true;
+      if (
+        this.retryRouteChanged(
+          routeGuard.expectedAction,
+          routeGuard.retrySignal,
+          routeGuard.retryEnv,
+          queryGeneration,
+          routeGuard.queueRunningAtEntry
+        )
+      ) {
+        logger.warn(
+          `${routeGuard.abandonLabel} abandoned: session ownership changed across the ${point}.`
+        );
+        return true;
+      }
+      return false;
+    };
+
+    const resetStartupState = (state: RetryTeardownState): RetryTeardownState => {
+      const staleStartupTimer = this.ctx.startupTimeoutTimer;
+      if (staleStartupTimer) {
+        clearTimeout(staleStartupTimer);
+        this.ctx.startupTimeoutTimer = null;
+      }
+      this.ctx.firstMessageReceived = false;
+      return state;
+    };
+
+    const idleSuppressWaiters = async (): Promise<void> => {
+      await stateManager.setIdle({ suppressDeliveryWaiters: true });
+    };
+
+    const terminateProcesses = (state: RetryTeardownState): RetryTeardownState => {
+      this.ctx.terminateTrackedAgentProcesses?.();
+      return state;
+    };
+
+    const requeueLastConsumed = (state: RetryTeardownState): RetryTeardownState => {
+      const lastMsg = this._lastConsumedUserMessage;
+      if (lastMsg && options.requeueLastConsumedFor) {
+        logger.warn(
+          `Re-enqueueing user message ${lastMsg.uuid} for ${options.requeueLastConsumedFor}.`
+        );
+        messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+        this._lastConsumedUserMessage = null;
+        this._consumedUserMessages.delete(queryGeneration);
+      }
+      return state;
+    };
+
+    const snapshotLastConsumed = (state: RetryTeardownState): RetryTeardownState => {
+      const snapshotMsg = this._lastConsumedUserMessage;
+      this._lastConsumedUserMessage = null;
+      this._consumedUserMessages.delete(queryGeneration);
+      return { ...state, snapshotMsg };
+    };
+
+    const displayRetryNotice = async (): Promise<void> => {
+      if (options.notice === undefined) return;
+      try {
+        await this.displayErrorAsAssistantMessage(options.notice, { markAsError: false });
+      } catch {}
+    };
+
+    const closeQueryObject = (state: RetryTeardownState): RetryTeardownState => {
+      if (this.ctx.queryObject) {
+        try {
+          this.ctx.queryObject.close();
+        } catch {}
+        this.ctx.queryObject = null;
+      }
+      return state;
+    };
+
+    const awaitProcessExit = async (): Promise<void> => {
+      const exitPromise = this.ctx.processExitedPromise;
+      if (!exitPromise) return;
+      await Promise.race([
+        exitPromise,
+        new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+      ]);
+      if (this.ctx.processExitedPromise === exitPromise) {
+        this.ctx.resetProcessExitedPromise();
+      }
+    };
+
+    const restartStoppedQueue = (state: RetryTeardownState): RetryTeardownState => {
+      if (
+        !messageQueue.isRunning() &&
+        !this.ctx.isCleaningUp() &&
+        stateManager.getState().status !== 'interrupted'
+      ) {
+        messageQueue.start();
+      }
+      return state;
+    };
+
+    const requeueConsumedList = (state: RetryTeardownState): RetryTeardownState => {
+      const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
+      if (consumed.length > 0) {
+        logger.warn(
+          `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
+        );
+        for (let i = consumed.length - 1; i >= 0; i--) {
+          const message = consumed[i];
+          messageQueue
+            .enqueueWithId(message.uuid, message.content, false, { prepend: true })
+            .catch(() => {});
+        }
+        this._consumedUserMessages.delete(queryGeneration);
+        this._lastConsumedUserMessage = null;
+      }
+      return state;
+    };
+
+    const displayPostTeardownNotice = async (): Promise<void> => {
+      if (options.noticeAfterTeardown === undefined) return;
+      try {
+        await this.displayErrorAsAssistantMessage(options.noticeAfterTeardown, {
+          markAsError: false,
+        });
+      } catch {}
+    };
+
+    const restoreEnvAndBackoff = async (): Promise<void> => {
+      const envVarsToRestore = this.ctx.originalEnvVars;
+      if (Object.keys(envVarsToRestore).length > 0) {
+        const { getProviderService: getProviderServiceForRetry } = await import(
+          '../provider-service.ts'
+        );
+        getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
+        this.ctx.originalEnvVars = {};
+      }
+      if (options.backoffMs !== undefined) {
+        await sleep(options.backoffMs);
+      }
+    };
+
+    const requeueSnapshotted = (state: RetryTeardownState): RetryTeardownState => {
+      if (state.snapshotMsg && options.snapshotRequeueLabel) {
+        logger.warn(
+          `Re-enqueueing user message ${state.snapshotMsg.uuid} for ${options.snapshotRequeueLabel}.`
+        );
+        messageQueue
+          .enqueueWithId(state.snapshotMsg.uuid, state.snapshotMsg.content)
+          .catch(() => {});
+        this._lastConsumedUserMessage = null;
+        this._consumedUserMessages.delete(queryGeneration);
+      }
+      return state;
+    };
+
+    const recurseNextAttempt = async (): Promise<void> => {
+      await this.runQuery(queryGeneration, options.nextAttempt, options.recoveryState);
+    };
+
+    const noticeOrRequeueBeforeTeardown =
+      options.notice !== undefined ||
+      options.requeueLastConsumedFor !== undefined ||
+      options.snapshotLastConsumed === true;
+    const deps: Record<string, ((state: RetryTeardownState) => unknown) | undefined> = {
+      resetStartupState: options.resetStartupState ? resetStartupState : undefined,
+      idleSuppressWaiters: options.idleFirst ? idleSuppressWaiters : undefined,
+      idleAwaitAbandoned: () => abandon('idle await'),
+      terminateProcesses: options.terminateProcesses ? terminateProcesses : undefined,
+      requeueLastConsumed: options.requeueLastConsumedFor ? requeueLastConsumed : undefined,
+      snapshotLastConsumed: options.snapshotLastConsumed ? snapshotLastConsumed : undefined,
+      displayRetryNotice: options.notice !== undefined ? displayRetryNotice : undefined,
+      noticeAbandoned: noticeOrRequeueBeforeTeardown ? () => abandon('publication') : undefined,
+      exitAwaitAbandoned: options.guardAfterExit ? () => abandon('exit await') : undefined,
+      restartStoppedQueue: options.restartQueueIfStopped ? restartStoppedQueue : undefined,
+      requeueConsumedList: options.requeueConsumedList ? requeueConsumedList : undefined,
+      displayPostTeardownNotice:
+        options.noticeAfterTeardown !== undefined ? displayPostTeardownNotice : undefined,
+      publicationAbandoned:
+        options.noticeAfterTeardown !== undefined ? () => abandon('publication') : undefined,
+      restoreEnvAndBackoff: options.backoffMs !== undefined ? restoreEnvAndBackoff : undefined,
+      backoffAbandoned:
+        options.backoffMs !== undefined
+          ? () => {
+              if (this.isRunOwnershipLive(queryGeneration)) return false;
+              this.retrySupersededByReplacement(queryGeneration);
+              logger.warn(
+                'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
+              );
+              return true;
+            }
+          : undefined,
+      requeueSnapshotted: options.snapshotLastConsumed ? requeueSnapshotted : undefined,
+    };
+
+    const runRetryTeardownPipeline = (superpipe(deps)('query-retry-teardown') as PipelineAPI)
+      .input(['state'])
+      .pipe('?resetStartupState', 'state', 'state')
+      .pipe('?idleSuppressWaiters', 'state')
+      .pipe('!idleAwaitAbandoned', 'state')
+      .pipe('?terminateProcesses', 'state', 'state')
+      .pipe('?requeueLastConsumed', 'state', 'state')
+      .pipe('?snapshotLastConsumed', 'state', 'state')
+      .pipe('?displayRetryNotice', 'state')
+      .pipe('!?noticeAbandoned', 'state')
+      .pipe(closeQueryObject, 'state', 'state')
+      .pipe(awaitProcessExit, 'state')
+      .pipe('!?exitAwaitAbandoned', 'state')
+      .pipe('?restartStoppedQueue', 'state', 'state')
+      .pipe('?requeueConsumedList', 'state', 'state')
+      .pipe('?displayPostTeardownNotice', 'state')
+      .pipe('!?publicationAbandoned', 'state')
+      .pipe('?restoreEnvAndBackoff', 'state')
+      .pipe('!?backoffAbandoned', 'state')
+      .pipe('?requeueSnapshotted', 'state', 'state')
+      .pipe(recurseNextAttempt, 'state')
+      .endAsync();
+
+    await (runRetryTeardownPipeline as (state: RetryTeardownState) => Promise<void>)({
+      snapshotMsg: null,
+    });
+  }
+
+  private retryRouteChanged(
+    expectedAction: QueryRetryRoute['action'],
+    errorSignal: QueryRetryErrorSignal,
+    env: QueryRetryEnvironment,
+    queryGeneration: number,
+    queueRunningAtEntry: boolean
+  ): boolean {
+    const queueRunning = this.ctx.messageQueue.isRunning();
+    const abortAborted = this.ctx.queryAbortController?.signal.aborted === true;
+    if (queueRunningAtEntry && !queueRunning) return true;
+    if (env.lifecycle.abortSignalAborted && !abortAborted) return true;
+    const resnapshotted = decideQueryRetry({
+      errorSignal,
+      env: {
+        ...env,
+        hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration) ?? []).length > 0,
+        hasQueuedPrompt: this.ctx.messageQueue.size() > 0,
+        isCleaningUp: this.ctx.isCleaningUp(),
+        isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
+        lifecycle: {
+          ...env.lifecycle,
+          processingStatus: this.ctx.stateManager.getState().status,
+          abortSignalAborted: abortAborted,
+        },
+      },
+    });
+    return resnapshotted.route.action !== expectedAction;
   }
 
   private retrySupersededByReplacement(queryGeneration: number): boolean {
@@ -1541,6 +1638,16 @@ export class QueryRunner {
     this.ctx.logger.warn('Auto-retry abandoned: a replacement query owns the session.');
     this._consumedUserMessages.delete(queryGeneration);
     return true;
+  }
+
+  private isRunOwnershipLive(queryGeneration: number): boolean {
+    return (
+      this.ctx.getQueryGeneration() === queryGeneration &&
+      !this.ctx.isCleaningUp() &&
+      this.ctx.stateManager.getState().status !== 'interrupted' &&
+      this.ctx.queryAbortController?.signal.aborted !== true &&
+      this.ctx.messageQueue.isRunning()
+    );
   }
 
   async *createMessageGeneratorWrapper(queryGeneration: number) {
@@ -1700,6 +1807,49 @@ export class QueryRunner {
     } catch {}
 
     return null;
+  }
+
+  private terminalUserMessageFor(
+    messageHint: string | undefined,
+    maxProviderRetries: number
+  ): string | undefined {
+    const { session } = this.ctx;
+    if (messageHint === 'startup_timeout') {
+      return (
+        `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+        `The SDK subprocess did not emit its first message within the startup window ` +
+        `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
+        `Try: resending your message, or increase the timeout with ` +
+        `HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+      );
+    }
+    if (messageHint === 'conversation_not_found') {
+      return (
+        `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+        `The previous session transcript was not found — this can happen after a provider switch, ` +
+        `workspace path change, or if the ~/.claude/projects/ directory was cleaned up. ` +
+        `Your message history in HyperNeo is preserved; only the AI context window is reset. ` +
+        `Please resend your message — you will be asked to choose whether to start a fresh session or keep the existing context.`
+      );
+    }
+    if (messageHint === 'message_not_found') {
+      return (
+        `The AI session could not resume from the previous rewind point ` +
+        `(workspace: ${session.workspacePath ?? 'unbound'}). The Claude SDK transcript no longer ` +
+        `contains that message UUID, likely after SDK compaction. Your message history in HyperNeo ` +
+        `is preserved; only the AI context window is reset. Please resend your message.`
+      );
+    }
+    if (messageHint === 'provider_exhausted') {
+      return (
+        `The provider is temporarily unavailable. The request was retried ` +
+        `${maxProviderRetries} time(s) without success. Please try again later.`
+      );
+    }
+    if (messageHint === 'transient_exhausted') {
+      return 'Could not get a response. The connection was interrupted. Please try again.';
+    }
+    return undefined;
   }
 
   async displayErrorAsAssistantMessage(

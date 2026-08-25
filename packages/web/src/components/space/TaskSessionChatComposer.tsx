@@ -269,7 +269,7 @@ export function TaskSessionChatComposer({
         isOpen={toolsModalOpen}
         onClose={() => setToolsModalOpen(false)}
         sessionId={targetSessionId}
-        agentLabel={selectedTarget?.label ?? 'Agent'}
+        agentLabel={selectedTarget?.label ?? ''}
       />
     </div>
   );

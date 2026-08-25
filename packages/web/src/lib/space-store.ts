@@ -20,6 +20,7 @@ import type {
   SpaceGoal,
   SpaceGoalEvent,
   SpaceGoalListParams,
+  SpaceGoalOwnerResolution,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
   SpaceLongHorizonAgentReminder,
@@ -96,6 +97,9 @@ export interface QueueHealthCounters {
   staleSessionSkips: number;
   pausedSpaceSkips: number;
   cooldownSkips: number;
+  directSteerEnqueued: number;
+  directSteerSuppressedByBufferCap: number;
+  directSteerEnqueuedByClass: Record<string, number>;
 }
 
 export interface QueueHealthGauges {
@@ -212,6 +216,8 @@ class SpaceStore {
   readonly goals = signal<SpaceGoal[]>([]);
 
   readonly goalEvents = signal<Map<string, SpaceGoalEvent[]>>(new Map());
+
+  readonly goalOwners = signal<Map<string, SpaceGoalOwnerResolution>>(new Map());
 
   readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
@@ -562,6 +568,7 @@ class SpaceStore {
     this.schedules.value = [];
     this.goals.value = [];
     this.goalEvents.value = new Map();
+    this.goalOwners.value = new Map();
     this.clearWorkflowDetailCache();
     this.workflowVersions.value = new Map();
     this.disposeSpaceSessionsSubscription();
@@ -803,6 +810,17 @@ class SpaceStore {
       }
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentDeleted);
+
+    const unsubGoalOwnerChanged = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      goalId: string;
+    }>('spaceGoal.ownerChanged', (event) => {
+      if (event.spaceId === spaceId) {
+        void this.fetchGoalOwner(event.goalId).catch(() => {});
+      }
+    });
+    this.cleanupFunctions.push(unsubGoalOwnerChanged);
 
     const unsubWorkflowCreated = hub.onEvent<{
       sessionId: string;
@@ -2660,6 +2678,55 @@ class SpaceStore {
       this.goalEvents.value = new Map(this.goalEvents.value).set(goalId, events ?? []);
     }
     return events ?? [];
+  }
+
+  private upsertGoalOwner(goalId: string, owner: SpaceGoalOwnerResolution): void {
+    this.goalOwners.value = new Map(this.goalOwners.value).set(goalId, owner);
+  }
+
+  async fetchGoalOwner(goalId: string): Promise<SpaceGoalOwnerResolution | null> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { owner } = await hub.request<{ owner: SpaceGoalOwnerResolution }>('spaceGoal.getOwner', {
+      spaceId,
+      goalId,
+    });
+    if (owner && this.spaceId.value === spaceId) this.upsertGoalOwner(goalId, owner);
+    return owner ?? null;
+  }
+
+  async assignGoalOwner(goalId: string, agentId: string): Promise<SpaceGoalOwnerResolution> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { owner } = await hub.request<{ owner: SpaceGoalOwnerResolution }>(
+      'spaceGoal.assignOwner',
+      { spaceId, goalId, agentId }
+    );
+    if (owner && this.spaceId.value === spaceId) this.upsertGoalOwner(goalId, owner);
+    return owner;
+  }
+
+  async unassignGoalOwner(goalId: string): Promise<SpaceGoalOwnerResolution> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { owner } = await hub.request<{ owner: SpaceGoalOwnerResolution }>(
+      'spaceGoal.unassignOwner',
+      { spaceId, goalId }
+    );
+    if (owner && this.spaceId.value === spaceId) this.upsertGoalOwner(goalId, owner);
+    return owner;
   }
 
   private async runGoalAction(method: 'spaceGoal.pause' | 'spaceGoal.resume', goalId: string) {
