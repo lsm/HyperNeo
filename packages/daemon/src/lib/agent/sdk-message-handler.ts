@@ -1267,10 +1267,12 @@ export class SDKMessageHandler {
     const fence = this.pendingTerminalFence;
     const slotGeneration = this.pendingTerminalFenceGeneration;
     if (!fence) return;
+    const currentGeneration = this.ctx.getQueryGeneration?.() ?? null;
     if (
       options?.generation != null &&
       slotGeneration != null &&
-      slotGeneration !== options.generation
+      slotGeneration !== options.generation &&
+      slotGeneration === currentGeneration
     ) {
       return;
     }

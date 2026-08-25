@@ -84,7 +84,7 @@ const stages: ReadonlyArray<{
   { step: resetTurnGuardsStage },
   { step: publishErrorClearStage, ownershipGateAfter: true },
   { step: stopQueryStage, ownershipGateAfter: true },
-  { step: settleSuppressedIdleStage },
+  { step: settleSuppressedIdleStage, ownershipGateAfter: true },
   { step: repairSessionFileStage },
   { step: clearModelsCacheStage, ownershipGateAfter: true },
   { step: startStreamingStage },
