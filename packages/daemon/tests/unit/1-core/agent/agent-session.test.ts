@@ -6616,6 +6616,13 @@ describe('AgentSession', () => {
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-interrupted', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
+        expect(
+          (
+            agentSession as unknown as {
+              zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null;
+            }
+          ).zeroProgressDeliveryFailures
+        ).toBeNull();
       } finally {
         db.close();
       }

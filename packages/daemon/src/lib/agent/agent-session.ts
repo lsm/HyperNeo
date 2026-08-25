@@ -2218,6 +2218,7 @@ export class AgentSession
     const responseObserver = started.responseObserver;
     let kickoffAcknowledged = false;
     let kickoffDiedBeforeConsumption = false;
+    let kickoffAckInvalidated = false;
     try {
       if (started.acknowledgment) {
         const aborted = waitForDeliveryAbort(signal);
@@ -2253,12 +2254,15 @@ export class AgentSession
           kickoffDiedBeforeConsumption = true;
         }
         const kickoffStatus = this.stateManager.getState().status;
-        if (
+        const kickoffAcknowledgementValid =
           !kickoffDiedBeforeConsumption &&
           (kickoffStatus === 'processing' || kickoffStatus === 'idle') &&
           (!claimGuard || claimGuard()) &&
-          this.acknowledgedDeliveryStillOwned(messageUuid)
-        ) {
+          this.acknowledgedDeliveryStillOwned(messageUuid);
+        if (kickoffWinner === 'acknowledged' && !kickoffAcknowledgementValid) {
+          kickoffAckInvalidated = true;
+        }
+        if (kickoffAcknowledgementValid) {
           kickoffAcknowledged = true;
           this.zeroProgressDeliveryFailures = null;
           this.logger.debug(
@@ -2376,7 +2380,7 @@ export class AgentSession
         throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
       }
       if (completion.outcome === 'recoverable_error') {
-        if (!kickoffAcknowledged && !alreadyConsumed) {
+        if (!kickoffAcknowledged && !kickoffAckInvalidated && !alreadyConsumed) {
           const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
           if (terminal) throw terminal;
         }
