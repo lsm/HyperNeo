@@ -12,6 +12,7 @@ import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
+import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
@@ -2240,10 +2241,14 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('pins: transient arm re-enqueues lastConsumedUserMessage ahead of its post-await guard (unfenced)', async () => {
+    it('pins: transient arm resnapshot suppresses re-enqueue when superseded during setIdle', async () => {
       const consumedUuid = 'stale-uuid';
       const consumedContent = [{ type: 'text' as const, text: 'OLD' }];
       buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      const replacementMessage = {
+        uuid: 'replacement-uuid',
+        content: [{ type: 'text' as const, text: 'NEW' }],
+      };
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
@@ -2254,30 +2259,24 @@ describe('QueryRunner', () => {
       runner.start();
       await idle.waitCalled();
       ctx.incrementQueryGeneration();
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage =
+        replacementMessage;
       idle.release();
       await ctx.queryPromise?.catch(() => {});
 
       expect(setIdleSpy).toHaveBeenCalled();
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
-      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
-        'test-session-id',
-        expect.objectContaining({
-          type: 'assistant',
-          message: expect.objectContaining({
-            content: expect.arrayContaining([
-              expect.objectContaining({
-                text: expect.stringContaining('The connection was interrupted'),
-              }),
-            ]),
-          }),
-        })
-      );
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect(handleErrorSpy).not.toHaveBeenCalled();
       expect(clearSpy).not.toHaveBeenCalled();
       expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(
         (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
-      ).toBeNull();
+      ).toBe(replacementMessage);
+      expect(
+        (runner as unknown as { _consumedUserMessages: Map<number, unknown> })._consumedUserMessages
+          .size
+      ).toBe(0);
     });
 
     it('pins: message-not-found resume-pointer consumption is NOT an unfenced window (stale generation reaches it with no intervening await)', async () => {
@@ -2558,6 +2557,144 @@ describe('QueryRunner', () => {
       expect(consumeSpy).toHaveBeenCalledTimes(1);
       expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
       expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('provider/transient arm resnapshot and ownership checks (B3b)', () => {
+    let savedApiKey: string | undefined;
+    let savedBaseDelay: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      savedBaseDelay = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      mockSession.workspacePath = tmpdir();
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+      if (savedBaseDelay === undefined) {
+        delete process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+      } else {
+        process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = savedBaseDelay;
+      }
+    });
+
+    type RunnerPrivate = {
+      _lastConsumedUserMessage: { uuid: string; content: unknown[] } | null;
+      _consumedUserMessages: Map<number, Array<{ uuid: string; content: unknown[] }>>;
+      runQuery: (
+        queryGeneration: number,
+        retryAttempt: number,
+        recoveryState: { rateLimitCooldownScheduled: boolean }
+      ) => Promise<void>;
+    };
+
+    it('transient arm resnapshot suppresses re-enqueue when processing is interrupted during setIdle', async () => {
+      const consumedUuid = 'consumed-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'C' }];
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      getStateSpy.mockReturnValue({ status: 'processing' });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+      runnerPrivate._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+      runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+
+      let flip = true;
+      setIdleSpy.mockImplementation(async () => {
+        if (flip) {
+          flip = false;
+          getStateSpy.mockReturnValue({ status: 'interrupted' });
+        }
+      });
+
+      ctx.incrementQueryGeneration();
+      isRunningSpy.mockReturnValue(true);
+      await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
+    });
+
+    it('transient arm resnapshot suppresses close and recursion when superseded during displayErrorAsAssistantMessage', async () => {
+      const consumedUuid = 'consumed-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'C' }];
+      buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
+      const closeSpy = mock(() => {});
+      const ctx = createContext({
+        queryObject: { close: closeSpy } as unknown as QueryLike,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+      runnerPrivate._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+      runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+
+      const originalDisplay = runner.displayErrorAsAssistantMessage.bind(runner);
+      runner.displayErrorAsAssistantMessage = mock(
+        async (text: string, options?: { markAsError?: boolean }) => {
+          ctx.incrementQueryGeneration();
+          await originalDisplay(text, options);
+        }
+      );
+
+      ctx.incrementQueryGeneration();
+      isRunningSpy.mockReturnValue(true);
+      await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(ctx.queryObject).not.toBeNull();
+      expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
+    });
+
+    it('provider arm resnapshot suppresses close and re-enqueue when superseded during displayErrorAsAssistantMessage', async () => {
+      buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
+      const closeSpy = mock(() => {});
+      const ctx = createContext({
+        queryObject: { close: closeSpy } as unknown as QueryLike,
+      });
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as RunnerPrivate;
+      runnerPrivate._lastConsumedUserMessage = {
+        uuid: 'consumed-uuid',
+        content: [{ type: 'text' as const, text: 'C' }],
+      };
+      runnerPrivate._consumedUserMessages.set(1, [runnerPrivate._lastConsumedUserMessage]);
+      isRunningSpy.mockReturnValue(true);
+
+      const originalDisplay = runner.displayErrorAsAssistantMessage.bind(runner);
+      runner.displayErrorAsAssistantMessage = mock(
+        async (text: string, options?: { markAsError?: boolean }) => {
+          ctx.incrementQueryGeneration();
+          await originalDisplay(text, options);
+        }
+      );
+
+      ctx.incrementQueryGeneration();
+      await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(ctx.queryObject).not.toBeNull();
     });
   });
 

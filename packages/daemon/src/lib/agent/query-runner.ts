@@ -1200,6 +1200,11 @@ export class QueryRunner {
         this.ctx.firstMessageReceived = false;
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
+        if (!this.isRunOwnershipLive(queryGeneration)) {
+          this.retrySupersededByReplacement(queryGeneration);
+          return;
+        }
+
         const lastMsg = this._lastConsumedUserMessage;
         if (lastMsg) {
           logger.warn(
@@ -1215,6 +1220,11 @@ export class QueryRunner {
             markAsError: false,
           });
         } catch {}
+
+        if (!this.isRunOwnershipLive(queryGeneration)) {
+          this.retrySupersededByReplacement(queryGeneration);
+          return;
+        }
 
         if (this.ctx.queryObject) {
           try {
@@ -1234,7 +1244,8 @@ export class QueryRunner {
           }
         }
 
-        if (this.retrySupersededByReplacement(queryGeneration)) {
+        if (!this.isRunOwnershipLive(queryGeneration)) {
+          this.retrySupersededByReplacement(queryGeneration);
           return;
         }
         return await this.runQuery(queryGeneration, 1, recoveryState);
@@ -1260,6 +1271,11 @@ export class QueryRunner {
 
         this.ctx.firstMessageReceived = false;
 
+        if (!this.isRunOwnershipLive(queryGeneration)) {
+          this.retrySupersededByReplacement(queryGeneration);
+          return;
+        }
+
         const retryMsg = this._lastConsumedUserMessage;
         this._lastConsumedUserMessage = null;
         this._consumedUserMessages.delete(queryGeneration);
@@ -1271,6 +1287,11 @@ export class QueryRunner {
             { markAsError: false }
           );
         } catch {}
+
+        if (!this.isRunOwnershipLive(queryGeneration)) {
+          this.retrySupersededByReplacement(queryGeneration);
+          return;
+        }
 
         if (this.ctx.queryObject) {
           try {
@@ -1301,13 +1322,8 @@ export class QueryRunner {
 
         await sleep(delayMs);
 
-        if (
-          this.ctx.isCleaningUp() ||
-          !messageQueue.isRunning() ||
-          this.ctx.getQueryGeneration() !== queryGeneration ||
-          stateManager.getState().status === 'interrupted' ||
-          this.ctx.queryAbortController?.signal.aborted === true
-        ) {
+        if (!this.isRunOwnershipLive(queryGeneration)) {
+          this.retrySupersededByReplacement(queryGeneration);
           logger.warn(
             'Provider error retry cancelled: session interrupted/restarted/cleaning up during backoff.'
           );
@@ -1601,6 +1617,16 @@ export class QueryRunner {
     this.ctx.logger.warn('Auto-retry abandoned: a replacement query owns the session.');
     this._consumedUserMessages.delete(queryGeneration);
     return true;
+  }
+
+  private isRunOwnershipLive(queryGeneration: number): boolean {
+    return (
+      this.ctx.getQueryGeneration() === queryGeneration &&
+      !this.ctx.isCleaningUp() &&
+      this.ctx.stateManager.getState().status !== 'interrupted' &&
+      this.ctx.queryAbortController?.signal.aborted !== true &&
+      this.ctx.messageQueue.isRunning()
+    );
   }
 
   async *createMessageGeneratorWrapper(queryGeneration: number) {
