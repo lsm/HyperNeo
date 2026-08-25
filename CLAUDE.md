@@ -34,7 +34,7 @@ Workspace aliases resolve directly to source: `@hyperneo/shared`, `@hyperneo/dae
 make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
 
 # Daemon under Deno (dual support) — same DB isolation rule; needs `bun install` first
-cd packages/daemon && DB_PATH=/tmp/hyperneo-deno.db bun run dev:deno
+cd packages/daemon && DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db bun run dev:deno
 
 # Quality
 bun run check        # lint, types, knip, session/schema/test-quality guards

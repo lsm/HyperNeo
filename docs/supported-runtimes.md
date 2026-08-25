@@ -19,10 +19,10 @@ Deno resolves workspace npm dependencies from the bun-installed `node_modules` (
 ```bash
 bun install
 cd packages/daemon
-DB_PATH=/tmp/hyperneo-deno.db deno run -A main.ts
+DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db deno run -A main.ts
 ```
 
-- No unstable flags are needed: the PR3 codemod made every relative import an explicit `.ts` import, and the `@hyperneo/shared` exports map is Deno-strict.
+- No unstable flags are needed: the PR3 codemod made every extensionless relative import an explicit `.ts` import, the `@hyperneo/shared` exports map is Deno-strict, and Deno remaps the remaining `.js`-suffixed relative imports inside `src/**` to their `.ts` files via the discovered `packages/daemon/tsconfig.json` (files outside its `include` — e.g. `tests/**` — do not get that remapping and must use explicit `.ts` specifiers).
 - The same DB isolation rule as Bun applies — the daemon DB has a PID lock, so always pass a unique `DB_PATH` (per worktree / per run).
 - The port comes from `HYPERNEO_PORT` (default 9283).
 - There is no `/api/health` route; probe `GET /` (expect 200) or the `/ws` WebSocket handshake.
@@ -41,7 +41,7 @@ Bumps are deliberate, coordinated edits landing through a PR like any other chan
 
 Dual support is guarded in two places:
 
-1. **`deno-boot-smoke` job** (`.github/workflows/main.yml`) — boots the daemon under the pinned Deno via `scripts/deno-smoke.sh` and asserts the boot contract: HTTP 200 on `/`, the `/ws` WebSocket handshake, > 80 sqlite tables created by migrations, and graceful SIGTERM shutdown. It runs on every trigger regardless of the daemon/web path filters (docs-only PRs included). It is `continue-on-error` (non-blocking) until it has been green long enough to flip required.
+1. **`deno-boot-smoke` job** (`.github/workflows/main.yml`) — boots the daemon under the pinned Deno via `scripts/deno-smoke.sh` and asserts the boot contract: HTTP 200 on `/`, the `/ws` WebSocket handshake, > 80 sqlite tables created by migrations, and graceful SIGTERM shutdown. It runs on every trigger regardless of the daemon/web path filters (docs-only PRs included); the one exception is manual `run_e2e_only=true` workflow dispatches, which skip it via the job-level `if`. It is `continue-on-error` (non-blocking) until it has been green long enough to flip required.
 2. **Deno session-loop integration test** (`packages/daemon/tests/online/deno/session-loop.test.ts`) — a full mocked session loop against a Deno-booted daemon: session create with worktree, message send, assistant reply delivery. It is exempt from the online shard matrix (manual-only, needs Deno 2.9.x on PATH):
 
 ```bash
