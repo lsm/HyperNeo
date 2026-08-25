@@ -480,6 +480,61 @@ describe('ProcessingStateManager', () => {
       expect(endedA).toBe(true);
       expect(endedB).toBe(false);
     });
+
+    test('a stale beginTerminalIdle(owner) keeps the successor waiter and skips the stale callback', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      const ownerA = manager.admitDeliveryTurn();
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      manager.beginTerminalIdle(ownerA);
+      await manager.setIdle();
+
+      expect(resolvedB).toBe(false);
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      await manager.setIdle();
+      await waiterB.promise;
+    });
+
+    test('a suppressed reentrant fenced idle transfers its waiter to the enclosing drain', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      let releaseCallback!: () => void;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+
+      manager.beginTerminalIdle();
+      const settleA = manager.setIdle();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(typeof releaseCallback).toBe('function');
+
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+      manager.beginTerminalIdle();
+      void manager.setIdle();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(resolvedB).toBe(false);
+
+      releaseCallback();
+      await settleA;
+      await waiterA.promise;
+      await waiterB.promise;
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+      expect(manager.isTerminalIdlePending()).toBe(false);
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

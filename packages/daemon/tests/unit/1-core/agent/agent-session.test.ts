@@ -1050,6 +1050,36 @@ describe('AgentSession', () => {
       expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
+    it('an aborted delivery admission leaves the idle owner untouched (no phantom turn)', async () => {
+      const admitSpy = mock(() => ({}));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'enqueued' })),
+      }));
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      const before = agentSession.stateManager.getCurrentIdleOwner();
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-aborted',
+        'hello',
+        null,
+        false,
+        () => false
+      );
+
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(agentSession.stateManager.getCurrentIdleOwner()).toEqual(before);
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
     it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
