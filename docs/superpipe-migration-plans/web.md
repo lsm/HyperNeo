@@ -360,8 +360,10 @@ anywhere in this plan.
      correction: the cloud regex is `[1-9]\d{2,}b`, i.e. 100B+ only, so 2-digit
      sizes like `32b` fall through to plain `ollama`; also
      `qwen2.5:latest` → ollama; `gpt-oss:120b` vs `gpt-oss:mini-cloud`).
-  2. Migrate `inferProviderFromModelId` to gates + `decisionRun`
-     ('infer-model-provider'), wrapper maps sentinel → undefined.
+  2. Retain `inferProviderFromModelId` as an ORDINARY PURE HELPER with its
+     ordered rules intact (review correction: do NOT convert it to a
+     `decisionRun` — `stageInferProvider` calling a nested pipeline per model
+     would re-split the mapping across composition boundaries).
   3. Extract `classifyModelFamily` (currently inline) as an ordinary pure
      helper — NOT its own `decisionRun` (review correction); pin its table
      including the default `sonnet` and the `/` → openrouter tail rule.

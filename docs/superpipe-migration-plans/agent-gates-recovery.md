@@ -607,17 +607,20 @@ compensated. No site in this plan performs effects, so none uses it.
   valid one; no final decider; wrapper returns `ctx.decision ?? null`
   (semantics: `decisionRun` halts exactly when a strategy finds a valid
   reset, which *is* the current short-circuit). Cooldown gates:
-  `applyParseStage` (transform: `extractResetTimestamp` — call the wrapper,
-  not the gates, so the two pipelines stay decoupled), then
+  `applyParseStage` (transform: `extractResetTimestamp` as an ORDINARY PURE
+  HELPER over the inline parse gates — review correction: calling a
+  separately pipelined wrapper here recreates a nested pipeline for the
+  complete cooldown operation; keep reset parsing as an ordinary helper or
+  place its gates directly in this pipeline), then
   `applyParsedResetGate` (stamps the free-wait decision) and final
   `applyBackoffLadderGate` (ladder clamp + cap + jitter + floor).
 - **shell/effect wiring.** No shell changes: all consumers call the wrappers,
   which keep the exact signatures (`computeCooldown(errorMessage, count,
   now?, jitterFn?)`).
-- **step-by-step migration.** 1) Pipelines + wrappers in
-  `fallback-recovery.ts`; 2) everything else continues to compile unchanged
-  (same exports); 3) land before the `limit-error-assess` apply so stage 2
-  of that transform calls the finished wrapper.
+- **step-by-step migration.** 1) One combined cooldown pipeline + wrapper in
+  `fallback-recovery.ts` with reset parsing inline; 2) everything else
+  continues to compile unchanged (same exports); 3) land before the
+  `limit-error-assess` apply, which consumes the helper.
 - **tests.** Existing `fallback-recovery.test.ts` is the parity proof
   (strategy coverage, horizon rejection, ladder clamping, jitter bounds —
   pass `jitterFn` spies). Add halt rows: iso match prevents local-datetime

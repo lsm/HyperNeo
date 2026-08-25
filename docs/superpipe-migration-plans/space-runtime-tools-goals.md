@@ -12,9 +12,9 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/external-events/deferred-event-digest.ts:foldDeferredExternalEventsAtFlush` | Partition, build digest, idempotent save, supersede sources | `stagedRun` | Has three ordered DB effects. Idempotency must be preserved; failure mid-way can duplicate or orphan rows. |
 | `packages/daemon/src/lib/external-events/deferred-event-digest.ts:foldDeferredExternalEventOverflow` | Plan overflow (pure), then save envelope and supersede sources | `stagedRun` (with a `decide` stage that wraps `planDeferredExternalEventOverflow`) | Same staged-effect discipline as flush; planning is a pure branch. |
 | `packages/daemon/src/lib/space/runtime/post-approval-router.ts:PostApprovalRouter.route` | Long if-cascade: no route, done terminal, spawn, skip, already-routed, with DB and sub-session effects | `stagedRun` | Needs snapshot, decide branches, effect stages (terminal write, spawn, task update), and resnapshot after spawn. |
-| `packages/daemon/src/lib/space/tools/space-agent-tools.ts:send_message_to_task` | Large if-cascade with target parse, handle resolution, worker activation, inject/queue | `stagedRun` | Mixed read/decide/effect; activation is an awaitable effect that must be followed by resnapshot and conditional inject/queue. |
+| `packages/daemon/src/lib/space/tools/space-agent-tools.ts:send_message_to_task` | Large if-cascade with target parse, handle resolution, worker activation, inject/queue | ONE `deliver-task-message` pipeline — target-admission and delivery-mode gates as direct inline stages (review correction: no nested `decisionRun`s) | Mixed read/decide/effect; activation is an awaitable effect that must be followed by resnapshot and conditional inject/queue. |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:approve_pending_completion` | Validate caller, snapshot task, branch (approve/reject), effect status change + post-approval dispatch | `stagedRun` (shared with `spaceTask.approvePendingCompletion`) | Tool and RPC share the same state machine. The approve branch is an effect followed by resnapshot and a blocked-reason effect on dispatch failure. |
-| `packages/daemon/src/lib/space/tools/space-agent-tools.ts:review_goal_outcome` | Discovery or claim path; claim uses `claimOutcomeNotification` | `stagedRun` that reuses existing `claim-admission-gates.ts` `decisionRun` | Discovery is a snapshot; claim is snapshot → `decideClaimAdmission` → effect (`apply` + `updateStatus`) → halt. |
+| `packages/daemon/src/lib/space/tools/space-agent-tools.ts:review_goal_outcome` | Discovery or claim path; claim uses `claimOutcomeNotification` | Discovery is a snapshot stage; claim calls `goalService.claimOutcomeNotification` as ONE effect (its inner sync pipeline stays atomic inside `runAtomic`) → halt with its result. |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:get_task_detail` | Identifier/lookup/space check/return | `decisionRun` | Pure target-resolution and return; no effects. |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:list_task_members` | Identifier/lookup/space check/workflow run check/list executions | `decisionRun` (admission), shell reads executions | Pure admission, then a read-only list. Can share the target gate with `get_task_detail`. |
 | `packages/daemon/src/lib/space/tools/node-agent-tools.ts:get_task` | Same pattern as `get_task_detail` | `decisionRun` (shared `task-target-resolution` core) | Node-agent and Space-agent lookups should converge on one `decisionRun`. |
@@ -22,8 +22,8 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.update` | Large if-cascade around status transitions, dependency block, override validation | `stagedRun` or `decisionRun` + staged shell | The routing core `routeTaskUpdate` is already a pure function; this path should reuse/extend the existing `space-tool-pipeline.ts` `decisionRun` and add a staged shell for runtime effects. |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.approvePendingCompletion` | Same semantics as `approve_pending_completion` tool | `stagedRun` shared core | Unify with the tool path. |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.publish` | Same semantics as tool `publish_task` and `onPublishTask` | `stagedRun` or `decisionRun` + shell | `routePublishTask` already exists; unification is the main win. |
-| `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onTaskCompleted` | Snapshot task/goal/scope/evidence, threshold check, optional job enqueue | `decisionRun` (admission), shell enqueues | No mid-flow effects; the only effect is the final job queue push. |
-| `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onSelfNag` | Snapshot scope/goal/policy/cursor/evidence, decide whether to enqueue self-nag | `decisionRun` (admission), shell enqueues | Same pattern as `onTaskCompleted`. |
+| `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onTaskCompleted` | Snapshot task/goal/scope/evidence, threshold check, optional job enqueue | One mixed decision/effect pipeline — admission gates plus the `enqueue` effect stage (review correction: an admission-only pipeline with shell interpretation preserves the hand-rolled outer split) | The job queue push is a stage of the same pipeline. |
+| `packages/daemon/src/lib/space/goals/goal-automation-service.ts:onSelfNag` | Snapshot scope/goal/policy/cursor/evidence, decide whether to enqueue self-nag | One mixed decision/effect pipeline — admission gates plus the `enqueue` effect stage | Same pattern as `onTaskCompleted`. |
 | `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope` | List schedules, pause/update/create schedule records | Direct sync `superpipe` (`.end`) inside the optional `db` transaction (review correction: `stagedRun` is async-only) | Effects on `ScheduleService`; must commit atomically with the sync transaction. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification` | Inside `runAtomic`; snapshot notification/goal, `decideClaimAdmission`, `apply`, update status | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Atomic claim; effect stage is the goal update and notification status flip. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Most complex goal effect chain; needs gather/decide/effect stages. |
@@ -93,7 +93,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     steerDbId: string | null;
   }
   ```
-- **Pure core design**: Extract a `decideDirectSteerFlush` `decisionRun` for the pure gates:
+- **Pure core design**: The admission branches are DIRECT decide stages of this staged flow (review correction: no separately executed `decideDirectSteerFlush` `decisionRun` — describe only the inline gate group):
   - `sessionMissing`
   - `sessionNotProcessing`
   - `parentTaskLimited`
@@ -125,7 +125,12 @@ The repo already has several proven pipelines. Use these as the model for each s
      would NOT run here and the copied row would remain `deferred` alongside
      its original source rows.
   7. `effect` `save-steer-row` saves the steer message.
-  8. `effect` `enqueue-steer-delivery` calls `deliverMessage`. On throw, mark the steer row `failed` and trigger the passenger compensation.
+  8. `effect` `enqueue-steer-delivery` calls `deliverMessage`. On throw, mark
+     the steer row `failed`, PUBLISH its `messages.statusChanged` transition
+     (review correction round 15: the current code publishes the failed row;
+     step 11's publications are success-only and never reached here, so
+     without it LiveQuery/runtime subscribers will not observe the failed
+     row until a refresh), and trigger the passenger compensation.
   9. `effect` `consume-source-rows` updates source row statuses.
   10. `effect` `record-steer-metrics` calls `recordDirectSteerEnqueued()` and
       `recordDirectSteerEnqueuedClass(...)` for every steered class (review
@@ -206,7 +211,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     startedAt: number | null;
   }
   ```
-- **Pure core design**: Extract a `decidePostApprovalRoute` `decisionRun` with branches: `notApproved`, `noRoutes`, `alreadyRouted`, `missingWorkflow`, `emptyInstructions`, `proceed`. Review correction: `multiRoutes` is NOT a decision branch — the current router WARNS and then continues with the FIRST route; a terminal `multiRoutes` decision would halt the pipeline before `proceed`. Record it as a nonterminal side annotation (`warnings` array) stamped before the decide stage, and `proceed` carries `routes[0]`.
+- **Pure core design**: Routing branches are DIRECT decide stages of this staged flow (review correction: do not extract `decidePostApprovalRoute` as a separate `decisionRun`) with branches: `notApproved`, `noRoutes`, `alreadyRouted`, `missingWorkflow`, `emptyInstructions`, `proceed`. Review correction: `multiRoutes` is NOT a decision branch — the current router WARNS and then continues with the FIRST route; a terminal `multiRoutes` decision would halt the pipeline before `proceed`. Record it as a nonterminal side annotation (`warnings` array) stamped before the decide stage, and `proceed` carries `routes[0]`.
 - **Shell/effect wiring**: The `PostApprovalRouter` shell calls `stagedRun('post-approval-route', ...)` with `deps`. Effects call `resolveCompletionOutcome`, `taskRepo.updateTask`, `goalService.handleTaskTerminal`, `evolutionScopeService.captureCompletedTaskEvidence`, `spawner.spawnPostApprovalSubSession`, `clearPendingCompletionState`. The final `halt` returns `PostApprovalRouteResult`.
 - **Step-by-step migration**:
   1. `snapshot` gathers task (fresh), workflow, routes, liveness.
@@ -312,9 +317,9 @@ The repo already has several proven pipelines. Use these as the model for each s
   it with a reply-routing parity test. Other effects:
   `taskRepo.getTask`, `taskRepo.getTaskByNumber`, `nodeExecutionRepo.listByWorkflowRun`, `workflowRunRepo.getRun`, `resolveHandleForTaskRouting`, `translateTaskMessageTarget`, `activateNode`, `taskAgentManager.injectSubSessionMessage`, `pendingMessageQueue.enqueue`. `auditing` and `jsonResult` mapping stay in the tool shell.
 - **Step-by-step migration**:
-  1. Move the target-resolution/admission block into a `decideTaskMessageTarget` `decisionRun`.
-  2. Move the target parse and execution resolution into a `snapshot` stage.
-  3. `decide` `delivery-mode` runs the second `decisionRun`.
+  1. Target-resolution/admission gates become DIRECT stages of the single `deliver-task-message` pipeline (review correction: no separate `decideTaskMessageTarget` runner).
+  2. The target parse and execution resolution run in the pipeline's snapshot stages.
+  3. Delivery-mode gates are DIRECT decide stages of the same pipeline (no second `decisionRun`).
   4. Guarded `effect` branches:
      - `deliverToSpaceAgent`: call `SpaceDeliveryFacade.routeMessage`.
      - `injectLive`: `taskAgentManager.injectSubSessionMessage`. Review
@@ -351,7 +356,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     dispatchErr?: unknown;
   }
   ```
-- **Pure core design**: `decideApprovePendingCompletion` `decisionRun` with branches: `unauthorized`, `notFound`, `spaceMismatch`, `notPending`, `notReview`, `approve`, `reject`.
+- **Pure core design**: Authorization (`unauthorized`), task-state (`notFound`, `spaceMismatch`, `notPending`, `notReview`), and approve/reject branches are DIRECT decide stages of the shared `approve-pending-completion` pipeline (review correction: delegating them to a separately composed `decideApprovePendingCompletion` runner splits one approval/rejection operation across two pipelines), so the subsequent status, dispatch, and blocked-reason effect stages remain part of the same composition.
 - **Shell/effect wiring**:
   - Tool shell: validates `callerRole === 'coordinator' | 'legacy_task_agent'`, sets `callerMayApprove`, runs the pipeline, maps to `jsonResult`.
   - RPC shell: sets `callerMayApprove = true`, runs the pipeline, returns the final task.
@@ -515,7 +520,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/tools/task-update-routing-pipeline.ts` exporting `decideTaskUpdate` as a `decisionRun`.
   2. Update `space-tool-pipeline.ts` to import and call `decideTaskUpdate` from there.
-  3. Rewrite `spaceTask.update` handler to first run `validateWorkflowModelOverrides` (as a `decisionRun`), then `decideTaskUpdate`, then a `stagedRun` or switch on `plan.action`.
+  3. Rewrite `spaceTask.update` handler as ONE direct RPC pipeline (review correction: workflow-override validation, task-update routing, and effects must not run as separate pipelines — retain the shared predicates as pure helpers or inline their gates into this single pipeline, then execute the effect flow within it; no two `decisionRun`s before a `stagedRun`), branching on `plan.action` inside.
   4. Unify dependency-block logic with the tool's `park_stopped` and `recover_transition` paths.
   5. Move `emitTaskUpdated` and `emitCascadedTasks` into the `stagedRun` `halt` or as a post-pipeline shell step.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts`. Add parity tests that feed the same `TaskUpdateRoutingInput` to both the tool and the RPC.
@@ -816,11 +821,11 @@ The repo already has several proven pipelines. Use these as the model for each s
   shared `canSend` authorization to every resolved target — authorization
   comes after resolution, so resolution must be nonterminal.
 - **Pure core design**: A direct `superpipe` pipeline (not a plain `decisionRun`), LINEAR with self-guarding stages and NO `!dep` halts between resolution stages (review correction round 4: `!hasTargets` after each resolution stage halts the WHOLE run once a known target is found, so `unauthorized`/`resolved` never execute and the shared `canSend` check is still bypassed). The resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) are nonterminal self-guarding no-ops once a resolution has matched — guarded by a separate `resolutionMatched` boolean, NOT by `targetAgentNames.length` (review correction: `target === []` and empty node groups deliberately resolve to `{ status: 'resolved', targetAgentNames: [] }`, which a length guard would misroute to `unknownTarget`; add empty-array and empty-node-group parity rows). Only the terminal stages set `decision`, in order: `noPermittedTargets` (review correction: `target === '*'` with an empty `permittedTargets` list is a DISTINCT public outcome with its own topology-specific explanation — it must not collapse into `unknownTarget`), `unknownTarget` (no resolution matched), `unauthorized` (`canSend` fails for any resolved target), `resolved` (carries the authorized `targetAgentNames`). Terminal stages match only when `decision === null`.
-- **Shell/effect wiring**: None; the result is consumed by `decideAgentMessageRouting` in `agent-message-routing-pipeline.ts`.
+- **Shell/effect wiring**: Review correction — do NOT create a separately imported `node-agent-target-resolution-pipeline.ts`; that splits target-resolution + authorization across two pipeline runs. Keep `resolveNodeAgentTargets`'s gates as pure helpers or move its resolution stages DIRECTLY into `agent-message-routing-pipeline.ts`, so the complete routing operation is one directly composed pipeline. Its result feeds `decideAgentMessageRouting`'s terminal stages in that same pipeline.
 - **Step-by-step migration**:
-  1. Create `packages/daemon/src/lib/space/runtime/node-agent-target-resolution-pipeline.ts`.
-  2. Replace `resolveNodeAgentTargets` with `runNodeAgentTargetResolution(input).decision`.
-  3. Update `agent-message-routing-pipeline.ts` to import the new pipeline.
+  1. Move `resolveNodeAgentTargets`'s resolution stages directly into `agent-message-routing-pipeline.ts` (or keep it as a pure helper consumed by a stage there) — no separate resolution pipeline file.
+  2. Replace the hand-rolled resolver with those stages feeding the authorization + terminal gates in the SAME pipeline.
+  3. Update tests accordingly.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts`.
 - **Risks/caveats**: The current `resolveNodeAgentTargets` is called in `agent-message-router.ts` and in tests. Change the export name to `decideNodeAgentTargets` and keep a deprecated re-export if needed for a transitional phase. The `decision` union should remain `ResolveNodeAgentTargetsOutcome`.
 

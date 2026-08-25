@@ -15,7 +15,7 @@ The target is **planning only**: no source code is changed by this document.
 | `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. |
 | `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called as a stage of the digest pipeline — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper (or direct stages) inside `build-external-event-digest-message`. |
 | `deferred-event-digest.ts:parseDeferredExternalEventText` | Raw superpipe transform with `!hasEntry` early exit | Try JSON, then rate-limit text. Each parse attempt either produces an entry and halts, or falls through. |
-| `event-tiers.ts:classifyExternalEventDirectSteer` | `decisionRun` | A short precedence chain over topic suffixes/state/conclusion/actor. First matching gate wins; fall-through returns `null`. |
+| `event-tiers.ts:classifyExternalEventDirectSteer` | Ordinary pure helper (review correction: called once per essence from `partitionDirectSteerEssences`, already a stage of `external-event-steer-admission` — converting to `decisionRun` adds a nested runner invocation per buffered event) | A short precedence chain over topic suffixes/state/conclusion/actor. First match wins; fall-through returns `null`. |
 | `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` | `decisionRun` | Validation gates each produce an `invalid` decision and halt; the final gate builds the `ok` pattern. The shell preserves the current throw-on-error contract. |
 | `github/github-event-extension.ts:validateRemoteHook` | `decisionRun` | Each validation rule produces an `invalid` decision and halts; success falls through to a `valid` decision. The shell preserves the `string \| null` contract. |
 
@@ -373,8 +373,10 @@ const formatEssencePipeline = superpipe<{ isDone: (ctx: FormatExternalEventEssen
   cap enforcement, and direct-steer buffering), plus `eventId`, `topic`,
   `eventType`, `action`, `actor`, `repo`, `prNumber`, `prUrl`, `externalUrl`,
   `occurredAt`, `body`. Pin it in the round-trip test.
-- `decideFieldSet` (or a `decisionRun` embedded as a stage) returns the list of
-  extra keys to copy for the current `eventType`.
+- `decideFieldSet` is an ORDINARY PURE HELPER returning the list of extra
+  keys to copy for the current `eventType` (review correction: not an
+  embedded `decisionRun` — field selection is only an internal stage of
+  this formatting operation; do not invoke another runner from the stage).
 - `copyEventTypeFields` applies that list and any topic-suffix special cases
   (`check_failed`, `suite_failed`).
 - `omitUndefinedAndStringify` runs `omitUndefinedExternalEventFields` and
@@ -752,7 +754,12 @@ Callers:
 
 #### Proposed combinator
 
-`decisionRun` with one gate per class and a fall-through to `null`.
+Ordinary pure helper (review correction): one ordered branch per class with
+a fall-through to `null`. It is invoked once per essence from
+`partitionDirectSteerEssences`, which is itself a stage of
+`external-event-steer-admission`; making this a `decisionRun` would split
+the admission operation across pipeline boundaries with a nested runner
+invocation per buffered event.
 
 #### Input/output snapshot design
 
