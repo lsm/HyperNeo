@@ -274,7 +274,7 @@ ADR sanctions pure-function admission gates from pilots 1/5).
   a concurrent delivery change between snapshot and apply fails that row
   instead of executing stale timestamp/turn/sequence instructions — the
   read → plan → CAS-within-transaction → apply contract of ADR Phase 4
-  (`docs/adr/0004-superpipe-decision-pipelines.md:701–703`). Today's
+  (`docs/adr/0004-superpipe-pipelines.md:701–703`). Today's
   unconditional `WHERE id IN` update keeps this window theoretical only
   because the connection is synchronous and single-threaded; the
   plan/interpret boundary must not widen it.

@@ -6,7 +6,7 @@ Date: 2026-08-22. Base: `origin/dev` @ `e87cadcd7`. Analysis only — no product
 code changed. Paths abbreviated: **D** = `packages/daemon/src`, **W** =
 `packages/web/src`. All line numbers verified against the base commit. Taxonomy
 references (P1–P8, `requestRun`, `decisionRun`) follow ADR 0004
-(`docs/adr/0004-superpipe-decision-pipelines.md`).
+(`docs/adr/0004-superpipe-pipelines.md`).
 
 Owner-reported pain investigated:
 

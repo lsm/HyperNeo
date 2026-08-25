@@ -5,7 +5,7 @@
 Status: Proposed (design pass — doc only, no production code in this change)
 Date: 2026-08-23
 Task: #1313. Sources: `docs/reports/providers-area-survey.md` chain C5 (PR #2722) and
-ADR 0004 Roadmap Phase 2 (`docs/adr/0004-superpipe-decision-pipelines.md`).
+ADR 0004 Roadmap Phase 2 (`docs/adr/0004-superpipe-pipelines.md`).
 Consumes: the limit-error classifier from #2661 (merged 2026-08-22, `667d53a1`) and
 the LLM classification tier from #2664 (merged 2026-08-23, `ae179427`); both are in
 `dev` at this branch's base, so the chain's sequencing precondition is satisfied.
@@ -2354,7 +2354,7 @@ by pre-existing suites):
 ## References
 
 - ADR 0004 Roadmap Phase 2 and pilot conventions:
-  `docs/adr/0004-superpipe-decision-pipelines.md` (Phase 2 entry; Decision items
+  `docs/adr/0004-superpipe-pipelines.md` (Phase 2 entry; Decision items
   1–7; pilots 4/7/9 for the gate/point-decision/caveat patterns).
 - Survey: `docs/reports/providers-area-survey.md` — C5 (ranked chains), area map
   row "Concurrency limits", GLM 429 causes.
