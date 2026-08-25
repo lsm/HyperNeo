@@ -722,6 +722,7 @@ export class SDKMessageHandler {
 
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
+    const invocationGeneration = this.ctx.getQueryGeneration?.() ?? null;
 
     this.ctx.bumpDeliveryTurnActivity?.();
     this.ctx.reportFirstDeliverySDKResponse?.(message.type);
@@ -912,6 +913,7 @@ export class SDKMessageHandler {
       if (observesArmedClearResult) {
         this.clearIdleSuppression();
       }
+      this.retirePendingTerminalFence({ generation: invocationGeneration });
       throw error;
     }
 
@@ -942,7 +944,7 @@ export class SDKMessageHandler {
 
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-        const terminalFence = this.consumePendingTerminalFence();
+        const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
         if (terminalFence) {
           await stateManager.setIdle({ fence: terminalFence });
         } else {
@@ -960,7 +962,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message, activeMessageId);
+      await this.handleResultMessage(message, activeMessageId, invocationGeneration);
     }
 
     if (isSDKAssistantMessage(message)) {
@@ -980,7 +982,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKSessionStateChangedMessage(message)) {
-      await this.handleSessionStateChangedMessage(message);
+      await this.handleSessionStateChangedMessage(message, invocationGeneration);
     }
 
     if (isSDKCompactBoundary(message)) {
@@ -1120,14 +1122,20 @@ export class SDKMessageHandler {
 
   private async handleResultMessage(
     message: SDKMessage,
-    activeMessageId: string | null
+    activeMessageId: string | null,
+    invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
     const confirmsArmedClear = this.matchesArmedClearResult(message);
 
     try {
-      await this.processResultMessage(message, activeMessageId, confirmsArmedClear);
+      await this.processResultMessage(
+        message,
+        activeMessageId,
+        confirmsArmedClear,
+        invocationGeneration
+      );
     } catch (error) {
       if (confirmsArmedClear) {
         this.clearIdleSuppression();
@@ -1139,7 +1147,8 @@ export class SDKMessageHandler {
   private async processResultMessage(
     message: SDKMessage,
     activeMessageId: string | null,
-    confirmsArmedClear: boolean
+    confirmsArmedClear: boolean,
+    invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
@@ -1177,7 +1186,7 @@ export class SDKMessageHandler {
       !this.usesSessionStateChangedTurnEnd &&
       !this.expectsSessionStateIdleAfterResult
     ) {
-      await this.finishTurn(this.lastResultWasSuccess !== false);
+      await this.finishTurn(this.lastResultWasSuccess !== false, invocationGeneration);
     }
     if (confirmsArmedClear) {
       if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
@@ -1237,33 +1246,43 @@ export class SDKMessageHandler {
     };
   }
 
-  retirePendingTerminalFence(): void {
+  retirePendingTerminalFence(options?: { generation?: number | null }): void {
     const fence = this.pendingTerminalFence;
+    const slotGeneration = this.pendingTerminalFenceGeneration;
+    if (!fence) return;
+    if (
+      options?.generation != null &&
+      slotGeneration != null &&
+      slotGeneration !== options.generation
+    ) {
+      return;
+    }
     this.pendingTerminalFence = null;
     this.pendingTerminalFenceGeneration = null;
-    if (fence) {
-      this.ctx.stateManager.cancelTerminalFence(fence);
-    }
+    this.ctx.stateManager.cancelTerminalFence(fence);
   }
 
-  private consumePendingTerminalFence(): IdleOwnerScope | null {
+  private consumePendingTerminalFence(invocationGeneration: number | null): IdleOwnerScope | null {
     const fence = this.pendingTerminalFence;
-    const generation = this.pendingTerminalFenceGeneration;
-    this.pendingTerminalFence = null;
-    this.pendingTerminalFenceGeneration = null;
+    const slotGeneration = this.pendingTerminalFenceGeneration;
     if (!fence) return null;
+    const currentGeneration = this.ctx.getQueryGeneration?.() ?? null;
     if (
-      generation !== null &&
-      this.ctx.getQueryGeneration &&
-      this.ctx.getQueryGeneration() !== generation
+      slotGeneration == null ||
+      (currentGeneration != null && slotGeneration !== currentGeneration) ||
+      (invocationGeneration != null && invocationGeneration !== currentGeneration)
     ) {
-      this.ctx.stateManager.cancelTerminalFence(fence);
       return null;
     }
+    this.pendingTerminalFence = null;
+    this.pendingTerminalFenceGeneration = null;
     return fence;
   }
 
-  private async finishTurn(allowQueueReplay = true): Promise<void> {
+  private async finishTurn(
+    allowQueueReplay = true,
+    invocationGeneration: number | null = null
+  ): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
     if (stateManager.getState().status === 'rate_limit_cooldown') {
@@ -1276,7 +1295,7 @@ export class SDKMessageHandler {
       return;
     }
 
-    const terminalFence = this.consumePendingTerminalFence();
+    const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
     if (terminalFence) {
       await stateManager.setIdle({ fence: terminalFence });
     } else {
@@ -1292,7 +1311,10 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleSessionStateChangedMessage(message: SDKMessage): Promise<void> {
+  private async handleSessionStateChangedMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     if (!isSDKSessionStateChangedMessage(message)) return;
 
     this.usesSessionStateChangedTurnEnd = true;
@@ -1300,7 +1322,7 @@ export class SDKMessageHandler {
       this.resetThinkingTokenTracking();
       const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
       if (clearTurnPending) {
-        const terminalFence = this.consumePendingTerminalFence();
+        const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
         if (terminalFence) {
           await this.ctx.stateManager.setIdle({
             suppressDeliveryWaiters: true,
@@ -1317,7 +1339,7 @@ export class SDKMessageHandler {
         }
       } else {
         const allowQueueReplay = this.lastResultWasSuccess !== false;
-        await this.finishTurn(allowQueueReplay);
+        await this.finishTurn(allowQueueReplay, invocationGeneration);
         this.usesSessionStateChangedTurnEnd = false;
         this.expectsSessionStateIdleAfterResult = false;
         this.lastResultWasSuccess = null;
