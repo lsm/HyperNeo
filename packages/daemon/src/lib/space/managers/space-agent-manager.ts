@@ -388,8 +388,8 @@ export class SpaceAgentManager {
         return `Model pool contains duplicate entries for "${entry.model}"`;
       }
       seen.add(entry.model);
-      if (!Number.isFinite(entry.maxConcurrent) || entry.maxConcurrent < 1) {
-        return `Model pool entry for "${entry.model}" must have maxConcurrent >= 1`;
+      if (!Number.isInteger(entry.maxConcurrent) || entry.maxConcurrent < 1) {
+        return `Model pool entry for "${entry.model}" must have an integer maxConcurrent >= 1`;
       }
       if (!Number.isFinite(entry.weight) || entry.weight < 0) {
         return `Model pool entry for "${entry.model}" must have weight >= 0`;

@@ -242,6 +242,9 @@ const exportedAgentBaseSchema = z.object({
         weight: z.number().min(0),
       })
     )
+    .refine((pool) => new Set(pool.map((entry) => entry.model)).size === pool.length, {
+      message: 'modelPool contains duplicate entries for the same model',
+    })
     .optional(),
 });
 
