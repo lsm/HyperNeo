@@ -469,7 +469,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: Gates: `overridesUndefined`, `lockedAfterStart`, `nullOverrides`, `invalidMap`, `noWorkflow`, `workflowDisabled`, `invalidKey`, `valid`.
-- **Shell/effect wiring**: The `spaceTask.update` shell calls `decideWorkflowModelOverrides({ ... })`. If `reject`, throw. If `valid`, apply the normalized value. Because `workflowManager.getWorkflow` is a snapshot read, pass the workflow in as part of the snapshot; do not call the manager inside the pipeline.
+- **Shell/effect wiring** (review correction): keep the workflow-override validation rules as ORDINARY PURE HELPERS or direct early stages INSIDE the single `spaceTask.update` RPC pipeline — do not create a standalone `decideWorkflowModelOverrides` runner that the shell invokes before its own direct pipeline, which would split validation, routing, and effects across composition boundaries. If `reject`, throw. If `valid`, apply the normalized value. Because `workflowManager.getWorkflow` is a snapshot read, pass the workflow in as part of the snapshot; do not call the manager inside the pipeline.
 - **Step-by-step migration**: Rename the current function to a `decisionRun` module; the current `throw` sites become `decision` branches. The RPC handler calls `decide...` and throws on `reject`.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
 - **Risks/caveats**: The function is `async` but contains no awaits. Keep it sync in the `decisionRun`; if a future lookup becomes async, wrap in `stagedRun`.
@@ -594,9 +594,9 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Current summary**: Given a goal/schedule/scope, checks goal active, scope, cron, evidence, then enqueues a self-nag job.
 - **Proposed combinator**: One mixed decision/effect pipeline (review correction: admission gates plus the `enqueue` effect stage compose directly in one named operation pipeline; no admission-only pipeline with an imperative `if (proceed) enqueue` outside).
 - **Input snapshot design**: Similar to `onTaskCompleted` but with `scheduleId` and `selfNagCronExpression`.
-- **Pure core design**: `decideSelfNagAutomation` with branches: `disabled`, `missingScope`, `notApplicable`, `proceed`.
-- **Shell/effect wiring**: Same as `onTaskCompleted`; the shell enqueues when `proceed`.
-- **Step-by-step migration**: Add `decideSelfNagAutomation` to the same `goal-automation-admission-pipeline.ts`.
+- **Pure core design**: `decideSelfNagAutomation` branches (`disabled`, `missingScope`, `notApplicable`, `proceed`) are direct decide stages of ONE mixed self-nag pipeline (review correction round 19: no admission-only pipeline — the `enqueue` effect stage composes directly in the same operation).
+- **Shell/effect wiring**: The shell only snapshots inputs and maps the result; the `GOAL_AUTOMATION_EXECUTE` enqueue is an effect stage of the pipeline.
+- **Step-by-step migration**: Compose snapshot → admission stages → guarded `enqueue` stage in one directly named self-nag pipeline.
 - **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
 - **Risks/caveats**: Review correction — `resolveScopeForGoal` falls back to the FIRST scope (`listScopes(...)[0] ?? null`); multiple scopes do NOT make it return `null`. Do not add an ambiguous-scope rejection: when no explicit `scopeId` is supplied, the first scope is used, and legacy schedules without `goalAutomationScopeId` metadata depend on that fallback. Keep validating an explicitly supplied scope against the goal and space only.
 
@@ -766,7 +766,13 @@ The repo already has several proven pipelines. Use these as the model for each s
      removes the trie entry and re-inserts `displaced` (explicit shell
      rollback replaces `compensate` in the sync pipeline).
   8. Review correction — `redispatch` is NOT a compensable `effect` stage: because it runs after `persist-subscription`, any throw would unwind the persist compensation after the DB upsert already succeeded, leaving the subscription persisted but absent from the live trie until restart. Move `redispatchRetainedExternalEvents` to a post-success best-effort step in the shell AFTER the pipeline completes (swallow-and-log its errors; it is a delivery nudge, not a consistency write). The pipeline's last stage is the `persist-subscription` effect.
-  9. `halt` returns `{ success: true }` or an error.
+  9. `.end` returns `{ success: true }` for ordinary validation failures
+     (`{ success: false, error }`) BUT review correction: the `limitReached`
+     branch must THROW after rolling back any displaced entry — the current
+     `registerSubscription` throws
+     `cannot register more than 10 event interests` and
+     `space-runtime-external-events.test.ts` asserts that exception; a
+     generic success/error return would break that contract.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-runtime-workflow-subscription-persistence.test.ts`. Add a row where `redispatchRetainedExternalEvents` throws: the subscription must remain both persisted and present in the trie.
 - **Risks/caveats**: `topicTrie` is in-memory shared state. The current manual rollback on repo error is exactly the in-memory compensation pattern. `workflowEventSubscriptionRepo.upsert` should be CAS-guarded or the `stagedRun` `compensate` must be able to undo the trie change. The limit check must be re-gathered between any write and the next read (the `existingInterests` snapshot already does this).
 

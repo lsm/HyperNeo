@@ -337,8 +337,7 @@ anywhere in this plan.
   order preserved inside each) consumed by the pipeline stages:
   `stageClassifyFamily` → `stageInferProvider` → `stageAssemble` →
   `stageSort`, ctx threading the models array.
-- **Input/output snapshot design.** Provider ctx: `{ modelId: string;
-  decision: string | undefined | null }` — careful: `decisionRun` halts on
+- **Input/output snapshot design.** Review correction: plain helper signatures, NO per-model decision-run contexts — `inferProviderFromModelId(modelId): string | undefined` and `classifyModelFamily(modelId): string` take/return plain values inside the pipeline's stages (`decisionRun` contexts here would restore two nested runner invocations per model). Helper detail:
   `decision !== null`, and `undefined` is a meaningful outcome here; use the
   sentinel `'unknown-provider'` internally and map to `undefined` in the
   wrapper (the daemon `decisionRun` types `decision: unknown`, so a
@@ -839,7 +838,7 @@ site's Vitest suite green.
     conventions built in step 10.
 12. **`sendMessage` Step 1** (admission decisionRun) — first hook-resident
     interpretation; zero async changes.
-13. **`shortenModelName`** — P1 transform; land with the call-site memoization
+13. **`shortenModelName`** — stays an ORDINARY PURE HELPER (review correction: a per-item pipeline executes once per dropdown item per render, exactly the hot inner-loop placement the guidance excludes; if it is ever pipelined, call-site memoization is a PREREQUISITE, not a follow-up)
     decision.
 14. **`getModelLabel`** — optional/last; gated on the SessionsPage
     convergence open question.
