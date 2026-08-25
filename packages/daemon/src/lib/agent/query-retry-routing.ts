@@ -74,6 +74,7 @@ function decideProviderTerminalCategory(
   env: QueryRetryEnvironment
 ): ErrorCategory {
   const raw = signal.rawText.toLowerCase();
+  if (signal.isStartupTimeout) return ErrorCategory.TIMEOUT;
   if (env.providerFamily === 'provider') {
     if (
       /\b(?:401|403|unauthorized|token expired|token_expired|not authenticated|invalid_api_key)\b/.test(
