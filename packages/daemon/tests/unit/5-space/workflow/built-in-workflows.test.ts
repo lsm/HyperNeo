@@ -34,6 +34,9 @@ import {
   RETIRED_MERGER_RAW_MERGE_GUARD,
   RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
   RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
+  RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT,
   RETIRED_PR_MERGER_SLOT_PROMPT,
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
@@ -490,23 +493,23 @@ describe('coder-only workflow template', () => {
       'for a `both`-source run confirm BOTH gate artifacts'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'its recorded base_oid equals the current baseRefOid'
+      'its recorded `base_oid` is informational under the same base-advance policy as the external artifact'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'the merged commit never passed the current policy'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('never as an external pass');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'Accept `MERGED` as verified ONLY when that first parent equals the `base_oid` recorded in your gate artifact'
+      'record it INFORMATIONALLY in the step-7 merge artifact with the standardized acceptance line'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'Accept `MERGED` as verified ONLY when that first parent equals the `base_oid` recorded in your gate artifact'
+      'record it INFORMATIONALLY in the step-7 merge artifact with the standardized acceptance line'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'the live baseRefOid has advanced past the merge and must not be compared'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'equals the merge commit' + "'" + 's first parent'
+      'compare its `base_oid` with the merge commit' + "'" + 's first parent'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'proceed without a new review round and without asking for fresh sign-off'
@@ -539,16 +542,22 @@ describe('coder-only workflow template', () => {
     expect(RESEARCH_PROMPT).toContain('always send the gated PR handoff to Review');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('never substitutes for the review source');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'Retargeting a PR changes the reviewed diff WITHOUT changing'
+      'a base ref NAME change is a retarget that changes the reviewed diff WITHOUT changing'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'the `base_ref`, `base_oid`, and `head_oid` recorded in your `review-base` note artifact (key "base")'
+      'the `base_ref` recorded in your `review-base` note artifact (key "base")'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'compare the current `baseRefName` AND `baseRefOid` AND `$HEAD_OID`'
+      'the `head_oid` and `base_ref` recorded in your `external-review-gate` artifact'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
-      'a mismatch in ANY value invalidates the gate'
+      'Bind the review gates AND the approvals to the gated head AND the base ref name'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'either mismatch invalidates the gate and every approval given against the old head or base ref'
+    );
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
+      'A base TIP advance under the same name never does'
     );
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
       'a note still in its dispatch-time `pending` state is NOT proof'
@@ -595,8 +604,9 @@ describe('coder-only workflow template', () => {
     expect(CODER_EXTERNAL_GATE_BLOCK).toContain('base_oid: "<baseRefOid>"');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('base_oid: "<baseRefOid>"');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'the same branch name can advance underneath the gate'
+      'A base-OID excursion alone — the same branch name'
     );
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('recorded, not discarded');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'poll all three on every wait cycle while the gate is live'
     );
@@ -605,7 +615,7 @@ describe('coder-only workflow template', () => {
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('even a change that later reverts');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      'AND the current baseRefOid (its recorded `base_oid`)'
+      'a base TIP advance under the same name does not'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
@@ -659,7 +669,10 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('must match the origin remote');
     expect(CODER_ONLY_PROMPT).toContain('the fork case');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
-      "its `base_oid` equals the merge commit's first parent"
+      'compare its `base_oid` with the merge commit' + "'" + 's first parent'
+    );
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
+      'a difference is a base-tip advance the policy accepts'
     );
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       '--force-with-lease="refs/heads/$HEAD_REF:$REMOTE_OID"'
@@ -1849,6 +1862,110 @@ describe('seedBuiltInWorkflows()', () => {
     );
     expect(afterCoderOnly.templateHash).toBe(
       computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === CODER_ONLY_WORKFLOW.name)!)
+    );
+  });
+
+  test('re-stamp upgrades strict-base-revalidation coder prompts to the base-advance-policy template', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+    const coderOnly = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
+    const coderOnlyNode = coderOnly.nodes[0]!;
+    const research = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+    const researchNode = research.nodes.find((n) => n.name === 'Research')!;
+
+    const staleCoding = manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: {
+                        value: RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
+                      },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    const staleCoderOnly = manager.updateWorkflow(coderOnly.id, {
+      nodes: coderOnly.nodes.map((n) =>
+        n.id !== coderOnlyNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: {
+                        value: RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
+                      },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    const staleResearch = manager.updateWorkflow(research.id, {
+      nodes: research.nodes.map((n) =>
+        n.id !== researchNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: { value: RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    expect(staleCoding).toBeTruthy();
+    expect(staleCoderOnly).toBeTruthy();
+    expect(staleResearch).toBeTruthy();
+    for (const workflow of [coding, coderOnly, research]) {
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        'stale-strict-base-revalidation',
+        workflow.id
+      );
+    }
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
+    expect(result.restamped).toContain(RESEARCH_WORKFLOW.name);
+
+    const afterCoding = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = afterCoding.nodes.find((n) => n.name === 'Coding')!;
+    expect(afterCodingNode.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
+    expect(afterCodingNode.agents[0]!.customPrompt?.value).toContain(
+      'merged anyway per policy decided 2026-08-24'
+    );
+
+    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
+    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toContain(
+      'A base-OID excursion alone'
+    );
+
+    const afterResearch = manager.getWorkflow(research.id)!;
+    const afterResearchNode = afterResearch.nodes.find((n) => n.name === 'Research')!;
+    expect(afterResearchNode.agents[0]!.customPrompt?.value).toBe(RESEARCH_PROMPT);
+    expect(afterResearchNode.agents[0]!.customPrompt?.value).not.toBe(
+      RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT
     );
   });
 
