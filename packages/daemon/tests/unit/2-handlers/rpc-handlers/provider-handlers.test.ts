@@ -1260,6 +1260,44 @@ describe('Provider RPC handlers', () => {
       ).toEqual(storedBefore.discoveredModels);
     });
 
+    it('restores server-owned discoveredModels when a stale client snapshot saves curation', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      const storedBefore = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedBefore.discoveredModels).toBeDefined();
+
+      const staleSnapshot = JSON.stringify({
+        region: 'china',
+        models: [{ id: 'remote-a' }],
+        discoveredModels: { models: [{ id: 'stale' }] },
+      });
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: staleSnapshot } },
+        {}
+      );
+
+      const storedAfter = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedAfter.discoveredModels).toEqual(storedBefore.discoveredModels);
+      expect(storedAfter.models).toEqual([{ id: 'remote-a' }]);
+    });
+
     it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {
       const created = repo.createProvider({
         providerId: 'remote',

@@ -315,7 +315,7 @@ function isCurationOnlyConfigUpdate(
   if (!next || typeof next !== 'object' || Array.isArray(next)) return false;
   const keys = new Set<string>([...Object.keys(prev), ...Object.keys(next)]);
   for (const key of keys) {
-    if (key === 'models') continue;
+    if (key === 'models' || key === LAST_GOOD_DISCOVERY_KEY) continue;
     if (JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null)) return false;
   }
   return true;
@@ -436,6 +436,40 @@ export function stripPersistedDiscovery(configJson: string | undefined): string 
   if (!(LAST_GOOD_DISCOVERY_KEY in parsed)) return configJson;
   delete parsed[LAST_GOOD_DISCOVERY_KEY];
   return JSON.stringify(parsed);
+}
+
+function restoreServerDiscoveredModels(
+  nextConfigJson: string | undefined,
+  previousConfigJson: string | undefined
+): string | undefined {
+  if (!nextConfigJson) return nextConfigJson;
+  let next: Record<string, unknown>;
+  try {
+    next = JSON.parse(nextConfigJson) as Record<string, unknown>;
+  } catch {
+    return nextConfigJson;
+  }
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return nextConfigJson;
+  let prev: Record<string, unknown> = {};
+  if (previousConfigJson) {
+    try {
+      const parsed = JSON.parse(previousConfigJson) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        prev = parsed;
+      }
+    } catch {}
+  }
+  const serverDiscovered = prev[LAST_GOOD_DISCOVERY_KEY];
+  if (serverDiscovered === undefined) {
+    if (!(LAST_GOOD_DISCOVERY_KEY in next)) return nextConfigJson;
+    delete next[LAST_GOOD_DISCOVERY_KEY];
+    return JSON.stringify(next);
+  }
+  if (JSON.stringify(next[LAST_GOOD_DISCOVERY_KEY] ?? null) === JSON.stringify(serverDiscovered)) {
+    return nextConfigJson;
+  }
+  next[LAST_GOOD_DISCOVERY_KEY] = serverDiscovered;
+  return JSON.stringify(next);
 }
 
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
@@ -581,7 +615,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       };
       const applied = applyDiscoveredProviderModels(
         record.providerId,
-        models,
+        discovered,
         'global',
         persistedDiscovered
       );
@@ -603,7 +637,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
             return { success: false, reason: 'superseded' };
           }
-          if (applyDiscoveredProviderModels(record.providerId, models)) {
+          if (applyDiscoveredProviderModels(record.providerId, discovered)) {
             releaseAppliedProviderSlice(record.providerId);
           } else {
             schedulePendingSliceRelease(record.providerId);
@@ -618,7 +652,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       return {
         success: true,
         ...(truncated ? { truncated: true } : {}),
-        models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
+        models: discovered.map(({ id, name }) => ({
+          id,
+          ...(name === undefined ? {} : { name }),
+        })),
       };
     });
   });
@@ -752,15 +789,28 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.configJson !== undefined ||
             updates.isEnabled !== undefined;
 
+          const curationOnlyConfigUpdate = isCurationOnlyConfigUpdate(
+            existing.configJson,
+            record.configJson
+          );
+
           const discoveryInvalidating =
             data.credentials !== undefined ||
             updates.baseUrl !== undefined ||
             updates.customEndpointConfigJson !== undefined ||
-            (updates.configJson !== undefined &&
-              !isCurationOnlyConfigUpdate(existing.configJson, record.configJson));
+            (updates.configJson !== undefined && !curationOnlyConfigUpdate);
 
           if (shouldResync) {
-            if (discoveryInvalidating) {
+            if (curationOnlyConfigUpdate && updates.configJson !== undefined) {
+              const restoredConfig = restoreServerDiscoveredModels(
+                record.configJson,
+                existing.configJson
+              );
+              if (restoredConfig !== record.configJson) {
+                record =
+                  providerRepo.updateProvider(data.id, { configJson: restoredConfig }) ?? record;
+              }
+            } else if (discoveryInvalidating) {
               const strippedConfig = stripPersistedDiscovery(record.configJson);
               if (strippedConfig !== record.configJson) {
                 record =

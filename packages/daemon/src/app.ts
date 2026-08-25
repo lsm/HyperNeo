@@ -505,6 +505,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         clearModelsCache();
       },
       onProviderChanged: async (providerId, outcome) => {
+        let skipCacheClear = false;
         try {
           const remaining = await providerRegistry.get(providerId)?.getCredentials?.();
           const definitiveCredentialLoss = outcome === 'refreshed' || !remaining;
@@ -516,6 +517,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
                 db.providers.updateProvider(record.id, { configJson: stripped });
               }
             }
+            if (outcome === 'refreshed') {
+              skipCacheClear = true;
+            }
           }
         } catch (error) {
           logError(
@@ -523,8 +527,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             error
           );
         }
-        const { clearModelsCache } = await import('./lib/model-service.js');
-        clearModelsCache();
+        if (!skipCacheClear) {
+          const { clearModelsCache } = await import('./lib/model-service.js');
+          clearModelsCache();
+        }
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
