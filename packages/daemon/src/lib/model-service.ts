@@ -193,18 +193,24 @@ function pendingSliceKey(cacheKey: string, providerId: string): string {
 
 function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
   let merged = models;
-  const matchedKeys: string[] = [];
+  const consumedKeys: string[] = [];
+  const providedProviders = new Set(merged.map((model) => model.provider));
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
-    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
-    matchedKeys.push(key);
-  }
-  for (const key of matchedKeys) {
-    if (pendingSliceReleases.has(key)) {
-      pendingSliceReleases.delete(key);
-      pendingProviderSlices.delete(key);
+    const isMarkedForRelease = pendingSliceReleases.has(key);
+    if (isMarkedForRelease && providedProviders.has(providerId)) {
+      consumedKeys.push(key);
+      continue;
     }
+    merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+    if (isMarkedForRelease) {
+      consumedKeys.push(key);
+    }
+  }
+  for (const key of consumedKeys) {
+    pendingSliceReleases.delete(key);
+    pendingProviderSlices.delete(key);
   }
   return merged;
 }
@@ -247,7 +253,6 @@ function applyRefreshedModels(
   unavailableProviders?: ReadonlySet<string>
 ): void {
   if (fetchedModels.length > 0) {
-    discardMarkedPendingSlices(cacheKey);
     const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
     if (preservePreviousOnShrink && previousModels && previousModels.length > mergedModels.length) {
       const superseded = new Set(supersededProviderIds);
@@ -770,7 +775,6 @@ export async function initializeModels(): Promise<void> {
       }
       applyProviderLoadOutcome(pruneSupersededProviders(result));
       if (result.models.length > 0) {
-        discardMarkedPendingSlices(cacheKey);
         const mergedModels = mergePendingProviderSlices(
           cacheKey,
           mergeWithFallbackModels(result.models)
@@ -1071,15 +1075,6 @@ export function releaseAppliedProviderSlice(providerId: string, cacheKey: string
 
 export function schedulePendingSliceRelease(providerId: string, cacheKey: string = 'global'): void {
   pendingSliceReleases.add(pendingSliceKey(cacheKey, providerId));
-}
-
-export function discardMarkedPendingSlices(cacheKey: string): void {
-  for (const key of [...pendingSliceReleases]) {
-    if (key.startsWith(`${cacheKey}:`)) {
-      pendingSliceReleases.delete(key);
-      pendingProviderSlices.delete(key);
-    }
-  }
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {

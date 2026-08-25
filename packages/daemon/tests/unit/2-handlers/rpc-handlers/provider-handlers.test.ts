@@ -1188,6 +1188,46 @@ describe('Provider RPC handlers', () => {
       expect(ids).toContain('later-model');
     });
 
+    it('keeps a scheduled deferred slice when the next load omits the provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('refreshed-a')],
+        getModels: async () => [makeDiscoveredModel('refreshed-a')],
+      });
+      getProviderRegistry().register({
+        id: 'flaky',
+        isAvailable: async () => true,
+        getModels: async () => {
+          throw new Error('flaky provider down');
+        },
+      } as unknown as Provider);
+      getProviderRegistry().register({
+        id: 'stable',
+        isAvailable: async () => true,
+        getModels: async () => [{ ...makeDiscoveredModel('stable-model'), provider: 'stable' }],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('refreshed-a');
+      expect(ids).toContain('stable-model');
+    });
+
     it('strips persisted discovery when an update changes the effective configuration', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
