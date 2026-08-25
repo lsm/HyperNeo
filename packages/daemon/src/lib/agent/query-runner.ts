@@ -1216,6 +1216,8 @@ export class QueryRunner {
         }
       }
     } finally {
+      this.attemptTokens.invalidate(attemptToken);
+
       releaseStartupPermit('attempt_finished');
 
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;

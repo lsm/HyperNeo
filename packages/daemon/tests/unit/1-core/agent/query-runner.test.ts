@@ -5555,13 +5555,21 @@ describe('QueryRunner', () => {
     });
 
     it('invalidates the predecessor attempt token before the recursive runQuery is invoked', async () => {
-      const probeHolder: { result?: Promise<Awaited<ReturnType<HookCallback>>> } = {};
+      const probeHolder: {
+        predecessor?: Promise<Awaited<ReturnType<HookCallback>>>;
+        successor?: Promise<Awaited<ReturnType<HookCallback>>>;
+      } = {};
       buildSpy.mockImplementation(async () => {
         const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<
           [HookCallback]
         >;
-        if (hookInstalls.length === 2 && probeHolder.result === undefined) {
-          probeHolder.result = invokeHook(hookInstalls[0][0], 'tu-predecessor');
+        if (hookInstalls.length === 2) {
+          if (probeHolder.predecessor === undefined) {
+            probeHolder.predecessor = invokeHook(hookInstalls[0][0], 'tu-predecessor');
+          }
+          if (probeHolder.successor === undefined) {
+            probeHolder.successor = invokeHook(hookInstalls[1][0], 'tu-successor');
+          }
         }
         throw new Error('SDK startup timeout - query aborted');
       });
@@ -5578,11 +5586,14 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
-      const probe = probeHolder.result;
-      if (probe === undefined) throw new Error('predecessor hook probe never ran');
-      const probed = denyDecisionOf(await probe);
+      const predecessorProbe = probeHolder.predecessor;
+      if (predecessorProbe === undefined) throw new Error('predecessor hook probe never ran');
+      const probed = denyDecisionOf(await predecessorProbe);
       expect(probed.permissionDecision).toBe('deny');
-      expect(innerHookCalls).toHaveLength(0);
+      const successorProbe = probeHolder.successor;
+      if (successorProbe === undefined) throw new Error('successor hook probe never ran');
+      await successorProbe;
+      expect(innerHookCalls).toHaveLength(1);
     });
 
     it('denies a late PreToolUse callback that outlives the retry teardown exit timeout', async () => {
@@ -5605,9 +5616,22 @@ describe('QueryRunner', () => {
       const latePredecessor = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-late'));
       expect(latePredecessor.permissionDecision).toBe('deny');
       expect(innerHookCalls).toHaveLength(0);
-      await invokeHook(hookInstalls[1][0], 'tu-successor');
-      expect(innerHookCalls).toHaveLength(1);
     }, 15000);
+
+    it('invalidates the attempt token when the run exits without a retry', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<[HookCallback]>;
+      const lateCallback = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-after-exit'));
+      expect(lateCallback.permissionDecision).toBe('deny');
+      expect(innerHookCalls).toHaveLength(0);
+    });
   });
 });
 
