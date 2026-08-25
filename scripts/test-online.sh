@@ -89,7 +89,8 @@ ONLINE_MODULES=(
 #                    credential issue (commented out in main.yml)
 #   sandbox        : disabled — not wired to a CI matrix shard
 #   cross-provider : real-key shards, manual-only in real-api-tests.yml
-ONLINE_EXEMPT_DIRS="benchmark glm providers sandbox cross-provider"
+#   deno           : manual-only — requires Deno 2.9.x on PATH
+ONLINE_EXEMPT_DIRS="benchmark glm providers sandbox cross-provider deno"
 
 # Map a hash-split module's suffix letter to a 0-based bucket index (a→0 … z→25).
 online_suffix_to_index() {
