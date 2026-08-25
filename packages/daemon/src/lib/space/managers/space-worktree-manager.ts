@@ -235,7 +235,7 @@ export class SpaceWorktreeManager {
       tracked = stdout;
     } catch (err) {
       const declaresLfs = await worktreeDeclaresLfsAttributes(worktreePath, async () => {
-        const { stdout } = await execFileAsync('git', ['ls-files'], {
+        const { stdout } = await execFileAsync('git', ['ls-files', '-z'], {
           cwd: worktreePath,
           encoding: 'utf8',
           timeout: 60_000,

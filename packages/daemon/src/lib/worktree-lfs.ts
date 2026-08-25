@@ -8,7 +8,7 @@ export async function worktreeDeclaresLfsAttributes(
   listFiles: () => Promise<string>
 ): Promise<boolean> {
   const files = (await listFiles())
-    .split('\n')
+    .split('\0')
     .map((entry) => entry.trim())
     .filter(Boolean);
   const attrFiles = files.filter(

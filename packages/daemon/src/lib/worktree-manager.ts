@@ -51,7 +51,7 @@ async function hydrateLfsObjects(git: SimpleGit, worktreePath: string): Promise<
   try {
     tracked = await git.raw(['lfs', 'ls-files']);
   } catch (err) {
-    if (await worktreeDeclaresLfsAttributes(worktreePath, () => git.raw(['ls-files']))) {
+    if (await worktreeDeclaresLfsAttributes(worktreePath, () => git.raw(['ls-files', '-z']))) {
       throw new Error(
         `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${
           err instanceof Error ? err.message : String(err)
