@@ -19,7 +19,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { Logger } from '../../logger.js';
-import { buildCopilotEnv } from './bun-node-wrapper.js';
 import { COPILOT_ANTHROPIC_MODELS } from './models.js';
 
 const execFileAsync = promisify(execFile);
@@ -899,12 +898,22 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       if (token) {
         env.COPILOT_GITHUB_TOKEN = token;
       }
-      const client = new CopilotClient({
-        useStdio: true,
-        logLevel: 'error',
-        env: buildCopilotEnv(env),
-      });
-      await client.start();
+      let client: CopilotClient;
+      try {
+        client = new CopilotClient({
+          useStdio: true,
+          logLevel: 'error',
+          env,
+        });
+        await client.start();
+      } catch (error) {
+        throw new Error(
+          `Failed to start GitHub Copilot client: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error }
+        );
+      }
       if (credentialsVersion !== this.credentialsVersion || this.shuttingDown || this.loggedOut) {
         await client.stop().catch(() => {});
         throw new Error('GitHub Copilot client startup was superseded');
