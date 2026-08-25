@@ -1296,6 +1296,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
     });
 
+    it('prefers the per-build askUserQuestionHook override over the shared field', async () => {
+      const fieldHook = (async () => ({})) as unknown as Parameters<
+        QueryOptionsBuilder['setAskUserQuestionHook']
+      >[0];
+      const overrideHook = (async () => ({})) as unknown as Parameters<
+        QueryOptionsBuilder['setAskUserQuestionHook']
+      >[0];
+      builder.setAskUserQuestionHook(fieldHook);
+      const options = await builder.build({ askUserQuestionHook: overrideHook });
+
+      expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('AskUserQuestion');
+      expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).toBe(overrideHook);
+      expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).not.toBe(fieldHook);
+    });
+
     it('installs a Bash-matcher scope hook from scoped Bash allowedTools entries', async () => {
       mockSession.config.allowedTools = ['Task', 'Bash(gh pr view:*)', 'Bash(jq:*)'];
       const options = await builder.build();

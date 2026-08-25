@@ -5520,6 +5520,15 @@ describe('QueryRunner', () => {
       return output.hookSpecificOutput ?? {};
     }
 
+    function attemptHookAt(index: number): HookCallback {
+      const buildCalls = buildSpy.mock.calls as unknown as Array<
+        [{ askUserQuestionHook?: HookCallback }?]
+      >;
+      const hook = buildCalls[index]?.[0]?.askUserQuestionHook;
+      if (!hook) throw new Error(`attempt-bound hook ${index} was not passed to build()`);
+      return hook;
+    }
+
     it('allocates attempt tokens that supersede on the next allocation and on invalidation', () => {
       const registry = new QueryAttemptRegistry();
       const first = registry.allocate();
@@ -5533,6 +5542,10 @@ describe('QueryRunner', () => {
       const third = registry.allocate();
       expect(registry.invalidate(first)).toBe(false);
       expect(third.isLive()).toBe(true);
+      expect(registry.invalidateCurrent()).toBe(true);
+      expect(third.isLive()).toBe(false);
+      expect(registry.invalidateCurrent()).toBe(false);
+      expect(QueryAttemptRegistry.detached().isLive()).toBe(false);
     });
 
     it('passes the PreToolUse hook through while its attempt token is live and denies once invalid', async () => {
@@ -5562,15 +5575,12 @@ describe('QueryRunner', () => {
         successor?: Promise<Awaited<ReturnType<HookCallback>>>;
       } = {};
       buildSpy.mockImplementation(async () => {
-        const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<
-          [HookCallback]
-        >;
-        if (hookInstalls.length === 2) {
+        if (buildSpy.mock.calls.length === 2) {
           if (probeHolder.predecessor === undefined) {
-            probeHolder.predecessor = invokeHook(hookInstalls[0][0], 'tu-predecessor');
+            probeHolder.predecessor = invokeHook(attemptHookAt(0), 'tu-predecessor');
           }
           if (probeHolder.successor === undefined) {
-            probeHolder.successor = invokeHook(hookInstalls[1][0], 'tu-successor');
+            probeHolder.successor = invokeHook(attemptHookAt(1), 'tu-successor');
           }
         }
         throw new Error('SDK startup timeout - query aborted');
@@ -5588,6 +5598,7 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(attemptHookAt(0)).not.toBe(attemptHookAt(1));
       const predecessorProbe = probeHolder.predecessor;
       if (predecessorProbe === undefined) throw new Error('predecessor hook probe never ran');
       const probed = denyDecisionOf(await predecessorProbe);
@@ -5622,14 +5633,13 @@ describe('QueryRunner', () => {
       ) {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<[HookCallback]>;
-      const duringTeardown = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-during-wait'));
+      const duringTeardown = denyDecisionOf(await invokeHook(attemptHookAt(0), 'tu-during-wait'));
       expect(duringTeardown.permissionDecision).toBe('deny');
       expect(innerHookCalls).toHaveLength(0);
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
-      const latePredecessor = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-late'));
+      const latePredecessor = denyDecisionOf(await invokeHook(attemptHookAt(0), 'tu-late'));
       expect(latePredecessor.permissionDecision).toBe('deny');
       expect(innerHookCalls).toHaveLength(0);
     }, 15000);
@@ -5657,6 +5667,35 @@ describe('QueryRunner', () => {
       expect(innerHookCalls).toHaveLength(1);
     });
 
+    it('does not supersede the live attempt token when runQuery enters with a superseded generation', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const replacementToken = ctx.attemptTokens.allocate();
+
+      await (runner as unknown as { runQuery(queryGeneration: number): Promise<void> }).runQuery(
+        999
+      );
+
+      expect(replacementToken.isLive()).toBe(true);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      const staleEntryHook = denyDecisionOf(await invokeHook(attemptHookAt(0), 'tu-stale-entry'));
+      expect(staleEntryHook.permissionDecision).toBe('deny');
+      expect(innerHookCalls).toHaveLength(0);
+    });
+
+    it('kills the live attempt token when the session switches the runner', () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const liveToken = ctx.attemptTokens.allocate();
+
+      runner.invalidateAttemptTokens();
+
+      expect(liveToken.isLive()).toBe(false);
+      expect(ctx.attemptTokens.allocate().isLive()).toBe(true);
+    });
+
     it('invalidates the attempt token when the run exits without a retry', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 
@@ -5666,8 +5705,7 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
-      const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<[HookCallback]>;
-      const lateCallback = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-after-exit'));
+      const lateCallback = denyDecisionOf(await invokeHook(attemptHookAt(0), 'tu-after-exit'));
       expect(lateCallback.permissionDecision).toBe('deny');
       expect(innerHookCalls).toHaveLength(0);
     });

@@ -399,7 +399,7 @@ describe('QueryRunner startup gate', () => {
 
   it('registers the AskUserQuestion hook and applies the deferred mode after spawn (runQuery wiring)', async () => {
     const setPermissionMode = mock(async () => {});
-    const setAskUserQuestionHook = mock(() => {});
+    const buildOverrides: Array<{ askUserQuestionHook?: unknown }> = [];
     const preToolUseHook = mock(async () => ({}));
     const createPreToolUseHook = mock(() => preToolUseHook);
     queryFactory = () => {
@@ -411,10 +411,13 @@ describe('QueryRunner startup gate', () => {
 
     const { runner, ctx } = createRunner('auq-wiring', {
       optionsBuilder: {
-        build: async () => ({ model: 'claude-sonnet-4-20250514' }),
+        build: async (overrides?: { askUserQuestionHook?: unknown }) => {
+          buildOverrides.push(overrides ?? {});
+          return { model: 'claude-sonnet-4-20250514' };
+        },
         addSessionStateOptions: (options: unknown) => options,
         setCanUseTool: () => {},
-        setAskUserQuestionHook,
+        setAskUserQuestionHook: () => {},
         getDeferredPermissionMode: () => 'bypassPermissions',
         getEffectiveMcpServers: () => ({}),
       } as unknown as QueryOptionsBuilder,
@@ -426,12 +429,12 @@ describe('QueryRunner startup gate', () => {
 
     runner.start();
     await waitFor(() => spawned.length === 1);
-    await waitFor(() => setAskUserQuestionHook.mock.calls.length > 0);
+    await waitFor(() => buildOverrides.some((overrides) => overrides.askUserQuestionHook));
     await waitFor(() => setPermissionMode.mock.calls.length > 0);
     await settle();
 
-    expect(setAskUserQuestionHook).toHaveBeenCalled();
-    const installedHook = setAskUserQuestionHook.mock.calls[0][0] as unknown as (
+    const installedHook = buildOverrides.find((overrides) => overrides.askUserQuestionHook)
+      ?.askUserQuestionHook as unknown as (
       input: unknown,
       toolUseId: string | undefined,
       options: { signal: AbortSignal }

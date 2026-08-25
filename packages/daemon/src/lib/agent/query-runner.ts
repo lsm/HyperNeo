@@ -532,6 +532,10 @@ export class QueryRunner {
     }
   }
 
+  invalidateAttemptTokens(): void {
+    this.ctx.attemptTokens.invalidateCurrent();
+  }
+
   private createAttemptBoundPreToolUseHook(attemptToken: QueryAttemptToken): HookCallback {
     const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook();
     return async (input, toolUseID, options) => {
@@ -560,7 +564,11 @@ export class QueryRunner {
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
-    const attemptToken = this.ctx.attemptTokens.allocate();
+    const attemptToken =
+      this.ctx.getQueryGeneration() === queryGeneration
+        ? this.ctx.attemptTokens.allocate()
+        : QueryAttemptRegistry.detached();
+    const attemptHook = this.createAttemptBoundPreToolUseHook(attemptToken);
 
     let startupPermit: SdkStartupPermit | null = null;
     const releaseStartupPermit = (reason: string): void => {
@@ -645,8 +653,7 @@ export class QueryRunner {
       }
 
       optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      optionsBuilder.setAskUserQuestionHook(this.createAttemptBoundPreToolUseHook(attemptToken));
-      let queryOptions = await optionsBuilder.build();
+      let queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
 
       if (provider?.setSessionThinkingConfig) {
         const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
@@ -680,7 +687,7 @@ export class QueryRunner {
           ` ${JSON.stringify(snapshotPayload)}`
       );
 
-      queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions);
+      queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions, attemptHook);
       if (isWorkflowSubSession) {
         const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
         const missingServers = missingMcpServers(
@@ -748,7 +755,7 @@ export class QueryRunner {
             );
           }
 
-          queryOptions = await optionsBuilder.build();
+          queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
           queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
           const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
           logger.info(
@@ -766,7 +773,7 @@ export class QueryRunner {
         }
       }
 
-      queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
+      queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions, attemptHook);
 
       const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
       const refreshAutoCompactWindow = true;
@@ -1291,7 +1298,10 @@ export class QueryRunner {
       .sort();
   }
 
-  private async ensureSpaceChatMcpInvariant(queryOptions: Options): Promise<Options> {
+  private async ensureSpaceChatMcpInvariant(
+    queryOptions: Options,
+    askUserQuestionHook: HookCallback
+  ): Promise<Options> {
     const { session, logger } = this.ctx;
     if (session.type !== 'space_chat') return queryOptions;
 
@@ -1322,7 +1332,7 @@ export class QueryRunner {
 
     if (this.ctx.onMissingSpaceChatMcpServers) {
       await this.ctx.onMissingSpaceChatMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build();
+      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
       const stillMissing = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
@@ -1345,7 +1355,10 @@ export class QueryRunner {
     );
   }
 
-  private async ensureMemberSpaceMcpInvariant(queryOptions: Options): Promise<Options> {
+  private async ensureMemberSpaceMcpInvariant(
+    queryOptions: Options,
+    askUserQuestionHook: HookCallback
+  ): Promise<Options> {
     const { session, logger } = this.ctx;
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
@@ -1382,7 +1395,7 @@ export class QueryRunner {
 
     if (this.ctx.onMissingMemberSpaceMcpServers) {
       await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build();
+      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const stillMissing = missingMcpServers(
         repairedOptions.mcpServers as Record<string, unknown> | undefined,

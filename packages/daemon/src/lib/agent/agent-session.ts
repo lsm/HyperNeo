@@ -731,6 +731,9 @@ export class AgentSession
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
     if (wantsAcp !== hasAcpRunner) {
+      (
+        this.queryRunner as unknown as { invalidateAttemptTokens?: () => void }
+      ).invalidateAttemptTokens?.();
       this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
     await this.queryRunner.start();
