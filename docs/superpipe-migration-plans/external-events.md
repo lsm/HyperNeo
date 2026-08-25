@@ -251,12 +251,17 @@ export function toExternalEvent(
 }
 ```
 
-The dispatch `decisionRun` and per-kind transforms are stages of the single
+Dispatch and per-kind transforms are stages of the single
 `ingest-github-webhook` pipeline (dispatch stage selects the kind; the shared
-per-kind stage template follows; projection stages append when the caller is
-the extension's publish path). The `id` generation (`crypto.randomUUID()`) is
-the only non-determinism. It stays in the final assembly stage. The normalizer
-family has no DB/network writes.
+per-kind stage template follows; the pipeline ENDS at `NormalizedGitHubEvent`
+— review correction: projection stages never append to the ingest pipeline,
+not even for the extension's publish path, because `handleWebhook` normalizes
+once before iterating `validForRepo` while `publishEvent` runs the distinct
+per-space `project-external-event` transform inside each iteration; an
+appended projection either lacks a `spaceId` or reuses one scoped event/UUID
+across every watched space). The `id` generation (`crypto.randomUUID()`) is
+the only non-determinism; it stays in the projection's final assembly stage.
+The normalizer family has no DB/network writes.
 
 #### Step-by-step migration
 

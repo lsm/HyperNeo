@@ -193,12 +193,12 @@ compensated. No site in this plan performs effects, so none uses it.
   3. No re-export changes needed in `message-delivery-pipeline.ts` (it
      re-exports the symbol, not the implementation).
 - **tests.** Existing suite must pass byte-identical (parity proof). Add two
-  pipeline-contract rows: (a) a spy gate after `applyProducedResultGate`
-  asserts the cascade halted (later gate not invoked); (b) `detail` gate runs
-  even when gate 1 decides (it precedes gate 1 in the list only if ordered
-  first — with the order above, `completed` short-circuits detail computation;
-  assert `completed` rows never build a detail string, preserving the current
-  laziness).
+  pipeline-contract rows (review correction — both must hold for
+  `producedResult: true`): (a) a spy gate after `applyProducedResultGate`
+  asserts the cascade halted and the later detail gate was NEVER invoked;
+  (b) `completed` rows never build a detail string (the current classifier
+  returns `completed` before reading any error-detail fields — preserve that
+  laziness; do not also require the detail gate to run).
 - **risks/caveats.** The `detail` preference chain is user-visible in thrown
   errors; a gate-order slip (detail gate after the first deciding gate)
   silently yields `undefined` detail. The `?? true` default on
@@ -471,7 +471,12 @@ compensated. No site in this plan performs effects, so none uses it.
   unconditional `set(scope, decision.streak)` would resurrect the old
   streak after an intervening unmonitored tool call and can trigger a
   false loop denial on return to the monitored tool), then `set(scope,
-  decision.streak)` only for allow decisions WITHOUT `resetLedger`, run
+  decision.streak)` for BOTH allow and deny decisions whenever `resetLedger`
+  is false (review correction: the current hook writes the advanced streak
+  BEFORE returning the deny response; skipping the write on deny leaves the
+  pre-threshold count and timestamp, so repeated denials stop refreshing the
+  window and the same retried call is re-admitted once the stale entry ages
+  out), run
   `sweepLedger`, delete expired ring, and on `deny` log + return the `permissionDecision: 'deny'`
   hook output with `permissionDecisionReason`. PostToolUse(Failure)
   callbacks keep calling `recordBashRingOutcome` directly (they are pure

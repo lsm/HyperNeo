@@ -373,7 +373,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     task: SpaceTask | null;
   }
   ```
-- **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`.
+- **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction: the node-agent `get_task` shell must MAP `spaceMismatch` to `notFound` (or normalize an out-of-space task to `null` before the decision) — the current handler deliberately masks a valid foreign-space task as the same `Task not found` response as an unknown UUID, and exposing `spaceMismatch` would reveal that the foreign task exists, changing the tool contract.
 - **Shell/effect wiring**:
   - `get_task_detail` shell: runs the `decisionRun`, returns `jsonResult`.
   - `list_task_members` shell: runs the `decisionRun`, then if `task.workflowRunId` is null returns `success: true, executions: []`, otherwise reads `nodeExecutionRepo.listByWorkflowRun`.

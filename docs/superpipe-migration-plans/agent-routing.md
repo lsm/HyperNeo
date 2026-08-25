@@ -66,7 +66,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 - **Input/output snapshot design:**
   - Input: `{ flags: TurnEndFlags; event: TurnEndEvent; queryMode: 'immediate' | 'manual; }` (the wrapper injects `decision: null`).
   - Output: `TurnEndPlan`.
-- **Pure core design:** Decompose the cascade into named gates, each populating `ctx.plan` WITHOUT deciding (review correction: `ctx.decision` in `turn-end-pipeline.ts` is the final `TurnEndPipelineDecision`; a routing gate that sets it would halt before `applyFinalGate` assembles the usage and acknowledgement results). Only the pipeline's existing `applyFinalGate` sets `decision` from `ctx.plan`.
+- **Pure core design:** Decompose the cascade into named gates, each populating `ctx.plan` WITHOUT deciding and WITHOUT overwriting: every routing gate begins with `if (ctx.plan !== null) return ctx;` (review correction: the gate predicates OVERLAP — an idle event with `clearAwaitingTrailingIdle` also reaches the default idle gate, and an armed-clear error also reaches the broader confirm gate — so unguarded later gates would overwrite the higher-priority plan before `applyFinalGate`; the self-guard preserves first-match precedence without halting the outer pipeline, so final usage/ack assembly still runs). Only the pipeline's existing `applyFinalGate` sets `decision` from `ctx.plan`.
   - `applySessionStateNonIdleGate` — `event.kind === 'sessionState' && event.state !== 'idle'`.
   - `applySessionStateClearAwaitingGate` — `event.kind === 'sessionState' && event.state === 'idle' && flags.clearAwaitingTrailingIdle`.
   - `applySessionStateSuppressedIdleGate` — `event.kind === 'sessionState' && event.state === 'idle' && flags.suppressIdleOnNextResult`.
