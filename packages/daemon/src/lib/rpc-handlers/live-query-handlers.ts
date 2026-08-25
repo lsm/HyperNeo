@@ -2427,6 +2427,31 @@ seg_summary AS (
       WHERE th.sessionId = tu.sessionId AND th.turnIndex = tu.turnIndex
     )
 ),
+-- Newest row per still-working session, computed over ALL joined rows — not
+-- just the selected ones (#2901 review). A hook-only active turn (SessionStart /
+-- Setup / PreToolUse hooks before the first assistant row) has its hook rows
+-- excluded from every selected_ids branch, so a tail computed after that join
+-- would pin the turn's user anchor or the PREVIOUS turn's terminal result —
+-- neither renders as the working agent's turn. Taking the tail from joined
+-- pins an actual row of the active turn (the newest hook row), which the
+-- frontend renders as a running-hook status turn.
+active_session_tails AS (
+  SELECT id
+  FROM (
+    SELECT
+      j.id AS id,
+      j.kind AS kind,
+      j.isTerminal AS isTerminalRow,
+      ROW_NUMBER() OVER (
+        PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
+      ) AS sessionRank
+    FROM joined j
+    WHERE j.sessionId IS NOT NULL
+  )
+  WHERE sessionRank = 1
+    AND kind != 'github'
+    AND COALESCE(isTerminalRow, 0) = 0
+),
 selected_ids AS (
   -- Every anchor (renderable user message) — never swallowed.
   SELECT id FROM joined WHERE messageType = 'user' AND isRenderable = 1
@@ -2483,6 +2508,11 @@ selected_ids AS (
   UNION ALL
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
+  UNION ALL
+  -- Session-tail rows of still-working sessions (see active_session_tails):
+  -- admits the newest hook row of a hook-only active turn so the thread can
+  -- render the working agent. Earlier hook rows stay roster-only.
+  SELECT id FROM active_session_tails
 ),
 -- Visible window: the newest N selected rows, oldest-first for rendering, with
 -- rows whose UI state must survive regardless of age pinned OUTSIDE the limit
@@ -2513,10 +2543,6 @@ ranked_rows AS (
     j.turnIndex AS turnIndex,
     j.parentToolUseId AS parentToolUseId,
     j.insOrder AS insOrder,
-    j.isTerminal AS isTerminalRow,
-    ROW_NUMBER() OVER (
-      PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
-    ) AS sessionRank,
     (
       (
         j.messageType = 'hyperneo_action'
@@ -2528,15 +2554,7 @@ ranked_rows AS (
       OR (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
     ) AS pinned
   FROM joined j
-  JOIN selected_ids s ON s.id = j.id
-),
-active_session_tails AS (
-  SELECT id
-  FROM ranked_rows
-  WHERE sessionRank = 1
-    AND sessionId IS NOT NULL
-    AND kind != 'github'
-    AND COALESCE(isTerminalRow, 0) = 0
+  JOIN (SELECT DISTINCT id FROM selected_ids) s ON s.id = j.id
 ),
 ordinary_ranked AS (
   SELECT

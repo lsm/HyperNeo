@@ -916,8 +916,33 @@ function buildOperationalSystemTurn(
     if (consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) return null;
     if (statusValue !== 'compacting') return null;
   }
+  const highlightUuid =
+    typeof (message as { uuid?: unknown }).uuid === 'string'
+      ? ((message as { uuid: string }).uuid as string)
+      : undefined;
   if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
-    return null;
+    if (!isSessionTail) return null;
+    const hookName = (message as { hook_name?: unknown }).hook_name;
+    const hookEvent = (message as { hook_event?: unknown }).hook_event;
+    const nameText = typeof hookName === 'string' && hookName.length > 0 ? hookName : 'hook';
+    const eventText =
+      typeof hookEvent === 'string' && hookEvent.length > 0 ? ` (${hookEvent})` : '';
+    return {
+      state: 'system',
+      id: `system-${String(row.id)}`,
+      agent: row.label,
+      agentKind: row.kind,
+      agentRole: row.role,
+      agentNodeExecutionId: row.nodeExecutionId ?? null,
+      createdAt: row.createdAt,
+      title: subtype === 'hook_response' ? 'Hook finished' : 'Running hook',
+      body: `${nameText}${eventText}`,
+      sessionId: row.sessionId,
+      highlightMessageUuid: highlightUuid,
+      replacementStatus: row.replacementStatus,
+      messageId: row.id,
+      isTruncated: row.contentTruncated,
+    };
   }
   if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
   if (subtype === 'api_retry' || subtype === 'thinking_tokens' || subtype === 'task_notification')
@@ -928,10 +953,6 @@ function buildOperationalSystemTurn(
     return null;
   }
   if (subtype === 'worker_shutting_down' && !isSessionTail) return null;
-  const highlightUuid =
-    typeof (message as { uuid?: unknown }).uuid === 'string'
-      ? ((message as { uuid: string }).uuid as string)
-      : undefined;
 
   if (subtype === 'session_state_changed') {
     const state = (message as { state?: unknown }).state;

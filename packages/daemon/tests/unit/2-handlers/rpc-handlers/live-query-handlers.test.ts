@@ -5318,13 +5318,18 @@ describe('NAMED_QUERY_REGISTRY', () => {
         return mod.buildActiveTurnSummariesFromRows(rows);
       }
 
-      test('compact feed excludes hook_* system rows (roster-only via active-turn summary)', () => {
+      test('compact feed excludes mid-turn hook_* system rows (roster-only via active-turn summary)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         insertSdkMessageAt('a1', sessionId, now + 1000, {
           type: 'assistant',
           uuid: 'a1',
           message: { content: [{ type: 'text', text: 'hi' }] },
+        });
+        insertSdkMessageAt('u-mid', sessionId, now + 1500, {
+          type: 'user',
+          uuid: 'u-mid',
+          message: { role: 'user', content: 'again' },
         });
         for (const [sub, id] of [
           ['hook_started', 'hs'],
@@ -5347,43 +5352,92 @@ describe('NAMED_QUERY_REGISTRY', () => {
             'system'
           );
         }
+        insertSdkMessageAt('a2', sessionId, now + 3000, {
+          type: 'assistant',
+          uuid: 'a2',
+          message: { content: [{ type: 'text', text: 'after hooks' }] },
+        });
 
         const ids = queryCompact(taskId).map((r) => String(r.id));
-        expect(ids).toContain('a1');
-        expect(ids).not.toContain('hs');
-        expect(ids).not.toContain('hp');
-        expect(ids).not.toContain('hr');
+        expect(ids).toEqual(['a1', 'u-mid', 'a2']);
       });
 
-      test('hook burst does not consume the compact tail (excluded before ranking)', () => {
+      test('compact feed admits the session-tail hook row of a hook-only working turn', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
-        insertSdkMessageAt('a-old', sessionId, now + 1000, {
-          type: 'assistant',
-          uuid: 'a-old',
-          message: { content: [{ type: 'text', text: 'real work' }] },
+        insertSdkMessageAt('u1', sessionId, now + 1000, {
+          type: 'user',
+          uuid: 'u1',
+          message: { role: 'user', content: 'go' },
         });
-        for (let i = 0; i < 6; i += 1) {
+        for (const [sub, id] of [
+          ['hook_started', 'hs'],
+          ['hook_progress', 'hp'],
+        ] as const) {
           insertSdkMessageAt(
-            `hp${i}`,
+            id,
             sessionId,
-            now + 2000 + i,
+            now + 2000,
             {
               type: 'system',
-              subtype: 'hook_progress',
-              uuid: `hp${i}`,
+              subtype: sub,
+              uuid: id,
               hook_id: 'h1',
               hook_name: 'lint',
-              hook_event: 'PreToolUse',
-              stdout: `phase ${i}`,
+              hook_event: 'SessionStart',
             },
             'system'
           );
         }
 
         const ids = queryCompact(taskId).map((r) => String(r.id));
-        expect(ids).toContain('a-old');
-        for (let i = 0; i < 6; i += 1) expect(ids).not.toContain(`hp${i}`);
+        expect(ids).toContain('u1');
+        expect(ids).not.toContain('hs');
+        expect(ids).toContain('hp');
+      });
+
+      test('compact feed admits the newest hook row after a prior terminal result', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt(
+          'r1',
+          sessionId,
+          now + 1000,
+          {
+            type: 'result',
+            subtype: 'success',
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+              reasoning_output_tokens: 0,
+              total_tokens: 2,
+            },
+          },
+          'result'
+        );
+        insertSdkMessageAt(
+          'hs2',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            uuid: 'hs2',
+            hook_id: 'h2',
+            hook_name: 'setup',
+            hook_event: 'SessionStart',
+          },
+          'system'
+        );
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('r1');
+        expect(ids).toContain('hs2');
       });
 
       test('malformed system sdk_message does not break the compact feed', () => {
