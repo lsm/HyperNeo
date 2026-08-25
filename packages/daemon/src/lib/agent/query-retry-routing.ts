@@ -1,7 +1,10 @@
 import { ErrorCategory } from '../error-manager.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 
 export type QueryRetryProviderFamily = 'anthropic' | 'provider';
+
+export type QueryRetryHandoffResult = 'accepted' | 'declined' | 'thrown';
 
 export interface QueryRetryLifecycle {
   processingStatus:
@@ -26,6 +29,7 @@ export interface QueryRetryEnvironment {
   isSuperseded: boolean;
   hasRateLimitHandoff: boolean;
   recoveryState: { rateLimitCooldownScheduled: boolean };
+  rateLimitHandoffResult?: QueryRetryHandoffResult;
 }
 
 export interface QueryRetryErrorSignal {
@@ -56,6 +60,25 @@ export type QueryRetryRoute =
 export interface QueryRetryRouteInput {
   errorSignal: QueryRetryErrorSignal;
   env: QueryRetryEnvironment;
+}
+
+export interface QueryRetryFinalizer {
+  skipQueueClear: boolean;
+  skipStop: boolean;
+  skipCatchIdle: boolean;
+  skipFinalizerIdle: (env: QueryRetryEnvironment) => boolean;
+  skipBeginTerminalIdle: boolean;
+  skipErrorManager: boolean;
+}
+
+export interface QueryRetryDecision {
+  route: QueryRetryRoute;
+  finalizer: QueryRetryFinalizer;
+}
+
+interface QueryRetryDecisionCtx extends QueryRetryRouteInput {
+  route: QueryRetryRoute | null;
+  decision: QueryRetryDecision | null;
 }
 
 function isQueryInterrupted(
@@ -119,8 +142,8 @@ function resolveTerminalMessageHint(
 
 export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetryRoute {
   const { errorSignal, env } = input;
-  if (env.isCleaningUp) return { action: 'cleanup_noop' };
   if (env.isSuperseded) return { action: 'superseded_noop' };
+  if (env.isCleaningUp) return { action: 'cleanup_noop' };
   if (
     errorSignal.isStartupTimeout &&
     env.attempt === 0 &&
@@ -153,4 +176,209 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     category: decideProviderTerminalCategory(errorSignal, env),
     messageHint: resolveTerminalMessageHint(errorSignal, env),
   };
+}
+
+function makeFinalizer(overrides: Partial<QueryRetryFinalizer>): QueryRetryFinalizer {
+  return {
+    skipQueueClear: false,
+    skipStop: false,
+    skipCatchIdle: false,
+    skipFinalizerIdle: () => false,
+    skipBeginTerminalIdle: false,
+    skipErrorManager: false,
+    ...overrides,
+  };
+}
+
+function skipIdleDueToRecovery(env: QueryRetryEnvironment): boolean {
+  return (
+    env.recoveryState.rateLimitCooldownScheduled ||
+    env.lifecycle.isLimitRecoveryPending ||
+    env.lifecycle.processingStatus === 'rate_limit_cooldown'
+  );
+}
+
+function skipFinalizerIdleDueToLifecycle(env: QueryRetryEnvironment): boolean {
+  return (
+    env.lifecycle.isLimitRecoveryPending || env.lifecycle.processingStatus === 'rate_limit_cooldown'
+  );
+}
+
+const skipFinalizerIdleAlways = () => true;
+
+function resolveDecision(
+  route: QueryRetryRoute,
+  env: QueryRetryEnvironment,
+  errorSignal?: QueryRetryErrorSignal
+): QueryRetryDecision {
+  const handoff = env.rateLimitHandoffResult ?? null;
+  if (route.action === 'rate_limit_handoff') {
+    if (handoff === 'accepted') {
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    }
+    if (handoff === 'thrown') {
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipIdleDueToRecovery,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    }
+    if (handoff === 'declined') {
+      if (errorSignal && isQueryInterrupted(errorSignal, env.lifecycle)) {
+        return {
+          route: { action: 'aborted_noop' },
+          finalizer: makeFinalizer({
+            skipCatchIdle: true,
+            skipFinalizerIdle: skipIdleDueToRecovery,
+            skipBeginTerminalIdle: true,
+            skipErrorManager: true,
+          }),
+        };
+      }
+      const nonHandoffEnv: QueryRetryEnvironment = { ...env, hasRateLimitHandoff: false };
+      const recomputedRoute = errorSignal
+        ? classifyQueryRetryRoute({ errorSignal, env: nonHandoffEnv })
+        : ({
+            action: 'terminal',
+            category: ErrorCategory.RATE_LIMIT,
+            messageHint: undefined,
+          } as QueryRetryRoute);
+      return resolveDecision(recomputedRoute, nonHandoffEnv, errorSignal);
+    }
+    return {
+      route,
+      finalizer: makeFinalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: skipFinalizerIdleAlways,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    };
+  }
+
+  switch (route.action) {
+    case 'superseded_noop':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipStop: true,
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'cleanup_noop':
+      if (env.isSuperseded) {
+        return {
+          route: { action: 'superseded_noop' },
+          finalizer: makeFinalizer({
+            skipQueueClear: true,
+            skipStop: true,
+            skipCatchIdle: true,
+            skipFinalizerIdle: skipFinalizerIdleAlways,
+            skipBeginTerminalIdle: true,
+            skipErrorManager: true,
+          }),
+        };
+      }
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'aborted_noop':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipIdleDueToRecovery,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'api_validation':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: env.recoveryState.rateLimitCooldownScheduled,
+          skipFinalizerIdle: skipIdleDueToRecovery,
+          skipErrorManager: true,
+        }),
+      };
+    case 'terminal':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipFinalizerIdle: skipFinalizerIdleDueToLifecycle,
+        }),
+      };
+    case 'startup_timeout_retry':
+    case 'message_not_found_retry':
+    case 'transient_retry':
+    case 'provider_backoff':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipCatchIdle: true,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    default:
+      return { route, finalizer: makeFinalizer({}) };
+  }
+}
+
+function decided(ctx: QueryRetryDecisionCtx, decision: QueryRetryDecision): QueryRetryDecisionCtx {
+  return { ...ctx, decision };
+}
+
+function applyClassifierGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
+  return {
+    ...ctx,
+    route: classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env }),
+  };
+}
+
+function applyArmMappingGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
+  const route =
+    ctx.route ?? classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env });
+  return decided(ctx, resolveDecision(route, ctx.env, ctx.errorSignal));
+}
+
+const queryRetryDecisionRun = decisionRun<QueryRetryDecisionCtx>('query-retry-arm', [
+  applyClassifierGate,
+  applyArmMappingGate,
+]);
+
+export function decideQueryRetry(input: QueryRetryRouteInput): QueryRetryDecision {
+  const ctx = queryRetryDecisionRun({
+    errorSignal: input.errorSignal,
+    env: input.env,
+    route: null,
+  });
+  return (
+    ctx.decision ??
+    resolveDecision(ctx.route ?? classifyQueryRetryRoute(input), input.env, input.errorSignal)
+  );
 }

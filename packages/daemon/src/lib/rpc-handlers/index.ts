@@ -929,6 +929,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupSpaceGoalHandlers(deps.messageHub, {
     goalService: spaceGoalService,
     spaceManager: deps.spaceManager,
+    longHorizonAgentRepo,
   });
 
   setupSpaceLongHorizonAgentHandlers(

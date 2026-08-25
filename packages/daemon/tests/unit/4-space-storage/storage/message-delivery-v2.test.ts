@@ -297,6 +297,40 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
   });
 
+  describe('deliverMessage — role-arbitration wiring (A3b)', () => {
+    it('propagates when the steer fallback enqueue fails too — exactly two attempts, no third', () => {
+      let calls = 0;
+      const stub = {
+        getActiveDeliveryRole: () => null,
+        enqueue: () => {
+          calls++;
+          throw new Error(
+            calls === 1 ? 'UNIQUE constraint failed: job_queue.queue' : 'steer insert exploded'
+          );
+        },
+      } as unknown as JobQueueRepository;
+      expect(() => deliverMessage(stub, SESSION, 'fallback-fail', { origin: 'chat' })).toThrow(
+        /steer insert exploded/
+      );
+      expect(calls).toBe(2);
+    });
+
+    it('rethrows a non-UNIQUE enqueue failure without attempting the steer fallback', () => {
+      let calls = 0;
+      const stub = {
+        getActiveDeliveryRole: () => null,
+        enqueue: () => {
+          calls++;
+          throw new Error('disk I/O error');
+        },
+      } as unknown as JobQueueRepository;
+      expect(() => deliverMessage(stub, SESSION, 'io-fail', { origin: 'chat' })).toThrow(
+        /disk I\/O error/
+      );
+      expect(calls).toBe(1);
+    });
+  });
+
   describe('deliverAndMarkQueued — role arbitration', () => {
     it('classifies as a turn when no active turn exists (idle session)', async () => {
       const { repo } = setupRepo();
