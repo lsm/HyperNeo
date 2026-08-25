@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { createDaemonApp, releaseStartupFileLogCapture } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 import {
+  clearProviderFailure,
+  recordClassifiedProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
+import {
   clearStructuredLogSubscribers,
   emitStructuredLogEvent,
   installConsoleLogCapture,
@@ -488,6 +493,49 @@ describe('Daemon App Cleanup', () => {
 
       expect(process.listenerCount('exit')).toBe(exitListenersBefore);
       expect(existsSync(lockPath)).toBe(false);
+    });
+  });
+
+  describe('provider failure health propagation', () => {
+    test('marks provider health unhealthy on a recorded failure and healthy when it clears', {
+      timeout: 10_000,
+    }, async () => {
+      const daemonContext = await createDaemonApp({
+        config,
+        verbose: false,
+        standalone: false,
+      });
+      try {
+        const db = daemonContext.db.getDatabase();
+        db.exec(
+          `INSERT OR IGNORE INTO providers
+             (id, provider_id, display_name, kind, auth_type, is_enabled, is_default, sort_order, health_status, created_at, updated_at)
+           VALUES
+             ('test-failure-provider', 'test-failure-provider', 'Test', 'built_in', 'api_key', 1, 0, 0, 'unknown', 0, 0)`
+        );
+        const readHealth = () =>
+          (
+            db
+              .prepare(
+                "SELECT health_status FROM providers WHERE provider_id = 'test-failure-provider'"
+              )
+              .get() as { health_status: string }
+          )?.health_status;
+
+        recordClassifiedProviderFailure('test-failure-provider', {
+          errorKind: 'credential',
+          message: 'Request failed (http 401)',
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(readHealth()).toBe('unhealthy');
+
+        clearProviderFailure('test-failure-provider');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(readHealth()).toBe('healthy');
+      } finally {
+        resetProviderFailureStore();
+        await daemonContext.cleanup();
+      }
     });
   });
 });

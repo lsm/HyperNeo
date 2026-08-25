@@ -11,8 +11,9 @@ declare const Bun: {
   serve(options: {
     hostname: string;
     port: number;
+    idleTimeout?: number;
     fetch: (req: Request, server: BunServer) => unknown;
-    websocket: unknown;
+    websocket?: unknown;
     error?: (error: unknown) => unknown;
   }): BunServer;
 };
@@ -25,26 +26,30 @@ interface BunServer {
 
 export async function createBunServer(options: ServerOptions): Promise<ServerHandle> {
   const { hostname, port, fetch, websocket, onError } = options;
+  const idleTimeout = options.idleTimeoutSeconds;
 
-  const bunHandlers = {
-    open(ws: BunWebSocket) {
-      return websocket.open?.(ws as unknown as RuntimeSocket);
-    },
-    message(ws: BunWebSocket, message: string | Buffer) {
-      const msg = typeof message === 'string' ? message : new Uint8Array(message);
-      return websocket.message?.(ws as unknown as RuntimeSocket, msg);
-    },
-    close(ws: BunWebSocket) {
-      return websocket.close?.(ws as unknown as RuntimeSocket);
-    },
-    error(ws: BunWebSocket, error: unknown) {
-      return websocket.error?.(ws as unknown as RuntimeSocket, error);
-    },
-  };
+  const bunHandlers = websocket
+    ? {
+        open(ws: BunWebSocket) {
+          return websocket.open?.(ws as unknown as RuntimeSocket);
+        },
+        message(ws: BunWebSocket, message: string | Buffer) {
+          const msg = typeof message === 'string' ? message : new Uint8Array(message);
+          return websocket.message?.(ws as unknown as RuntimeSocket, msg);
+        },
+        close(ws: BunWebSocket) {
+          return websocket.close?.(ws as unknown as RuntimeSocket);
+        },
+        error(ws: BunWebSocket, error: unknown) {
+          return websocket.error?.(ws as unknown as RuntimeSocket, error);
+        },
+      }
+    : undefined;
 
   const server = Bun.serve({
     hostname,
     port,
+    ...(idleTimeout !== undefined ? { idleTimeout } : {}),
     fetch(req: Request, bunServer: BunServer) {
       const upgrade: UpgradeFn = <TData>(upgradeReq: Request, data: TData) => {
         const ok = bunServer.upgrade(upgradeReq, { data });
@@ -52,7 +57,7 @@ export async function createBunServer(options: ServerOptions): Promise<ServerHan
       };
       return fetch(req, upgrade);
     },
-    websocket: bunHandlers,
+    ...(bunHandlers ? { websocket: bunHandlers } : {}),
     error: onError
       ? (error: unknown) => {
           return onError(error);
@@ -63,8 +68,8 @@ export async function createBunServer(options: ServerOptions): Promise<ServerHan
   return {
     hostname,
     port: server.port,
-    stop() {
-      server.stop();
+    stop(closeActiveConnections?: boolean) {
+      server.stop(closeActiveConnections);
     },
   };
 }

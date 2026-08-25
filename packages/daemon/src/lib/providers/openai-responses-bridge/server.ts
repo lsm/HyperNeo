@@ -30,6 +30,7 @@ import {
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
+import { createHttpWsServer } from '../../runtime-server/index.js';
 
 const logger = new Logger('openai-responses-bridge-server');
 
@@ -899,11 +900,13 @@ async function streamResponsesToAnthropic({
   onReasoningItems,
   onProductive,
   modelContextWindow,
+  abortSignal,
 }: {
   openAIResponse: Response;
   controller: ReadableStreamDefaultController<Uint8Array>;
   model: string;
   estimatedInputTokens: number;
+  abortSignal?: AbortSignal;
   onFunctionCallResponse?: (callId: string, responseId: string) => void;
   onReasoningItems?: (items: ResponsesReasoningItem[]) => void;
   onProductive?: () => void;
@@ -1261,6 +1264,10 @@ async function streamResponsesToAnthropic({
     send(messageStopSSE());
     closeController();
   } catch (err) {
+    if (abortSignal?.aborted) {
+      closeController();
+      return;
+    }
     if (isControllerInvalidStateError(err)) {
       closed = true;
       logger.warn('openai-responses: SSE controller closed during streaming');
@@ -1314,9 +1321,9 @@ function resolveModelId(model: string, aliases: Record<string, string> | undefin
   return aliases?.[model] ?? model;
 }
 
-export function createOpenAIResponsesBridgeServer(
+export async function createOpenAIResponsesBridgeServer(
   config: OpenAIResponsesBridgeConfig
-): OpenAIResponsesBridgeServer {
+): Promise<OpenAIResponsesBridgeServer> {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.openAIBaseUrl ?? defaultBaseUrlForAuth(config.auth);
   const modelsResponse = modelsListResponse(config.models);
@@ -1415,9 +1422,10 @@ export function createOpenAIResponsesBridgeServer(
     }
   };
 
-  const server = Bun.serve({
+  const server = await createHttpWsServer({
+    hostname: '127.0.0.1',
     port: 0,
-    idleTimeout: 0,
+    idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {
       const route = extractSessionId(req);
 
@@ -1511,12 +1519,19 @@ export function createOpenAIResponsesBridgeServer(
         );
       }
       const upstreamUrl = `${baseUrl.replace(/\/$/, '')}/responses`;
+      const upstreamAbort = new AbortController();
+      if (req.signal.aborted) {
+        upstreamAbort.abort();
+      } else {
+        req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
+      }
       let openAIResponse: Response;
       try {
         openAIResponse = await fetchImpl(upstreamUrl, {
           method: 'POST',
           headers: buildOpenAIHeaders(config.auth, resolvedAuth),
           body: JSON.stringify(requestBody),
+          signal: upstreamAbort.signal,
         });
         if (openAIResponse.status === 401) {
           const refreshed = await refreshOpenAIResponsesAuth(config.auth);
@@ -1526,6 +1541,7 @@ export function createOpenAIResponsesBridgeServer(
               method: 'POST',
               headers: buildOpenAIHeaders(config.auth, resolvedAuth),
               body: JSON.stringify(requestBody),
+              signal: upstreamAbort.signal,
             });
           }
         }
@@ -1554,6 +1570,7 @@ export function createOpenAIResponsesBridgeServer(
               method: 'POST',
               headers: buildOpenAIHeaders(config.auth, resolvedAuth),
               body: JSON.stringify(requestBody),
+              signal: upstreamAbort.signal,
             });
             continuation = undefined;
           } else {
@@ -1607,6 +1624,7 @@ export function createOpenAIResponsesBridgeServer(
             method: 'POST',
             headers: buildOpenAIHeaders(config.auth, resolvedAuth),
             body: JSON.stringify(requestBody),
+            signal: upstreamAbort.signal,
           });
         }
       } catch (err) {
@@ -1696,6 +1714,7 @@ export function createOpenAIResponsesBridgeServer(
             controller,
             model,
             estimatedInputTokens,
+            abortSignal: upstreamAbort.signal,
             ...(resolvedModelContextWindow !== undefined
               ? { modelContextWindow: resolvedModelContextWindow }
               : {}),
@@ -1713,6 +1732,9 @@ export function createOpenAIResponsesBridgeServer(
               consumeContinuation(sessionId, resolvedContinuation);
             },
           });
+        },
+        cancel() {
+          upstreamAbort.abort();
         },
       });
       return new Response(stream, {

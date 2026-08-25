@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
   ListRemoteModelsOptions,
   ModelTier,
   Provider,
@@ -65,6 +66,7 @@ export class DeepSeekProvider implements Provider {
   ];
 
   private credentials: ProviderCredentials | null = null;
+  private curatedModels: CuratedModel[] | undefined;
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
   private readonly probeCache = new Map<string, { at: number; result: Promise<void> }>();
@@ -143,12 +145,38 @@ export class DeepSeekProvider implements Provider {
     const apiKey = this.getApiKey();
     if (!apiKey) return [];
     await this.verifyCredentials(DeepSeekProvider.BASE_URL, apiKey);
+    let models: ModelInfo[];
     try {
       const discovered = await this.listRemoteModels();
-      return mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
+      models = mergeDiscoveredModels(DeepSeekProvider.MODELS, discovered);
     } catch {
-      return DeepSeekProvider.MODELS;
+      models = DeepSeekProvider.MODELS;
     }
+    return this.mergeCuratedModels(models);
+  }
+
+  setCuratedModels(models: CuratedModel[] | undefined): void {
+    this.curatedModels = models;
+  }
+
+  getCachedModels(): ModelInfo[] | null {
+    if (!this.curatedModels?.length) return null;
+    return this.mergeCuratedModels(DeepSeekProvider.MODELS);
+  }
+
+  private mergeCuratedModels(models: ModelInfo[]): ModelInfo[] {
+    if (!this.curatedModels?.length) return models;
+    const merged = [...models];
+    const present = new Set(merged.map((model) => model.id));
+    for (const curated of this.curatedModels) {
+      if (!this.ownsModel(curated.id)) continue;
+      const info = this.toRemoteModelInfo({ id: curated.id, name: curated.name });
+      if (info && !present.has(info.id)) {
+        merged.push(info);
+        present.add(info.id);
+      }
+    }
+    return merged;
   }
 
   private discoveryFingerprint(): string {
@@ -180,7 +208,7 @@ export class DeepSeekProvider implements Provider {
       .filter((model) => this.ownsModel(model.id))
       .map((model) => this.toRemoteModelInfo(model));
     this.discoveryCache.set(fingerprint, discovered);
-    return discovered;
+    return this.mergeCuratedModels(discovered);
   }
 
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {

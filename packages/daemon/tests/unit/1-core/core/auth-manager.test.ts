@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { AuthManager } from '../../../../src/lib/auth-manager';
+import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
 
 describe('AuthManager', () => {
   let authManager: AuthManager;
@@ -91,6 +92,27 @@ describe('AuthManager', () => {
       expect(status.method).toBe('api_key');
       const key = await authManager.getCurrentApiKey();
       expect(key).toBe('sk-ant-test-key');
+    });
+  });
+
+  describe('provider env coordination', () => {
+    it('waits out a foreign lease window and reads the restored env, not the temporary token', async () => {
+      const token = await providerEnvCoordinator.acquire('anthropic.loadModelsFromSdk');
+      process.env.ANTHROPIC_AUTH_TOKEN = 'foreign-window-token';
+
+      let resolved: Awaited<ReturnType<AuthManager['getAuthStatus']>> | undefined;
+      const pending = authManager.getAuthStatus().then((status) => {
+        resolved = status;
+        return status;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(resolved).toBeUndefined();
+
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+      providerEnvCoordinator.release(token);
+      const status = await pending;
+      expect(status.isAuthenticated).toBe(false);
+      expect(providerEnvCoordinator.isLeaseHeld()).toBe(false);
     });
   });
 

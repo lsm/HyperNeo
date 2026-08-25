@@ -94,6 +94,7 @@ export interface SDKMessageHandlerContext {
 
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
+  onDeliveryTurnAccepted?(): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -565,6 +566,7 @@ export class SDKMessageHandler {
     );
     if (consumed) {
       this.completeDeliveryAcceptance(messageId);
+      this.ctx.onDeliveryTurnAccepted?.();
     }
   }
 
@@ -1311,7 +1313,7 @@ export class SDKMessageHandler {
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
-    const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
+    const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
     const builtFallbackModel = getBuiltFallbackModel(session);
     if (builtFallbackModel === undefined || builtFallbackModel !== fallbackModel) return;
@@ -1355,7 +1357,9 @@ export class SDKMessageHandler {
     });
   }
 
-  private resolveConfiguredFallbackModel(sdkFallbackModel: string | undefined): string | undefined {
+  private async resolveConfiguredFallbackModel(
+    sdkFallbackModel: string | undefined
+  ): Promise<string | undefined> {
     const configuredFallbackModel = this.ctx.session.config.fallbackModel;
     if (!sdkFallbackModel || !configuredFallbackModel) return undefined;
 
@@ -1366,9 +1370,9 @@ export class SDKMessageHandler {
         model: configuredFallbackModel,
       },
     };
-    const fallbackSdkModel = getProviderContextManager()
-      .createContext(fallbackSession)
-      .getSdkModelId();
+    const contextManager = getProviderContextManager();
+    await contextManager.ensureContextReady(fallbackSession);
+    const fallbackSdkModel = contextManager.createContext(fallbackSession).getSdkModelId();
     return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : undefined;
   }
 

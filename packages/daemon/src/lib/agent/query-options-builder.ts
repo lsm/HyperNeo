@@ -309,6 +309,7 @@ export class QueryOptionsBuilder {
     await waitForOptionalProviderRegistration();
 
     const contextManager = getProviderContextManager();
+    await contextManager.ensureContextReady(this.ctx.session);
     const providerContext = contextManager.createContext(this.ctx.session);
     const providerId = providerContext.provider.id;
     const modelInfo = await getSessionModelInfo(this.ctx.session);
@@ -333,6 +334,7 @@ export class QueryOptionsBuilder {
           ...this.ctx.session,
           config: { ...this.ctx.session.config, model: config.fallbackModel },
         };
+        await contextManager.ensureContextReady(fallbackSession);
         const fallbackContext = contextManager.createContext(fallbackSession);
         sdkFallbackModel = fallbackContext.getSdkModelId();
       }

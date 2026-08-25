@@ -1,5 +1,7 @@
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
+import { getProviderFailure } from '../providers/provider-failure-store.js';
+import type { ProviderRecoveryOutcome } from '../model-service.js';
 import type { ProviderCredentialManager } from './provider-credential-manager.js';
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
@@ -13,10 +15,12 @@ export interface OAuthRefreshSchedulerOptions {
   registry?: ProviderRegistry;
   now?: () => number;
   onProviderChanged?: (providerId: string) => void;
+  recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
 }
 
 export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private activeTick: Promise<void> | null = null;
   private readonly retryCounts = new Map<string, number>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
@@ -24,6 +28,9 @@ export class OAuthRefreshScheduler {
   private readonly registry: ProviderRegistry;
   private readonly now: () => number;
   private readonly onProviderChanged?: (providerId: string) => void;
+  private readonly recoverDormantProvider?: (
+    providerId: string
+  ) => Promise<ProviderRecoveryOutcome>;
 
   constructor(
     private readonly credentialManager: ProviderCredentialManager,
@@ -35,6 +42,7 @@ export class OAuthRefreshScheduler {
     this.registry = options.registry ?? getProviderRegistry();
     this.now = options.now ?? Date.now;
     this.onProviderChanged = options.onProviderChanged;
+    this.recoverDormantProvider = options.recoverDormantProvider;
   }
 
   start(): void {
@@ -45,13 +53,31 @@ export class OAuthRefreshScheduler {
     }, this.intervalMs);
   }
 
-  stop(): void {
-    if (!this.timer) return;
-    clearInterval(this.timer);
-    this.timer = null;
+  async stop(): Promise<void> {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    const tick = this.activeTick;
+    if (tick) {
+      await tick.catch(() => {});
+    }
   }
 
   async tick(): Promise<void> {
+    const prior = this.activeTick ?? Promise.resolve();
+    const promise = prior.catch(() => {}).then(() => this.runTick());
+    this.activeTick = promise;
+    try {
+      await promise;
+    } finally {
+      if (this.activeTick === promise) {
+        this.activeTick = null;
+      }
+    }
+  }
+
+  private async runTick(): Promise<void> {
     await Promise.all(
       this.registry.getAll().map((provider) => this.refreshProviderIfNeeded(provider))
     );
@@ -83,6 +109,7 @@ export class OAuthRefreshScheduler {
         await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
       }
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
+      await this.recoverDormant(provider.id);
       this.onProviderChanged?.(provider.id);
       return;
     }
@@ -93,6 +120,18 @@ export class OAuthRefreshScheduler {
       this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
       this.onProviderChanged?.(provider.id);
     }
+  }
+
+  private async recoverDormant(providerId: string): Promise<void> {
+    if (!this.recoverDormantProvider) return;
+    try {
+      const outcome = await this.recoverDormantProvider(providerId);
+      if (outcome === 'failed') {
+        this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      } else if (outcome === 'no-op' && getProviderFailure(providerId)) {
+        this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      }
+    } catch {}
   }
 
   private async credentialsForProvider(provider: Provider): Promise<ProviderCredentials | null> {

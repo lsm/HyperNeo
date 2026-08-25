@@ -32,7 +32,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
       ].join('\n');
       return new Response(body, { status: 200 });
     });
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       apiKey: 'cloud-key',
       fetchImpl: fetchMock as typeof fetch,
@@ -72,7 +72,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('serves Anthropic-compatible model listing for SDK initialization', async () => {
     const fetchMock = mock(async () => new Response('', { status: 500 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -90,7 +90,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('includes tool schemas and tool blocks in token counting', async () => {
     const fetchMock = mock(async () => new Response('', { status: 500 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -167,7 +167,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
       ].join('\n');
       return new Response(body, { status: 200 });
     });
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -203,7 +203,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
       ].join('\n');
       return new Response(body, { status: 200 });
     });
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -233,7 +233,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
       capturedRequest = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({ model: 'llama3.2', done: true }), { status: 200 });
     });
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -284,7 +284,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
       capturedRequest = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({ model: 'llama3.2', done: true }), { status: 200 });
     });
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -333,7 +333,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('rejects image blocks before forwarding to Ollama', async () => {
     const fetchMock = mock(async () => new Response('', { status: 500 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -368,7 +368,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('rejects image blocks nested in Ollama tool results', async () => {
     const fetchMock = mock(async () => new Response('', { status: 500 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'http://ollama.test',
       fetchImpl: fetchMock as typeof fetch,
     });
@@ -409,7 +409,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('maps upstream rate limits to Anthropic rate_limit_error', async () => {
     const fetchMock = mock(async () => new Response('Too Many Requests', { status: 429 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'https://ollama.com',
       apiKey: 'cloud-key',
       fetchImpl: fetchMock as typeof fetch,
@@ -433,7 +433,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('maps upstream 529 to Anthropic overloaded_error', async () => {
     const fetchMock = mock(async () => new Response('Overloaded', { status: 529 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'https://ollama.com',
       apiKey: 'cloud-key',
       fetchImpl: fetchMock as typeof fetch,
@@ -457,7 +457,7 @@ describe.skipIf(!isBun)('Ollama Anthropic bridge server', () => {
 
   it('maps upstream failures to Anthropic JSON errors', async () => {
     const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
-    const server = createOllamaAnthropicBridgeServer({
+    const server = await createOllamaAnthropicBridgeServer({
       baseUrl: 'https://ollama.com',
       apiKey: 'bad-key',
       fetchImpl: fetchMock as typeof fetch,

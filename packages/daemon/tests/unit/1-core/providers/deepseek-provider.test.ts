@@ -62,6 +62,42 @@ describe('DeepSeekProvider', () => {
     expect(provider.isAvailable()).toBe(true);
   });
 
+  it('synthesizes curated discovered IDs into the visible model list', async () => {
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    const fetchImpl = mock(
+      async () => new Response('{}', { status: 200 })
+    ) as unknown as typeof fetch;
+    const provider = new DeepSeekProvider(process.env, fetchImpl);
+    provider.setCuratedModels([
+      { id: 'deepseek-v5', name: 'DeepSeek V5' },
+      { id: 'deepseek-pro' },
+      { id: 'glm-5' },
+    ]);
+
+    const models = await provider.getModels();
+
+    expect(models.map((m) => m.id)).toEqual([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'deepseek-v5',
+    ]);
+    expect(models.find((m) => m.id === 'deepseek-v5')).toMatchObject({
+      name: 'DeepSeek V5',
+      alias: 'deepseek-v5',
+      family: 'deepseek',
+      provider: 'deepseek',
+      contextWindow: 128_000,
+      available: true,
+    });
+    expect(provider.getCachedModels()?.map((m) => m.id)).toContain('deepseek-v5');
+
+    provider.setCuratedModels(undefined);
+    expect(provider.getCachedModels()).toBeNull();
+
+    provider.setCuratedModels(undefined);
+    expect(await provider.getModels()).toEqual(DeepSeekProvider.MODELS);
+  });
+
   it('maps opus to Pro and other Claude tiers to Flash', () => {
     const provider = new DeepSeekProvider({});
     expect(provider.getModelForTier('opus')).toBe('deepseek-v4-pro');
@@ -75,6 +111,16 @@ describe('DeepSeekProvider', () => {
     expect(provider.ownsModel('deepseek-v4-pro')).toBe(true);
     expect(provider.ownsModel('deepseek-pro')).toBe(true);
     expect(provider.ownsModel('deepseek-r1:latest')).toBe(false);
+  });
+
+  it('falls back to the default model for IDs outside the DeepSeek family', () => {
+    const provider = new DeepSeekProvider({ DEEPSEEK_API_KEY: 'test-key' });
+
+    expect(provider.ownsModel('glm-5')).toBe(false);
+
+    const config = provider.buildSdkConfig('glm-5');
+    expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(DeepSeekProvider.DEFAULT_MODEL);
+    expect(provider.translateModelIdForSdk('glm-5')).toBe('claude-sonnet-4-6[1m]');
   });
 
   describe('listRemoteModels', () => {
@@ -150,6 +196,22 @@ describe('DeepSeekProvider', () => {
       expect((await provider.listRemoteModels())[0]?.id).toBe('deepseek-v5');
       expect((await provider.listRemoteModels({ force: true }))[0]?.id).toBe('deepseek-v6');
       expect((await provider.listRemoteModels())[0]?.id).toBe('deepseek-v6');
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps curated synthesis across forced discovery refreshes', async () => {
+      process.env.DEEPSEEK_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'deepseek-v4-pro' }] }), { status: 200 })
+      );
+      const provider = new DeepSeekProvider(process.env);
+      provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }]);
+
+      await provider.listRemoteModels();
+      const forced = await provider.listRemoteModels({ force: true });
+
+      expect(forced.map((m) => m.id)).toEqual(['deepseek-v4-pro', 'deepseek-v5']);
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 

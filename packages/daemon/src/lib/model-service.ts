@@ -100,7 +100,19 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
 
 function getCuratedModelIds(providerId: string): Set<string> | undefined {
   const curatedModels = getProviderRegistry().getCuratedModels(providerId);
-  return curatedModels === undefined ? undefined : new Set(curatedModels.map((model) => model.id));
+  if (curatedModels === undefined) return undefined;
+  const curatedIds = new Set<string>();
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  for (const curated of curatedModels) {
+    curatedIds.add(curated.id);
+    if (!KimiProvider.isCapacityTaggedModelId(curated.id)) {
+      const canonical = findInModels(staticProviderModels, curated.id)?.id;
+      if (canonical) curatedIds.add(canonical);
+    }
+  }
+  return curatedIds;
 }
 
 function filterProviderModels(providerId: string, models: ModelInfo[]): ModelInfo[] {
@@ -599,6 +611,64 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
   clearProviderRetry(providerId);
 }
 
+export type ProviderRecoveryOutcome = 'no-op' | 'recovered' | 'failed';
+
+export async function recoverDormantProvider(providerId: string): Promise<ProviderRecoveryOutcome> {
+  if (getProviderFailure(providerId)?.errorKind !== 'credential') return 'no-op';
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider) return 'no-op';
+
+  clearProviderRetry(providerId);
+  provider.clearModelCache?.();
+
+  const generationAtStart = providerRetryGeneration;
+  const failureAtStart = getProviderFailure(providerId);
+  const probeSeq = ++modelLoadSequence;
+  const result = await raceProviderProbe(
+    loadProviderModels(provider),
+    PROVIDER_RETRY_PROBE_TIMEOUT_MS
+  );
+  if ((providerAppliedSeq.get(providerId) ?? 0) > probeSeq) {
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  if (result === 'timeout' || result.status === 'unavailable') {
+    if (providerRetryGeneration === generationAtStart) {
+      armProviderRetryTimer(providerId);
+      return 'failed';
+    }
+    return getProviderFailure(providerId) ? 'failed' : 'no-op';
+  }
+  const error = result.status === 'failed' ? result.error : undefined;
+  if (error !== undefined) {
+    if (providerRetryGeneration !== generationAtStart) {
+      return getProviderFailure(providerId) ? 'failed' : 'no-op';
+    }
+    applyProviderLoadOutcome({
+      models: [],
+      succeededProviderIds: [],
+      loadedProviderIds: [],
+      supersededProviderIds: [],
+      unavailableProviderIds: [],
+      failures: [{ providerId, ...classifyProviderFailure(error) }],
+      loadSeq: probeSeq,
+      providerIds: [providerId],
+    });
+    return 'failed';
+  }
+  const currentFailure = getProviderFailure(providerId);
+  if (providerRetryGeneration !== generationAtStart && currentFailure !== failureAtStart) {
+    return currentFailure ? 'failed' : 'no-op';
+  }
+  clearProviderFailure(providerId);
+  clearProviderRetry(providerId);
+  if (providerRetryGeneration !== generationAtStart) {
+    return 'recovered';
+  }
+  providerAppliedSeq.set(providerId, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models);
+  return 'recovered';
+}
+
 function isCacheStale(cacheKey: string): boolean {
   const timestamp = cacheTimestamps.get(cacheKey);
   if (!timestamp) return true;
@@ -892,7 +962,11 @@ export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo 
     for (const model of models) {
       for (const rawPrefix of model.providerAliasPrefixes ?? []) {
         const prefix = rawPrefix.toLowerCase();
-        if (normalized.startsWith(prefix) && (!bestPrefix || prefix.length > bestPrefix.length)) {
+        const boundary =
+          normalized === prefix ||
+          normalized.startsWith(`${prefix}-`) ||
+          normalized.startsWith(`${prefix}[`);
+        if (boundary && (!bestPrefix || prefix.length > bestPrefix.length)) {
           bestPrefix = { model, length: prefix.length };
         }
       }
@@ -1020,12 +1094,10 @@ export function isCuratedOutModel(
   providerId: string,
   cacheKey: string = 'global'
 ): boolean {
-  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
-  if (curatedModels === undefined) {
+  const curatedIds = getCuratedModelIds(providerId);
+  if (curatedIds === undefined) {
     return false;
   }
-
-  const curatedIds = new Set(curatedModels.map((model) => model.id));
 
   const rawModels = readCachedModels(cacheKey);
   const knownModel =

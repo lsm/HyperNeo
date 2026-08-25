@@ -165,7 +165,6 @@ const mockKimiModels: ModelInfo[] = [
     preferContextWindowMetadata: true,
     available: true,
     providerAliases: ['kimi', 'kimi-for-coding', 'kimi-k2.7-code'],
-    providerAliasPrefixes: ['moonshot-'],
   },
 ];
 
@@ -543,7 +542,7 @@ describe('SessionLifecycle', () => {
     it('resolves Kimi aliases when no explicit provider is set', async () => {
       await lifecycle.create({
         config: {
-          model: 'moonshot-v1-32k',
+          model: 'kimi-k2.7-code',
         },
       });
 

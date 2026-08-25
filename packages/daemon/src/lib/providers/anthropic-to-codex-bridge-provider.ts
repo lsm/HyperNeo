@@ -133,6 +133,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
   private readonly bridgeServers = new Map<string, OpenAIResponsesBridgeServer>();
   private readonly bridgeServerAuthKeys = new Map<string, string>();
+  private readonly bridgePromises = new Map<string, Promise<void>>();
+  private shutdownStarted = false;
 
   private readonly authPath: string;
 
@@ -517,6 +519,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   async getModels(): Promise<ModelInfo[]> {
     const auth = await this.getBridgeAuth();
     if (!auth) return [];
+    void this.ensureBridgeStarted('default').catch(() => {});
     await this.verifyCredentials(auth);
     return ANTHROPIC_CODEX_MODELS.map((m) => ({ ...m, thinkingModes: 'granular' as const }));
   }
@@ -563,20 +566,9 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     const isChatgptOAuth = auth?.source === 'chatgpt_oauth';
 
     if (!bridgeServer) {
-      if (!auth) {
-        logger.warn(
-          'AnthropicToCodexBridgeProvider: starting Responses bridge without resolved auth; requests will fail until credentials are available'
-        );
-      }
-      bridgeServer = createOpenAIResponsesBridgeServer({
-        auth: auth ?? { source: 'api_key', apiKey: '' },
-        models: this.responsesBridgeModels(isChatgptOAuth),
-        modelAliases: this.modelAliases(),
-      });
-      this.bridgeServers.set(bridgeKey, bridgeServer);
-      this.bridgeServerAuthKeys.set(bridgeKey, authKey);
-      logger.info(
-        `AnthropicToCodexBridgeProvider: Responses bridge server started on port ${bridgeServer.port} for key=${bridgeKey}`
+      throw new Error(
+        'AnthropicToCodexBridgeProvider: Responses bridge not started. ' +
+          'Await ensureBridgeStarted() (or getModels()) before calling buildSdkConfig().'
       );
     }
 
@@ -611,6 +603,49 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     };
   }
 
+  async ensureBridgeStarted(
+    _modelId: string,
+    _sessionConfig?: ProviderSessionConfig
+  ): Promise<void> {
+    const auth = this.resolveBridgeAuth();
+    const authKey = this.bridgeAuthCacheKey(auth);
+    const bridgeKey = `responses:${authKey}`;
+    if (this.bridgeServers.has(bridgeKey)) return;
+    const pending = this.bridgePromises.get(bridgeKey);
+    if (pending) return pending;
+    const isChatgptOAuth = auth?.source === 'chatgpt_oauth';
+    if (!auth) {
+      logger.warn(
+        'AnthropicToCodexBridgeProvider: starting Responses bridge without resolved auth; requests will fail until credentials are available'
+      );
+    }
+    const ready = createOpenAIResponsesBridgeServer({
+      auth: auth ?? { source: 'api_key', apiKey: '' },
+      models: this.responsesBridgeModels(isChatgptOAuth),
+      modelAliases: this.modelAliases(),
+    }).then(
+      (bridgeServer) => {
+        if (this.shutdownStarted) {
+          bridgeServer.stop();
+          this.bridgePromises.delete(bridgeKey);
+          return;
+        }
+        this.bridgeServers.set(bridgeKey, bridgeServer);
+        this.bridgeServerAuthKeys.set(bridgeKey, authKey);
+        this.bridgePromises.delete(bridgeKey);
+        logger.info(
+          `AnthropicToCodexBridgeProvider: Responses bridge server started on port ${bridgeServer.port} for key=${bridgeKey}`
+        );
+      },
+      (error) => {
+        this.bridgePromises.delete(bridgeKey);
+        throw error;
+      }
+    );
+    this.bridgePromises.set(bridgeKey, ready);
+    return ready;
+  }
+
   setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
     const auth = this.resolveBridgeAuth();
     const authKey = this.bridgeAuthCacheKey(auth);
@@ -631,6 +666,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
   }
 
   stopAllBridgeServers(): void {
+    this.shutdownStarted = true;
+    this.bridgePromises.clear();
     for (const server of this.bridgeServers.values()) {
       server.stop();
     }

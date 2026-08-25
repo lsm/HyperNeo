@@ -51,6 +51,11 @@ const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
   return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
 })();
 
+const ACP_DELIVERY_ACCEPTANCE_STALL_MS = (() => {
+  const env = Number(process.env.HYPERNEO_DELIVERY_ACP_ACCEPTANCE_MS);
+  return Number.isFinite(env) && env >= 30_000 ? env : ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+})();
+
 const MAX_ZERO_PROGRESS_DELIVERY_FAILURES = (() => {
   const env = Number(process.env.HYPERNEO_DELIVERY_ZERO_PROGRESS_MAX);
   return Number.isFinite(env) && env > 0 ? env : 3;
@@ -152,6 +157,7 @@ import {
   classifyReclaimTermination,
   type DriveTurnOutcome,
   deliverMessage,
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
@@ -358,7 +364,7 @@ export class AgentSession
 
     this.deliveryErrorSubs.push(
       this.internalEventBus.subscribe(
-        'session.error',
+        'session.errorObserved',
         (data) => {
           if (data.sessionId !== this.session.id) return;
           const details = data.details as StructuredError | undefined;
@@ -2380,8 +2386,9 @@ export class AgentSession
   private armDeliveryTurnStall(signal?: AbortSignal, claimGuard?: () => boolean): Promise<void> {
     this.clearDeliveryTurnStall();
     this.deliveryTurnStalled = false;
+    const awaitingAcpAcceptance = this.isAcpSession() && !this.hasDeliveryTurnBeenAccepted();
     this.deliveryTurnStall = new DeliveryTurnStallWatchdog(
-      DELIVERY_TURN_NO_ACTIVITY_MS,
+      awaitingAcpAcceptance ? ACP_DELIVERY_ACCEPTANCE_STALL_MS : DELIVERY_TURN_NO_ACTIVITY_MS,
       () => this.outstandingToolUseIds.size > 0,
       async () => {
         if (signal?.aborted || (claimGuard && !claimGuard())) return;
@@ -2393,6 +2400,24 @@ export class AgentSession
       () => this.stateManager.getState().status === 'rate_limit_cooldown'
     );
     return this.deliveryTurnStall.arm();
+  }
+
+  onDeliveryTurnAccepted(): void {
+    if (!this.isAcpSession() || !this.deliveryTurnStall) return;
+    this.deliveryTurnStall.resizeTimeoutMs(DELIVERY_TURN_NO_ACTIVITY_MS);
+  }
+
+  private isAcpSession(): boolean {
+    return this.session.config.provider === 'acp';
+  }
+
+  private hasDeliveryTurnBeenAccepted(): boolean {
+    const state = this.stateManager.getState();
+    const promptUuid = state.status === 'processing' ? state.messageId : undefined;
+    if (!promptUuid) return true;
+    const loaded = this.db.getSDKMessageRepo()?.getDeliveryContent(this.session.id, promptUuid);
+    if (!loaded) return true;
+    return loaded.sendStatus === 'consumed';
   }
 
   bumpDeliveryTurnActivity(): void {

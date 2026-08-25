@@ -6,8 +6,8 @@ import {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-function makeServer(upstream: typeof fetch): OpenAIChatBridgeServer {
-  return createOpenAIChatBridgeServer({
+async function makeServer(upstream: typeof fetch): OpenAIChatBridgeServer {
+  return await createOpenAIChatBridgeServer({
     baseUrl: 'https://api.example.com/v1',
     apiKey: 'test-key',
     fetchImpl: upstream,
@@ -59,8 +59,91 @@ describe.skipIf(!isBun)(
       server = undefined;
     });
 
+    it('aborts the upstream fetch when the client disconnects before upstream headers arrive', async () => {
+      let upstreamSignal: AbortSignal | undefined;
+      server = await makeServer(
+        (_url, init) =>
+          new Promise<Response>(() => {
+            upstreamSignal = init?.signal ?? undefined;
+          })
+      );
+
+      const controller = new AbortController();
+      const resPromise = fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'custom-model',
+          max_tokens: 16,
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+        signal: controller.signal,
+      });
+
+      const started = Date.now() + 5000;
+      while (!upstreamSignal && Date.now() < started) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(upstreamSignal).toBeDefined();
+
+      controller.abort();
+      await resPromise.catch(() => {});
+
+      const deadline = Date.now() + 5000;
+      while (!upstreamSignal?.aborted && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(upstreamSignal?.aborted).toBe(true);
+    });
+
+    it('aborts the upstream fetch when the client disconnects mid-stream', async () => {
+      let upstreamSignal: AbortSignal | undefined;
+      server = await makeServer(
+        (_url, init) =>
+          new Promise<Response>((resolve) => {
+            upstreamSignal = init?.signal ?? undefined;
+            const encoder = new TextEncoder();
+            resolve(
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      encoder.encode('data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n')
+                    );
+                  },
+                }),
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              )
+            );
+          })
+      );
+
+      const controller = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'custom-model',
+          max_tokens: 16,
+          stream: true,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      await reader.read();
+      controller.abort();
+
+      const deadline = Date.now() + 5000;
+      while (!upstreamSignal?.aborted && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(upstreamSignal?.aborted).toBe(true);
+    });
+
     it('normalizes a 200-with-body rate-limit error to retryable', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -78,7 +161,7 @@ describe.skipIf(!isBun)(
     });
 
     it('reclassifies a 5xx overload body to overloaded_error', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -95,7 +178,7 @@ describe.skipIf(!isBun)(
     });
 
     it('recognizes non-canonical JSON content-types (application/problem+json, case-insensitive)', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -115,7 +198,7 @@ describe.skipIf(!isBun)(
       const sse =
         'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
         'data: {"error":{"message":"rate limit exceeded","type":"rate_limit_exceeded"}}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -130,7 +213,7 @@ describe.skipIf(!isBun)(
 
     it('leaves a non-transient mid-stream chunk as api_error', async () => {
       const sse = 'data: {"error":{"message":"invalid model","type":"invalid_request_error"}}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -144,7 +227,7 @@ describe.skipIf(!isBun)(
     it('classifies a flat SSE error payload (event: error, top-level fields)', async () => {
       const sse =
         'event: error\n' + 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -162,7 +245,7 @@ describe.skipIf(!isBun)(
         'data: {"type":"ping"}\n\n' +
         'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
         'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -179,7 +262,7 @@ describe.skipIf(!isBun)(
 
     it('admits a type-only flat error frame with a known transient type', async () => {
       const sse = 'event: error\n' + 'data: {"type":"server_error"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -194,7 +277,7 @@ describe.skipIf(!isBun)(
 
     it('admits a flat RFC 7807 problem-detail error frame (status/detail)', async () => {
       const sse = 'event: error\n' + 'data: {"status":429,"detail":"Too Many Requests"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -209,7 +292,7 @@ describe.skipIf(!isBun)(
 
     it('admits a flat error frame with a numeric code (e.g. {"code":429})', async () => {
       const sse = 'event: error\n' + 'data: {"code":429}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
       );
@@ -226,7 +309,7 @@ describe.skipIf(!isBun)(
       const sse =
         'data: {"choices":[{"delta":{"content":"The server is overloaded but this is normal text"}}]}\n\n' +
         'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () => new Response(sse, { status: 200, headers: { 'Content-Type': 'text/plain' } })
       );
 
