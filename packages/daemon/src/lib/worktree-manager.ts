@@ -46,12 +46,15 @@ function literalPathspec(path: string): string {
 }
 
 async function hydrateLfsObjects(git: SimpleGit): Promise<void> {
+  let tracked: string;
   try {
-    const tracked = await git.raw(['lfs', 'ls-files']);
-    if (tracked.trim().length > 0) {
-      await git.raw(['lfs', 'pull']);
-    }
-  } catch {}
+    tracked = await git.raw(['lfs', 'ls-files']);
+  } catch {
+    return;
+  }
+  if (tracked.trim().length > 0) {
+    await git.raw(['lfs', 'pull']);
+  }
 }
 
 const EMPTY_REVIEW: GitReviewSummary = {

@@ -78,7 +78,7 @@ describe('buildDialogEnv', () => {
 });
 
 describe('buildGitCommandEnv', () => {
-  test('keeps safe git variables and excludes secret carriers and SSH/askpass inputs', () => {
+  test('keeps safe git variables and excludes secret carriers, SSH/askpass, and proxy inputs', () => {
     const env = buildGitCommandEnv(SOURCE);
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
@@ -87,6 +87,7 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
     expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
   });
 });
 
@@ -109,6 +110,19 @@ describe('buildGitSshEnv', () => {
     });
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
     expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+  });
+
+  test('carries proxy inputs and TLS client-certificate metadata', () => {
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_SSL_CERT_TYPE: 'DER',
+      GIT_SSL_KEY_TYPE: 'ENGINE',
+      GIT_SSL_CERT_PASSWORD_PROTECTED: '1',
+    });
+    expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
+    expect(env.GIT_SSL_CERT_TYPE).toBe('DER');
+    expect(env.GIT_SSL_KEY_TYPE).toBe('ENGINE');
+    expect(env.GIT_SSL_CERT_PASSWORD_PROTECTED).toBe('1');
   });
 
   test('accepts URL-scoped http.<url>.extraHeader configuration keys', () => {
@@ -144,11 +158,12 @@ describe('buildSdkRuntimeEnv', () => {
 });
 
 describe('buildWorkflowConditionEnv', () => {
-  test('starts from the credential-free command baseline', () => {
+  test('starts from the credential-free OS baseline without proxy inputs', () => {
     const env = buildWorkflowConditionEnv(undefined, SOURCE);
     expect(env.PATH).toBe(SOURCE.PATH);
     expect(env.GH_TOKEN).toBeUndefined();
     expect(env.MY_TOOL_FLAG).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
   });
 
   test('injects only non-restricted allowedEnv names from the immutable source', () => {

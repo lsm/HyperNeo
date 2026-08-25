@@ -13,7 +13,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
-import { startupEnvValue } from '../../spawn-env.ts';
+import { PROXY_TLS_ENV_KEYS, startupEnvValue } from '../../spawn-env.ts';
 import { validateWorkflowHookResult } from '../workflow-hook-validation.ts';
 import type { Connector } from './connectors/connector.ts';
 import {
@@ -165,6 +165,7 @@ function buildHookRestrictedEnv(
 
   const baselineEnvKeys = new Set<string>([
     ...ALWAYS_ALLOWED_ENV_KEYS,
+    ...PROXY_TLS_ENV_KEYS,
     ...permittedConnectorEnvKeys,
   ]);
   for (const key of baselineEnvKeys) {

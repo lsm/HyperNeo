@@ -5,11 +5,15 @@ import { Logger } from '../../../../src/lib/logger';
 import type { Session } from '@hyperneo/shared';
 import type { SimpleGit } from 'simple-git';
 
-const gitMocks = vi.hoisted(() => ({
-  raw: vi.fn(async () => ''),
-  revparse: vi.fn(async () => ''),
-  branch: vi.fn(async () => ({})),
-}));
+const gitMocks = vi.hoisted(() => {
+  const mocks = {
+    env: vi.fn(() => mocks),
+    raw: vi.fn(async () => ''),
+    revparse: vi.fn(async () => ''),
+    branch: vi.fn(async () => ({})),
+  };
+  return mocks;
+});
 const mockGitRaw = gitMocks.raw;
 const mockGitRevparse = gitMocks.revparse;
 const mockGitBranch = gitMocks.branch;

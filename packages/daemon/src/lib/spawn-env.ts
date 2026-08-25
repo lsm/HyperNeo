@@ -78,7 +78,10 @@ const GIT_SSH_ENV_KEYS = [
   'GIT_ASKPASS',
   'SSH_ASKPASS',
   'GIT_SSL_CERT',
+  'GIT_SSL_CERT_TYPE',
+  'GIT_SSL_CERT_PASSWORD_PROTECTED',
   'GIT_SSL_KEY',
+  'GIT_SSL_KEY_TYPE',
 ] as const;
 
 const RESTRICTED_ENV_PREFIXES = [
@@ -117,6 +120,8 @@ const CONDITION_FORBIDDEN_ENV_KEYS = new Set([
 ]);
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
+
+export { PROXY_TLS_ENV_KEYS };
 
 function captureBaseline(source: EnvSource): Readonly<Record<string, string>> {
   return Object.freeze(
@@ -197,7 +202,7 @@ export function buildGitCommandEnv(
 ): Record<string, string> {
   return {
     ...buildOsBaselineEnv(source),
-    ...pickKeys([...GIT_COMMAND_ENV_KEYS, ...PROXY_TLS_ENV_KEYS], source),
+    ...pickKeys(GIT_COMMAND_ENV_KEYS, source),
   };
 }
 
@@ -205,7 +210,7 @@ export function buildGitSshEnv(source: EnvSource = STARTUP_ENV_BASELINE): Record
   const configKeys = collectExtraHeaderConfig(source);
   return {
     ...buildGitCommandEnv(source),
-    ...pickKeys(GIT_SSH_ENV_KEYS, source),
+    ...pickKeys([...GIT_SSH_ENV_KEYS, ...PROXY_TLS_ENV_KEYS], source),
     ...configKeys,
   };
 }
@@ -223,7 +228,7 @@ export function buildWorkflowConditionEnv(
   allowedEnv: readonly string[] | undefined,
   source: EnvSource = STARTUP_ENV_BASELINE
 ): Record<string, string> {
-  const env = buildCommandEnv(source);
+  const env = buildOsBaselineEnv(source);
   if (!allowedEnv) return env;
   for (const key of allowedEnv) {
     if (isRestrictedEnvName(key) || CONDITION_FORBIDDEN_ENV_KEYS.has(key.toUpperCase())) continue;

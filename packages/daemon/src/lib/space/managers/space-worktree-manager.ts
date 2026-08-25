@@ -142,9 +142,9 @@ export class SpaceWorktreeManager {
       );
     }
 
-    this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
-
     this.hydrateWorktreeLfs(worktreePath);
+
+    this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
 
     this.logger.info(
       `Created worktree for task ${taskId} at ${worktreePath} (branch: ${branchName})`
@@ -198,25 +198,27 @@ export class SpaceWorktreeManager {
   }
 
   private hydrateWorktreeLfs(worktreePath: string): void {
+    let tracked: string;
     try {
-      const tracked = execFileSync('git', ['lfs', 'ls-files'], {
+      tracked = execFileSync('git', ['lfs', 'ls-files'], {
         cwd: worktreePath,
         encoding: 'utf8',
         timeout: 60_000,
         env: buildGitSshEnv(),
       });
-      if (tracked.trim().length > 0) {
-        execFileSync('git', ['lfs', 'pull'], {
-          cwd: worktreePath,
-          encoding: 'utf8',
-          timeout: 300_000,
-          env: buildGitSshEnv(),
-        });
-      }
     } catch (err) {
       this.logger.warn(
         `Git LFS hydration skipped for ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`
       );
+      return;
+    }
+    if (tracked.trim().length > 0) {
+      execFileSync('git', ['lfs', 'pull'], {
+        cwd: worktreePath,
+        encoding: 'utf8',
+        timeout: 300_000,
+        env: buildGitSshEnv(),
+      });
     }
   }
 
