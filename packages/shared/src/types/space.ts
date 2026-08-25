@@ -1146,6 +1146,17 @@ export interface WorkflowChannel {
 
 export const HANDOFF_TARGET_WILDCARD = '*' as const;
 
+export type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
+
+export interface WorkflowCondition {
+  type: WorkflowConditionType;
+  expression?: string;
+  description?: string;
+  maxRetries?: number;
+  timeoutMs?: number;
+  allowedEnv?: string[];
+}
+
 export interface HandoffTransition {
   id: string;
   label?: string;

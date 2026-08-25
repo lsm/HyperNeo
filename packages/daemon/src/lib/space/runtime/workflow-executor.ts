@@ -1,16 +1,6 @@
-import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { buildWorkflowConditionEnv } from '../../spawn-env.ts';
-
-type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
-
-interface WorkflowCondition {
-  type: WorkflowConditionType;
-  expression?: string;
-  description?: string;
-  timeoutMs?: number;
-  allowedEnv?: string[];
-}
 
 export interface ConditionContext {
   workspacePath: string;

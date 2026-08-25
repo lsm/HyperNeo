@@ -21,6 +21,7 @@ const _workflowConditionSchema = z
     description: z.string().optional(),
     maxRetries: z.number().int().nonnegative().optional(),
     timeoutMs: z.number().int().nonnegative().optional(),
+    allowedEnv: z.array(z.string().min(1)).optional(),
   })
   .superRefine((val, ctx) => {
     if (val.type === 'condition' && (!val.expression || !val.expression.trim())) {
