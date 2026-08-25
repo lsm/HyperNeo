@@ -463,6 +463,36 @@ describe('WorktreeManager', () => {
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });
 
+    it('should skip LFS hydration when only commented-out LFS attributes exist', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      fsPromisesMocks.readFile.mockResolvedValue('# *.bin filter=lfs diff=lfs merge=lfs -text');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '.gitattributes';
+        return '';
+      });
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.branch).toBe('session/session-123');
+    });
+
     it('should not delete a pre-existing fallback branch when worktree add fails', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);

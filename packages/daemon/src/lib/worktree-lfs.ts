@@ -17,7 +17,11 @@ export async function worktreeDeclaresLfsAttributes(
   for (const rel of attrFiles) {
     try {
       const content = await readFile(join(worktreePath, rel), 'utf-8');
-      if (LFS_ATTRIBUTE_PATTERN.test(content)) return true;
+      const activeAttributes = content
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('#'))
+        .join('\n');
+      if (LFS_ATTRIBUTE_PATTERN.test(activeAttributes)) return true;
     } catch {}
   }
   return false;

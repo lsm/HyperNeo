@@ -41,6 +41,9 @@ const SOURCE: Record<string, string> = {
   GH_TOKEN: 'gh-secret',
   SSH_AUTH_SOCK: '/tmp/ssh-agent.sock',
   GIT_SSH_COMMAND: 'ssh -i /secret/id_ed25519',
+  VSCODE_GIT_ASKPASS_NODE: '/usr/local/bin/node',
+  VSCODE_GIT_ASKPASS_MAIN: '/vscode/extensions/git/dist/askpass-main.js',
+  VSCODE_GIT_IPC_HANDLE: '/tmp/vscode-git-ipc',
   GIT_LFS_SKIP_SMUDGE: '0',
   GIT_CONFIG_COUNT: '2',
   GIT_CONFIG_KEY_0: 'http.extraHeader',
@@ -110,6 +113,9 @@ describe('buildGitSshEnv', () => {
     const env = buildGitSshEnv(SOURCE);
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.VSCODE_GIT_ASKPASS_NODE).toBe(SOURCE.VSCODE_GIT_ASKPASS_NODE);
+    expect(env.VSCODE_GIT_ASKPASS_MAIN).toBe(SOURCE.VSCODE_GIT_ASKPASS_MAIN);
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
     expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
     expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
     expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
