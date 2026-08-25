@@ -242,6 +242,19 @@ export class PendingAgentMessageRepository {
     this.notify();
   }
 
+  deferExpiration(ids: string[], ttlMs = DEFAULT_PENDING_MESSAGE_TTL_MS): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET expires_at = ?
+				 WHERE id IN (${placeholders}) AND status = 'pending'`
+      )
+      .run(Date.now() + ttlMs, ...ids);
+    this.notify();
+  }
+
   rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
     const tx = this.db.transaction(() => {
       const row = this.getById(id);

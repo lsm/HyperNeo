@@ -320,7 +320,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
 
     await admitPromptMessage(spawnedQueries[0], 'msg-wake-1');
     const outcome = await delivered;
-    expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-wake-1' });
+    expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-wake-1', sessionId: SESSION_ID });
     expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus).toBe(
       'consumed'
     );
@@ -350,7 +350,11 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       const { db, agentSession } = harness;
 
       const outcome = await harness.escalate('msg-queued-1', 'escalation while coordinator idle');
-      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-queued-1' });
+      expect(outcome).toEqual({
+        state: 'queued',
+        messageId: 'msg-queued-1',
+        sessionId: SESSION_ID,
+      });
       expect(
         db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-queued-1')?.sendStatus
       ).toBe('enqueued');
@@ -472,7 +476,11 @@ describe('idle coordinator message consumption (issue #2963)', () => {
         }
       );
       const outcome = await escalated;
-      expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-boundary-1' });
+      expect(outcome).toEqual({
+        state: 'delivered',
+        messageId: 'msg-boundary-1',
+        sessionId: SESSION_ID,
+      });
     });
 
     it('settles a queued escalation through the delayed-consumption hook', async () => {
@@ -486,7 +494,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
           settled = true;
         },
       });
-      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-late-1' });
+      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-late-1', sessionId: SESSION_ID });
       expect(settled).toBe(false);
 
       await waitFor(() => spawnedQueries.length > 0);

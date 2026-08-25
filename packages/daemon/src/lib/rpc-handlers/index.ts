@@ -1051,7 +1051,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         .catch(() => {});
       await session.messageQueue.enqueueWithId(messageId, message);
     });
-    return { state: 'delivered', messageId };
+    return { state: 'delivered', messageId, sessionId };
   };
 
   const taskAgentManager = new TaskAgentManager({

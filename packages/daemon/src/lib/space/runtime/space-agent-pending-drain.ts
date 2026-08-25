@@ -11,6 +11,7 @@ export interface SpaceAgentPendingDrainDeps {
     listPendingForTarget(workflowRunId: string, targetName: string): PendingAgentMessageRecord[];
     getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
+    deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null }): unknown;
     expireStale(runId: string): unknown;
   };
@@ -27,7 +28,7 @@ export interface SpaceAgentPendingDrainInput {
 interface SpaceAgentPendingDrainCtx extends SpaceAgentPendingDrainInput {
   deps: SpaceAgentPendingDrainDeps;
   listedRows?: PendingAgentMessageRecord[];
-  unsettledRows?: PendingAgentMessageRecord[];
+  activeDeliveryIds?: string[];
   pendingRows?: PendingAgentMessageRecord[];
   outcome?: SpaceAgentPendingDrainOutcome;
 }
@@ -39,28 +40,41 @@ function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   };
 }
 
-function reconcileConsumed(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
+function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const settledIds = new Set<string>();
+  const activeDeliveryIds: string[] = [];
   for (const row of ctx.listedRows ?? []) {
+    if (settledIds.has(row.id)) continue;
     const replyTo = ctx.deps.resolveReplySession(row);
     const candidates =
       replyTo && replyTo !== ctx.spaceChatSessionId
         ? [replyTo, ctx.spaceChatSessionId]
         : [ctx.spaceChatSessionId];
+    let resolved = false;
     for (const sessionId of candidates) {
-      if (ctx.deps.probeDeliveryStatus(sessionId, row.id) !== 'consumed') continue;
-      if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
-        ctx.deps.repo.markDelivered(row.id, sessionId);
-        ctx.deps.onSettled(row, sessionId);
+      const sendStatus = ctx.deps.probeDeliveryStatus(sessionId, row.id);
+      if (sendStatus === 'consumed') {
+        if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
+          ctx.deps.repo.markDelivered(row.id, sessionId);
+          ctx.deps.onSettled(row, sessionId);
+        }
+        resolved = true;
+        break;
       }
-      settledIds.add(row.id);
-      break;
+      if (sendStatus === 'enqueued' && !activeDeliveryIds.includes(row.id)) {
+        activeDeliveryIds.push(row.id);
+      }
     }
+    if (resolved) settledIds.add(row.id);
   }
-  return {
-    ...ctx,
-    unsettledRows: (ctx.listedRows ?? []).filter((row) => !settledIds.has(row.id)),
-  };
+  return { ...ctx, activeDeliveryIds };
+}
+
+function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
+  if ((ctx.activeDeliveryIds ?? []).length > 0) {
+    ctx.deps.repo.deferExpiration(ctx.activeDeliveryIds!);
+  }
+  return ctx;
 }
 
 function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
@@ -103,7 +117,8 @@ const run = (
 )
   .input(['ctx'])
   .pipe(listRows, 'ctx', 'ctx')
-  .pipe(reconcileConsumed, 'ctx', 'ctx')
+  .pipe(reconcileRows, 'ctx', 'ctx')
+  .pipe(deferActiveDeliveries, 'ctx', 'ctx')
   .pipe(runRetention, 'ctx', 'ctx')
   .pipe(listAdmissibleRows, 'ctx', 'ctx')
   .pipe(admitDrain, 'ctx', 'ctx')

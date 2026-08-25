@@ -1950,7 +1950,11 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+      spaceAgentInjector: async () => ({
+        state: 'queued',
+        messageId: 'msg-queued-coordinator',
+        sessionId: 'sess-stub',
+      }),
     });
 
     const result = await router.deliverMessage({
@@ -1974,7 +1978,11 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+      spaceAgentInjector: async () => ({
+        state: 'queued',
+        messageId: 'msg-queued-coordinator',
+        sessionId: 'sess-stub',
+      }),
     });
 
     const result = await router.deliverMessage({
@@ -1996,7 +2004,11 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+      spaceAgentInjector: async () => ({
+        state: 'queued',
+        messageId: 'msg-queued-coordinator',
+        sessionId: 'sess-stub',
+      }),
       messageResolver: {
         resolveTargets: async () => {
           throw new Error('resolver down');
@@ -2026,7 +2038,11 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ state: 'delivered', messageId: 'msg-live-coordinator' }),
+      spaceAgentInjector: async () => ({
+        state: 'delivered',
+        messageId: 'msg-live-coordinator',
+        sessionId: 'sess-stub',
+      }),
     });
 
     const result = await router.deliverMessage({
@@ -2082,7 +2098,11 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+      spaceAgentInjector: async () => ({
+        state: 'queued',
+        messageId: 'msg-queued-coordinator',
+        sessionId: 'sess-stub',
+      }),
       replyRoutingLookup: () => 'session-origin',
     });
 
@@ -2109,7 +2129,11 @@ describe('AgentMessageRouter: generic address targets', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async () => ({ state: 'delivered', messageId: 'msg-space-agent' }),
+      spaceAgentInjector: async () => ({
+        state: 'delivered',
+        messageId: 'msg-space-agent',
+        sessionId: 'sess-stub',
+      }),
       replyRoutingLookup: () => 'session-origin',
     });
 
@@ -2566,7 +2590,11 @@ describe('AgentMessageRouter: replyRoutingLookup routes space-agent replies to o
     const router = makeRouter(ctx, workflowRunId, [], runChannels, {
       spaceId: ctx.spaceId,
       taskId: 'task-123',
-      spaceAgentInjector: async () => ({ state: 'delivered', messageId: 'msg-space-agent' }),
+      spaceAgentInjector: async () => ({
+        state: 'delivered',
+        messageId: 'msg-space-agent',
+        sessionId: 'sess-stub',
+      }),
       replyRoutingLookup: (agentName) => {
         lookupCalls.push(agentName ?? null);
         return agentName === 'coder' ? 'session-adhoc-coder' : null;

@@ -55,6 +55,10 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
       return repo.listPendingForTarget(runId, targetName, workflowNodeId);
     },
     getById: (id: string) => repo.getById(id),
+    deferExpiration: (ids: string[], ttlMs?: number) => {
+      calls.push(`defer:${ids.join(',')}`);
+      repo.deferExpiration(ids, ttlMs);
+    },
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);
       repo.markDelivered(id, sessionId);
@@ -682,6 +686,29 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
     expect(h.spyRepo.calls).toEqual([]);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+  });
+
+  it('defers pending-row expiry while an SDK delivery is still active', async () => {
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
+        state: 'queued',
+        messageId: rowId,
+        sessionId: `space:chat:stub`,
+      }),
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'still in flight' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'enqueued' } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.spyRepo.calls).toContain(`defer:${row.id}`);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
   });
 

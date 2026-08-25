@@ -1515,7 +1515,7 @@ export class TaskAgentManager {
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const replyTo = resolveReplySession(row);
-        const deliveredSessionId = replyTo || spaceChatSessionId;
+        let deliveredSessionId = replyTo || spaceChatSessionId;
         const settleDelivered = (): void => {
           if (repo.getById(row.id)?.status !== 'pending') return;
           repo.markDelivered(row.id, deliveredSessionId);
@@ -1524,6 +1524,7 @@ export class TaskAgentManager {
         const outcome = await inject(spaceId, message, replyTo, row.id, {
           onConsumed: settleDelivered,
         });
+        if (outcome.sessionId) deliveredSessionId = outcome.sessionId;
         if (outcome.state === 'delivered') {
           settleDelivered();
         } else if (outcome.state === 'failed') {

@@ -16,9 +16,9 @@ const log = new Logger('space-agent-delivery');
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 
 export type SpaceAgentInjectionOutcome =
-  | { state: 'delivered'; messageId: string }
-  | { state: 'queued'; messageId: string }
-  | { state: 'failed'; messageId: string; error: string };
+  | { state: 'delivered'; messageId: string; sessionId: string }
+  | { state: 'queued'; messageId: string; sessionId: string }
+  | { state: 'failed'; messageId: string; sessionId: string; error: string };
 
 export interface SpaceAgentDeliveryDeps {
   sdkMessageRepo: {
@@ -67,7 +67,10 @@ function loadExistingRow(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
 
 function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
   if (ctx.existing?.sendStatus !== 'consumed') return ctx;
-  return { ...ctx, outcome: { state: 'delivered', messageId: ctx.messageId } };
+  return {
+    ...ctx,
+    outcome: { state: 'delivered', messageId: ctx.messageId, sessionId: ctx.sessionId },
+  };
 }
 
 async function persistOrReopenRow(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
@@ -119,11 +122,11 @@ async function deliverAndAwaitConsumption(
 async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
   const { sessionId, messageId } = ctx;
   if (ctx.consumed) {
-    return { ...ctx, outcome: { state: 'delivered', messageId } };
+    return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
   }
   const settled = ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
   if (settled === 'consumed') {
-    return { ...ctx, outcome: { state: 'delivered', messageId } };
+    return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
   }
   if (settled === 'failed') {
     return {
@@ -131,13 +134,14 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
       outcome: {
         state: 'failed',
         messageId,
+        sessionId,
         error: 'delivery dead-lettered while awaiting consumption',
       },
     };
   }
   const onConsumed = ctx.deps.onConsumed;
   if (!onConsumed) {
-    return { ...ctx, outcome: { state: 'queued', messageId } };
+    return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
   }
   const late = waitForDeliveryConsumption(sessionId, messageId);
   const expiry = setTimeout(() => late.cancel(), LATE_SETTLE_HORIZON_MS);
@@ -152,7 +156,7 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
       );
     }
   });
-  return { ...ctx, outcome: { state: 'queued', messageId } };
+  return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
 }
 
 async function failDelivery(ctx: SpaceAgentDeliveryCtx): Promise<void> {
@@ -190,6 +194,7 @@ export async function deliverSpaceAgentMessage(
     ctx.outcome ?? {
       state: 'failed',
       messageId: args.messageId,
+      sessionId: args.sessionId,
       error: 'space-agent delivery ended without an outcome',
     }
   );
