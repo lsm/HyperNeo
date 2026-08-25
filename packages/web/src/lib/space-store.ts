@@ -808,6 +808,17 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentDeleted);
 
+    const unsubGoalOwnerChanged = hub.onEvent<{
+      sessionId: string;
+      spaceId: string;
+      goalId: string;
+    }>('spaceGoal.ownerChanged', (event) => {
+      if (event.spaceId === spaceId) {
+        void this.fetchGoalOwner(event.goalId).catch(() => {});
+      }
+    });
+    this.cleanupFunctions.push(unsubGoalOwnerChanged);
+
     const unsubWorkflowCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;

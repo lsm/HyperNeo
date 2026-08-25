@@ -67,6 +67,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     let cancelled = false;
     setOwnerLoadFailed(false);
     setAssignOpen(false);
+    setAssigneeId('');
     spaceStore
       .fetchGoalOwner(goalId)
       .then(() => {

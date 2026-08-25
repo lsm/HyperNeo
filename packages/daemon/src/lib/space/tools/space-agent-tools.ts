@@ -899,6 +899,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       .catch(() => {});
   }
 
+  function emitGoalOwnerChanged(goalId: string): void {
+    internalEventBus
+      ?.publish('spaceGoal.ownerChanged', {
+        sessionId: mySessionId ?? 'space-agent-tools',
+        spaceId,
+        goalId,
+      })
+      .catch(() => {});
+  }
+
   function logAudit(
     toolName: string,
     paramsSummary: Record<string, unknown>,
@@ -1536,6 +1546,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         requireLongHorizonAgentInSpace(args.agent_id);
         requireGoalInSpace(args.goal_id);
         requireLongHorizonAgentRepo().assignGoal(args.agent_id, args.goal_id);
+        emitGoalOwnerChanged(args.goal_id);
         logAudit('assign_agent_to_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
@@ -1563,6 +1574,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.goal_id,
           'owner'
         );
+        emitGoalOwnerChanged(args.goal_id);
         logAudit('unassign_agent_from_goal', args);
         return jsonResult({ success: true });
       } catch (err) {
