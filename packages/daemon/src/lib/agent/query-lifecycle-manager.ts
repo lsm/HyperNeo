@@ -735,9 +735,9 @@ export class QueryLifecycleManager {
     await this.restart();
   }
 
-  async executeDeferredRestartIfPending(idleOwner?: IdleOwnerScope): Promise<void> {
+  async executeDeferredRestartIfPending(idleOwner?: IdleOwnerScope): Promise<boolean> {
     if (!this.ctx.pendingRestartReason) {
-      return;
+      return false;
     }
 
     const reason = this.ctx.pendingRestartReason;
@@ -745,10 +745,12 @@ export class QueryLifecycleManager {
 
     try {
       await this.restart({ idleOwner });
+      return true;
     } catch (error) {
       if (error instanceof IdleRestartSupersededError) {
         this.ctx.pendingRestartReason = reason;
       }
+      return false;
     }
   }
 

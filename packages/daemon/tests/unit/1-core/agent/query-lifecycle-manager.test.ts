@@ -1434,10 +1434,11 @@ describe('QueryLifecycleManager', () => {
       mockContext.pendingRestartReason = 'settings.local.json';
       manager = new QueryLifecycleManager(mockContext);
 
-      await manager.executeDeferredRestartIfPending();
+      const restarted = await manager.executeDeferredRestartIfPending();
 
       expect(mockContext.pendingRestartReason).toBeNull();
       expect(startStreamingCalled).toBe(true);
+      expect(restarted).toBe(true);
     });
 
     test('clears pending reason even if restart fails', async () => {

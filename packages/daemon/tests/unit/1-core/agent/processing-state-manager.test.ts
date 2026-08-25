@@ -563,6 +563,31 @@ describe('ProcessingStateManager', () => {
       await waiterB.promise;
     });
 
+    test('a replacement settle consumes its own fence, not the stalled predecessor fence', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      manager.beginTerminalIdle();
+
+      manager.noteQueryOwnerGeneration(1);
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      manager.beginTerminalIdle();
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      await manager.setIdle();
+
+      expect(manager.getState().status).toBe('idle');
+      expect(resolvedB).toBe(true);
+      await waiterA.promise;
+      expect(manager.isTerminalIdlePending()).toBe(true);
+
+      await manager.setIdle();
+      expect(manager.isTerminalIdlePending()).toBe(false);
+    });
+
     test('a suppressed reentrant fenced idle transfers its waiter to the enclosing drain', async () => {
       const ownerA = manager.admitDeliveryTurn();
       const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);

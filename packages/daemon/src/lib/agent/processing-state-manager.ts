@@ -212,9 +212,18 @@ export class ProcessingStateManager {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
-    const fenceOwner = consumesTerminalFence
-      ? (this.pendingFenceOwners.shift() ?? this.getCurrentIdleOwner())
-      : undefined;
+    let fenceOwner: IdleOwnerScope | undefined;
+    if (consumesTerminalFence) {
+      let fenceIndex = -1;
+      for (let i = this.pendingFenceOwners.length - 1; i >= 0; i--) {
+        if (this.isIdleOwnerCurrent(this.pendingFenceOwners[i])) {
+          fenceIndex = i;
+          break;
+        }
+      }
+      if (fenceIndex === -1) fenceIndex = 0;
+      fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
+    }
     const transitionOwner = opts?.owner ?? fenceOwner ?? this.getCurrentIdleOwner();
     const fenceStartToken = fenceOwner ? fenceOwner.turnToken : this.turnOwnerToken;
     if (consumesTerminalFence) {
