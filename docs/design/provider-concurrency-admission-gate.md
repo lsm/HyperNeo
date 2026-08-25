@@ -52,10 +52,12 @@ or test-pinned).
   *episode* itself IS durable in v1 — one persisted marker row per account
   (caveat 1, in the C5-PR3 migration family) so a restart re-enters
   saturation or the closed state rather than re-admitting a herd. What
-  stays in-memory is the fine-grained state around it — grants,
-  registrations, in-flight counts — whose loss is bounded: reconstruction
-  re-registers from the durable markers, and the drain's first probe may
-  pay one re-armed 429 (bounded, see caveats).
+  stays in-memory is the fine-grained state around it — registrations and
+  in-flight counts (re-registered from the durable markers) — while a
+  probing episode's grant holder and lease ARE durable (the probing
+  record) and are reconstructed bound to the serialized identity or
+  pending; only a non-probing episode's transition back into the drain
+  can pay one re-armed discovery 429 (bounded, see caveats).
 - **Provider-level UI surfacing** (a `providers.changed`-style status event, picker
   badges). Queued messages are visible as pending (deferred) rows in the existing UI.
 - **Falling back on provider queueing.** The per-session fallback ladder
@@ -902,11 +904,17 @@ AFTER the generated API-key authentication
 anthropic-messages-bridge/server.ts:188-194): two records with one base
 URL and a placeholder `apiKey` but different overriding `Authorization`
 or tenant headers send as different identities and must not share a key,
-while two records whose `Authorization` override makes their differing
+while two records whose overrides make their differing
 placeholder `apiKey` values irrelevant send as the SAME identity and
-must share one (generated credentials that a custom header replaces are
-excluded from the digest; absent identity headers digest to a constant
-and the raw credential stands in) — the
+must share one — where "irrelevant" means EVERY provider-specific
+generated authentication header the credential supplies has been
+overridden: the anthropic bridge generates BOTH `Authorization` and
+`x-api-key` before applying custom headers
+(anthropic-messages-bridge/server.ts:188-194), so overriding only
+`Authorization` leaves the generated `x-api-key` differing and the raw
+credential stays in the digest (a partial override excludes nothing);
+absent identity headers digest to a constant
+and the raw credential stands in — the
 `baseUrl` component canonicalized through the SAME provider-specific
 base-authority normalization the request builders apply (whitespace and
 trailing-slash trimming, terminal request paths such as
@@ -1127,7 +1135,10 @@ not inherit):
   billing-closed pause (banner and `canRetryNow` restored), keeping the
   manual path repeatedly available across transient probe failures. And (b) a bounded daily
   health probe per closed account (one unref'd timer; a successful probe
-  turn clears, a limit re-arms) so a renewal while the daemon idles is not
+  turn performs the same **one-grant probing transition** the state-table
+  contract defines — closure clears INTO probing, exactly one successor
+  grant minted for the FIFO head, never a bulk drain of the closed
+  backlog — and a limit re-arms) so a renewal while the daemon idles is not
   stuck until restart. **Durable parking under closure**: the job
   queue's `run_at` is `INTEGER NOT NULL` and `requeue` takes a number, so a
   closed denial parks an already-enqueued job at a far-future sentinel
@@ -1406,8 +1417,13 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   inbox entries occupy the same background lane, so independently generated
   per-table sequences are not comparable and would leave their cross-type
   order ambiguous after restart): parked jobs stamp `provider_park_seq`
-  beside `provider_park` on the job-queue row, and inbox items carry their
-  ingest sequence from that same allocator — neither has a message row, so
+  beside `provider_park` on the job-queue row, and a mid-flow event park
+  stamps its waiter sequence at REGISTRATION time — not its ingest
+  sequence, because the entry may be ingested long before it reaches
+  provider admission (its security stage may still be running), and
+  ordering by ingest would leapfrog an already-waiting job that
+  registered during that interval — the stamp allocating from that same
+  allocator when the park registers; neither has a message row, so
   each lane reconstructs from its own durable order and the lanes merge
   only at selection time (chat-first). In-memory order can diverge from row
   age (an older preexisting row P3-parks after a newer message registered),
@@ -1440,8 +1456,11 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   (`D/src/storage/schema/index.ts:199`), so a new value would fail the CHECK, and
   overloading it would discard the row's human/system semantics anyway —
   the admission-arm shadow therefore gets its OWN nullable
-  `admission_arm` column in the same migration (written whenever the
-  provider gate queues a row, and **retained past prompt yield — cleared
+  `admission_arm` column in the same migration (written for EVERY P1/P2
+  delivery entering a provider call — not only previously queued ones,
+  because the call that first discovers a limit was admitted while the
+  registry was open, never took the queue arm, and would otherwise reach
+  P4 with a null shadow — and **retained past prompt yield — cleared
   only on terminal status flips or user removal**, because P4 runs AFTER
   the yielded provider call reports its limit and must still read the
   arm to restore `provider_saturated_p1` vs `_p2`; clearing it with the
