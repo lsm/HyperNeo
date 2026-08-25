@@ -349,6 +349,34 @@ function fallbackModelsFor(provider: Provider): ModelInfo[] {
   return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
 }
 
+function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+  if (curatedModels === undefined) return models;
+  const knownIds = new Set(models.map((model) => model.id));
+  const staticProviderModels = STATIC_MODEL_METADATA.filter(
+    (model) => model.provider === providerId
+  );
+  const missing = curatedModels.flatMap((curated) => {
+    if (knownIds.has(curated.id)) return [];
+    const known = findInModels(staticProviderModels, curated.id);
+    if (known) return [{ ...known }];
+    return [
+      {
+        id: curated.id,
+        name: curated.name ?? curated.id,
+        alias: '',
+        family: providerId,
+        provider: providerId,
+        contextWindow: 128000,
+        description: `Curated model ${curated.name ?? curated.id}`,
+        releaseDate: '',
+        available: true,
+      },
+    ];
+  });
+  return missing.length === 0 ? models : [...models, ...missing];
+}
+
 async function loadProviderModels(
   provider: Provider,
   options?: { forceRemote?: boolean }
@@ -357,10 +385,13 @@ async function loadProviderModels(
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
-    const models =
+    const discovered =
       options?.forceRemote && provider.listRemoteModels
         ? await provider.listRemoteModels({ force: true })
-        : await provider.getModels();
+        : null;
+    const models = discovered
+      ? withCuratedEntries(provider.id, discovered)
+      : await provider.getModels();
     if (
       models.length > 0 ||
       provider.hasCuratedModelList?.() ||
