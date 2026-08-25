@@ -94,6 +94,12 @@ import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { GOAL_OUTCOME_WAKE_ENABLED } from '../space/runtime/goal-outcome-wake-flag.ts';
+import { SpaceAgentInactivityWatchdogService } from '../space/agents/inactivity-watchdog-service.ts';
+import type { InactivityWatchdogSessionSnapshot } from '../space/agents/inactivity-watchdog-service.ts';
+import {
+  SpaceAgentInactivityClaimRepository,
+  SpaceAgentInactivityConfigRepository,
+} from '../../storage/repositories/space-agent-inactivity-repository.ts';
 import { setupSpaceWorkflowRunHandlers } from './space-workflow-run-handlers.ts';
 import type { SpaceWorkflowRunTaskManagerFactory } from './space-workflow-run-handlers.ts';
 import { setupNodeExecutionHandlers } from './space-node-execution-handlers.ts';
@@ -199,6 +205,15 @@ export interface RPCHandlerDependencies {
 
 const log = new Logger('rpc-handlers');
 
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 export function setupExternalEventExtensionHandlers(deps: RPCHandlerDependencies): void {
   deps.messageHub.onRequest('space.externalEvents.listDeliveries', async (data) => {
     const params = (data ?? {}) as {
@@ -298,9 +313,14 @@ export interface RPCHandlerSetupResult {
   spaceWorktreeManager: SpaceWorktreeManager;
   spaceGoalService: SpaceGoalService;
   goalAutomationService: GoalAutomationService;
+  spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
+  cancelInactivityWatchdog: () => void;
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
+  const pendingInactivityRunNow = new Set<Promise<void>>();
+  let inactivityRunNowCancelled = false;
+  let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
   setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -623,7 +643,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db.getDatabase()
   );
 
-  const spaceRuntimeService = new SpaceRuntimeService({
+  const spaceAgentInactivityConfigRepo = new SpaceAgentInactivityConfigRepository(
+    deps.db.getDatabase()
+  );
+  const spaceAgentInactivityClaimRepo = new SpaceAgentInactivityClaimRepository(
+    deps.db.getDatabase()
+  );
+
+  const spaceRuntimeService: SpaceRuntimeService = new SpaceRuntimeService({
     db: deps.db.getDatabase(),
     dbPath: deps.db.getDatabasePath(),
     spaceManager: deps.spaceManager,
@@ -662,7 +689,190 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactProfile,
     outcomeNotificationRepo,
     enableGoalOutcomeWake: GOAL_OUTCOME_WAKE_ENABLED,
+    inactivityConfigRepo: spaceAgentInactivityConfigRepo,
+    inactivityClaimRepo: spaceAgentInactivityClaimRepo,
+    inactivityRunNow: (spaceId, agentId) => {
+      const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
+      const db = deps.db.getDatabase();
+      const anchorRow =
+        sessionId !== null && sessionId !== undefined
+          ? (db
+              .prepare(
+                `SELECT MAX(timestamp) AS ts FROM sdk_messages
+                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+                   AND timestamp < (
+                     SELECT MAX(timestamp) FROM sdk_messages
+                     WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+                       AND message_type = 'user'
+                   )`
+              )
+              .get(sessionId, sessionId) as { ts?: string | number | null } | null)
+          : null;
+      const invokingUserRow =
+        sessionId !== null && sessionId !== undefined
+          ? (db
+              .prepare(
+                `SELECT MAX(timestamp) AS ts FROM sdk_messages
+                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+                   AND message_type = 'user'`
+              )
+              .get(sessionId) as { ts?: string | number | null } | null)
+          : null;
+      const activityBaseline = toEpochMs(anchorRow?.ts) ?? undefined;
+      const invokingUserMsgAt = toEpochMs(invokingUserRow?.ts);
+      const invokedAt = Date.now();
+      let task: Promise<void>;
+      const run = async () => {
+        try {
+          while (!inactivityRunNowCancelled) {
+            if (sessionId !== null && sessionId !== undefined) {
+              const row = db
+                .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
+                .get(sessionId) as { processing_state?: string | null } | null;
+              let status = 'idle';
+              try {
+                const parsed = row?.processing_state
+                  ? (JSON.parse(row.processing_state) as { status?: unknown })
+                  : null;
+                if (parsed && typeof parsed.status === 'string') status = parsed.status;
+              } catch {}
+              if (
+                status !== 'processing' &&
+                status !== 'queued' &&
+                status !== 'running' &&
+                status !== 'waiting_for_input' &&
+                status !== 'rate_limit_cooldown'
+              ) {
+                break;
+              }
+            } else {
+              break;
+            }
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 2000);
+              timer.unref();
+            });
+          }
+          if (!inactivityRunNowCancelled) {
+            await spaceAgentInactivityWatchdog
+              .scanAgent(spaceId, agentId, activityBaseline, invokedAt, invokingUserMsgAt)
+              .catch(() => {});
+          }
+        } finally {
+          pendingInactivityRunNow.delete(task);
+        }
+      };
+      task = run();
+      pendingInactivityRunNow.add(task);
+      void task.catch(() => {});
+      return Promise.resolve();
+    },
   });
+
+  const spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService =
+    new SpaceAgentInactivityWatchdogService({
+      configRepo: spaceAgentInactivityConfigRepo,
+      claimRepo: spaceAgentInactivityClaimRepo,
+      agentRepo: longHorizonAgentRepo,
+      spaceManager: deps.spaceManager,
+      scannerToken: `inactivity-scanner:${deps.db.getDatabasePath()}`,
+      shouldAbort: () => inactivityAborted,
+      getSessionSnapshot: (spaceId, agentId): InactivityWatchdogSessionSnapshot | null => {
+        const agent = longHorizonAgentRepo.getById(agentId);
+        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return null;
+        const db = deps.db.getDatabase();
+        const sessionRow = db
+          .prepare(`SELECT created_at, status, processing_state FROM sessions WHERE id = ?`)
+          .get(agent.sessionId) as {
+          created_at?: string | number;
+          status?: string | null;
+          processing_state?: string | null;
+        } | null;
+        if (
+          sessionRow !== null &&
+          (sessionRow.status === 'archived' || sessionRow.status === 'ended')
+        ) {
+          return null;
+        }
+        const consumedRow = db
+          .prepare(
+            `SELECT MAX(timestamp) AS ts FROM sdk_messages
+           WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
+          )
+          .get(agent.sessionId) as { ts?: string | number | null } | null;
+        const consumedUserRow = db
+          .prepare(
+            `SELECT MAX(timestamp) AS ts FROM sdk_messages
+           WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+             AND message_type = 'user'`
+          )
+          .get(agent.sessionId) as { ts?: string | number | null } | null;
+        const pendingRow = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM sdk_messages
+           WHERE session_id = ? AND send_status IN ('enqueued', 'submitted', 'deferred')`
+          )
+          .get(agent.sessionId) as { n?: number } | null;
+        let status = 'idle';
+        const liveSession = deps.sessionManager?.getCachedSession(agent.sessionId);
+        if (liveSession) {
+          status = liveSession.stateManager.getState().status;
+        } else {
+          try {
+            const parsed = sessionRow?.processing_state
+              ? (JSON.parse(sessionRow.processing_state) as { status?: unknown })
+              : null;
+            if (parsed && typeof parsed.status === 'string') status = parsed.status;
+          } catch {}
+        }
+        return {
+          latestConsumedMessageAt: toEpochMs(consumedRow?.ts),
+          latestConsumedUserMessageAt: toEpochMs(consumedUserRow?.ts),
+          sessionCreatedAt: toEpochMs(sessionRow?.created_at),
+          busyWithOtherWork:
+            status === 'processing' ||
+            status === 'queued' ||
+            status === 'running' ||
+            status === 'rate_limit_cooldown' ||
+            status === 'waiting_for_input',
+          pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0,
+        };
+      },
+      isNagDeliveryPending: (spaceId, agentId, claimKey) => {
+        const agent = longHorizonAgentRepo.getById(agentId);
+        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const row = deps.db
+          .getDatabase()
+          .prepare(
+            `SELECT send_status FROM sdk_messages
+             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
+          )
+          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
+        const status = row?.send_status ?? null;
+        return status === 'enqueued' || status === 'submitted' || status === 'deferred';
+      },
+      isNagDeliveryFailed: (spaceId, agentId, claimKey) => {
+        const agent = longHorizonAgentRepo.getById(agentId);
+        if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const row = deps.db
+          .getDatabase()
+          .prepare(
+            `SELECT send_status FROM sdk_messages
+             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
+          )
+          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
+        return row?.send_status === 'failed';
+      },
+      deliverNag: (args) =>
+        spaceRuntimeService.deliverLongHorizonAgentNag({
+          spaceId: args.spaceId,
+          agentId: args.agentId,
+          message: args.prompt,
+          idempotencyKey: args.idempotencyKey,
+          expectedConfigRevision: args.configRevision,
+        }),
+    });
+
   deliverOutcomeWake = (notification) => {
     void spaceRuntimeService.deliverGoalOutcomeWake(notification).catch((err) => {
       log.warn(
@@ -1013,6 +1223,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   return {
     cleanup: async () => {
+      inactivityRunNowCancelled = true;
+      await Promise.allSettled(pendingInactivityRunNow);
       unsubLiveQuery();
       await spaceRuntimeService.stop();
       fileIndex.dispose();
@@ -1022,5 +1234,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorktreeManager,
     spaceGoalService,
     goalAutomationService,
+    spaceAgentInactivityWatchdog,
+    cancelInactivityWatchdog: () => {
+      inactivityAborted = true;
+      inactivityRunNowCancelled = true;
+    },
   };
 }
