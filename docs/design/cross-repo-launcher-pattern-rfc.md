@@ -136,9 +136,12 @@ workspaces plus a doctrine for sequencing them. No new runtime concept is introd
 
 The doctrine is prompt content, deliverable two ways:
 
-- **Zero-code (usable today):** any LH agent can carry the doctrine in its
-  `instructions` (`create_agent` / `update_agent`) — `buildLongHorizonAgentSessionConfig`
-  already appends agent instructions to every LH session prompt.
+- **Zero-code:** any LH agent can carry the doctrine in its `instructions`
+  (`create_agent` / `update_agent`) — `buildLongHorizonAgentSessionConfig` already
+  appends agent instructions to every LH session prompt. This is usable only once the
+  workspace parameters ship (#2531/#2535): today's creation tools cannot pin a goal or
+  task to repo B, so until then the pattern needs goals provisioned by a surface that
+  can, or it degrades to launching B's work in the Space primary.
 - **Packaged:** a long-horizon template family file (e.g. `cross-repo-launcher.md`,
   alongside `release-manager.md` and peers) registered in the daemon's
   `LONG_HORIZON_AGENT_TEMPLATES` array, with the whole contract embedded in the
@@ -207,7 +210,7 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 
 | Coupling | Mechanism | Enforced by |
 | --- | --- | --- |
-| Hard artifact gate (B's task cannot start without A's artifact) | Gated task with `depends_on` (standalone, or atomic via a Forge proposal — shapes below) | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents, a failed one blocks them with `dependency_failed` |
+| Hard artifact gate (B's task cannot start without A's artifact) | Gated task with `depends_on` (standalone, or atomic via a Forge proposal — shapes below), **and** goal B paused for the gate's duration | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents, a failed one blocks them with `dependency_failed`. The pause is required doctrine: gated shapes never claim B's active-task pointer, so a B check-in fire could otherwise spawn a separate ungated goal task and perform the release the gate exists to prevent |
 | Judgment gate (partial completion quality must be reviewed) | Launcher `pause_goal`s B for the duration of the gate with the condition recorded in B's `nextSteps`; `resume_goal` + `trigger_goal_task` when it reviews the gating outcome | Prompt doctrine. A withheld `trigger_goal_task` alone does **not** hold: with a check-in schedule configured, the scheduled fire creates a goal task and claims B's empty active-task pointer without consulting `nextSteps` — pausing suspends that schedule too |
 | Durable wait (A slipped/blocked indefinitely) | `pause_goal` on B with the wait recorded; `resume_goal` when released | Prompt doctrine; visible in goal state/UI |
 | Milestone release (partial completion of A releases B) | Milestones listed in A's `nextSteps`/`metrics`; B's gate names the milestone; launcher reviews A's terminal outcome against it | Prompt doctrine |
@@ -219,8 +222,11 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
 
 - **Standalone gated task:** `create_standalone_task(depends_on=[A's task])` for the
   specific artifact-bound step. Runtime-enforced from creation, but outside the goal's
-  outcome loop — the launcher tracks it with `get_task_detail`/`list_tasks` instead of
-  receiving a wake.
+  outcome loop — nothing wakes the launcher when it finishes or fails (`space.task.updated`
+  is not an LH wake source, and polling is forbidden), so the launcher must arm a durable
+  reminder (`create_agent_reminder`) when the dependency can release the task and check
+  `get_task_detail` on wake. Prefer the Forge shape when the goal has a scope: its
+  goal link produces a real outcome wake.
 - **Forge-proposal gated task** (atomic, goal-linked): when the dependent goal has a
   linked Forge scope (`create_forge_scope_from_goal`), `create_forge_task_proposal` →
   `create_task_from_forge_proposal(depends_on=[A's task])` persists `goalId` and
@@ -274,8 +280,9 @@ queued-follow-up shape already prevents overlap storms; the launcher adds no pol
 this RFC is prompt content — a launcher template registered in the daemon's existing
 `LONG_HORIZON_AGENT_TEMPLATES` array, contract embedded in the template's `instructions`
 (§4; `create_agent_from_template` copies them, and no shared session-builder append is
-needed) — plus a section in #2537's usage doc. Until that lands, the doctrine is usable
-zero-code via any LH agent's `instructions`. No new pipeline logic is introduced, so the
+needed) — plus a section in #2537's usage doc. Once the workspace creation parameters ship
+(#2531/#2535), the doctrine is also usable zero-code via any LH agent's `instructions`
+(§4). No new pipeline logic is introduced, so the
 epic's superpipe guidance (ADR 0004) does not engage; if a deferred primitive below is
 ever built, its admission/binding logic composes as a direct superpipe pipeline.
 
