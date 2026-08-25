@@ -9,6 +9,8 @@ import {
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
+  getProviderCatalogModels,
+  bumpProviderCatalogEpoch,
   clearModelsCache,
   getModelsCache,
   setModelsCache,
@@ -2780,6 +2782,87 @@ describe('Model Service', () => {
       expect(isCuratedOutModelAllowingExactId('QWEN3', 'ollama')).toBe(false);
       expect(isCuratedOutModelAllowingExactId('qwen3', 'ollama')).toBe(false);
       expect(isCuratedOutModelAllowingExactId('llama3', 'ollama')).toBe(true);
+    });
+
+    it('keeps a canonical fallback id whose curated entry is a live alias', () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'qwen3:latest',
+                name: 'Qwen 3 Latest',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Qwen 3 Latest',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModelAllowingExactId('qwen3:latest', 'ollama')).toBe(false);
+      expect(isCuratedOutModelAllowingExactId('llama3:latest', 'ollama')).toBe(true);
+    });
+  });
+
+  describe('getProviderCatalogModels', () => {
+    it('does not cache a catalog fetched across a provider sync epoch bump', async () => {
+      const registry = getProviderRegistry();
+      let fetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [
+            {
+              id: 'ollama-qwen',
+              name: 'Qwen',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Qwen',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+      setModelsCache(new Map());
+      const provider = registry.get('ollama')!;
+
+      const firstFetch = getProviderCatalogModels('ollama', provider);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      bumpProviderCatalogEpoch();
+      await firstFetch;
+      expect(fetchCount).toBe(1);
+
+      await getProviderCatalogModels('ollama', provider);
+      expect(fetchCount).toBe(2);
     });
   });
 

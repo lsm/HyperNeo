@@ -383,6 +383,7 @@ export async function getProviderCatalogModels(
   ) {
     return cached.models;
   }
+  const epochAtFetch = providerCatalogEpoch;
   let models: ModelInfo[];
   try {
     const fetched = await provider.getModels();
@@ -395,12 +396,12 @@ export async function getProviderCatalogModels(
   } catch {
     models = fallbackModelsFor(provider);
   }
-  if (models.length > 0) {
+  if (models.length > 0 && providerCatalogEpoch === epochAtFetch) {
     providerCatalogCache.set(provider, {
       models,
       at: Date.now(),
       curatedStamp,
-      epoch: providerCatalogEpoch,
+      epoch: epochAtFetch,
     });
   }
   return models;
@@ -1239,6 +1240,15 @@ export function isCuratedOutModelAllowingExactId(idOrAlias: string, providerId: 
     for (const curatedId of curatedIds) {
       if (curatedId.toLowerCase() === lowerInput) {
         return false;
+      }
+    }
+    const canonicalInput = resolveCuratedCanonicalModelId(idOrAlias, providerId);
+    if (canonicalInput) {
+      for (const curatedId of curatedIds) {
+        const canonicalCurated = resolveCuratedCanonicalModelId(curatedId, providerId);
+        if (canonicalCurated === canonicalInput) {
+          return false;
+        }
       }
     }
   }
