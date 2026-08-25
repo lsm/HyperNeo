@@ -62,22 +62,26 @@ describe('defaultAcpCommandProbe', () => {
       HOME: '/safe/home',
       ANTHROPIC_AUTH_TOKEN: 'secret',
     };
+    _setStartupEnvBaselineForTesting({ PATH: '/safe/bin', HOME: '/safe/home' });
+    try {
+      await defaultAcpCommandProbe('"/Applications/Devin CLI/devin" acp');
 
-    await defaultAcpCommandProbe('"/Applications/Devin CLI/devin" acp');
-
-    expect(clientOptions?.command).toBe('/Applications/Devin CLI/devin');
-    expect(clientOptions?.args).toEqual(['acp']);
-    expect(clientOptions?.env?.PATH).toBe('/safe/bin');
-    expect(clientOptions?.env?.HOME).toBe('/safe/home');
-    expect(clientOptions?.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-    expect(clientOptions?.replaceEnv).toBe(true);
+      expect(clientOptions?.command).toBe('/Applications/Devin CLI/devin');
+      expect(clientOptions?.args).toEqual(['acp']);
+      expect(clientOptions?.env?.PATH).toBe('/safe/bin');
+      expect(clientOptions?.env?.HOME).toBe('/safe/home');
+      expect(clientOptions?.env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(clientOptions?.replaceEnv).toBe(true);
+    } finally {
+      _setStartupEnvBaselineForTesting({});
+    }
   });
 
   test('carries selected credentials and proxy TLS inputs into the probe environment', async () => {
     process.env = { PATH: '/safe/bin', HOME: '/safe/home' };
-    const previousBaseline: Record<string, string | undefined> = { ...process.env };
     _setStartupEnvBaselineForTesting({
-      ...previousBaseline,
+      PATH: '/safe/bin',
+      HOME: '/safe/home',
       HYPERNEO_ACP_ENV_KEYS: 'PROBE_TOKEN',
       PROBE_TOKEN: 'probe-secret',
       HTTPS_PROXY: 'http://proxy.internal:8080',
@@ -86,10 +90,11 @@ describe('defaultAcpCommandProbe', () => {
       await defaultAcpCommandProbe('devin acp');
 
       expect(clientOptions?.env?.PROBE_TOKEN).toBe('probe-secret');
+      expect(clientOptions?.env?.PATH).toBe('/safe/bin');
       expect(clientOptions?.env?.HTTPS_PROXY).toBe('http://proxy.internal:8080');
       expect(clientOptions?.env?.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
     } finally {
-      _setStartupEnvBaselineForTesting(previousBaseline);
+      _setStartupEnvBaselineForTesting({});
     }
   });
 
