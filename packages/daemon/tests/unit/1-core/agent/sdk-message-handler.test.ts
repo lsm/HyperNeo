@@ -18,7 +18,7 @@ import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
 
 class TranslatingMockProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -2472,6 +2472,34 @@ describe('SDKMessageHandler', () => {
           config: expect.objectContaining({ model: 'gpt-5.4-mini' }),
         })
       );
+    });
+
+    it('should skip fallback persistence when the provider epoch changed after build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerEpoch: getProviderCatalogEpoch() + 5,
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
     });
 
     it('does not persist a retry event for a fallback replaced after build', async () => {

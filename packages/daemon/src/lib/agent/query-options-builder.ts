@@ -37,6 +37,8 @@ import type { McpEnablementRepository } from '../../storage/repositories/mcp-ena
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import { Logger } from '../logger.ts';
 import {
+  ensureScopedProviderCatalogModels,
+  getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
   isCuratedOutModelAllowingExactId,
@@ -252,6 +254,7 @@ export interface BuiltFallbackIdentity {
   scopedApiKey?: string;
   scopedBaseUrl?: string;
   scopedRegion?: string;
+  providerEpoch?: number;
 }
 
 const builtFallbackBySession = new WeakMap<object, BuiltFallbackIdentity>();
@@ -325,15 +328,28 @@ export class QueryOptionsBuilder {
     const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
+    const providerEpoch = getProviderCatalogEpoch();
     if (config.fallbackModel) {
       const sessionScopedProvider = Boolean(
         config.providerConfig?.apiKey ||
           config.providerConfig?.baseUrl ||
           config.providerConfig?.region
       );
-      const fallbackExcluded = sessionScopedProvider
-        ? isCuratedOutModelAllowingExactId(config.fallbackModel, providerId, this.ctx.session.id)
-        : await isModelExcludedByCuration(config.fallbackModel, providerId);
+      let fallbackExcluded: boolean;
+      if (sessionScopedProvider) {
+        await ensureScopedProviderCatalogModels(
+          this.ctx.session.id,
+          providerId,
+          config.providerConfig ?? {}
+        );
+        fallbackExcluded = isCuratedOutModelAllowingExactId(
+          config.fallbackModel,
+          providerId,
+          this.ctx.session.id
+        );
+      } else {
+        fallbackExcluded = await isModelExcludedByCuration(config.fallbackModel, providerId);
+      }
       if (fallbackExcluded) {
         this.logger.warn(
           `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
@@ -367,6 +383,7 @@ export class QueryOptionsBuilder {
         typeof config.providerConfig?.region === 'string'
           ? config.providerConfig.region
           : undefined,
+      providerEpoch,
     });
 
     const systemPromptConfig = this.buildSystemPrompt();
@@ -446,10 +463,25 @@ export class QueryOptionsBuilder {
             this.ctx.session.config.providerConfig?.baseUrl ||
             this.ctx.session.config.providerConfig?.region
         );
-        const fallbackExcluded = sessionScopedProvider
-          ? isCuratedOutModelAllowingExactId(fallbackAtRequest, providerId, this.ctx.session.id)
-          : await isModelExcludedByCuration(fallbackAtRequest, providerId);
+        let fallbackExcluded: boolean;
+        if (sessionScopedProvider) {
+          await ensureScopedProviderCatalogModels(
+            this.ctx.session.id,
+            providerId,
+            this.ctx.session.config.providerConfig ?? {}
+          );
+          fallbackExcluded = isCuratedOutModelAllowingExactId(
+            fallbackAtRequest,
+            providerId,
+            this.ctx.session.id
+          );
+        } else {
+          fallbackExcluded = await isModelExcludedByCuration(fallbackAtRequest, providerId);
+        }
         if (fallbackExcluded) {
+          return { behavior: 'cancelled' };
+        }
+        if (getProviderCatalogEpoch() !== providerEpoch) {
           return { behavior: 'cancelled' };
         }
         const configAfter = this.ctx.session.config;

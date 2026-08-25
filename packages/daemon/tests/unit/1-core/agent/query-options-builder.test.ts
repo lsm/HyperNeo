@@ -13,7 +13,7 @@ import {
   SDK_TRANSCRIPT_RETENTION_DAYS,
   withSdkTranscriptRetention,
 } from '../../../../src/lib/agent/sdk-transcript-retention';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import { bumpProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -311,6 +311,87 @@ describe('QueryOptionsBuilder', () => {
         } finally {
           getProviderRegistry().setCuratedModels('anthropic', undefined);
         }
+      });
+
+      it('keeps a scoped fallback mapped by the session-scoped catalog', async () => {
+        getProviderRegistry().register({
+          id: 'ollama',
+          displayName: 'Ollama',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => [
+            {
+              id: 'qwen3:14b',
+              name: 'Qwen 3 14B',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Qwen 3 14B',
+              releaseDate: '',
+              available: true,
+            },
+          ],
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('ollama', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'ollama';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
+          setModelsCache(
+            new Map([
+              [
+                'global',
+                [
+                  {
+                    id: 'qwen3:8b',
+                    name: 'Qwen 3 8B',
+                    alias: 'qwen3',
+                    family: 'qwen',
+                    provider: 'ollama',
+                    contextWindow: 128000,
+                    description: 'Qwen 3 8B',
+                    releaseDate: '',
+                    available: true,
+                  },
+                ],
+              ],
+            ])
+          );
+
+          const options = await builder.build();
+
+          expect(options.fallbackModel).toBe('qwen3:14b');
+        } finally {
+          getProviderRegistry().setCuratedModels('ollama', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+          setModelsCache(new Map());
+        }
+      });
+
+      it('declines the refusal dialog when the provider catalog epoch changed after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        bumpProviderCatalogEpoch();
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
       });
     });
 

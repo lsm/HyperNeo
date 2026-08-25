@@ -11,6 +11,8 @@ import {
   resolveModelAliasUnfiltered,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
+  ensureScopedProviderCatalogModels,
+  peekProviderCatalogModels,
   resolveVisibleCanonicalModelId,
   clearModelsCache,
   getModelsCache,
@@ -3036,6 +3038,120 @@ describe('Model Service', () => {
       await refreshModels();
       await getProviderCatalogModels('ollama', provider);
       expect(fetchCount).toBe(3);
+    });
+
+    it('skips the availability probe when the catalog cache is fresh', async () => {
+      const registry = getProviderRegistry();
+      let availabilityProbes = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: async () => {
+          availabilityProbes += 1;
+          return true;
+        },
+        getModels: async () => [
+          {
+            id: 'ollama-qwen',
+            name: 'Qwen',
+            alias: 'qwen3',
+            family: 'qwen',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Qwen',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+      const provider = registry.get('ollama')!;
+
+      await getProviderCatalogModels('ollama', provider);
+      expect(availabilityProbes).toBe(0);
+
+      await resolveVisibleCanonicalModelId('qwen3', 'ollama');
+      expect(availabilityProbes).toBe(0);
+
+      expect(peekProviderCatalogModels('ollama', provider)?.map((m) => m.id)).toEqual([
+        'ollama-qwen',
+      ]);
+
+      bumpProviderCatalogEpoch();
+      expect(peekProviderCatalogModels('ollama', provider)).toBeNull();
+
+      await resolveVisibleCanonicalModelId('qwen3', 'ollama');
+      expect(availabilityProbes).toBe(1);
+    });
+  });
+
+  describe('ensureScopedProviderCatalogModels', () => {
+    it('populates the session cache from the scoped catalog', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async (sessionConfig) => {
+          scopedFetchCount += 1;
+          return [
+            {
+              id: `scoped-${sessionConfig.baseUrl}`,
+              name: 'Scoped Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-2', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+
+      expect(scopedFetchCount).toBe(1);
+      expect(getAvailableModels('session-scoped-2').map((model) => model.id)).toEqual([
+        'scoped-http://127.0.0.1:11434',
+      ]);
+
+      await ensureScopedProviderCatalogModels('session-scoped-2', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(scopedFetchCount).toBe(1);
+    });
+
+    it('is a no-op when the provider has no scoped discovery seam', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-3', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+
+      expect(getAvailableModels('session-scoped-3')).toEqual([]);
     });
   });
 

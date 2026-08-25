@@ -10,7 +10,11 @@ import {
   recordClassifiedProviderFailure,
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
-import type { Provider, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
+import type {
+  Provider,
+  ProviderFailureErrorKind,
+  ProviderSessionConfig,
+} from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
@@ -355,6 +359,46 @@ let providerCatalogEpoch = 0;
 
 export function bumpProviderCatalogEpoch(): void {
   providerCatalogEpoch += 1;
+}
+
+export function getProviderCatalogEpoch(): number {
+  return providerCatalogEpoch;
+}
+
+export function peekProviderCatalogModels(
+  providerId: string,
+  provider: Provider
+): ModelInfo[] | null {
+  const curatedNow = getProviderRegistry().getCuratedModels(providerId);
+  const curatedStamp =
+    curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(',');
+  const cached = providerCatalogCache.get(provider);
+  if (
+    cached &&
+    cached.curatedStamp === curatedStamp &&
+    cached.epoch === providerCatalogEpoch &&
+    Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
+  ) {
+    return cached.models;
+  }
+  return null;
+}
+
+export async function ensureScopedProviderCatalogModels(
+  sessionCacheKey: string,
+  providerId: string,
+  sessionConfig: ProviderSessionConfig
+): Promise<void> {
+  if (readCachedModels(sessionCacheKey)) return;
+  const provider = getProviderRegistry().get(providerId);
+  if (!provider?.getModelsForSessionConfig) return;
+  try {
+    const models = await provider.getModelsForSessionConfig(sessionConfig);
+    if (models.length > 0) {
+      modelsCache.set(sessionCacheKey, models);
+      cacheTimestamps.set(sessionCacheKey, Date.now());
+    }
+  } catch {}
 }
 
 const providerCatalogCache = new WeakMap<
@@ -1249,12 +1293,17 @@ export async function resolveVisibleCanonicalModelId(
   if (preloadedModels === undefined) {
     const provider = getProviderRegistry().get(providerId);
     if (provider) {
-      try {
-        if (await provider.isAvailable()) {
-          liveModels = await getProviderCatalogModels(providerId, provider);
+      const cachedCatalog = peekProviderCatalogModels(providerId, provider);
+      if (cachedCatalog) {
+        liveModels = cachedCatalog;
+      } else {
+        try {
+          if (await provider.isAvailable()) {
+            liveModels = await getProviderCatalogModels(providerId, provider);
+          }
+        } catch {
+          liveModels = fallbackModelsFor(provider);
         }
-      } catch {
-        liveModels = fallbackModelsFor(provider);
       }
     }
   }

@@ -38,6 +38,8 @@ import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import {
+  ensureScopedProviderCatalogModels,
+  getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModelAllowingExactId,
   isModelExcludedByCuration,
@@ -1327,7 +1329,9 @@ export class SDKMessageHandler {
       builtIdentity.scopedRegion !==
         (typeof session.config.providerConfig?.region === 'string'
           ? session.config.providerConfig.region
-          : undefined)
+          : undefined) ||
+      (builtIdentity.providerEpoch !== undefined &&
+        builtIdentity.providerEpoch !== getProviderCatalogEpoch())
     ) {
       return;
     }
@@ -1339,9 +1343,17 @@ export class SDKMessageHandler {
     const sessionScopedProvider = Boolean(
       scopedApiKeyBefore || scopedBaseUrlBefore || scopedRegionBefore
     );
-    const fallbackExcluded = sessionScopedProvider
-      ? isCuratedOutModelAllowingExactId(fallbackModel, providerId, session.id)
-      : await isModelExcludedByCuration(fallbackModel, providerId);
+    let fallbackExcluded: boolean;
+    if (sessionScopedProvider) {
+      await ensureScopedProviderCatalogModels(
+        session.id,
+        providerId,
+        session.config.providerConfig ?? {}
+      );
+      fallbackExcluded = isCuratedOutModelAllowingExactId(fallbackModel, providerId, session.id);
+    } else {
+      fallbackExcluded = await isModelExcludedByCuration(fallbackModel, providerId);
+    }
     if (fallbackExcluded) return;
     const liveConfig = this.ctx.session.config;
     if (
@@ -1350,7 +1362,9 @@ export class SDKMessageHandler {
       liveConfig.model !== primaryModelBeforeGuard ||
       liveConfig.providerConfig?.apiKey !== scopedApiKeyBefore ||
       liveConfig.providerConfig?.baseUrl !== scopedBaseUrlBefore ||
-      liveConfig.providerConfig?.region !== scopedRegionBefore
+      liveConfig.providerConfig?.region !== scopedRegionBefore ||
+      (builtIdentity.providerEpoch !== undefined &&
+        builtIdentity.providerEpoch !== getProviderCatalogEpoch())
     ) {
       this.logger.warn(
         `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`
