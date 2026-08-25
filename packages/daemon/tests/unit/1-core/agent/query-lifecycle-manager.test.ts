@@ -123,7 +123,7 @@ describe('QueryLifecycleManager', () => {
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
         cancelSuppressedResultWait: mock(() => {}),
-        retirePendingTerminalFence: mock(() => {}),
+        retirePendingTerminalFence: mock((_opts?: { generation?: number | null }) => {}),
       } as unknown as SDKMessageHandler,
       interruptHandler: {
         getInterruptPromise: getInterruptPromiseSpy,
@@ -151,6 +151,7 @@ describe('QueryLifecycleManager', () => {
       setCleaningUp: mock(() => {}),
       cleanupEventSubscriptions: mock(() => {}),
       clearModelsCache: clearModelsCacheSpy,
+      getQueryGeneration: mock(() => 7),
       ...overrides,
     };
   }
@@ -168,6 +169,22 @@ describe('QueryLifecycleManager', () => {
       await manager.stop();
 
       expect(stopSpy).toHaveBeenCalled();
+    });
+
+    test('scopes the post-wait fence retirement to the generation captured at stop entry (B5e)', async () => {
+      const retireSpy = mock((_opts?: { generation?: number | null }) => {});
+      mockContext.messageHandler = {
+        resetCircuitBreaker: mock(() => {}),
+        cancelSuppressedResultWait: mock(() => {}),
+        retirePendingTerminalFence: retireSpy,
+      } as unknown as SDKMessageHandler;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.stop();
+
+      expect(retireSpy).toHaveBeenCalledTimes(2);
+      expect(retireSpy.mock.calls[0]).toEqual([]);
+      expect(retireSpy.mock.calls[1]).toEqual([{ generation: 7 }]);
     });
 
     test('aborts the active query before waiting for it to stop', async () => {

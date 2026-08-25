@@ -398,7 +398,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
         cancelSuppressedResultWait: mock(() => {}),
-        retirePendingTerminalFence: mock(() => {}),
+        retirePendingTerminalFence: mock((_opts?: { generation?: number | null }) => {}),
       } as unknown as SDKMessageHandler,
       interruptHandler: {
         getInterruptPromise: getInterruptPromiseSpy,

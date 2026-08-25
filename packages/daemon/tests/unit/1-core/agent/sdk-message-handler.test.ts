@@ -4535,6 +4535,25 @@ describe('SDKMessageHandler', () => {
       expect(publishedTopics()).not.toContain('query.trigger');
     });
 
+    it('a result going stale during limit classification creates no fence and spares any installed fence (B5e)', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      const cancelSpy = mock(() => {});
+      (mockStateManager as unknown as { cancelTerminalFence: unknown }).cancelTerminalFence =
+        cancelSpy;
+      mockContext.onResultLimitError = mock(async () => {
+        generation = 9;
+        return false;
+      });
+
+      await handler.handleMessage(makeApiErrorResult());
+
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
     it('ignores genuine success results', async () => {
       const onResultLimitError = mock(async () => true);
       mockContext.onResultLimitError = onResultLimitError;

@@ -889,9 +889,12 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      this.retirePendingTerminalFence();
-      this.pendingTerminalFence = stateManager.beginTerminalIdle();
-      this.pendingTerminalFenceGeneration = this.ctx.getQueryGeneration?.() ?? null;
+      if (!this.isInvocationStale(invocationGeneration)) {
+        this.retirePendingTerminalFence({ generation: invocationGeneration });
+        this.pendingTerminalFence = stateManager.beginTerminalIdle();
+        this.pendingTerminalFenceGeneration =
+          invocationGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
+      }
     }
 
     messageHub.event(
