@@ -4792,6 +4792,59 @@ describe('QueryRunner', () => {
       }
     });
 
+    describe('terminal & handoff route interpretation (B3d)', () => {
+      it('declined handoff with interrupted processing re-routes to aborted_noop instead of the terminal publication', async () => {
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          status: 'interrupted',
+          onRateLimit: () => false,
+        });
+        expectRoute(routeAllZero({ clear: 1, idle: 1, stop: 1 }));
+      });
+
+      it('declined handoff with an aborted controller re-routes to aborted_noop', async () => {
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          abortedController: true,
+          onRateLimit: () => false,
+        });
+        expectRoute(routeAllZero({ clear: 1, idle: 1, stop: 1 }));
+      });
+
+      it('accepted handoff records the scheduled cooldown on the recovery state', async () => {
+        const recoveryState = { rateLimitCooldownScheduled: false };
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          attempt: 0,
+          recoveryState,
+          onRateLimit: () => true,
+        });
+        expect(recoveryState.rateLimitCooldownScheduled).toBe(true);
+      });
+
+      it('declined handoff recomputes an incoming cooldown flag to false', async () => {
+        const recoveryState = { rateLimitCooldownScheduled: true };
+        await runLifecycleRow({
+          message: LIMIT_429_MSG,
+          attempt: 0,
+          recoveryState,
+          onRateLimit: () => false,
+        });
+        expect(recoveryState.rateLimitCooldownScheduled).toBe(false);
+      });
+
+      it('exhausted provider retries map the provider_exhausted hint to the retry-count user message', async () => {
+        await runLifecycleRow({
+          message: PROVIDER_5XX_MSG,
+          attempt: 3,
+          consumed: true,
+        });
+        expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy.mock.calls[0][2]).toBe(ErrorCategory.SYSTEM);
+        expect(handleErrorSpy.mock.calls[0][3]).toContain('3 time(s) without success');
+      });
+    });
+
     describe('superseded mid-arm checkpoint and finalizer teardown', () => {
       it('startup arm abandons the retry when a replacement takes the generation across the setIdle await', async () => {
         buildSpy.mockRejectedValue(new Error(STARTUP_TIMEOUT_MSG));
