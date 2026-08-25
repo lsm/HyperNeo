@@ -160,8 +160,11 @@ describe('stable coding workflow templates', () => {
       expect(coder.eventInterests).toEqual([expected]);
       for (const node of wf.nodes) {
         for (const agent of node.agents) {
-          if (agent.name === 'coder') continue;
-          expect(agent.eventInterests).toBeUndefined();
+          if (agent.name === 'coder' || agent.name === 'reviewer') {
+            expect(agent.eventInterests).toEqual([expected]);
+          } else {
+            expect(agent.eventInterests).toBeUndefined();
+          }
         }
       }
     }
@@ -890,7 +893,7 @@ describe('RESEARCH_WORKFLOW template', () => {
     const reviewer = RESEARCH_WORKFLOW.nodes
       .find((n) => n.name === 'Review')!
       .agents.find((a) => a.name === 'reviewer')!;
-    expect(reviewer.eventInterests).toBeUndefined();
+    expect(reviewer.eventInterests).toEqual(research.eventInterests);
   });
 
   test('second node uses Reviewer agent', () => {
@@ -2172,7 +2175,7 @@ describe('seedBuiltInWorkflows()', () => {
     const outReviewer = result
       .find((node) => node.name === 'Review')!
       .agents.find((a) => a.name === 'reviewer')!;
-    expect(outReviewer.eventInterests).toBeUndefined();
+    expect(outReviewer.eventInterests).toEqual(CODING_WORKFLOW.nodes[1].agents[0]!.eventInterests);
   });
 
   test('mergeNodeStructuralFieldsFromTemplate overwrites a divergent slot eventInterests from the template', () => {
