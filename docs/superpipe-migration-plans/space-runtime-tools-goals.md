@@ -350,14 +350,21 @@ The repo already has several proven pipelines. Use these as the model for each s
   ```
 - **Pure core design**:
   - `decideReviewGoalOutcomeMode`: branches `discover` (no `notification_id` and no updates) or `claim`.
-  - Inside `claim`, use `decideClaimAdmission` from `claim-admission-gates.ts`.
+  - Inside `claim`, call `goalService.claimOutcomeNotification` as one effect; do NOT re-inline `decideClaimAdmission` from `claim-admission-gates.ts` outside the service's atomic boundary.
 - **Shell/effect wiring**: Effects: `goalService.listClaimableOutcomeNotifications`, `goalService.claimOutcomeNotification` (or, after migration, an inline effect that invokes the same sync claim pipeline).
 - **Step-by-step migration**:
   1. Define `stagedRun('review-goal-outcome', ...)`.
   2. `snapshot` validates `hasGoalUpdate` vs `disposition` rules.
   3. `decide` mode: `discover` or `claim`.
   4. Branch `discover` → `snapshot` list notifications → `halt`.
-  5. Branch `claim` → `snapshot` notification and goal; `decide` `claim-admission` (import existing `decisionRun`); `effect` `apply-goal-update` (when `mutatesGoalState`); `effect` `update-notification-status`; `halt`.
+  5. Branch `claim` → ONE `effect` calling `goalService.claimOutcomeNotification`
+     with the claim args (review correction: duplicating its inner
+     admission/apply/status-flip effects as separate `stagedRun` stages runs
+     them OUTSIDE the service's `runAtomic` boundary — two concurrent
+     claimers can both pass a stale admission and mutate the goal, or a
+     failure can leave the goal updated with the notification still pending).
+     The admission `decisionRun` is not re-imported here; the service's sync
+     claim pipeline stays the single atomic home; `halt` returns its result.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
 - **Risks/caveats**: The `claimOutcomeNotification` call is currently inside `runAtomic` in `goal-service.ts`; after unification the atomicity should not be broken. Either keep `goalService.claimOutcomeNotification` as the effect primitive or call the same sync claim pipeline from both places — never an async `stagedRun` inside the transaction.
 
@@ -547,7 +554,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     existing: Schedule | null;
   }
   ```
-- **Pure core design**: `decideSelfNagScheduleSync` with branches: `pauseAllNoGoal`, `pauseNoCron`, `update`, `create`, `noOp`. Review correction: `pauseOrphans` is NOT a decision branch — it is not mutually exclusive with `update`/`create` (the current code first pauses stale schedules from a previous goal, then continues syncing the active goal's schedule; a scope can have both). It runs as a preliminary unconditional `effect` before `decide`, so a scope with both a stale schedule and a valid current policy still reaches `update`/`create`.
+- **Pure core design**: `decideSelfNagScheduleSync` with branches: `pauseAllNoGoal`, `missingGoalNoOp`, `pauseNoCron`, `update`, `create`, `noOp`. Review correction: `pauseAllNoGoal` fires only when `scope.spaceGoalId` itself is ABSENT; when the goal reference is set but the goal is missing or inactive, the current implementation returns WITHOUT pausing that goal's schedule (a no-op) — the ctx must carry the goal-reference state separately (not collapsed into `goal: null`) and route to `missingGoalNoOp`, or the migration silently changes missing/deactivated-goal behavior. Review correction: `pauseOrphans` is NOT a decision branch — it is not mutually exclusive with `update`/`create` (the current code first pauses stale schedules from a previous goal, then continues syncing the active goal's schedule; a scope can have both). It runs as a preliminary unconditional `effect` before `decide`, so a scope with both a stale schedule and a valid current policy still reaches `update`/`create`.
 - **Shell/effect wiring**: Effects call `scheduleService.pauseSchedule`, `updateSchedule`, `resumeSchedule`, `createGoalSchedule`. Review correction — when `db` is supplied, the flow composes as a direct SYNCHRONOUS `superpipe` pipeline with `.end` executed inside `db.transaction(fn)()`: `stagedRun` executes through `endAsync`, so wrapping it in the synchronous SQLite transaction would commit as soon as the Promise is returned, leaving the normal tool paths (which pass `config.db`) with orphan pauses committed without the replacement schedule. When `db` is absent the same sync pipeline runs best-effort.
 - **Step-by-step migration**:
   1. Define the direct sync pipeline `selfNagScheduleSyncRun` (`superpipe` + `.end`, effect functions synchronous).
@@ -728,7 +735,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   current resolver first computes the resolved names and THEN applies the
   shared `canSend` authorization to every resolved target — authorization
   comes after resolution, so resolution must be nonterminal.
-- **Pure core design**: A direct `superpipe` pipeline (not a plain `decisionRun`), LINEAR with self-guarding stages and NO `!dep` halts between resolution stages (review correction round 4: `!hasTargets` after each resolution stage halts the WHOLE run once a known target is found, so `unauthorized`/`resolved` never execute and the shared `canSend` check is still bypassed). The resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) are nonterminal self-guarding no-ops once `targetAgentNames` is populated (first match wins, later stages decline to overwrite). Only the terminal stages set `decision`, in order: `noPermittedTargets` (review correction: `target === '*'` with an empty `permittedTargets` list is a DISTINCT public outcome with its own topology-specific explanation — it must not collapse into `unknownTarget`), `unknownTarget` (no resolution matched), `unauthorized` (`canSend` fails for any resolved target), `resolved` (carries the authorized `targetAgentNames`). Terminal stages match only when `decision === null`.
+- **Pure core design**: A direct `superpipe` pipeline (not a plain `decisionRun`), LINEAR with self-guarding stages and NO `!dep` halts between resolution stages (review correction round 4: `!hasTargets` after each resolution stage halts the WHOLE run once a known target is found, so `unauthorized`/`resolved` never execute and the shared `canSend` check is still bypassed). The resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) are nonterminal self-guarding no-ops once a resolution has matched — guarded by a separate `resolutionMatched` boolean, NOT by `targetAgentNames.length` (review correction: `target === []` and empty node groups deliberately resolve to `{ status: 'resolved', targetAgentNames: [] }`, which a length guard would misroute to `unknownTarget`; add empty-array and empty-node-group parity rows). Only the terminal stages set `decision`, in order: `noPermittedTargets` (review correction: `target === '*'` with an empty `permittedTargets` list is a DISTINCT public outcome with its own topology-specific explanation — it must not collapse into `unknownTarget`), `unknownTarget` (no resolution matched), `unauthorized` (`canSend` fails for any resolved target), `resolved` (carries the authorized `targetAgentNames`). Terminal stages match only when `decision === null`.
 - **Shell/effect wiring**: None; the result is consumed by `decideAgentMessageRouting` in `agent-message-routing-pipeline.ts`.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/node-agent-target-resolution-pipeline.ts`.

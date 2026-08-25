@@ -163,23 +163,26 @@ interface ToExternalEventCtx {
    `userFrom`, `truncateBody`, `isBotActor`, `sanitizeBranchTopicSegment`,
    `parseMergeQueuePrNumber`. They are called by pipeline stages.
 
-2. **`normalizeGitHubWebhook` dispatcher** — `decisionRun` with a gate per known
-   kind and a final `ignore` gate:
+2. **`normalizeGitHubWebhook` dispatch stages** (review correction — NOT a
+   separately-run `decisionRun` with its own decision context; that would
+   retain the second composition boundary): self-guarding dispatch stages run
+   INLINE as the head of `ingest-github-webhook`, each setting `kind`/`input`
+   on the shared ctx when it matches and no-op-ing once `kind` is set (first
+   match wins):
 
-   - `gateCheckRun`
-   - `gateCheckSuite`
-   - `gateBranchProtectionRule`
-   - `gateMergeGroup`
-   - `gateIssueComment` (guard that the issue is a PR)
-   - `gatePullRequestReview`
-   - `gatePullRequestReviewComment`
-   - `gatePullRequestReviewThread`
-   - `gatePullRequest`
-   - `gateIgnoreUnknown` (sets `decision: { action: 'ignore' }`)
+   - `stageCheckRun`
+   - `stageCheckSuite`
+   - `stageBranchProtectionRule`
+   - `stageMergeGroup`
+   - `stageIssueComment` (guard that the issue is a PR)
+   - `stagePullRequestReview`
+   - `stagePullRequestReviewComment`
+   - `stagePullRequestReviewThread`
+   - `stagePullRequest`
+   - `stageIgnoreUnknown` (leaves `kind` unset — the shell returns `null`)
 
-   Each gate, when it matches, sets `decision = { action: 'normalize', kind, input }`
-   and returns. The dispatcher also runs an initial `snapshotBase` stage that
-   extracts `WebhookBase` so per-kind normalizers do not re-parse repo/sender.
+   The pipeline also runs an initial `snapshotBase` stage that extracts
+   `WebhookBase` so per-kind stages do not re-parse repo/sender.
 
 3. **Per-kind transform stages live inside the operation pipeline, not as
    separately-run pipelines** (review correction — regroup by business path per
@@ -202,7 +205,7 @@ interface ToExternalEventCtx {
    `.end('ctx')` and the shell unwraps `outcome.status === 'done' ? value : null`.
 
 4. **`normalizeGitHubPollingRow`** — same single-pipeline shape, with the
-   dispatch stage keyed on `endpointKey` (`issue_comments`, `review_comments`,
+   dispatch stages keyed on `endpointKey` (`issue_comments`, `review_comments`,
    `pulls`, etc.) followed by the endpoint-specific transform stages inline.
 
 5. **`toExternalEvent` stays a separate per-space projection pipeline at the
