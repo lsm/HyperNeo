@@ -49,6 +49,34 @@ export interface PayloadMatch {
   equals: string;
 }
 
+export interface FencedDeliveryBatchWriteResult {
+  applied: boolean;
+  priorBatchUuids: string[] | null;
+  priorDroppedBatchUuids: string[];
+}
+
+export type DeliveryAdmissionReservation =
+  | { status: 'reserved' }
+  | { status: 'alreadyReserved'; reservedByClaimToken: string }
+  | { status: 'staleClaim' };
+
+function parseUuidArray(value: unknown): string[] | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+const DELIVERY_CLAIM_FENCE_SQL = `queue = 'message_delivery'
+  AND json_extract(payload, '$.sessionId') = ?
+  AND json_extract(payload, '$.messageUuid') = ?
+  AND status = 'processing'
+  AND json_extract(payload, '$.__claimToken') = ?`;
+
 export interface JobQueueCandidateSelectionInput {
   queue: string;
   now: number;
@@ -449,7 +477,134 @@ export class JobQueueRepository {
     return res.changes > 0;
   }
 
-  private settleableBatchMembers(sessionId: string, uuids: string[]): string[] {
+  updateDeliveryBatchUuidsFenced(args: {
+    sessionId: string;
+    kickoffUuid: string;
+    claimToken: string;
+    expectedBatchUuids: string[];
+    batchUuids: string[];
+    droppedBatchUuids?: string[];
+  }): FencedDeliveryBatchWriteResult {
+    const prior = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.batchUuids') AS batch,
+                json_extract(payload, '$.droppedBatchUuids') AS dropped
+           FROM job_queue
+          WHERE ${DELIVERY_CLAIM_FENCE_SQL}`
+      )
+      .get(args.sessionId, args.kickoffUuid, args.claimToken) as
+      | { batch: string | null; dropped: string | null }
+      | undefined;
+    const priorBatchUuids = prior ? parseUuidArray(prior.batch) : null;
+    const priorDroppedBatchUuids = parseUuidArray(prior?.dropped) ?? [];
+    if (priorBatchUuids === null) {
+      return { applied: false, priorBatchUuids: null, priorDroppedBatchUuids: [] };
+    }
+    const dropped = priorBatchUuids.filter((uuid) => !args.batchUuids.includes(uuid));
+    const droppedBatchUuids =
+      args.droppedBatchUuids ??
+      (dropped.length > 0 ? this.settleableBatchMembers(args.sessionId, dropped) : []);
+    const res = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+              SET payload = json_set(
+                    json_set(payload, '$.batchUuids', json(?)),
+                    '$.droppedBatchUuids', json(?)
+                  )
+            WHERE ${DELIVERY_CLAIM_FENCE_SQL}
+              AND json_extract(payload, '$.batchUuids') = json(?)`
+        )
+        .run(
+          JSON.stringify(args.batchUuids),
+          JSON.stringify(droppedBatchUuids),
+          args.sessionId,
+          args.kickoffUuid,
+          args.claimToken,
+          JSON.stringify(args.expectedBatchUuids)
+        )
+    );
+    return { applied: res.changes > 0, priorBatchUuids, priorDroppedBatchUuids };
+  }
+
+  transitionDeliverySendStatusFenced(args: {
+    sessionId: string;
+    kickoffUuid: string;
+    claimToken: string;
+    uuids: string[];
+    fromStatus: 'enqueued' | 'submitted';
+    toStatus: 'submitted' | 'enqueued';
+  }): string[] {
+    if (args.uuids.length === 0) return [];
+    const placeholders = args.uuids.map(() => '?').join(',');
+    const rows = withBusyRetry(
+      () =>
+        this.db
+          .prepare(
+            `UPDATE sdk_messages
+              SET send_status = ?
+            WHERE session_id = ?
+              AND message_type = 'user'
+              AND sdk_uuid IN (${placeholders})
+              AND send_status = ?
+              AND EXISTS (
+                SELECT 1 FROM job_queue
+                 WHERE ${DELIVERY_CLAIM_FENCE_SQL}
+              )
+            RETURNING sdk_uuid`
+          )
+          .all(
+            args.toStatus,
+            args.sessionId,
+            ...args.uuids,
+            args.fromStatus,
+            args.sessionId,
+            args.kickoffUuid,
+            args.claimToken
+          ) as Array<{ sdk_uuid: string }>
+    );
+    return rows.map((row) => row.sdk_uuid);
+  }
+
+  reserveDeliveryAdmission(args: {
+    sessionId: string;
+    kickoffUuid: string;
+    claimToken: string;
+    messageUuid: string;
+  }): DeliveryAdmissionReservation {
+    const reservationPath = `$.__admissionReservations."${args.messageUuid}"`;
+    const res = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+              SET payload = json_set(payload, ?, json(?))
+            WHERE ${DELIVERY_CLAIM_FENCE_SQL}
+              AND json_extract(payload, ?) IS NULL`
+        )
+        .run(
+          reservationPath,
+          JSON.stringify(args.claimToken),
+          args.sessionId,
+          args.kickoffUuid,
+          args.claimToken,
+          reservationPath
+        )
+    );
+    if (res.changes > 0) return { status: 'reserved' };
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, ?) AS reservedBy
+           FROM job_queue
+          WHERE ${DELIVERY_CLAIM_FENCE_SQL}`
+      )
+      .get(reservationPath, args.sessionId, args.kickoffUuid, args.claimToken) as
+      | { reservedBy: string | null }
+      | undefined;
+    if (!row || typeof row.reservedBy !== 'string') return { status: 'staleClaim' };
+    return { status: 'alreadyReserved', reservedByClaimToken: row.reservedBy };
+  }
+
+  settleableBatchMembers(sessionId: string, uuids: string[]): string[] {
     const placeholders = uuids.map(() => '?').join(',');
     const rows = this.db
       .prepare(
