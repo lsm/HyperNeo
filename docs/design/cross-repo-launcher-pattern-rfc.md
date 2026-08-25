@@ -124,7 +124,9 @@ workspaces plus a doctrine for sequencing them. No new runtime concept is introd
 **Role.**
 
 - The launcher's own session stays in the Space primary workspace. It never edits either
-  repo directly; every repo mutation flows through a goal-linked task bound to that repo.
+  repo directly; every repo mutation flows through a task bound to that repo — normally
+  goal-linked, except the hard-gated artifact steps §5 carves out as standalone gated
+  tasks.
   This respects one-task-one-repo and one-session-one-repo, keeps each repo's PR frozen
   per run, and keeps the orchestrator's deliverable — goal state and gated sequencing —
   out of the repos it coordinates.
@@ -224,9 +226,10 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   specific artifact-bound step. Runtime-enforced from creation, but outside the goal's
   outcome loop — nothing wakes the launcher when it finishes or fails (`space.task.updated`
   is not an LH wake source, and polling is forbidden), so the launcher must arm a durable
-  reminder (`create_agent_reminder`) when the dependency can release the task and check
-  `get_task_detail` on wake. Prefer the Forge shape when the goal has a scope: its
-  goal link produces a real outcome wake.
+  reminder (`create_agent_reminder`, one-shot by construction) when the dependency can
+  release the task, and **re-arm after every nonterminal inspection** until the task
+  terminalizes — bounded, escalating to the human instead of re-arming forever. Prefer
+  the Forge shape when the goal has a scope: its goal link produces a real outcome wake.
 - **Forge-proposal gated task** (atomic, goal-linked): when the dependent goal has a
   linked Forge scope (`create_forge_scope_from_goal`), `create_forge_task_proposal` →
   `create_task_from_forge_proposal(depends_on=[A's task])` persists `goalId` and
@@ -261,7 +264,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 
 | Failure | Existing mechanism | Launcher doctrine |
 | --- | --- | --- |
-| Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | None needed beyond responding on the next wake or check-in |
+| Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | Respond on the next wake or launcher reminder. Goals in a launcher objective therefore default to **no check-in schedule**: while an outcome sits unreviewed, the goal's own check-in fire would create a new task from stale `nextSteps` on the cleared pointer and bump the revision so the pending outcome's CAS fails — if a schedule must exist, pause it around pending outcomes |
 | Launcher wakes but never reviews | Nag re-prompts the **same** agent; there is no auto-escalation on repeated ignored wakes | Accepted v1 failure mode, stated honestly: a wedged owner leaves notifications pending indefinitely. Pending notifications have **no human-facing surface today** (no web/RPC query exposes them) — humans can only infer trouble from stalled goal state. Notification visibility plus bounded escalation are folded into the deferred primitive (§7) |
 | Daemon restart mid-loop | Notifications persisted in the terminal transaction; startup recovery; inbox replay | None needed |
 | A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer | Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). If retries are exhausted: `pause_goal` on B first, then cancel B's active task (`cancel_workflow_run: true` where applicable) — pausing alone does not stop active work, and B must not publish against a failed prerequisite — then pause A's goal too, record in `nextSteps`, escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
@@ -270,8 +273,9 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 | Human decision needed | `send_session_message` to the Space chat / coordinator session (requires **Space autonomy level 4**); below that: durable high-priority draft task + the decision recorded in goal `nextSteps` | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight". Treat autonomy ≥4 as a launcher deployment prerequisite for the messaging path |
 
 Backoff policy: cross-goal re-evaluation rides the launcher's own reminders and the
-**gating** goal's wakes/check-ins — a gated (paused) goal's own schedule is suspended by
-design, so it cannot be the timer. Within a goal, the existing single-active-task +
+**gating** goal's outcome wakes — pattern goals default to no check-in schedule (§6
+explains why a firing check-in is not a benign re-evaluation wake), and a gated (paused)
+goal's schedule is suspended by design. Within a goal, the existing single-active-task +
 queued-follow-up shape already prevents overlap storms; the launcher adds no polling.
 
 ## 7. Decision
