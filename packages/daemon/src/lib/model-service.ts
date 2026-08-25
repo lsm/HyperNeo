@@ -557,15 +557,24 @@ async function loadProviderCatalogModels(
         models = fetched;
         discovered = true;
       } else {
+        const attested = provider.getCachedModels?.();
         models =
           curatedNow !== undefined && curatedNow.length === 0
             ? fetched
-            : fallbackModelsFor(provider);
-        discovered = false;
+            : attested && attested.length > 0
+              ? attested
+              : fallbackModelsFor(provider);
+        discovered = Boolean(attested && attested.length > 0);
       }
     } catch {
-      models = fallbackModelsFor(provider);
-      discovered = false;
+      const attested = provider.getCachedModels?.();
+      if (attested && attested.length > 0) {
+        models = attested;
+        discovered = true;
+      } else {
+        models = fallbackModelsFor(provider);
+        discovered = false;
+      }
     }
     if (providerCatalogEpoch === epochAtFetch) {
       if (models.length > 0) {
