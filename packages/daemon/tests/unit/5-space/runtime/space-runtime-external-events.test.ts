@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { EventInterest, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
@@ -194,7 +194,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
   function createWorkflow(
     nodeId = 'code',
-    options: { eventInterests?: Array<{ topic: string }> } = {}
+    options: { eventInterests?: EventInterest[] } = {}
   ): SpaceWorkflow {
     return workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -1633,6 +1633,34 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(() => runtime.registerRunInterests(run.id, tasks[0]!.id, workflow.nodes)).toThrow(
       'Invalid static external event interest'
+    );
+  });
+
+  test('resolves topicFrom primaryLink interests against the run PR artifact', async () => {
+    const workflow = createWorkflow('code', {
+      eventInterests: [
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    stampRunPr(run.id, 'https://github.com/lsm/HyperNeo/pull/2969');
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    const list = runtime.listSubscriptions(run.id, SPACE_ID, 'code');
+    expect(list.success).toBe(true);
+    const active = list.success ? list.result.active : [];
+    expect(active).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          topic: 'github/lsm/HyperNeo/pull_request/2969.*',
+          subscriptionKind: 'static',
+        }),
+      ])
     );
   });
 

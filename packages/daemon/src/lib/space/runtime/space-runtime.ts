@@ -153,6 +153,7 @@ import {
   resolveQuiesceSourceNodeId,
   selectSiblingsToQuiesce,
 } from './run-completion-settlement.ts';
+import { resolveTopicFromInterest } from './parse-pr-url.ts';
 import {
   decideSpawnAdmission,
   selectPromotablePendingExecutions,
@@ -831,16 +832,22 @@ export class SpaceRuntime {
     if (options.clearQueuedDeliveries) {
       this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
     }
+    const primaryLinkUrl = this.config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
+    const allowedHosts = new Set(['github.com', process.env.GH_HOST ?? '']);
     for (const node of nodes) {
       for (const agentEntry of resolveNodeAgents(node)) {
         for (const interest of agentEntry.eventInterests ?? []) {
-          if (typeof interest.topic !== 'string') continue;
+          const topic =
+            typeof interest.topic === 'string'
+              ? interest.topic
+              : resolveTopicFromInterest(interest, primaryLinkUrl, allowedHosts);
+          if (!topic) continue;
           const result = this.registerSubscription(
             workflowRunId,
             taskId,
             node.id,
             agentEntry.name,
-            interest.topic,
+            topic,
             {
               subscriptionKind: 'static',
             }
