@@ -39,6 +39,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import {
   ensureScopedProviderCatalogModels,
+  getCuratedModelIds,
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModelAllowingExactId,
@@ -1352,13 +1353,15 @@ export class SDKMessageHandler {
       scopedApiKeyBefore || scopedBaseUrlBefore || scopedRegionBefore
     );
     let fallbackExcluded: boolean;
-    if (sessionScopedProvider) {
+    if (sessionScopedProvider && getCuratedModelIds(providerId) !== undefined) {
       await ensureScopedProviderCatalogModels(
         session.id,
         providerId,
         session.config.providerConfig ?? {}
       );
       fallbackExcluded = isCuratedOutModelAllowingExactId(fallbackModel, providerId, session.id);
+    } else if (sessionScopedProvider) {
+      fallbackExcluded = false;
     } else {
       fallbackExcluded = await isModelExcludedByCuration(fallbackModel, providerId);
     }

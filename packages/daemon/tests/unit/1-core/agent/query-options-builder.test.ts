@@ -13,7 +13,11 @@ import {
   SDK_TRANSCRIPT_RETENTION_DAYS,
   withSdkTranscriptRetention,
 } from '../../../../src/lib/agent/sdk-transcript-retention';
-import { bumpProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
+import {
+  bumpProviderCatalogEpoch,
+  clearModelsCache,
+  setModelsCache,
+} from '../../../../src/lib/model-service';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -400,6 +404,212 @@ describe('QueryOptionsBuilder', () => {
         );
 
         expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog after an auth-driven cache clear bumps the provider revision', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        clearModelsCache(undefined, 'anthropic');
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('skips scoped catalog discovery when no curation is configured', async () => {
+        let scopedFetchCount = 0;
+        getProviderRegistry().register({
+          id: 'scoped-skip-test',
+          displayName: 'Scoped Skip Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-skip-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        try {
+          mockSession.config.provider = 'scoped-skip-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
+
+          const options = await builder.build();
+          expect(options.fallbackModel).toBe('qwen3:14b');
+          expect(scopedFetchCount).toBe(0);
+
+          getProviderRegistry().setCuratedModels('scoped-skip-test', [{ id: 'qwen3' }]);
+          const curatedOptions = await builder.build();
+          expect(curatedOptions.fallbackModel).toBe('qwen3:14b');
+          expect(scopedFetchCount).toBe(1);
+        } finally {
+          getProviderRegistry().unregister('scoped-skip-test');
+          getProviderRegistry().setCuratedModels('scoped-skip-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('declines the dialog without scoped discovery when scoped credentials changed while the dialog was pending', async () => {
+        let scopedFetchCount = 0;
+        getProviderRegistry().register({
+          id: 'scoped-identity-test',
+          displayName: 'Scoped Identity Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-identity-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-identity-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-identity-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = {
+            baseUrl: 'http://127.0.0.1:11434',
+            apiKey: 'old-key',
+          };
+
+          const options = await builder.build();
+          expect(options.fallbackModel).toBe('qwen3:14b');
+          expect(scopedFetchCount).toBe(1);
+
+          mockSession.config = {
+            ...mockSession.config,
+            providerConfig: { baseUrl: 'http://127.0.0.1:11434', apiKey: 'new-key' },
+          };
+
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+          expect(scopedFetchCount).toBe(1);
+        } finally {
+          getProviderRegistry().unregister('scoped-identity-test');
+          getProviderRegistry().setCuratedModels('scoped-identity-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('declines the dialog when scoped settings change during the dialog scoped discovery', async () => {
+        let scopedFetchCount = 0;
+        getProviderRegistry().register({
+          id: 'scoped-race-test',
+          displayName: 'Scoped Race Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            if (scopedFetchCount > 1) {
+              mockSession.config = {
+                ...mockSession.config,
+                providerConfig: { baseUrl: 'http://127.0.0.1:11434', apiKey: 'rotated' },
+              };
+            }
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-race-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-race-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-race-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = {
+            baseUrl: 'http://127.0.0.1:11434',
+            apiKey: 'old-key',
+          };
+
+          const options = await builder.build();
+          expect(scopedFetchCount).toBe(1);
+
+          clearModelsCache(mockSession.id);
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+          expect(scopedFetchCount).toBe(2);
+        } finally {
+          getProviderRegistry().unregister('scoped-race-test');
+          getProviderRegistry().setCuratedModels('scoped-race-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
       });
     });
 

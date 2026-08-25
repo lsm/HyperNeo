@@ -28,10 +28,11 @@ import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
 async function clearCacheAndNotifyProvidersChanged(
-  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
+  providerId?: string
 ): Promise<void> {
   const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache();
+  clearModelsCache(undefined, providerId);
   internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
@@ -147,7 +148,7 @@ export function setupAuthHandlers(
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           }
           unsubscribe?.();
-          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();
@@ -241,7 +242,7 @@ export function setupAuthHandlers(
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
         return { success: true };
       } catch (error) {
         try {
@@ -255,7 +256,7 @@ export function setupAuthHandlers(
           error instanceof Error &&
           (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
         if (!refused) {
-          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
         }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
@@ -304,7 +305,7 @@ export function setupAuthHandlers(
         if (credentials?.type === 'oauth') {
           await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus);
+        await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
         return { success: true };
       } catch (error) {
         log.error(`Token refresh failed for ${providerId}:`, error);

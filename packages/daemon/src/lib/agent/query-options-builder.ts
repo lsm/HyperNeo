@@ -38,6 +38,7 @@ import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-serv
 import { Logger } from '../logger.ts';
 import {
   ensureScopedProviderCatalogModels,
+  getCuratedModelIds,
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
@@ -336,7 +337,7 @@ export class QueryOptionsBuilder {
           config.providerConfig?.region
       );
       let fallbackExcluded: boolean;
-      if (sessionScopedProvider) {
+      if (sessionScopedProvider && getCuratedModelIds(providerId) !== undefined) {
         await ensureScopedProviderCatalogModels(
           this.ctx.session.id,
           providerId,
@@ -347,6 +348,8 @@ export class QueryOptionsBuilder {
           providerId,
           this.ctx.session.id
         );
+      } else if (sessionScopedProvider) {
+        fallbackExcluded = false;
       } else {
         fallbackExcluded = await isModelExcludedByCuration(config.fallbackModel, providerId);
       }
@@ -454,8 +457,23 @@ export class QueryOptionsBuilder {
       canUseTool: this.canUseTool,
       onUserDialog: async (request) => {
         if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
-        const fallbackAtRequest = this.ctx.session.config.fallbackModel;
-        if (!fallbackAtRequest || fallbackAtRequest !== configuredFallbackModel) {
+        if (!configuredFallbackModel) {
+          return { behavior: 'cancelled' };
+        }
+        const matchesBuildSnapshot = () => {
+          const configNow = this.ctx.session.config;
+          return (
+            (configNow.provider ?? 'anthropic') === providerId &&
+            configNow.fallbackModel === configuredFallbackModel &&
+            configNow.model === configuredPrimaryModel &&
+            configNow.providerConfig?.apiKey === configuredScopedApiKey &&
+            configNow.providerConfig?.baseUrl === configuredScopedBaseUrl &&
+            configNow.providerConfig?.region === configuredScopedRegion
+          );
+        };
+        const guardsIntact = () =>
+          matchesBuildSnapshot() && getProviderCatalogEpoch(providerId) === providerEpoch;
+        if (!guardsIntact()) {
           return { behavior: 'cancelled' };
         }
         const sessionScopedProvider = Boolean(
@@ -464,35 +482,23 @@ export class QueryOptionsBuilder {
             this.ctx.session.config.providerConfig?.region
         );
         let fallbackExcluded: boolean;
-        if (sessionScopedProvider) {
+        if (sessionScopedProvider && getCuratedModelIds(providerId) !== undefined) {
           await ensureScopedProviderCatalogModels(
             this.ctx.session.id,
             providerId,
             this.ctx.session.config.providerConfig ?? {}
           );
           fallbackExcluded = isCuratedOutModelAllowingExactId(
-            fallbackAtRequest,
+            configuredFallbackModel,
             providerId,
             this.ctx.session.id
           );
+        } else if (sessionScopedProvider) {
+          fallbackExcluded = false;
         } else {
-          fallbackExcluded = await isModelExcludedByCuration(fallbackAtRequest, providerId);
+          fallbackExcluded = await isModelExcludedByCuration(configuredFallbackModel, providerId);
         }
-        if (fallbackExcluded) {
-          return { behavior: 'cancelled' };
-        }
-        if (getProviderCatalogEpoch(providerId) !== providerEpoch) {
-          return { behavior: 'cancelled' };
-        }
-        const configAfter = this.ctx.session.config;
-        if (
-          (configAfter.provider ?? 'anthropic') !== providerId ||
-          configAfter.fallbackModel !== fallbackAtRequest ||
-          configAfter.model !== configuredPrimaryModel ||
-          configAfter.providerConfig?.apiKey !== configuredScopedApiKey ||
-          configAfter.providerConfig?.baseUrl !== configuredScopedBaseUrl ||
-          configAfter.providerConfig?.region !== configuredScopedRegion
-        ) {
+        if (fallbackExcluded || !guardsIntact()) {
           return { behavior: 'cancelled' };
         }
         return { behavior: 'completed', result: { continue: true } };

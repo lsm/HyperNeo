@@ -2474,6 +2474,46 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('skips scoped catalog discovery when no curation is configured', async () => {
+      const provider = new TranslatingMockProvider();
+      let scopedFetchCount = 0;
+      (
+        provider as unknown as {
+          getModelsForSessionConfig: (config: unknown) => Promise<ModelInfo[]>;
+        }
+      ).getModelsForSessionConfig = async () => {
+        scopedFetchCount += 1;
+        return [];
+      };
+      getProviderRegistry().register(provider);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerConfig: { baseUrl: 'http://scoped.example' },
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        scopedBaseUrl: 'http://scoped.example',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(scopedFetchCount).toBe(0);
+      expect(mockSession.config.model).toBe('gpt-5.4-mini');
+      expect(updateSessionSpy).toHaveBeenCalled();
+    });
+
     it('should skip fallback persistence when the provider epoch changed after build', async () => {
       getProviderRegistry().register(new TranslatingMockProvider());
       mockSession.config = {

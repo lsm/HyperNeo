@@ -11,6 +11,7 @@ import {
   resolveModelAliasUnfiltered,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
+  getProviderCatalogEpoch,
   ensureScopedProviderCatalogModels,
   peekProviderCatalogModels,
   resolveVisibleCanonicalModelId,
@@ -117,6 +118,14 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache();
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+    });
+
+    it('clearModelsCache with a providerId advances that provider catalog revision', () => {
+      const providerBefore = getProviderCatalogEpoch('ollama');
+      const globalBefore = getProviderCatalogEpoch();
+      clearModelsCache(undefined, 'ollama');
+      expect(getProviderCatalogEpoch('ollama')).toBeGreaterThan(providerBefore);
+      expect(getProviderCatalogEpoch()).toBeGreaterThan(globalBefore);
     });
 
     it('a session-scoped clear does NOT reset the tracking', () => {
@@ -2961,6 +2970,61 @@ describe('Model Service', () => {
         false
       );
     });
+
+    it('rejects a fallback absent from the populated scoped catalog even when global curation would admit it', () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3' }]);
+      setModelsCache(
+        new Map<string, ModelInfo[]>([
+          [
+            'global',
+            [
+              {
+                id: 'qwen3:latest',
+                name: 'Qwen 3 Latest',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Qwen 3 Latest',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+          [
+            'session-scoped-7',
+            [
+              {
+                id: 'qwen3:8b',
+                name: 'Qwen 3 8B',
+                alias: 'qwen3-8b',
+                family: 'qwen',
+                provider: 'anthropic',
+                contextWindow: 128000,
+                description: 'Qwen 3 8B',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModelAllowingExactId('qwen3:latest', 'ollama')).toBe(false);
+      expect(isCuratedOutModelAllowingExactId('qwen3:latest', 'ollama', 'session-scoped-7')).toBe(
+        true
+      );
+    });
   });
 
   describe('getProviderCatalogModels', () => {
@@ -3351,6 +3415,101 @@ describe('Model Service', () => {
       expect(getAvailableModels('session-scoped-5').map((model) => model.id)).toEqual([
         'scoped-gen-2',
       ]);
+    });
+
+    it('clears the stale scoped catalog when discovery returns an empty catalog', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      let authRejected = false;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async (sessionConfig) => {
+          scopedFetchCount += 1;
+          if (authRejected) return [];
+          return [
+            {
+              id: `scoped-${sessionConfig.baseUrl}`,
+              name: 'Scoped Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-8', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(getAvailableModels('session-scoped-8').map((model) => model.id)).toEqual([
+        'scoped-http://127.0.0.1:11434',
+      ]);
+
+      authRejected = true;
+      await ensureScopedProviderCatalogModels('session-scoped-8', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: 'rejected-key',
+      });
+      expect(scopedFetchCount).toBe(2);
+      expect(getAvailableModels('session-scoped-8')).toEqual([]);
+    });
+
+    it('clears the stale scoped catalog when discovery throws', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      let failing = false;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async (sessionConfig) => {
+          scopedFetchCount += 1;
+          if (failing) throw new Error('scoped endpoint unreachable');
+          return [
+            {
+              id: `scoped-${sessionConfig.baseUrl}`,
+              name: 'Scoped Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-9', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(getAvailableModels('session-scoped-9').map((model) => model.id)).toEqual([
+        'scoped-http://127.0.0.1:11434',
+      ]);
+
+      failing = true;
+      await ensureScopedProviderCatalogModels('session-scoped-9', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11500',
+      });
+      expect(scopedFetchCount).toBe(2);
+      expect(getAvailableModels('session-scoped-9')).toEqual([]);
     });
   });
 

@@ -425,14 +425,23 @@ export async function ensureScopedProviderCatalogModels(
   }
   const provider = getProviderRegistry().get(providerId);
   if (!provider?.getModelsForSessionConfig) return;
+  const dropScopedCatalog = () => {
+    modelsCache.delete(sessionCacheKey);
+    cacheTimestamps.delete(sessionCacheKey);
+    scopedCatalogStamps.delete(sessionCacheKey);
+  };
   try {
     const models = await provider.getModelsForSessionConfig(sessionConfig);
     if (models.length > 0) {
       modelsCache.set(sessionCacheKey, models);
       cacheTimestamps.set(sessionCacheKey, Date.now());
       scopedCatalogStamps.set(sessionCacheKey, stamp);
+    } else {
+      dropScopedCatalog();
     }
-  } catch {}
+  } catch {
+    dropScopedCatalog();
+  }
 }
 
 const providerCatalogCache = new WeakMap<
@@ -975,7 +984,7 @@ function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
   }
 }
 
-export function clearModelsCache(cacheKey?: string): void {
+export function clearModelsCache(cacheKey?: string, providerId?: string): void {
   if (cacheKey) {
     const hadInFlight = refreshInProgress.has(cacheKey);
     modelsCache.delete(cacheKey);
@@ -1005,7 +1014,7 @@ export function clearModelsCache(cacheKey?: string): void {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
     cancelAllProviderRetries();
-    bumpProviderCatalogEpoch();
+    bumpProviderCatalogEpoch(providerId);
   }
 }
 
@@ -1409,14 +1418,15 @@ export function isCuratedOutModelAllowingExactId(
     }
     if (scopedModels) {
       const scopedCanonical = findInModels(scopedModels, idOrAlias)?.id;
-      if (scopedCanonical) {
-        for (const curatedId of curatedIds) {
-          if (findInModels(scopedModels, curatedId)?.id === scopedCanonical) {
-            return false;
-          }
-        }
+      if (!scopedCanonical) {
         return true;
       }
+      for (const curatedId of curatedIds) {
+        if (findInModels(scopedModels, curatedId)?.id === scopedCanonical) {
+          return false;
+        }
+      }
+      return true;
     }
     const canonicalInput = resolveCuratedCanonicalModelId(idOrAlias, providerId);
     if (canonicalInput) {
