@@ -38,7 +38,7 @@ export function runMigration217(db: BunDatabase): void {
       space_id TEXT NOT NULL,
       path TEXT NOT NULL,
       label TEXT NOT NULL DEFAULT '',
-      is_primary INTEGER NOT NULL DEFAULT 0,
+      is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(space_id, path),
@@ -46,6 +46,9 @@ export function runMigration217(db: BunDatabase): void {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workspaces_space_id ON space_workspaces(space_id)`);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workspaces_primary ON space_workspaces(space_id) WHERE is_primary = 1`
+  );
 
   if (!tableHasColumn(db, 'spaces', 'workspace_path')) return;
 
