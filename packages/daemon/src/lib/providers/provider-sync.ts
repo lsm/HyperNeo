@@ -3,7 +3,7 @@ import type { CuratedModel, ProviderCredentials } from '@hyperneo/shared/provide
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { AcpProvider } from './acp-provider.js';
-import { bumpProviderCatalogEpoch } from '../provider-service.js';
+import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';

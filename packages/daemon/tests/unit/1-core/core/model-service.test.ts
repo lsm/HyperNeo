@@ -4,6 +4,7 @@ import {
   getModelInfo,
   getModelInfoUnfiltered,
   isCuratedOutModel,
+  isCuratedOutModelAllowingExactId,
   isModelExcludedByCuration,
   isValidModel,
   resolveModelAlias,
@@ -2703,6 +2704,80 @@ describe('Model Service', () => {
 
       await expect(isModelExcludedByCuration('ollama-qwen', 'ollama')).resolves.toBe(false);
       await expect(isModelExcludedByCuration('ollama-ghost', 'ollama')).resolves.toBe(true);
+    });
+
+    it('reuses the shared catalog cache across exclusion checks', async () => {
+      const registry = getProviderRegistry();
+      let fetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [
+            {
+              id: 'ollama-qwen',
+              name: 'Qwen',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Qwen',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+      setModelsCache(new Map());
+
+      await isModelExcludedByCuration('ollama-qwen', 'ollama');
+      await isModelExcludedByCuration('qwen3', 'ollama');
+
+      expect(fetchCount).toBe(1);
+    });
+
+    it('matches scoped curated aliases case-insensitively', async () => {
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'qwen3' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'qwen3:8b',
+                name: 'Qwen 3 8B',
+                alias: 'qwen3-8b',
+                family: 'qwen',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Qwen 3 8B',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModelAllowingExactId('QWEN3', 'ollama')).toBe(false);
+      expect(isCuratedOutModelAllowingExactId('qwen3', 'ollama')).toBe(false);
+      expect(isCuratedOutModelAllowingExactId('llama3', 'ollama')).toBe(true);
     });
   });
 

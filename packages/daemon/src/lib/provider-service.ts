@@ -7,18 +7,12 @@ import type {
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
 import {
-  fallbackModelsFor,
   getCuratedModelIds,
+  getProviderCatalogModels,
   resolveVisibleCanonicalModelId,
 } from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { providerSessionConfigForSession } from './providers/session-config.js';
-
-let providerCatalogEpoch = 0;
-
-export function bumpProviderCatalogEpoch(): void {
-  providerCatalogEpoch += 1;
-}
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
   return {
@@ -98,19 +92,8 @@ function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
   return envVars;
 }
 
-const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
-
 export class ProviderService {
   private readonly logger = new Logger('provider-service');
-  private readonly catalogCache = new WeakMap<
-    RegisteredProvider,
-    {
-      models: ModelInfo[];
-      at: number;
-      curatedStamp: string | undefined;
-      epoch: number;
-    }
-  >();
 
   private async ensureProviderBridges(
     provider:
@@ -276,41 +259,7 @@ export class ProviderService {
     providerId: string,
     provider: RegisteredProvider
   ): Promise<ModelInfo[]> {
-    const curatedNow = this.getRegistry().getCuratedModels(providerId);
-    const curatedStamp =
-      curatedNow === undefined ? undefined : curatedNow.map((m) => m.id).join(',');
-    const cached = this.catalogCache.get(provider);
-    if (
-      cached &&
-      cached.curatedStamp === curatedStamp &&
-      cached.epoch === providerCatalogEpoch &&
-      Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
-    ) {
-      return cached.models;
-    }
-    let models: ModelInfo[];
-    try {
-      const fetched = await provider.getModels();
-      if (fetched.length > 0 || provider.hasCuratedModelList?.()) {
-        models = fetched;
-      } else {
-        models =
-          curatedNow !== undefined && curatedNow.length === 0
-            ? fetched
-            : fallbackModelsFor(provider);
-      }
-    } catch {
-      models = fallbackModelsFor(provider);
-    }
-    if (models.length > 0) {
-      this.catalogCache.set(provider, {
-        models,
-        at: Date.now(),
-        curatedStamp,
-        epoch: providerCatalogEpoch,
-      });
-    }
-    return models;
+    return getProviderCatalogModels(providerId, provider);
   }
 
   private async resolveVisibleCuratedModel(
