@@ -1,5 +1,5 @@
 import type { SpaceGoal, SpaceLongHorizonAgent } from '@hyperneo/shared';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceTask } from '../../lib/router';
 import { connectionState } from '../../lib/state';
 import { spaceStore } from '../../lib/space-store';
@@ -62,6 +62,10 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     spaceStore.spaceId.value === spaceId ? (spaceStore.goalOwners.value.get(goalId) ?? null) : null;
   const agents = spaceStore.spaceId.value === spaceId ? spaceStore.longHorizonAgents.value : [];
   const agentsVersion = agents.map((item) => `${item.id}:${item.status}`).join('|');
+  const goalIdRef = useRef(goalId);
+  const spaceIdRef = useRef(spaceId);
+  goalIdRef.current = goalId;
+  spaceIdRef.current = spaceId;
 
   useEffect(() => {
     setOwnerLoadFailed(false);
@@ -134,6 +138,10 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const runOwnerAction = async (action: 'assign' | 'unassign') => {
     setOwnerBusy(true);
     const previousOwner = owner;
+    const mutatedGoalId = goal.id;
+    const mutatedSpaceId = spaceId;
+    const stillViewing = () =>
+      goalIdRef.current === mutatedGoalId && spaceIdRef.current === mutatedSpaceId;
     try {
       if (action === 'assign') {
         if (!assigneeId) return;
@@ -147,16 +155,22 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           toast.success('Owner updated');
         }
       } else {
-        await spaceStore.unassignGoalOwner(goal.id);
-        toast.success('Owner cleared');
+        const result = await spaceStore.unassignGoalOwner(goal.id);
+        if (result.action === 'resolved' || result.action === 'degraded') {
+          toast.success('Primary owner removed — another owner assignment remains');
+        } else {
+          toast.success('Owner cleared');
+        }
       }
-      setOwnerLoadFailed(false);
+      if (stillViewing()) setOwnerLoadFailed(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Owner update failed');
     } finally {
       setOwnerBusy(false);
-      setAssignOpen(false);
-      setAssigneeId('');
+      if (stillViewing()) {
+        setAssignOpen(false);
+        setAssigneeId('');
+      }
     }
   };
 
@@ -182,8 +196,8 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           </div>
           {degraded && (
             <p class="text-xs text-amber-300/80">
-              Owner is {DEGRADED_REASON_LABELS[owner.reason] ?? owner.reason} — the coordinator
-              covers this goal until reassigned.
+              Owner is {DEGRADED_REASON_LABELS[owner.reason] ?? owner.reason} — reassign an active
+              owner to restore ownership.
             </p>
           )}
           {owner.conflicts.length > 0 && (

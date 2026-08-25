@@ -366,7 +366,8 @@ describe('GoalDetailPanel', () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
 
     await waitFor(() => expect(screen.getByText('Degraded')).toBeTruthy());
-    expect(screen.getByText(/Owner is paused/)).toBeTruthy();
+    const notice = screen.getByText(/Owner is paused/);
+    expect(notice.textContent).not.toMatch(/coordinator covers/);
   });
 
   it('shows the unowned state for no-recipient and coordinator fallback', async () => {
@@ -480,6 +481,59 @@ describe('GoalDetailPanel', () => {
       expect(screen.queryByText('Owner unavailable — refresh to retry.')).toBeNull()
     );
     expect(screen.getByText('Watchman (@watchman)')).toBeTruthy();
+  });
+
+  it('reports a remaining owner when unassign promotes a conflicting assignment', async () => {
+    mockUnassignGoalOwner.mockImplementation(async (goalId: string) => {
+      const owner = resolvedOwner('agent-2');
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return owner;
+    });
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unassign' }));
+
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        'Primary owner removed — another owner assignment remains'
+      )
+    );
+  });
+
+  it('ignores a late owner mutation completion after switching goals', async () => {
+    mockLongHorizonAgents.value = [
+      makeAgent(),
+      makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
+    ];
+    let resolveAssign: () => void = () => {};
+    mockAssignGoalOwner.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveAssign = resolve;
+        })
+    );
+    mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
+      if (goalId === 'goal-2') throw new Error('Not connected');
+      const owner = resolvedOwner();
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return owner;
+    });
+    mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
+    const { rerender } = render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Change owner' }));
+    await chooseAssignee('agent-2');
+    fireEvent.click(screen.getByRole('button', { name: 'Assign' }));
+
+    rerender(<GoalDetailPanel spaceId="space-1" goalId="goal-2" />);
+    await waitFor(() =>
+      expect(screen.getByText('Owner unavailable — refresh to retry.')).toBeTruthy()
+    );
+
+    resolveAssign();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText('Owner unavailable — refresh to retry.')).toBeTruthy();
   });
 
   it('refreshes the owner resolution when the owning agent changes status', async () => {
