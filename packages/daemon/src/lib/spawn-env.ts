@@ -109,6 +109,7 @@ const GIT_SSH_ENV_KEYS = [
   'GIT_CONFIG_GLOBAL',
   'GIT_CONFIG_SYSTEM',
   'GIT_ALLOW_PROTOCOL',
+  'GIT_PROXY_COMMAND',
   'GIT_PROXY_SSL_CAINFO',
   'GIT_PROXY_SSL_CERT',
   'GIT_PROXY_SSL_KEY',
@@ -272,6 +273,7 @@ export function buildSdkRuntimeEnv(
       ],
       source
     ),
+    ...collectPermittedGitConfig(source),
   };
 }
 

@@ -41,6 +41,7 @@ const SOURCE: Record<string, string> = {
   GIT_TERMINAL_PROMPT: '0',
   EMAIL: 'agent@example.com',
   GIT_ALLOW_PROTOCOL: 'file:https',
+  GIT_PROXY_COMMAND: '/tmp/git-proxy.sh',
   GIT_PROXY_SSL_CAINFO: '/tmp/proxy-ca.pem',
   GIT_PROXY_SSL_CERT: '/tmp/proxy-cert.pem',
   GIT_PROXY_SSL_KEY: '/tmp/proxy-key.pem',
@@ -155,6 +156,7 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
     expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
     expect(env.GIT_ALLOW_PROTOCOL).toBe('file:https');
+    expect(env.GIT_PROXY_COMMAND).toBe(SOURCE.GIT_PROXY_COMMAND);
     expect(env.GIT_PROXY_SSL_CAINFO).toBe(SOURCE.GIT_PROXY_SSL_CAINFO);
     expect(env.GIT_PROXY_SSL_CERT).toBe(SOURCE.GIT_PROXY_SSL_CERT);
     expect(env.GIT_PROXY_SSL_KEY).toBe(SOURCE.GIT_PROXY_SSL_KEY);
@@ -251,7 +253,22 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_SSL_NO_VERIFY).toBe(SOURCE.GIT_SSL_NO_VERIFY);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
-    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
+    expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
+    expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+  });
+
+  test('preserves safe.directory entries for agent git commands', () => {
+    const env = buildSdkRuntimeEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: '/mnt/trusted-repo',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
+    expect(env.GIT_CONFIG_VALUE_0).toBe('/mnt/trusted-repo');
   });
 });
 

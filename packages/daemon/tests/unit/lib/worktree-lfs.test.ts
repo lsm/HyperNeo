@@ -92,6 +92,11 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('rejects lone-CR line endings in pointer blobs', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\r${POINTER_OID}\rsize 1234`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('accepts non-canonical size records accepted by git lfs', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize +1\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
@@ -99,19 +104,25 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('rejects negative size records', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize -1\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('rejects non-numeric size records', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize twelve\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
-  test('rejects lone-CR line endings in pointer blobs', async () => {
-    stubGrepCandidate(`${LFS_SIGNATURE}\r${POINTER_OID}\rsize 1234`);
+  test('rejects duplicate extension priorities', async () => {
+    const dup = `ext-0-other sha256:${'c'.repeat(64)}`;
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${dup}\n${POINTER_OID}\nsize 1234\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
-  test('rejects extension records with malformed digests', async () => {
+  test('rejects leading-zero extension priorities', async () => {
     stubGrepCandidate(
-      `${LFS_SIGNATURE}\next-0-counter sha256:not-a-digest\n${POINTER_OID}\nsize 1234\n`
+      `${LFS_SIGNATURE}\next-00-counter sha256:${'b'.repeat(64)}\n${POINTER_OID}\nsize 1234\n`
     );
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
