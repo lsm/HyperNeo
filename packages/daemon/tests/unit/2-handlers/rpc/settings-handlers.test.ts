@@ -237,6 +237,20 @@ describe('Settings RPC Handlers', () => {
 
       expect(process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS).toBeUndefined();
     });
+
+    it('advances the removed provider revision when its allowlist key is dropped', async () => {
+      const { syncProviderModelAllowlists } = await import(
+        '../../../../src/lib/rpc-handlers/settings-handlers'
+      );
+      const { getProviderCatalogEpoch } = await import('../../../../src/lib/model-service');
+      process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS = 'openrouter:xai/grok-4.3';
+      const before = getProviderCatalogEpoch('openrouter');
+
+      await syncProviderModelAllowlists({});
+
+      expect(process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS).toBeUndefined();
+      expect(getProviderCatalogEpoch('openrouter')).toBeGreaterThan(before);
+    });
   });
 
   describe('settings.global.get', () => {

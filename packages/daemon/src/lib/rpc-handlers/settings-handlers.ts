@@ -9,12 +9,31 @@ import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
+function providerIdsFromAllowlistEnv(): string[] {
+  const raw = process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
+  if (!raw?.trim()) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const [provider, ...rest] = entry.split(':');
+          return rest.length > 0 ? provider : '';
+        })
+        .filter(Boolean)
+    )
+  );
+}
+
 export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
 ): Promise<void> {
+  const previousProviderIds = providerIdsFromAllowlistEnv();
   applyProviderModelAllowlistsToEnv(allowlists);
   const { bumpProviderCatalogEpoch, clearModelsCache } = await import('../model-service.ts');
-  for (const providerId of Object.keys(allowlists ?? {})) {
+  for (const providerId of new Set([...previousProviderIds, ...Object.keys(allowlists ?? {})])) {
     bumpProviderCatalogEpoch(providerId);
   }
   clearModelsCache();
