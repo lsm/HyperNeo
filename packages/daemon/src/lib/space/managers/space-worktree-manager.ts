@@ -20,6 +20,8 @@ import { runWorktreeLfsHydration } from '../../worktree-lfs-hydration.ts';
 
 const execFileAsync = promisify(execFile);
 
+const LFS_PULL_TIMEOUT_MS = 1_800_000;
+
 export interface SpaceWorktreeInfo {
   slug: string;
   taskId: string;
@@ -255,7 +257,7 @@ export class SpaceWorktreeManager {
         await execFileAsync('git', ['lfs', 'pull'], {
           cwd: worktreePath,
           encoding: 'utf8',
-          timeout: 300_000,
+          timeout: LFS_PULL_TIMEOUT_MS,
           maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
           env: buildGitSshEnv(),
         });

@@ -47,6 +47,9 @@ const SOURCE: Record<string, string> = {
   GIT_ATTR_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
   GIT_EDITOR: 'true',
+  EDITOR: '/usr/bin/vim',
+  VISUAL: '/usr/bin/code -w',
+  DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
   EMAIL: 'agent@example.com',
   GIT_ALLOW_PROTOCOL: 'file:https',
   GIT_PROXY_COMMAND: '/tmp/git-proxy.sh',
@@ -204,6 +207,8 @@ describe('buildGitSshEnv', () => {
     });
     expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
     expect(env.DISPLAY).toBe(SOURCE.DISPLAY);
+    expect(env.DBUS_SESSION_BUS_ADDRESS).toBe(SOURCE.DBUS_SESSION_BUS_ADDRESS);
+    expect(env.XDG_RUNTIME_DIR).toBe(SOURCE.XDG_RUNTIME_DIR);
     expect(env.SSH_ASKPASS_REQUIRE).toBe('force');
     expect(env.SSH_ASKPASS).toBe('/tmp/askpass.sh');
     expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/gitconfig-global');
@@ -268,6 +273,8 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
     expect(env.GIT_EDITOR).toBe(SOURCE.GIT_EDITOR);
+    expect(env.EDITOR).toBe(SOURCE.EDITOR);
+    expect(env.VISUAL).toBe(SOURCE.VISUAL);
     expect(env.GNUPGHOME).toBe(SOURCE.GNUPGHOME);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');

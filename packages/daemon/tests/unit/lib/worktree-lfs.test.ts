@@ -126,6 +126,16 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
+  test('accepts sizes within the signed 64-bit range', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 9223372036854775807\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('rejects sizes beyond the signed 64-bit range', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 9223372036854775808\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('rejects non-numeric size records', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize twelve\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);

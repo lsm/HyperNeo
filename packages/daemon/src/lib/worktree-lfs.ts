@@ -33,7 +33,12 @@ function isLfsPointerContent(content: string): boolean {
     index++;
   }
   if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[index] ?? '')) return false;
-  if (!/^size \+?\d+\s*$/.test(lines[index + 1] ?? '')) return false;
+  const sizeRecord = /^size \+?(\d+)\s*$/.exec(lines[index + 1] ?? '');
+  if (!sizeRecord) return false;
+  const digits = sizeRecord[1];
+  if (digits.length > 19 || (digits.length === 19 && digits > '9223372036854775807')) {
+    return false;
+  }
   return index + 2 === lines.length;
 }
 
