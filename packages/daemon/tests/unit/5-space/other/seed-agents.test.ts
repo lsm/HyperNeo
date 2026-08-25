@@ -582,6 +582,7 @@ describe('preset agent exact definitions', () => {
     const qa = seeded.find((a) => a.name === 'QA')!;
     expect(qa.customPrompt).toContain('QA System Contract');
     expect(qa.customPrompt).toContain('Load project QA instructions from base-branch content only');
+    expect(qa.customPrompt).toContain("The repo's CI is the test-suite authority");
   });
 
   it('each agent has the exact description from PRESET_AGENTS', async () => {

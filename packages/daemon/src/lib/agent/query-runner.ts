@@ -29,6 +29,7 @@ import {
   decideQueryRetry,
   type QueryRetryEnvironment,
   type QueryRetryErrorSignal,
+  type QueryRetryRoute,
 } from './query-retry-routing.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
@@ -964,6 +965,7 @@ export class QueryRunner {
         recoveryState,
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
+      const queueRunningAtEntry = messageQueue.isRunning();
 
       if (
         routeDecision.route.action === 'superseded_noop' ||
@@ -990,28 +992,37 @@ export class QueryRunner {
         );
       }
 
-      const startupRetryFutile =
+      if (
         isStartupTimeout &&
         retryAttempt === 0 &&
-        !this.canRedeliverPromptOnStartupRetry(queryGeneration);
-      if (startupRetryFutile) {
+        !retryEnv.hasConsumedPrompt &&
+        !retryEnv.hasQueuedPrompt
+      ) {
         logger.warn(
           'SDK startup timeout with no consumed or queued prompt: skipping the one-shot ' +
             'retry — a fresh attempt could not deliver anything.'
         );
       }
 
-      if (
-        !startupRetryFutile &&
-        isStartupTimeout &&
-        retryAttempt === 0 &&
-        !this.ctx.isCleaningUp() &&
-        stateManager.getState().status !== 'interrupted'
-      ) {
+      if (routeDecision.route.action === 'startup_timeout_retry') {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
         if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+        if (
+          this.retryRouteChanged(
+            'startup_timeout_retry',
+            retrySignal,
+            retryEnv,
+            queryGeneration,
+            queueRunningAtEntry
+          )
+        ) {
+          logger.warn(
+            'Startup-timeout retry abandoned: session ownership changed across the idle await.'
+          );
           return;
         }
 
@@ -1036,6 +1047,20 @@ export class QueryRunner {
         }
 
         if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+        if (
+          this.retryRouteChanged(
+            'startup_timeout_retry',
+            retrySignal,
+            retryEnv,
+            queryGeneration,
+            queueRunningAtEntry
+          )
+        ) {
+          logger.warn(
+            'Startup-timeout retry abandoned: session ownership changed across the exit await.'
+          );
           return;
         }
 
@@ -1070,9 +1095,27 @@ export class QueryRunner {
           );
         } catch {}
 
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+        if (
+          this.retryRouteChanged(
+            'startup_timeout_retry',
+            retrySignal,
+            retryEnv,
+            queryGeneration,
+            queueRunningAtEntry
+          )
+        ) {
+          logger.warn(
+            'Startup-timeout retry abandoned: session ownership changed across the publication.'
+          );
+          return;
+        }
+
         return await this.runQuery(queryGeneration, 1, recoveryState);
       }
-      if (isMessageNotFound && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
+      if (routeDecision.route.action === 'message_not_found_retry') {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
         const staleStartupTimer = this.ctx.startupTimeoutTimer;
@@ -1084,6 +1127,20 @@ export class QueryRunner {
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
         if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+        if (
+          this.retryRouteChanged(
+            'message_not_found_retry',
+            retrySignal,
+            retryEnv,
+            queryGeneration,
+            queueRunningAtEntry
+          )
+        ) {
+          logger.warn(
+            'Message-not-found retry abandoned: session ownership changed across the idle await.'
+          );
           return;
         }
 
@@ -1108,6 +1165,20 @@ export class QueryRunner {
         }
 
         if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+        if (
+          this.retryRouteChanged(
+            'message_not_found_retry',
+            retrySignal,
+            retryEnv,
+            queryGeneration,
+            queueRunningAtEntry
+          )
+        ) {
+          logger.warn(
+            'Message-not-found retry abandoned: session ownership changed across the exit await.'
+          );
           return;
         }
         return await this.runQuery(queryGeneration, 1, recoveryState);
@@ -1496,9 +1567,33 @@ export class QueryRunner {
     );
   }
 
-  private canRedeliverPromptOnStartupRetry(queryGeneration: number): boolean {
-    const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
-    return consumed.length > 0 || this.ctx.messageQueue.size() > 0;
+  private retryRouteChanged(
+    expectedAction: QueryRetryRoute['action'],
+    errorSignal: QueryRetryErrorSignal,
+    env: QueryRetryEnvironment,
+    queryGeneration: number,
+    queueRunningAtEntry: boolean
+  ): boolean {
+    const queueRunning = this.ctx.messageQueue.isRunning();
+    const abortAborted = this.ctx.queryAbortController?.signal.aborted === true;
+    if (queueRunningAtEntry && !queueRunning) return true;
+    if (env.lifecycle.abortSignalAborted && !abortAborted) return true;
+    const resnapshotted = decideQueryRetry({
+      errorSignal,
+      env: {
+        ...env,
+        hasConsumedPrompt: (this._consumedUserMessages.get(queryGeneration) ?? []).length > 0,
+        hasQueuedPrompt: this.ctx.messageQueue.size() > 0,
+        isCleaningUp: this.ctx.isCleaningUp(),
+        isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
+        lifecycle: {
+          ...env.lifecycle,
+          processingStatus: this.ctx.stateManager.getState().status,
+          abortSignalAborted: abortAborted,
+        },
+      },
+    });
+    return resnapshotted.route.action !== expectedAction;
   }
 
   private retrySupersededByReplacement(queryGeneration: number): boolean {

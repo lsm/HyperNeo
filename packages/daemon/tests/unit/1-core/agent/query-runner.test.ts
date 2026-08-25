@@ -134,7 +134,9 @@ describe('QueryRunner', () => {
       isRunningSpy.mockReturnValue(false);
     });
     sizeSpy = mock(() => 0);
-    enqueueWithIdSpy = mock(async () => {});
+    enqueueWithIdSpy = mock(async () => {
+      sizeSpy.mockReturnValue(sizeSpy() + 1);
+    });
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -1880,9 +1882,6 @@ describe('QueryRunner', () => {
     });
 
     it('restarts a stopped message queue before the startup-timeout retry', async () => {
-      setIdleSpy.mockImplementation(async () => {
-        stopSpy();
-      });
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       (
@@ -1892,6 +1891,7 @@ describe('QueryRunner', () => {
       ]);
 
       runner.start();
+      isRunningSpy.mockReturnValue(false);
       await ctx.queryPromise?.catch(() => {});
 
       expect(startSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -2298,10 +2298,157 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('pins: startup arm recurses after the publication await with no intervening guard (reachable window)', async () => {
-      buildSpy
-        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
-        .mockRejectedValueOnce(new Error('stop after retry'));
+    it('pins: startup arm revalidates after the publication await — a replacement during the publication does not launch another attempt', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const runnerPrivate = runner as unknown as {
+        _consumedUserMessages: Map<number, unknown[]>;
+      };
+      runnerPrivate._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      ctx.incrementQueryGeneration();
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(
+        'consumed-uuid',
+        expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
+        false,
+        { prepend: true }
+      );
+      expect(runnerPrivate._consumedUserMessages.has(1)).toBe(false);
+    });
+
+    it('pins: startup arm resnapshots the route across the setIdle await — an interrupt flip abandons before any shared mutation', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      getStateSpy.mockReturnValue({ status: 'interrupted' });
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm pre-recursion gate abandons when cleanup begins during the publication', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      let cleaningUp = false;
+      const ctx = createContext({ isCleaningUp: () => cleaningUp });
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      cleaningUp = true;
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm resnapshots the route across the setIdle await — a cleanup flip abandons before teardown', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let cleaningUp = false;
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        isCleaningUp: () => cleaningUp,
+      });
+      runner = new QueryRunner(ctx);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      cleaningUp = true;
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm revalidates immediately before recursion — a cleanup flip across the exit await does not launch another attempt', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let cleaningUp = false;
+      let releaseExit!: () => void;
+      const exitGate = new Promise<void>((resolve) => {
+        releaseExit = resolve;
+      });
+      let markTerminate!: () => void;
+      const terminateReached = new Promise<void>((resolve) => {
+        markTerminate = resolve;
+      });
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        markTerminate();
+      });
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        isCleaningUp: () => cleaningUp,
+        processExitedPromise: exitGate,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await terminateReached;
+      cleaningUp = true;
+      releaseExit();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm pre-recursion gate abandons when a completed interrupt stops the queue during the publication', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       (
@@ -2323,17 +2470,94 @@ describe('QueryRunner', () => {
       });
       runner.start();
       await displayCalled;
-      ctx.incrementQueryGeneration();
+      isRunningSpy.mockReturnValue(false);
       releaseDisplay();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(buildSpy).toHaveBeenCalledTimes(2);
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(
-        'consumed-uuid',
-        expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
-        false,
-        { prepend: true }
-      );
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm resnapshots live redeliverability — a queue cleared during the publication does not launch a futile recursion', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      sizeSpy.mockReturnValue(1);
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      sizeSpy.mockReturnValue(0);
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('pins: startup arm abandons before shared mutation when a completed interrupt consumes the abort controller on the self-stopped queue', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const controller = new AbortController();
+      controller.abort();
+      isRunningSpy.mockReturnValue(false);
+      const ctx = createContext({ queryAbortController: controller });
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      ctx.queryAbortController = null;
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm does not launch the retry against a queue stopped by a completed interrupt', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let releaseExit!: () => void;
+      const exitGate = new Promise<void>((resolve) => {
+        releaseExit = resolve;
+      });
+      let markTerminate!: () => void;
+      const terminateReached = new Promise<void>((resolve) => {
+        markTerminate = resolve;
+      });
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        markTerminate();
+      });
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        processExitedPromise: exitGate,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await terminateReached;
+      isRunningSpy.mockReturnValue(false);
+      releaseExit();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -2695,6 +2919,7 @@ describe('QueryRunner', () => {
       markQueueStopped: () => void;
     } {
       const queueIsRunning = mock((): boolean => false);
+      let queueSize = 0;
       const queryObject = {
         close: mock((): void => {
           events.push('query.close');
@@ -2712,13 +2937,14 @@ describe('QueryRunner', () => {
             events.push('queue.start');
           }),
           clear: mock(() => {
+            queueSize = 0;
             events.push('queue.clear');
           }),
           stop: mock(() => {
             queueIsRunning.mockReturnValue(false);
             events.push('queue.stop');
           }),
-          size: mock((): number => 0),
+          size: mock((): number => queueSize),
           getGeneration: mock((): number => 0),
           enqueueWithId: mock(
             async (
@@ -2727,6 +2953,7 @@ describe('QueryRunner', () => {
               _internal?: boolean,
               options?: { prepend?: boolean }
             ): Promise<void> => {
+              queueSize += 1;
               events.push(`enqueue:${messageId}${options?.prepend ? ':prepend' : ''}`);
             }
           ),
