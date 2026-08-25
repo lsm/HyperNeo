@@ -466,7 +466,7 @@ describe('node-agent-tools: send_message', () => {
         return {
           state: 'delivered',
           messageId: `msg-${spaceMessages.length}`,
-          sessionId: 'sess-stub',
+          sessionId: `space:chat:${spaceId}`,
         };
       },
     });

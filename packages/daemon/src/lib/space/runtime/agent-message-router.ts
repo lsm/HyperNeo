@@ -328,13 +328,13 @@ export class AgentMessageRouter {
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, null);
           if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: `space:chat:${spaceId!}` });
+            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
               agentName: 'space-agent',
-              sessionId: `space:chat:${spaceId!}`,
+              sessionId: outcome.sessionId,
               error: outcome.error,
             });
           }
@@ -352,13 +352,13 @@ export class AgentMessageRouter {
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, decision.sessionId);
           if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: decision.sessionId });
+            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
               agentName: 'space-agent',
-              sessionId: decision.sessionId,
+              sessionId: outcome.sessionId,
               error: outcome.error,
             });
           }
@@ -720,11 +720,15 @@ export class AgentMessageRouter {
         try {
           const outcome = await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
           if (outcome.state === 'delivered') {
-            delivered.push({ agentName, sessionId });
+            delivered.push({ agentName, sessionId: outcome.sessionId || sessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName, messageId: outcome.messageId });
           } else {
-            failed.push({ agentName, sessionId, error: outcome.error });
+            failed.push({
+              agentName,
+              sessionId: outcome.sessionId || sessionId,
+              error: outcome.error,
+            });
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);

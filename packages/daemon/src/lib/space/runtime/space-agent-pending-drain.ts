@@ -12,7 +12,7 @@ export interface SpaceAgentPendingDrainDeps {
     getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
     deferExpiration(ids: string[], ttlMs?: number): void;
-    enforceRetention(options: { runId?: string | null }): unknown;
+    enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string): unknown;
   };
   resolveReplySession(row: PendingAgentMessageRecord): string | null;
@@ -78,7 +78,10 @@ function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendin
 }
 
 function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
-  ctx.deps.repo.enforceRetention({ runId: ctx.workflowRunId });
+  ctx.deps.repo.enforceRetention({
+    runId: ctx.workflowRunId,
+    excludeIds: ctx.activeDeliveryIds ?? [],
+  });
   ctx.deps.repo.expireStale(ctx.workflowRunId);
   return ctx;
 }

@@ -314,7 +314,11 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
       taskNumber: 236,
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
-        return { state: 'delivered', messageId: `msg-${spaceMessages.length}` };
+        return {
+          state: 'delivered',
+          messageId: `msg-${spaceMessages.length}`,
+          sessionId: `space:chat:${spaceId}`,
+        };
       },
     });
 
@@ -357,7 +361,11 @@ describe('AgentMessageRouter: built-in inter-level targets', () => {
       taskNumber: 236,
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
-        return { state: 'delivered', messageId: `msg-${spaceMessages.length}` };
+        return {
+          state: 'delivered',
+          messageId: `msg-${spaceMessages.length}`,
+          sessionId: `space:chat:${spaceId}`,
+        };
       },
     });
 
@@ -1888,7 +1896,11 @@ describe('AgentMessageRouter: generic address targets', () => {
       spaceId: ctx.spaceId,
       spaceAgentInjector: async (_spaceId, message) => {
         spaceMessages.push(message);
-        return { state: 'delivered', messageId: `msg-${spaceMessages.length}` };
+        return {
+          state: 'delivered',
+          messageId: `msg-${spaceMessages.length}`,
+          sessionId: 'sess-stub',
+        };
       },
     });
 
@@ -1919,9 +1931,13 @@ describe('AgentMessageRouter: generic address targets', () => {
     const injected: Array<string | null> = [];
     const router = makeRouter(ctx, workflowRunId, [], [], {
       spaceId: ctx.spaceId,
-      spaceAgentInjector: async (_spaceId, _message, replyToSessionId) => {
+      spaceAgentInjector: async (spaceId, _message, replyToSessionId) => {
         injected.push(replyToSessionId);
-        return { state: 'delivered', messageId: `msg-${injected.length}` };
+        return {
+          state: 'delivered',
+          messageId: `msg-${injected.length}`,
+          sessionId: replyToSessionId ?? `space:chat:${spaceId}`,
+        };
       },
       replyRoutingLookup: () => 'session-origin',
     });
@@ -2041,7 +2057,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       spaceAgentInjector: async () => ({
         state: 'delivered',
         messageId: 'msg-live-coordinator',
-        sessionId: 'sess-stub',
+        sessionId: `space:chat:${ctx.spaceId}`,
       }),
     });
 
@@ -2067,6 +2083,7 @@ describe('AgentMessageRouter: generic address targets', () => {
       spaceAgentInjector: async () => ({
         state: 'failed' as const,
         messageId: 'msg-dead-lettered',
+        sessionId: `space:chat:${ctx.spaceId}`,
         error: 'delivery dead-lettered while awaiting consumption',
       }),
     });
