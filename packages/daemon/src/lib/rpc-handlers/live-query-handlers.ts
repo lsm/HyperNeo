@@ -2497,34 +2497,72 @@ tail_eligible AS (
   UNION
   SELECT id FROM hook_rows
 ),
--- Newest row per still-working session, ranked over rows that are either
--- selectable or hook rows — not blindly over every joined row (#2901 review).
--- A hook-only active turn (SessionStart / Setup / PreToolUse hooks before the
--- first assistant row) has its hook rows excluded from every selection branch,
--- so a tail computed over selected rows only would pin the turn's user anchor
--- or the PREVIOUS turn's terminal result — neither renders as the working
--- agent's turn. Admitting hook rows as tail candidates pins an actual row of
--- the active turn (the newest hook row), which the frontend renders as a
--- running-hook status turn. Rows outside every selection branch (e.g. a
--- malformed trailing sdk_message) stay ineligible, so the tail cannot leak a
--- row the feed deliberately filters.
+-- A session is pinned only when it is actually working, decided by the SAME
+-- candidate predicate as SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL: the
+-- session's most-recent candidate row (assistant / result / operational
+-- system rows incl. hooks) is non-terminal AND sits in the session's latest
+-- conversation turn (#2901 review). Inferring activity from the newest
+-- arbitrary row wrongly pinned an idle session's failed user delivery that
+-- landed after its closing result — the active-turn query deliberately
+-- ignores user-only failed turns, so the tail must too.
+session_candidates AS (
+  SELECT
+    j.id AS id,
+    j.sessionId AS sessionId,
+    j.isTerminal AS isTerminalRow,
+    j.turnIndex AS turnIndex,
+    ROW_NUMBER() OVER (
+      PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
+    ) AS candRank
+  FROM joined j
+  WHERE j.sessionId IS NOT NULL
+    AND (
+      j.messageType IN ('assistant', 'result')
+      OR (
+        j.messageType = 'system'
+        AND json_valid(j.content)
+        AND COALESCE(json_extract(j.content, '$.subtype'), '')
+          IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
+      )
+    )
+),
+active_sessions AS (
+  SELECT sessionId
+  FROM session_candidates c
+  WHERE c.candRank = 1
+    AND COALESCE(c.isTerminalRow, 0) = 0
+    AND c.turnIndex = (
+      SELECT j2.turnIndex
+      FROM joined j2
+      WHERE j2.sessionId = c.sessionId
+      ORDER BY j2.createdAt DESC, j2.insOrder DESC
+      LIMIT 1
+    )
+),
+-- The pinned row is the newest tail-eligible row of each active session:
+-- selectable rows, plus hook rows so a hook-only active turn (SessionStart /
+-- Setup / PreToolUse hooks before the first assistant row) pins an actual row
+-- of the working turn — its newest hook row, which the frontend renders as a
+-- running-hook status turn — instead of the turn's user anchor or the
+-- PREVIOUS turn's terminal result. Rows outside every selection branch (e.g.
+-- a malformed trailing sdk_message) stay ineligible, so the tail cannot leak
+-- a row the feed deliberately filters.
 active_session_tails AS (
   SELECT id
   FROM (
     SELECT
       j.id AS id,
       j.kind AS kind,
-      j.isTerminal AS isTerminalRow,
       ROW_NUMBER() OVER (
         PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
       ) AS sessionRank
     FROM joined j
     WHERE j.sessionId IS NOT NULL
       AND j.id IN (SELECT id FROM tail_eligible)
+      AND j.sessionId IN (SELECT sessionId FROM active_sessions)
   )
   WHERE sessionRank = 1
     AND kind != 'github'
-    AND COALESCE(isTerminalRow, 0) = 0
 ),
 selected_ids AS (
   SELECT id FROM base_selection

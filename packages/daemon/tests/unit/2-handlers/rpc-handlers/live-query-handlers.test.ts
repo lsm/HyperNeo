@@ -5452,6 +5452,76 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).toContain('hs2');
       });
 
+      test('failed user delivery after a result does not pin an idle session tail', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSession('working-session', 'worker', '{"status":"processing"}');
+        sessionTaskIds.set('working-session', taskId);
+        insertSession('finished-session', 'worker', '{"status":"processing"}');
+        sessionTaskIds.set('finished-session', taskId);
+
+        insertSdkMessageAt(
+          'idle-r',
+          sessionId,
+          now + 1000,
+          {
+            type: 'result',
+            subtype: 'success',
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+              reasoning_output_tokens: 0,
+              total_tokens: 2,
+            },
+          },
+          'result'
+        );
+        insertSdkMessageAt(
+          'idle-failed-user',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'idle-failed-user', message: { role: 'user', content: 'retry' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'failed' WHERE id = 'idle-failed-user'`
+        ).run();
+        insertSdkMessageAt('working-tail', 'working-session', now + 3000, {
+          type: 'assistant',
+          uuid: 'working-tail',
+          message: { content: [{ type: 'text', text: 'still working' }] },
+        });
+        insertSdkMessageAt(
+          'finished-r',
+          'finished-session',
+          now + 4000,
+          {
+            type: 'result',
+            subtype: 'success',
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+              reasoning_output_tokens: 0,
+              total_tokens: 2,
+            },
+          },
+          'result'
+        );
+
+        const ids = queryCompact(taskId, 1).map((r) => String(r.id));
+        expect(ids).toEqual(['working-tail', 'finished-r']);
+      });
+
       test('malformed system sdk_message does not break the compact feed', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

@@ -161,10 +161,33 @@ describe('SpaceTaskUnifiedThread', () => {
       expect(lastAutoScrollMessageCount).toBe(0);
     });
 
-    it('passes the real rows.length when not loading or reconnecting', () => {
+    it('passes a positive content version when not loading or reconnecting', () => {
       mockRows = makeMinimalRows();
       render(<SpaceTaskUnifiedThread taskId="task-1" />);
-      expect(lastAutoScrollMessageCount).toBe(mockRows.length);
+      expect(lastAutoScrollMessageCount).toBeGreaterThan(0);
+    });
+
+    it('increments messageCount when the window advances at a constant row count', () => {
+      mockRows = makeMinimalRows();
+      const { rerender } = render(<SpaceTaskUnifiedThread taskId="task-1" />);
+      const before = lastAutoScrollMessageCount;
+      const windowSize = mockRows.length;
+      expect(before).toBeGreaterThan(0);
+
+      const advanced = [
+        ...mockRows.slice(1),
+        makeRow(
+          'a-new',
+          'Task Agent',
+          { type: 'assistant', message: { content: [{ type: 'text', text: 'newest' }] } },
+          4000
+        ),
+      ];
+      expect(advanced).toHaveLength(windowSize);
+      mockRows = advanced;
+      rerender(<SpaceTaskUnifiedThread taskId="task-1" />);
+
+      expect(lastAutoScrollMessageCount).toBe(before + 1);
     });
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useSpaceTaskMessages } from '../../hooks/useSpaceTaskMessages';
 import { getProviderLabel } from '../../hooks/useModelSwitcher';
@@ -61,11 +61,21 @@ export function SpaceTaskUnifiedThread({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
+
+  const newestRowKey = rows.length > 0 ? String(rows[rows.length - 1].id) : '';
+  const prevNewestRowKeyRef = useRef('');
+  const [contentVersion, setContentVersion] = useState(0);
+  useEffect(() => {
+    if (newestRowKey === prevNewestRowKeyRef.current) return;
+    prevNewestRowKeyRef.current = newestRowKey;
+    setContentVersion((version) => (newestRowKey === '' ? 0 : version + 1));
+  }, [newestRowKey]);
+
   const { showScrollButton, scrollToBottom } = useAutoScroll({
     containerRef,
     endRef: messagesEndRef,
     enabled: autoScrollEnabled,
-    messageCount: isLoading || isReconnecting ? 0 : rows.length,
+    messageCount: isLoading || isReconnecting ? 0 : contentVersion,
     resetKey: taskId,
   });
 
