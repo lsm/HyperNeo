@@ -3,6 +3,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
+import { planDeliveryRoleArbitration } from './delivery-turn-routing.ts';
 import { selectStrandedDeliveries } from './turn-outcome-classification.ts';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
@@ -109,33 +110,29 @@ export function deliverMessage(
     parentToolUseId: options.parentToolUseId ?? null,
   };
 
-  const existingRole = jobQueue.getActiveDeliveryRole(sessionId, messageUuid);
-  if (existingRole) return existingRole;
+  const arbitration = planDeliveryRoleArbitration({
+    existingActiveRole: jobQueue.getActiveDeliveryRole(sessionId, messageUuid),
+    requestedRole: options.role,
+  });
 
-  if (options.role) {
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: options.role },
-      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
-    });
-    return options.role;
-  }
+  if (arbitration.action === 'reuse') return arbitration.role;
 
   try {
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
-      payload: basePayload,
+      payload: { ...basePayload, role: arbitration.role },
       maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
-    return 'turn';
+    return arbitration.role;
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
+    if (arbitration.uniqueConstraintFallback === null) throw err;
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: 'steer' },
+      payload: { ...basePayload, role: arbitration.uniqueConstraintFallback },
       maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
-    return 'steer';
+    return arbitration.uniqueConstraintFallback;
   }
 }
 
