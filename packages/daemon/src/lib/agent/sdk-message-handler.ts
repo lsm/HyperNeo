@@ -1499,10 +1499,12 @@ export class SDKMessageHandler {
     const promise = (async () => {
       try {
         const modelInfo = await getSessionModelInfo(session);
+        if (this.ctx.queryObject !== queryObject) return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
           queryObject,
           modelInfo
         );
+        if (this.ctx.queryObject !== queryObject) return;
         if (!contextInfo) return;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
         await internalEventBus.publish('context.updated', {

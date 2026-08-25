@@ -4469,6 +4469,78 @@ describe('SDKMessageHandler', () => {
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
       });
+
+      it('drops an over-budget refresh whose query was replaced before usage resolved', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        let resolveUsage: ((value: unknown) => void) | undefined;
+        const getContextUsageSpy = mock(
+          () =>
+            new Promise((resolve) => {
+              resolveUsage = resolve;
+            })
+        );
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        mockContext.queryObject = { getContextUsage: mock(async () => ({})) } as never;
+
+        resolveUsage?.({
+          categories: [{ name: 'Messages', tokens: 950_000 }],
+          totalTokens: 950_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 95,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
     });
 
     it('never injects /context into the message queue', async () => {

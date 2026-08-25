@@ -557,7 +557,8 @@ describe('N4: literal /compact never enters the transcript or provider request',
       if (c.provider === 'kimi') {
         expect(harness.enqueueSpy, `${c.provider}/${c.model}`).toHaveBeenCalledWith(
           '/compact',
-          true
+          true,
+          { prepend: true }
         );
         expect(
           harness.markCompactionTriggeredSpy,
