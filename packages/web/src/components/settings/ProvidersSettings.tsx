@@ -107,6 +107,7 @@ interface VisibleModelsPanelState {
   candidates: Array<{ id: string; name?: string }> | null;
   fingerprint?: string;
   draftCheckedIds?: Set<string>;
+  cachedOnlyIds?: Set<string>;
 }
 
 const EMPTY_VISIBLE_MODELS_PANEL: VisibleModelsPanelState = {
@@ -148,13 +149,16 @@ function mergeVisibleModelCandidates(
 
 function getDefaultVisibleCheckedIds(
   provider: EnrichedProvider,
-  visibleRows: Array<{ id: string }>
+  visibleRows: Array<{ id: string }>,
+  cachedOnlyIds?: Set<string>
 ): Set<string> {
   const curatedList = readCuratedModels(provider);
   if (curatedList !== undefined) {
     return new Set(curatedList.map((model) => model.id));
   }
-  return new Set(visibleRows.map((model) => model.id));
+  return new Set(
+    visibleRows.filter((model) => !cachedOnlyIds?.has(model.id)).map((model) => model.id)
+  );
 }
 
 export function ProvidersSettings() {
@@ -662,6 +666,12 @@ export function ProvidersSettings() {
         remote.models,
         cachedProviderModels,
       ]);
+      const discoveryIds = new Set(
+        mergeVisibleModelCandidates([curatedList, remote.models]).map((model) => model.id)
+      );
+      const cachedOnlyIds = new Set(
+        candidates.map((model) => model.id).filter((id) => !discoveryIds.has(id))
+      );
       setVisibleModelsPanels((prev) => ({
         ...prev,
         [provider.id]: {
@@ -669,7 +679,8 @@ export function ProvidersSettings() {
           error: null,
           candidates,
           fingerprint,
-          draftCheckedIds: getDefaultVisibleCheckedIds(provider, candidates),
+          draftCheckedIds: getDefaultVisibleCheckedIds(provider, candidates, cachedOnlyIds),
+          cachedOnlyIds,
         },
       }));
     }
@@ -680,7 +691,8 @@ export function ProvidersSettings() {
       const panel = prev[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
       const visibleRows = panel.candidates ?? readCuratedModels(provider) ?? [];
       const checkedIds = new Set(
-        panel.draftCheckedIds ?? getDefaultVisibleCheckedIds(provider, visibleRows)
+        panel.draftCheckedIds ??
+          getDefaultVisibleCheckedIds(provider, visibleRows, panel.cachedOnlyIds)
       );
       if (checkedIds.has(modelId)) {
         checkedIds.delete(modelId);
@@ -701,7 +713,9 @@ export function ProvidersSettings() {
   const handleSaveVisibleModels = async (provider: EnrichedProvider) => {
     const panel = visibleModelsPanels[provider.id] ?? EMPTY_VISIBLE_MODELS_PANEL;
     const visibleRows = panel.candidates ?? readCuratedModels(provider) ?? [];
-    const checkedIds = panel.draftCheckedIds ?? getDefaultVisibleCheckedIds(provider, visibleRows);
+    const checkedIds =
+      panel.draftCheckedIds ??
+      getDefaultVisibleCheckedIds(provider, visibleRows, panel.cachedOnlyIds);
     const models = visibleRows
       .filter((model) => checkedIds.has(model.id))
       .map((model) => ({ id: model.id, ...(model.name ? { name: model.name } : {}) }));
@@ -732,7 +746,7 @@ export function ProvidersSettings() {
     const hub = connectionManager.getHubIfConnected();
     if (hub) {
       try {
-        const response = (await hub.request('models.list', { forceRefresh: true })) as {
+        const response = (await hub.request('models.list', {})) as {
           models?: Array<{ id?: string; provider?: string }>;
         };
         if (provider.isEnabled) {
@@ -892,7 +906,11 @@ export function ProvidersSettings() {
                     ? new Set(curatedList.map((model) => model.id))
                     : undefined;
                 const visibleRows = visiblePanel.candidates ?? curatedList ?? [];
-                const defaultCheckedIds = getDefaultVisibleCheckedIds(provider, visibleRows);
+                const defaultCheckedIds = getDefaultVisibleCheckedIds(
+                  provider,
+                  visibleRows,
+                  visiblePanel.cachedOnlyIds
+                );
                 const draftCheckedIds = visiblePanel.draftCheckedIds ?? defaultCheckedIds;
                 const visibleCheckedCount = visibleRows.filter((model) =>
                   draftCheckedIds.has(model.id)
@@ -1233,7 +1251,7 @@ export function ProvidersSettings() {
                                     ? `${visibleCheckedCount} of ${visibleRows.length} visible.`
                                     : hasUnsavedVisibleModels
                                       ? `${visibleCheckedCount} of ${visibleRows.length} selected (unsaved).`
-                                      : `${visibleRows.length} model${visibleRows.length === 1 ? '' : 's'} — all visible (no curation stored).`}
+                                      : `${visibleCheckedCount} of ${visibleRows.length} selected.`}
                                 </p>
                                 <div class="max-h-48 overflow-y-auto space-y-1 mt-1">
                                   {visibleRows.map((model) => (

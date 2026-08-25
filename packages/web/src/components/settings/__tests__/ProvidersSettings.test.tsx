@@ -1700,7 +1700,7 @@ describe('ProvidersSettings', () => {
         expect(panel.textContent).toContain('kimi-k4');
       });
       expect(panel.textContent).toContain('Kimi K3');
-      expect(panel.textContent).toContain('2 models — all visible (no curation stored).');
+      expect(panel.textContent).toContain('2 of 2 selected.');
       expect(mockListAvailableModels).not.toHaveBeenCalled();
       const boxes = panel.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
       expect(boxes.length).toBe(2);
@@ -1960,7 +1960,7 @@ describe('ProvidersSettings', () => {
       });
       const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
       expect(JSON.parse(params.configJson).models).toEqual([{ id: 'kimi-k3', name: 'Kimi K3' }]);
-      expect(mockRequest).toHaveBeenCalledWith('models.list', { forceRefresh: true });
+      expect(mockRequest).toHaveBeenCalledWith('models.list', {});
       expect(mockToastWarning).not.toHaveBeenCalled();
     });
 
@@ -2024,7 +2024,7 @@ describe('ProvidersSettings', () => {
       });
       const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
       expect(JSON.parse(params.configJson).models).toEqual([]);
-      expect(mockRequest).toHaveBeenCalledWith('models.list', { forceRefresh: true });
+      expect(mockRequest).toHaveBeenCalledWith('models.list', {});
     });
 
     it('picker reflects the new subset after save', async () => {
@@ -2133,8 +2133,17 @@ describe('ProvidersSettings', () => {
       expect(panelEl.textContent).toContain('kimi-k3');
 
       const boxes = panelEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
-      fireEvent.click(boxes[0]);
-      expect(panelEl.textContent).toContain('1 of 2 selected (unsaved).');
+      expect(boxes[0].checked).toBe(true);
+      expect(boxes[1].checked).toBe(false);
+      fireEvent.click(boxes[1]);
+      expect(panelEl.textContent).toContain('2 of 2 selected (unsaved).');
+
+      fireEvent.click(screen.getByText('Save curation'));
+
+      await waitFor(() => expect(mockUpdateProvider).toHaveBeenCalled());
+      const [_, params] = mockUpdateProvider.mock.calls[0] as [string, { configJson: string }];
+      const stored = JSON.parse(params.configJson).models as Array<{ id: string }>;
+      expect(stored.map((model) => model.id).sort()).toEqual(['kimi-k3', 'kimi-offline']);
     });
 
     it('disables curation checkboxes while candidates are fetching', async () => {
