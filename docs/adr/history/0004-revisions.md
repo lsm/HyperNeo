@@ -1,95 +1,111 @@
-# ADR 0004 — Revision history and retired framing (reference only)
+# ADR 0004 revision and validation history (reference only)
 
-Extracted from the ADR body 2026-08-25 so the ADR carries only executable guidance. Nothing here is normative; where it conflicts with the ADR, the ADR wins.
+Verbatim record extracted from the pre-2026-08-25 ADR 0004
+(`docs/adr/0004-superpipe-decision-pipelines.md` at commit 884721f47, before the
+one-pipeline-per-business-path revision and the rename to
+`docs/adr/0004-superpipe-pipelines.md`). Non-normative: the normative document
+is `docs/adr/0004-superpipe-pipelines.md`.
 
-## Status chronology (as previously recorded)
+---
 
-Revised 2026-08-20 after owner review: scope widened from decision cores to pure
-pipelines generally — decisions, multi-step transforms (rendering/projection), and
-staged async flows (decide → effect → re-snapshot). The boundaries in
-"Where superpipe must not be used" still hold; "free-form effect executor"
-replaces the earlier blanket "effect executor".Revised 2026-08-21 after issue #2670 (stagedRun RFC): staged run pipelines are
-sanctioned — `stagedRun` composes snapshot/decide/effect/resnapshot stages, with
-effect stages permitted inside pipelines under atomicity-delegation conditions.
-Answers the RFC's five open questions; see "Staged run pipelines". The prior
-boundary is retained in substance: a pipeline still never owns atomicity.Revised 2026-08-25 after owner review: the combinator-centric organization is
-retired as a gate. Direct superpipe composition — one cohesive, business-named
-pipeline per business path, mixing decision, transform, and effect stages — is
-the default form for new work in daemon and web. `decisionRun` and `stagedRun`
-remain for their existing call sites and may be used where they fit, but no
-flow must be pre-classified into a category, and no combinator is designed
-ahead of the direct uses that would justify it. See "One pipeline per business
-path" and Decision item 3.
+## Context
 
-## Validation chronology
+HyperNeo's Space runtime classes accumulate cascades that interleave three concerns:
+snapshot reads (repos, stores, in-flight maps), decisions (deliver / defer / fail /
+skip), and effects (DB marks, session injects, retries, activation). Before the
+pilot, `deliverExternalEventToWorkflowTarget` was a single 193-line cascade whose
+gate order lived only in control flow — unreachable to unit tests without the whole
+runtime, and expensive to reason about.
 
-Validated further by pilot 3 (2026-08-21): `processRunTick` rewritten as a staged
-interpreter over three extracted cores plus a `decisionRun` admission pipeline —
-see "Pilot 3" below for boundary caveats.Validated further by pilot 5 (2026-08-21): the eight task-mutation MCP tools in
-`space-agent-tools.ts` interpreted as staged pipelines over extracted
-admission/routing cores — see "Pilot 5" below for the recorded asymmetries and
-the group roadmap.Validated further by pilot 4 (2026-08-21): the agent message-delivery chain —
-inject admission and turn-end flush as `decisionRun` pipelines, turn-outcome
-and reconcile as point decisions — with the closing PRs fixing the two live
-incident bugs the decision-table pins surfaced; see "Pilot 4" below for the two
-design lessons it added to the record.Validated further by pilot 6 / chain S (2026-08-23): the verified-stop ladder
-(`stopSessionVerified`) applied as a `stagedRun` interpreter over extracted
-gates — the combinator's first composed-then-swapped production flow. See
-"Pilot 6" below for the boundary caveats, the compensation deferral, and the
-closing sweep.Validated further by pilot 7 (2026-08-23, Chain P): the workflow-node spawn
-seam applied as a staged interpreter over extracted cores and the
-lazy-activation path as an inline interpreter over its pure routing core —
-and the first production consumer of
-`casExecutionStatus` and the spawn reservation, whose superseded outcomes
-replace previously tolerated racy writes (the other Phase 0 primitives had
-already gained consumers just before the chain: transition-table enforcement
-#2682, `casStatus` #2684). See "Pilot 7" below for the pinned behavior deltas,
-the Pilot 3 spawn-seam race closure, and the boundary caveats.Validated further by pilot 9 / chain C (2026-08-23): the message-search FTS
-admission gates as a `decisionRun` core and the delivery-status family as a
-routing table under `src/storage/` — the first pilot whose cores live in the
-repository layer — with the second production FTS admission implementation
-(`SessionRepository.rebuildMessageSearchRows`) aligned to the extracted
-vocabulary and parity-pinned. See "Pilot 9" below for the lazy-fact caveats
-and the deliberate rebuild residual.Validated further by pilot 10 / chain A (2026-08-23): the `sdk_messages`
-read-projection layer of `SDKMessageRepository` extracted as pure transforms
-into `sdk-message-projections.ts` — the widened scope's P1 pure-transform form
-applied below the runtime, at the persistence boundary. See "Pilot 10" below
-for the policy-parameterization discipline the chain settled on and its
-closing sweep. (Pilot 8 is reserved for chain I, the pending-queue drain +
-injection shell, by Pilot 7's closing note; pilot 9 is chain C's.)Validated further by pilot 11 / chain B (2026-08-23): the `sdk_messages`
-write side — save admission as a pure core over a normalized input, badge
-maintenance as an instruction set, and the delivery-status flip as a
-plan/interpret whose per-instruction CAS guards apply inside one
-transaction (a Phase 4 relative at the storage layer: guarded effects
-inside the transaction, not after commit). See "Pilot 11" below for
-the coupled TS/SQL badge predicate, the per-variant admission placement
-divergence, and the closing sweep.Validated further by pilot 8 / chain I (2026-08-23): the pending-queue
-drain — admission gates and envelope transforms as pure cores, the drain
-admission as a `decisionRun`, two flush sites as its gather → decide →
-interpret consumers — and the injection shell around the Pilot 4 inject
-decision, which stays single-sourced in `decideInjectDelivery` while its
-delivery-row steps and v1/v2 branch moved to a steps module. See
-"Pilot 8" below for the boundary caveats, the envelope-detector
-retirement, and the remaining mini-pilot shelf for
-`task-agent-manager.ts`.Validated further by pilot 12 (2026-08-23, first web-side pilot — the UI
-chain's own "pilot 6", renumbered here to keep the ADR sequence unambiguous):
-the four hand-rolled LiveQuery subscription hook lifecycles pinned then
-migrated onto one pure machine, `live-query-lifecycle.ts` — composition stayed
-a plain function under the earn-the-layer rule, so the pilot validates the
-reduceRun shape (reducer + effects-executing facade) without yet promoting the
-combinator; see "Pilot 12" below for the rule-of-three count and the recorded
-config drift.
+The pilot question: can the functional-core style — decisions as pure
+functions/pipelines, classes as snapshot-readers and effect-interpreters — be
+adopted with zero behavior change and without growing the codebase?
 
-## Retired: stagedRun full design record (2026-08-21, demoted to guidance 2026-08-25)
+[superpipe](https://github.com/lsm/superpipe) 0.17.0 provides the pipeline
+primitive: dependency-injected named stages, ctx threading, boolean `!dep`
+flow-control halts, and a choice of sync (`.end`) or async (`.endAsync`) executors.
+It was hardened for this pilot upstream (tsconfig build fix, raw-boolean-dep
+support, catchable `OutputKeyError`).
+
+### Library surface vs. blessed idioms
+
+Superpipe's full surface is larger than anything blessed in this ADR: async
+pipelines, dependency-injected named inputs/outputs, per-stage error handlers,
+`!dep`/`?dep` control-flow prefixes, output picking/merging, and `withSignal`
+cancellation. The combinators below (`decisionRun`, `stagedRun`) are **blessed
+idioms** — recurring shapes with the wiring ceremony deduplicated and one
+discipline made structural — not a statement about what the library can do. A
+flow that fits no blessed idiom may use superpipe directly; when a raw shape
+recurs (≈3 uses), promote it into a named combinator so the codebase converges
+on vocabulary instead of calcifying. A combinator must earn its layer by making
+a discipline structural — dedup alone is convenience, not a layer. Phases bound
+adoption; nothing here bounds the library.
+
+## Decision
+
+Adopt the functional-core sandwich for runtime logic — decision flows and
+multi-step transforms alike. Superpipe carries the pure core (a decision, an
+evolved value, or a staged plan); the class keeps snapshot reads and effect
+execution at staged boundaries.
+
+```
+shell (class): read snapshot into a plain input object
+core (superpipe): ordered pure gates → first decision wins → decision union
+shell (class): flat interpreter, one branch per decision action
+```
+
+1. **Gates are `(ctx) => ctx`.** A gate either attaches a member of the decision
+   union (via a `decided(ctx, decision)` spread) or returns the ctx unchanged.
+   Passing through must be identity (`gate(ctx) === ctx`).
+2. **Precedence is stage order, enforced structurally.** Every gate is followed by
+   a `!hasDecided` halt guard, so the first deciding gate wins. There is no
+   separate precedence document; the gate list is it.
+3. **All wiring ceremony lives in `decisionRun(name, gates)`**
+   (`packages/daemon/src/lib/space/runtime/decision-pipeline.ts`): factory + cast,
+   `.input(['ctx'])`, the per-gate halt guards, and `decision: null` injection.
+   A new decision pipeline is a name plus a gate array (~6 lines). Do not
+   hand-write the gate ritual when `decisionRun` fits. Superpipe imports outside
+   `decision-pipeline.ts` and `staged-run.ts` are permitted for flows that fit no
+   blessed idiom (revised 2026-08-21 — this was earlier a monopoly, and it bred
+   false ceilings about the library); when a raw shape recurs ≈3 times, promote
+   it into a named combinator.
+4. **Pipelines are the composition primitive for sequential logic, not just
+   decisions.** Two additional sanctioned forms beyond decide-once cores:
+   - **Transform pipelines.** A pipeline may compose an evolving value across
+     many steps — rendering/projection pipelines, message-shape normalization,
+     UI state changes — using the same halt machinery for data-dependent early
+     exit (`!dep` guards, `?dep` optional stages): a 10-step render that stops
+     after step 3 when the data says so is a pipeline, not a decision. Steps
+     stay pure `(value) => value`; applying the result (DOM, DB, publish)
+     remains outside.
+   - **Staged async flows: decide → effect → re-snapshot → decide.** A pipeline
+     run may end in an effect, and the shell may re-enter a pipeline on the
+     result. The pilot already ships this shape: `deliverViaActivation` runs
+     the async activation, then feeds the outcome through the post-activation
+     decision pipeline. What is *not* sanctioned is free-form effectful stages
+     mid-pipeline: each effect boundary must be idempotent or compensable, and
+     atomic multi-step writes belong to a transaction shell (P7), never to the
+     pipeline. A pipeline owns no atomicity.
+5. **Decision cores stay synchronous** (`.end`, never `.endAsync`). Pilot evidence:
+   the async executor's promise settlement added microtask boundaries that changed
+   interleaving with background tick timers and broke a timing-sensitive test
+   (transient-dispatch retry in `space-runtime-external-events.test.ts`); the sync
+   executor preserves the pre-refactor event-loop profile exactly. Async snapshot
+   gathering stays in the shell; the core is sync by convention until a case is
+   made and proven. Any async pipeline coupled to the run-tick must pin its
+   microtask profile in tests.
+6. **Testing conventions.** (a) A parity harness pins behavior against the parent
+   commit before extraction — transcript-style instrumentation of store marks and
+   effect calls (`space-runtime-external-event-admission-parity.test.ts`). (b) Gate
+   unit tests cover the decision table, precedence ("terminal beats every
+   downstream gate"), and pass-through identity. (c) The interpreter is covered by
+   the pre-existing scenario suites, which must pass unchanged — that is the
+   parity proof.
+7. **Cancellation is requirement-driven.** `run.withSignal(signal, …)` per-run
+   `AbortSignal` cancellation exists and is unused. Wire it when a real
+   cancellation requirement appears, not to exercise the feature.
 
 ### Staged run pipelines (`stagedRun`) — added 2026-08-21 (#2670)
-
-**Revision 2026-08-25:** this section records the `stagedRun` design as built
-and remains in force for its existing consumers (verified-stop, spawn flow).
-It is no longer a mandatory classification. New flows compose one direct
-pipeline per business path (see "One pipeline per business path"); the five
-stage contracts and declared read/write sets below are guidance for race-prone
-effect stages, not a required taxonomy.
 
 `decisionRun` answers "what happens next" in one synchronous step. The run tick's
 remaining body is a different shape: long flows interleaving snapshots, decisions,
@@ -226,7 +242,39 @@ grows that requirement — the caveats narrow, never expand.
    composes `decide` stages that wrap `decisionRun` cores internally. Two
    combinators, two jobs.
 
-## Retired: Consequences as previously recorded
+### Where superpipe must not be used
+
+- **As a state machine or unbounded fold.** State lives in the runtime/DB; a
+  pipeline decides one step. Stream reduction may use a pipeline as the per-event
+  reducer body (Phase 3), never as the loop.
+- **As a free-form effect executor.** Effects happen at pipeline boundaries, or
+  as declared `effect` stages inside `stagedRun` under the five conditions in
+  "Staged run pipelines" (revised 2026-08-21). DB writes, network, publishes,
+  session injects never appear as ad-hoc mid-pipeline steps; a pipeline still
+  never owns atomicity — effect stages delegate it to repository primitives.
+- **As a resource owner.** `AbortController`s, timers, subscriptions, query
+  objects stay in classes; pipelines receive values.
+- **On hot paths.** Per-stage container allocation is not free. A six-gate,
+  router-shaped benchmark (100k iterations; median of five fresh Bun processes on
+  an Intel i9-10910) measured `decisionRun` at 2,557 ns/op cold and 1,999 ns/op warm,
+  versus 194 ns/op cold and 75 ns/op warm for an if-cascade. `AgentMessageRouter`
+  runs once per `send_message` tool call, not per streaming token, and its awaited
+  repository reads and session injection are millisecond-scale. Both pipeline
+  measurements are below the 10 µs/decision threshold, so this is a **GO** for the
+  router; genuinely hot inner loops should stay inline.
+
+### Pattern taxonomy (from the adoption study)
+
+| Pattern | Shape | HyperNeo fit |
+| --- | --- | --- |
+| P1 pure sync transform | `pipe → end` | data mapping, projections, rendering pipelines with data-dependent early exit (Phase 5) |
+| P2 awaitable planning flow | async deciders, `endAsync` | **pilot used sync cores instead**; async variant unproven in-repo; staged effect boundaries (Decision item 4) are the sanctioned async form meanwhile — P8 (2026-08-21) supersedes for staged flows |
+| P3 guard/validation gate | boolean `!dep` halts | eligibility, preflight decline |
+| P4 optional stages | `?dep` skips when undefined | conditional normalization |
+| P5 callback continuation | `next` keeps run open | avoided — abort abandons retained `next` |
+| P6 per-event reducer | pipeline as reducer body | stream folds (Phase 3) |
+| P7 functional sandwich | read → plan → apply | the adopted macro; pilot + Phases 1–4 |
+| P8 staged orchestration | `stagedRun`: snapshot/decide/effect/resnapshot/halt | run-tick recovery handlers, handoff repair, settlement, spawn (rollout below) |
 
 ## Consequences
 
@@ -246,3 +294,4 @@ Phase 0 changes product behavior — racy writes that were silently tolerated
 become `superseded` outcomes — so Phase 0 carries its own characterization pins.
 Per #2670's acceptance criteria, the caveats this ADR records must narrow as
 phases land, never expand.
+

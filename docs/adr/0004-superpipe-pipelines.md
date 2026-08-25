@@ -36,8 +36,9 @@ as decision vs staged vs transform; do not split one path across pipelines.
    uses reveal a recurring shape; never design one ahead of use.
 2. **Stages.** A stage is a function in the named pipeline. Pure decision and
    transform stages are preferred wherever no await or write is needed; effect
-   stages are normal where the path needs them. `!dep`/`?dep` handle
-   data-dependent early exit; `.end` for fully sync paths, `.endAsync` when a
+   stages are normal where the path needs them. `!dep` halts the run
+   (data-dependent early exit); `?dep` skips only its own optional stage when
+   the dependency is undefined. `.end` for fully sync paths, `.endAsync` when a
    stage awaits.
 3. **Effects delegate atomicity.** Every effect stage writes through repository
    primitives — CAS (`casStatus`, `casRunStatus`, `casExecutionStatus`), the

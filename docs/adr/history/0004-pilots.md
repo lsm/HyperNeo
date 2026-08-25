@@ -1,6 +1,10 @@
-# ADR 0004 — Pilot records (reference only)
+# ADR 0004 pilot records and completion log (reference only)
 
-Extracted from the ADR body 2026-08-25. These are historical records of what shipped, with boundary caveats and closing sweeps. Nothing here adds rules; the ADR is the only normative document.
+Verbatim record of pilot sections 3-12 plus the Roadmap and References of the
+pre-2026-08-25 ADR 0004 (same base commit as 0004-revisions.md). Non-normative:
+the normative document is `docs/adr/0004-superpipe-pipelines.md`.
+
+---
 
 ## Pilot 3 — run-tick staged interpreter (2026-08-21)
 
@@ -984,6 +988,7 @@ Pilot 9 PRs: #2755, #2771, #2791, #2804, plus this closing sweep. Chain A
 landed beside this chain as pilot 10; chain B (save admission) from the same
 survey remains in flight and lands its own note.
 
+
 ## Pilot 10 — chain A: sdk-message read projections (2026-08-23)
 
 Chain A applied the widened scope (pure transforms, P1) to the persistence
@@ -1572,17 +1577,203 @@ owner decides.
 UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
 #2788, plus this closing PR (drift report + dead-code sweep + this note).
 
-## Roadmap completion log
+## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
+  needed there); delivery + post-activation decision pipelines; `decisionRun`
+  combinator; interpreter dedup.
 - **Done (pilot 3):** run-tick admission/settlement/spawn cores and the
+  `processRunTick` staged interpreter — see "Pilot 3" above.
 - **Done (pilot 4):** the agent message-delivery cores — inject admission and
+  turn-end flush `decisionRun` pipelines plus the turn-outcome/reconcile point
+  decisions, with both incident bugs fixed — see "Pilot 4" above.
 - **Done (pilot 5):** the eight task-mutation MCP tools as staged pipelines
+  over `tool-admission-gates` / `task-transition-routing` /
+  `space-tool-pipeline` — see "Pilot 5" above, which also records the group
+  follow-ups (session tools, agent CRUD, forge/goals, messaging, the RPC task
+  cascade) as mini-pilot candidates.
 - **Done (chain S / pilot 6):** the verified-stop ladder as a `stagedRun`
+  interpreter over `stop-verification-gates.ts`, composed in
+  `verified-stop-flow.ts` and applied in `stopSessionVerified` — see "Pilot 6"
+  above for the boundary caveats, the compensation deferral, and the closing
+  sweep. The stop flow is done; later chains do not revisit it.
 - **Done (pilot 7, Chain P):** the spawn/activation seam staged over the
+  Phase 0 primitives — see "Pilot 7" above, which records the Phase 0
+  consumption ledger, the superseded-outcome pins, and the Pilot 3
+  spawn-seam race closure, and whose close unblocks Chain I (pending-drain +
+  injection shell).
 - **Done (chain C / pilot 9):** the message-search FTS admission gates
+  (`decisionRun`) and the delivery-status routing table under
+  `src/storage/repositories/`, with the session-rebuild parity alignment —
+  see "Pilot 9" above for the lazy-fact caveats and the deliberate rebuild
+  residual. Chain B (save admission) from the same survey remains in flight.
 - **Done (chain A / pilot 10):** the `sdk_messages` read-projection layer of
+  `SDKMessageRepository` extracted as the pure `sdk-message-projections.ts`
+  (parse/inflate, text/content shapers over an explicit first-block-only /
+  join-all policy parameter, renderable-text projection, page composition) —
+  see "Pilot 10" above for the policy-parameterization idiom and the closing
+  sweep. The repository's read projections are done; the write/admission side
+  is chain B's (pilot 11), not revisited here.
 - **Done (chain B / pilot 11):** the save-admission core, badge instruction
+  set, and `updateMessageStatus` plan interpreter under
+  `src/storage/repositories/` — see "Pilot 11" above for the
+  variant-parameterized divergences, the badge predicate's coupled TS/SQL
+  pair, and the worker/recovery-script contract. Chain C from the same
+  survey lands its own note.
 - **Done (chain I / pilot 8):** the pending-queue drain (admission gates,
+  envelope transforms, the `decisionRun` composition) with both flush sites
+  as gather → decide → interpret consumers, and the injection-shell delivery
+  steps around the Pilot 4 inject core, which stays single-sourced in
+  `decideInjectDelivery` — see "Pilot 8" above for the boundary caveats, the
+  envelope-detector retirement, and the mini-pilot shelf (the MCP-factory
+  task-tool handlers onto the Pilot 5 routing cores, the
+  `rehydrateSubSession` failure-cleanup asymmetry, the rehydrate admission
+  gates).
 - **Done (pilot 12, web):** the four LiveQuery hook lifecycles onto the pure
+  `live-query-lifecycle` machine, plain-function composition (no superpipe —
+  earn-the-layer held); the `reduceRun` executor shape is at 4 real uses with
+  three store consumers scouted — see "Pilot 12" above and the closing drift
+  report for the unification path.
+- **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
+  discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
+  with existing tests. First test of whether an async core is ever needed, or
+  "sync core, async shell" holds as a standing convention. Go/no-go for Phases
+  2–5.
+- **Phase 2 — workflow transition resolution** (message-delivery admission half
+  done in the pilot). The message-admission pipeline — sequenced behind the
+  in-flight delivery-ordering fixes in the turn lifecycle — is also the landing
+  spot for a **provider-concurrency admission gate**: when a provider (e.g. GLM)
+  is at its concurrency limit, the admission decision queues the message before
+  it is persisted to the session, instead of letting concurrent calls pile up at
+  the provider.
+- **Phase 3 — per-event stream reduction** (query-runner event folds, ACP
+  translation as P6 reducer bodies).
+- **Phase 4 — transaction sandwich** (schedule transactions, workflow hook
+  engine): read → plan → CAS within transaction → apply effects after commit.
+- **Phase 5 — web functional cores** (P1: `useTurnBlocks`, message projections,
+  model-switcher projections).
 - **Done (combinator, 2026-08-22):** `staged-run.ts` landed — the `stagedRun`
+  interpreter plus its contract suite (composition-time stage-contract
+  validation, declared-key views, interpreter-stamped `superseded`, reverse
+  compensation unwind, microtask-profile pins; branching rides superpipe's
+  native `!dep`/`?dep`). Production consumers have since landed: chain S's
+  verified-stop flow (PRs 4–5, see "Pilot 6") and chain P's spawn flow. Every
+  later phase below composes **on this landed module** — it is never re-landed
+  or duplicated.
+- **Staged rollout of `stagedRun`** (from #2670; the pilot-3 "future mini-pilots"
+  sub-flows become these phases). Every phase composes on the landed
+  `staged-run.ts` from S2 (#2717) as a direct import: the run-tick phases —
+  `repairQueuedWorkflowNodeHandoffs` (phase 1), the four
+  `handle*Executions` recovery handlers (phases 2–5), and the top-level tick
+  composition (phase 6) — depend on that module and must never re-land or
+  duplicate it:
+
+  | Phase | Scope | Notes |
+  | --- | --- | --- |
+  | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). Consumption so far: transition-table enforcement (#2682); `casStatus` (#2684 recovery blocked-write; Pilot 7 added the trailing promotion); `casExecutionStatus` across the spawn seam and the spawn reservation (Pilot 7 — its consumers carry the before/after pins). Implemented but unconsumed: the run CAS (`casRunStatus`). Not yet implemented at all: the durable intent/outbox and compensation-record repositories for Space flows (only the unrelated message-delivery outbox exists), so those rows name future primitives, not dormant code. |
+  | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
+  | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
+  | 3 | `handleWaitingRebindExecutions` | |
+  | 4 | `handleNonTerminalIdleExecutions` | |
+  | 5 | `handleTerminalErrorIdleExecutions` | |
+  | 6 | Compose `processRunTick` as one top-level `stagedRun` | Sequenced strictly after the pilot-3 apply PR merges — same lines. |
+  | 7 | Same pattern beyond the tick: runtime nags, checkpoint/restore, message dispatch, startup handoff repair | |
+
+- **Candidate idioms (rule of three — extract on the ≈3rd real use, not before):**
+  `transformRun` (P1 pure transforms with data-dependent early exit:
+  github-normalizer, store delta application, message-shape normalization);
+  `requestRun` (web: generation-guarded request/apply — a stale response
+  structurally cannot apply — SpaceForge/ScopeDetail fetches, GitHubHealthPanel
+  refresh, every version-guarded panel fetch); `transactionalRun` (P7/Phase 4 —
+  effects run only after commit); `reduceRun` (P6/Phase 3 — per-event reducer
+  bodies; the web subscription-lifecycle machine plus its four facades, extracted
+  by pilot 12, decompose into this shape, and the executor half already recurs
+  4× — promotion rides the store adoptions). See "Library surface vs. blessed
+  idioms" for the promotion rule.
+- **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
+
+## References
+
+- Pilot files: `packages/daemon/src/lib/space/runtime/{decision-pipeline,
+  external-event-delivery-pipeline, external-event-admission-gates}.ts`; delivery
+  interpreter in `space-runtime.ts`
+  (`deliverExternalEventToWorkflowTarget` and helpers).
+- Parity harness:
+  `packages/daemon/tests/unit/5-space/runtime/space-runtime-external-event-admission-parity.test.ts`
+- Benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts` (`bun run
+  packages/daemon/scripts/benchmark/decision-pipeline.ts` from the repository root).
+- Pilot PRs: #2578, #2582, #2589, #2591 (branch `superpipe-pilot-1`).
+- Pilot 3 files: `packages/daemon/src/lib/space/runtime/{run-tick-admission-gates,
+  run-tick-decision-pipeline, run-completion-settlement, run-spawn-decisions}.ts`;
+  interpreter in `space-runtime.ts` (`processRunTick`). Pilot 3 PRs: #2601,
+  #2604, #2620, #2624, #2629, #2641.
+- Pilot 4 files: `packages/daemon/src/lib/agent/{message-ownership-gates,
+  context-reset-planner,turn-outcome-classification,message-delivery-pipeline}.ts`;
+  interpreters in `runtime/task-agent-manager.ts` (`injectMessageIntoSession`),
+  `query-mode-handler.ts` (turn-end flush), and `agent-session.ts`
+  (`driveDeliveryTurn` tail, `reconcileStrandedDeliveries`). Pilot 4 PRs:
+  #2618, #2622, #2636, #2639, #2648, #2662, #2694, #2728.
+- Pilot 5 files: `packages/daemon/src/lib/space/tools/{tool-admission-gates,
+  task-transition-routing,space-tool-pipeline}.ts`; interpreters in
+  `space-agent-tools.ts` (the eight task-mutation handlers). Pilot 5 PRs:
+  #2663, #2668, #2669, #2673, #2676.
+- Pilot 7 files: `packages/daemon/src/lib/space/runtime/{spawn-admission-gates,
+  spawn-admission-decision-pipeline,spawn-slot-resolution,spawn-flow,
+  activation-routing}.ts`; interpreters in `task-agent-manager.ts`
+  (`spawnWorkflowNodeAgentForExecution`, `activateTargetSessionsForMessage`).
+  Phase 0 primitives in `storage/repositories/{node-execution-repository,
+  space-task-repository}.ts` (#2677, #2678, #2680). BEFORE/AFTER pins:
+  `tests/unit/5-space/agent/task-agent-manager-{spawn-admission,spawn-cas,
+  spawn-flow}.test.ts`; real-repo race pins in the spawn-cas suite; tick-loop
+  pins in `tests/unit/5-space/runtime/space-runtime-tick-loop.test.ts`.
+  Pilot 7 PRs: #2712, #2725, #2735, #2761, #2770.
+- RFC: issue #2670 (`stagedRun` rollout proposal; its open questions are answered
+  by the "Staged run pipelines" section).
+- Staged combinator (landed 2026-08-22):
+  `packages/daemon/src/lib/space/runtime/staged-run.ts`, contract suite in
+  `packages/daemon/tests/unit/5-space/runtime/staged-run.test.ts`. The run-tick
+  phases below and every later pilot depend on this module — never re-land it.
+- Pilot 6 (chain S) files:
+  `packages/daemon/src/lib/space/runtime/{stop-verification-gates,verified-stop-flow}.ts`;
+  interpreter in `task-agent-manager.ts` (`stopSessionsVerified` /
+  `stopSessionVerified` and the deps builder). Pilot 6 PRs: #2709, #2717,
+  #2729, #2763, #2787, plus this closing sweep.
+- Pilot 9 (chain C) files:
+  `packages/daemon/src/storage/repositories/{message-search-admission,delivery-status-routing}.ts`;
+  interpreters in `sdk-message-repository.ts` (`upsertMessageSearchRow`, the
+  ten delivery wrappers, `deferEnqueuedUserMessage`) and
+  `session-repository.ts` (`rebuildMessageSearchRows`); survey and C4 outcome
+  in `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 9 PRs:
+  #2755, #2771, #2791, #2804, plus this closing sweep.
+- Pilot 10 (chain A) files:
+  `packages/daemon/src/storage/repositories/sdk-message-projections.ts`;
+  consumer in `sdk-message-repository.ts`. Characterization pins in
+  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+  (A1), module suite in `sdk-message-projections.test.ts`. Pilot 10 PRs:
+  #2730, #2766, #2793, #2811, plus this closing sweep.
+- Pilot 11 (chain B) files:
+  `packages/daemon/src/storage/repositories/{sdk-message-admission,sdk-message-badge,sdk-message-status-plan}.ts`;
+  interpreters in `sdk-message-repository.ts` (`saveSDKMessage`,
+  `saveUserMessageCore`, `saveHyperNeoActionMessage`, `updateMessageStatus`,
+  `applyBadgeUpdate`); pins in
+  `packages/daemon/tests/unit/4-space-storage/storage/{sdk-message-save-admission-drift,sdk-message-admission,sdk-message-badge,sdk-message-status-plan,task-id-resolution-cache}.test.ts`;
+  survey and chain plan in
+  `docs/reports/sdk-message-repository-superpipe-survey.md`. Pilot 11 PRs:
+  #2736, #2767, #2794, #2815, plus this closing sweep.
+- Pilot 8 (chain I) files:
+  `packages/daemon/src/lib/space/runtime/{pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.ts`;
+  interpreters in `task-agent-manager.ts` (`injectMessageIntoSession`,
+  `flushPendingMessagesForTarget`, `flushPendingMessagesForSpaceAgent`); pins
+  in
+  `packages/daemon/tests/unit/5-space/runtime/{task-agent-manager-pending-drain,reset-context-per-turn,pending-drain-gates,pending-envelope,pending-drain-decision-pipeline,injection-delivery-steps}.test.ts`.
+  Pilot 8 PRs: #2799, #2809, #2817, #2829, #2840, plus this closing sweep.
+- Pilot 12 (UI pilot 6) files: `packages/web/src/lib/live-query-lifecycle.ts`
+  (machine, with its contract suite alongside); facades in
+  `packages/web/src/hooks/{useSpaceTaskMessages,useActorMessageProjections,
+  useTaskMilestones,useGroupMessages}.ts`, pins in
+  `hooks/__tests__/*.lifecycle.test.ts`. Closing drift report (config-drift
+  table, store-variant assessment, unification proposals U1–U6):
+  `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`. UI pilot 6 PRs:
+  #2714, #2716, #2718, #2724, #2756, #2788, plus the closing PR.
+- superpipe 0.17.0 — library semantics map and contract tests produced during the
+  pilot.

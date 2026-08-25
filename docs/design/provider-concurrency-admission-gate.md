@@ -5,7 +5,9 @@
 Status: Proposed (design pass — doc only, no production code in this change)
 Date: 2026-08-23
 Task: #1313. Sources: `docs/reports/providers-area-survey.md` chain C5 (PR #2722) and
-ADR 0004 Roadmap Phase 2 (`docs/adr/0004-superpipe-pipelines.md`).
+ADR 0004 Roadmap Phase 2 (archived: `docs/adr/history/0004-pilots.md`, Roadmap
+section — the Phase 2 row carries the sequencing and pre-persistence queueing
+language; the current ADR lists the gate as an open roadmap item).
 Consumes: the limit-error classifier from #2661 (merged 2026-08-22, `667d53a1`) and
 the LLM classification tier from #2664 (merged 2026-08-23, `ae179427`); both are in
 `dev` at this branch's base, so the chain's sequencing precondition is satisfied.

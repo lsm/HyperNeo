@@ -191,9 +191,10 @@ polling sources.
   original author (`github-normalizer.ts:385`, `:397-403`) — another user's edit of
   a token-owner-authored comment would otherwise be dropped as self-originated.
   Edited rows carry initiator unknown. **Fail-open:** an event with no resolvable
-  initiator is always admitted. Per the pilot precedent, a single gate is a **pure
-  function** — adopt `decisionRun` composition only when chain B adds more gates and
-  order becomes contract. Shell: `publishEvent` (`:1731`) reads the cached identity
+  initiator is always admitted. SUPERSEDED 2026-08-25 (ADR 0004 revision): compose
+  the admission as a direct superpipe pipeline from the start — the
+  "single gate stays a plain function" instruction below predates the
+  one-pipeline-per-business-path revision and no longer applies. Shell: `publishEvent` (`:1731`) reads the cached identity
   and gates **first observations only** (review finding, PR #2723): a `getByDedupe`
   lookup precedes the gate, and an existing canonical row — retryable (`published`)
   or terminal — bypasses the gate entirely and flows through the normal duplicate
