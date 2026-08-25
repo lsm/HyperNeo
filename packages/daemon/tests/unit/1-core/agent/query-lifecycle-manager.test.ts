@@ -118,6 +118,7 @@ describe('QueryLifecycleManager', () => {
         setQueued: setQueuedSpy,
         getState: getStateSpy,
         releaseIdleWaiters: releaseIdleWaitersSpy,
+        isIdleOwnerCurrent: mock(() => true),
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
@@ -1409,6 +1410,7 @@ describe('QueryLifecycleManager', () => {
         setIdle: setIdleSpy,
         setQueued: setQueuedSpy,
         getState: getStateSpy,
+        isIdleOwnerCurrent: mock(() => true),
       } as unknown as ProcessingStateManager;
       manager = new QueryLifecycleManager(mockContext);
 
@@ -1450,6 +1452,26 @@ describe('QueryLifecycleManager', () => {
       await manager.executeDeferredRestartIfPending();
 
       expect(mockContext.pendingRestartReason).toBeNull();
+    });
+
+    test('abandons the restart and re-arms the reason when the idle owner went stale (B5e)', async () => {
+      mockContext = createMockContext({
+        pendingRestartReason: 'settings.local.json',
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+        queryPromise: Promise.resolve(),
+      });
+      (mockContext.stateManager as unknown as { isIdleOwnerCurrent: unknown }).isIdleOwnerCurrent =
+        mock(() => false);
+      manager = new QueryLifecycleManager(mockContext);
+      const stopSpy = spyOn(messageQueue, 'stop');
+
+      await manager.executeDeferredRestartIfPending({ queryGeneration: 0, turnToken: 1 });
+
+      expect(stopSpy).not.toHaveBeenCalled();
+      expect(startStreamingCalled).toBe(false);
+      expect(mockContext.pendingRestartReason).toBe('settings.local.json');
     });
   });
 

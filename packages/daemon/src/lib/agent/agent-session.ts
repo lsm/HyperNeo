@@ -509,7 +509,7 @@ export class AgentSession
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
     this.stateManager.setOnIdleCallback(async (owner) => {
-      await this.lifecycleManager.executeDeferredRestartIfPending();
+      await this.lifecycleManager.executeDeferredRestartIfPending(owner);
       this.flushPendingTaskNotificationRequery();
       void this.reconcileStrandedDeliveries(owner).catch((error) => {
         this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);

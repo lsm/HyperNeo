@@ -1028,6 +1028,7 @@ describe('AgentSession', () => {
 
       await agentSession.stateManager.setProcessing('uuid-reopen');
       const live = agentSession.driveDeliveryTurn('uuid-reopen', 'hello', null, true, () => true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       await agentSession.stateManager.setIdle();
       const error = await live.catch((caught) => caught);
       expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
@@ -1109,6 +1110,7 @@ describe('AgentSession', () => {
 
       await agentSession.stateManager.setProcessing('uuid-park');
       const drive = agentSession.driveDeliveryTurn('uuid-park', 'hello', null, true, () => true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
       await agentSession.stateManager.setIdle();
       const result = await drive;
 
@@ -1153,6 +1155,7 @@ describe('AgentSession', () => {
         true,
         () => true
       );
+      await new Promise((resolve) => setTimeout(resolve, 0));
       await agentSession.stateManager.setIdle();
       const result = (await drive) as { outcome: string; retryAt: number };
 

@@ -501,6 +501,68 @@ describe('ProcessingStateManager', () => {
       await waiterB.promise;
     });
 
+    test('a stale fenced idle does not overwrite a successor processing state', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      manager.beginTerminalIdle();
+      const ownerB = manager.admitDeliveryTurn();
+      manager.waitForIdleTransition(undefined, undefined, ownerB);
+      await manager.setProcessing('successor-message');
+
+      await manager.setIdle();
+
+      expect(manager.getState().status).toBe('processing');
+      await waiterA.promise;
+    });
+
+    test('an unfenced idle spares a successor waiter armed during its publication', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      let resolvePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+
+      const settlePromise = manager.setIdle();
+      await Promise.resolve();
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      resolvePublish();
+      emitMock.mockImplementation(async () => {});
+      await settlePromise;
+      await waiterA.promise;
+
+      expect(resolvedB).toBe(false);
+      await manager.setIdle();
+      await waiterB.promise;
+    });
+
+    test('an owner-scoped setIdle drains only the waiter owned by that owner', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      await manager.setIdle({ owner: ownerA });
+      await waiterA.promise;
+
+      expect(resolvedB).toBe(false);
+      await manager.setIdle();
+      await waiterB.promise;
+    });
+
     test('a suppressed reentrant fenced idle transfers its waiter to the enclosing drain', async () => {
       const ownerA = manager.admitDeliveryTurn();
       const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);

@@ -13,12 +13,20 @@ import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
+import type { IdleOwnerScope } from './processing-state-manager.ts';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
   migrateSDKSessionFile,
   getSDKSessionFilePath,
 } from '../sdk-session-file-manager.ts';
+
+export class IdleRestartSupersededError extends Error {
+  constructor() {
+    super('Deferred restart superseded: a successor delivery owns the session.');
+    this.name = 'IdleRestartSupersededError';
+  }
+}
 
 const DEFAULT_TERMINATION_TIMEOUT_MS = 5000;
 const RESET_TERMINATION_TIMEOUT_MS = 3000;
@@ -274,7 +282,7 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restart(): Promise<void> {
+  async restart(options?: { idleOwner?: IdleOwnerScope }): Promise<void> {
     const { session, internalEventBus, messageHandler } = this.ctx;
     let reachedSuppressedIdle = false;
 
@@ -282,6 +290,10 @@ export class QueryLifecycleManager {
       messageHandler.resetCircuitBreaker();
       this.ctx.resetTaskNotificationRequery?.();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
+      if (!this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
+        this.logger.info('Restart abandoned: a successor delivery owns the session.');
+        throw new IdleRestartSupersededError();
+      }
 
       await this.stop();
 
@@ -306,6 +318,7 @@ export class QueryLifecycleManager {
       if (reachedSuppressedIdle) {
         this.ctx.stateManager.releaseIdleWaiters();
       }
+      if (error instanceof IdleRestartSupersededError) throw error;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Query restart failed: ${errorMessage}`);
     }
@@ -711,17 +724,21 @@ export class QueryLifecycleManager {
     await this.restart();
   }
 
-  async executeDeferredRestartIfPending(): Promise<void> {
+  async executeDeferredRestartIfPending(idleOwner?: IdleOwnerScope): Promise<void> {
     if (!this.ctx.pendingRestartReason) {
       return;
     }
 
-    const _reason = this.ctx.pendingRestartReason;
+    const reason = this.ctx.pendingRestartReason;
     this.ctx.pendingRestartReason = null;
 
     try {
-      await this.restart();
-    } catch {}
+      await this.restart({ idleOwner });
+    } catch (error) {
+      if (error instanceof IdleRestartSupersededError) {
+        this.ctx.pendingRestartReason = reason;
+      }
+    }
   }
 
   async cleanup(): Promise<void> {

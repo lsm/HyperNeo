@@ -234,7 +234,9 @@ export class ProcessingStateManager {
       for (const w of claimed) w.fireEnd();
     }
     try {
-      await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
+      if (this.isIdleOwnerCurrent(transitionOwner)) {
+        await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
+      }
       if (
         this.onIdleCallback &&
         !opts?.suppressIdleCallback &&
@@ -252,21 +254,15 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        if (consumesTerminalFence || this.suppressedFenceCarryTokens.length > 0) {
-          const drainCeiling = Math.max(fenceStartToken, ...this.suppressedFenceCarryTokens);
-          const drained = [...this.idleWaiters.values()].filter((w) =>
-            this.waiterOwnedByTransition(w, opts?.owner, drainCeiling)
-          );
-          for (const w of drained) {
-            this.idleWaiters.delete(w.id);
-            w.endOnce();
-          }
-          this.suppressedFenceCarryTokens = [];
-        } else {
-          const waiters = [...this.idleWaiters.values()];
-          this.idleWaiters.clear();
-          for (const w of waiters) w.endOnce();
+        const drainCeiling = Math.max(fenceStartToken, ...this.suppressedFenceCarryTokens);
+        const drained = [...this.idleWaiters.values()].filter((w) =>
+          this.waiterOwnedByTransition(w, opts?.owner, drainCeiling)
+        );
+        for (const w of drained) {
+          this.idleWaiters.delete(w.id);
+          w.endOnce();
         }
+        this.suppressedFenceCarryTokens = [];
       }
       if (ownsTerminalTransition) {
         this.terminalIdleTransitions -= 1;
