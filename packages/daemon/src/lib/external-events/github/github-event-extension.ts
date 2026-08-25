@@ -59,6 +59,7 @@ const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 120_000;
 const GITHUB_API_BASE = 'https://api.github.com';
 const REACTION_POLL_PR_LIMIT = 10;
+const MAX_REACTION_PAGES = 10;
 const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
 const RATE_LIMIT_LOW_REMAINING_THRESHOLD = 10;
 const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
@@ -3022,98 +3023,142 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         partialScan = true;
         break;
       }
-      const query = new URLSearchParams({ per_page: '100' });
-      const reactionHeaders = gitHubPollingHeaders(token);
-      if (reactionEtags[prNumber]) reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
-      let response: Response;
-      try {
-        response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
-          headers: reactionHeaders,
-          signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
-        });
-      } catch (err) {
-        if (!pollErrorMessage) {
-          pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+      let reactionPage = 1;
+      let reactionScanComplete = false;
+      let reactionScanSinglePage = false;
+      let reactionNotModified = false;
+      let reactionPendingEtag: string | null = null;
+      while (reactionPage <= MAX_REACTION_PAGES) {
+        const reactionQuery = new URLSearchParams({ per_page: '100' });
+        if (reactionPage > 1) reactionQuery.set('page', String(reactionPage));
+        const reactionHeaders = gitHubPollingHeaders(token);
+        if (reactionPage === 1 && reactionEtags[prNumber]) {
+          reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
         }
-        reactionsFullyPolled = false;
-        partialScan = true;
-        continue;
-      }
-      const reactionRateLimit = parseRateLimitHeaders(response);
-      latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
-      if (response.status === 304) {
-        reactionPolledAt = Date.now();
-        continue;
-      }
-      if (reactionRateLimit.limited) {
-        if (
-          response.status === 429 &&
-          reactionRateLimit.remaining > 0 &&
-          !reactionRateLimit.retryAfter
-        ) {
-          this.applyRateLimit({
-            remaining: reactionRateLimit.remaining,
-            resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
-            limited: true,
-            retryAfter: true,
-          });
-        } else {
-          this.applyRateLimit(reactionRateLimit);
-        }
-        reactionsFullyPolled = false;
-        partialScan = true;
-        break;
-      }
-      if (!response.ok) {
-        const errorText = await response.text();
-        if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
-          const secondaryDelayMs = reactionRateLimit.retryAfter
-            ? reactionRateLimit.resetAt - Date.now()
-            : RATE_LIMIT_MIN_BACKOFF_MS;
-          this.applyRateLimit({
-            remaining: reactionRateLimit.remaining,
-            resetAt: Date.now() + secondaryDelayMs,
-            limited: true,
-            retryAfter: true,
-          });
+        let response: Response;
+        try {
+          response = await fetchImpl(
+            `${base}/issues/${prNumber}/reactions?${reactionQuery.toString()}`,
+            {
+              headers: reactionHeaders,
+              signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+            }
+          );
+        } catch (err) {
+          if (!pollErrorMessage) {
+            pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+          }
           reactionsFullyPolled = false;
           partialScan = true;
           break;
         }
-        if (!pollErrorMessage) {
-          pollErrorMessage = errorText.trim().slice(0, 160) || `reactions HTTP ${response.status}`;
+        const reactionRateLimit = parseRateLimitHeaders(response);
+        latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
+        if (response.status === 304) {
+          if (reactionPage === 1) {
+            reactionNotModified = true;
+            reactionScanComplete = true;
+            reactionScanSinglePage = true;
+            reactionPolledAt = Date.now();
+          }
+          break;
         }
-        reactionsFullyPolled = false;
-        partialScan = true;
-        continue;
-      }
-      reactionPolledAt = Date.now();
-      const reactions = (await response.json()) as unknown[];
-      const reactionEtag = response.headers.get('ETag');
-      if (reactionEtag) reactionEtags[prNumber] = reactionEtag;
-      for (const reaction of reactions) {
-        if (!isPositiveReaction(reaction)) continue;
-        const reactionId = reactionIdFrom(reaction);
-        if (seenReactionIds[reactionId]) continue;
-        const event = normalizeGitHubReaction(watched, prNumber, reaction);
-        if (!event) continue;
-        if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+        if (reactionRateLimit.limited) {
+          if (
+            response.status === 429 &&
+            reactionRateLimit.remaining > 0 &&
+            !reactionRateLimit.retryAfter
+          ) {
+            this.applyRateLimit({
+              remaining: reactionRateLimit.remaining,
+              resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+              limited: true,
+              retryAfter: true,
+            });
+          } else {
+            this.applyRateLimit(reactionRateLimit);
+          }
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        if (!response.ok) {
+          const errorText = await response.text();
+          if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
+            const secondaryDelayMs = reactionRateLimit.retryAfter
+              ? reactionRateLimit.resetAt - Date.now()
+              : RATE_LIMIT_MIN_BACKOFF_MS;
+            this.applyRateLimit({
+              remaining: reactionRateLimit.remaining,
+              resetAt: Date.now() + secondaryDelayMs,
+              limited: true,
+              retryAfter: true,
+            });
+            reactionsFullyPolled = false;
+            partialScan = true;
+            break;
+          }
+          if (!pollErrorMessage) {
+            pollErrorMessage =
+              errorText.trim().slice(0, 160) || `reactions HTTP ${response.status}`;
+          }
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        if (reactionPage === 1) {
+          reactionPendingEtag = response.headers.get('ETag');
+        }
+        reactionPolledAt = Date.now();
+        const reactions = (await response.json()) as unknown[];
+        for (const reaction of reactions) {
+          if (!isPositiveReaction(reaction)) continue;
+          const reactionId = reactionIdFrom(reaction);
+          if (seenReactionIds[reactionId]) continue;
+          const event = normalizeGitHubReaction(watched, prNumber, reaction);
+          if (!event) continue;
+          if (watermarks.committed > 0 && event.occurredAt < watermarks.committed) {
+            seenReactionIds[reactionId] = true;
+            continue;
+          }
+          await this.publishEvent(watched.spaceId, event, this.context);
           seenReactionIds[reactionId] = true;
-          continue;
+          count++;
         }
-        await this.publishEvent(watched.spaceId, event, this.context);
-        seenReactionIds[reactionId] = true;
-        count++;
+        if (reactions.length < 100) {
+          reactionScanComplete = true;
+          reactionScanSinglePage = reactionPage === 1;
+          break;
+        }
+        if (reactionPage === MAX_REACTION_PAGES) {
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        if (!canPollReactions(reactionRateLimit.remaining)) {
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        if (
+          Number.isFinite(reactionRateLimit.remaining) &&
+          reactionRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+        ) {
+          this.applyRateLimit(reactionRateLimit);
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        reactionPage++;
       }
-      if (
-        Number.isFinite(reactionRateLimit.remaining) &&
-        reactionRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
-      ) {
-        this.applyRateLimit(reactionRateLimit);
-        reactionsFullyPolled = false;
-        partialScan = true;
-        break;
+      if (!reactionNotModified) {
+        if (reactionScanComplete && reactionScanSinglePage && reactionPendingEtag) {
+          reactionEtags[prNumber] = reactionPendingEtag;
+        } else {
+          delete reactionEtags[prNumber];
+        }
       }
+      if (partialScan) break;
     }
 
     const trackedPrSet = new Set(recentPullRequestNumbers);

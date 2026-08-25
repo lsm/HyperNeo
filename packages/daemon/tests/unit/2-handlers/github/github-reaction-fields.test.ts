@@ -18,9 +18,10 @@ describe('isPositiveReaction', () => {
     expect(isPositiveReaction({ content: undefined })).toBe(false);
   });
 
-  it('returns true for the two positive-reaction content values', () => {
+  it('returns true for the tracked positive and engagement reaction content values', () => {
     expect(isPositiveReaction({ content: '+1' })).toBe(true);
     expect(isPositiveReaction({ content: 'thumbs_up' })).toBe(true);
+    expect(isPositiveReaction({ content: 'eyes' })).toBe(true);
   });
 
   it('returns false for the other GitHub reaction content values', () => {
@@ -30,7 +31,6 @@ describe('isPositiveReaction', () => {
     expect(isPositiveReaction({ content: 'heart' })).toBe(false);
     expect(isPositiveReaction({ content: 'hooray' })).toBe(false);
     expect(isPositiveReaction({ content: 'rocket' })).toBe(false);
-    expect(isPositiveReaction({ content: 'eyes' })).toBe(false);
   });
 
   it('returns false for any other content string', () => {

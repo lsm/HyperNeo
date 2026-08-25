@@ -863,13 +863,17 @@ export class SpaceRuntime {
     }
   }
 
-  private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
+  private registerRunInterestsFromWorkflow(
+    run: SpaceWorkflowRun,
+    workflow: SpaceWorkflow,
+    options: { clearQueuedDeliveries?: boolean } = {}
+  ): void {
     const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
     if (!task) return;
     if (task.status === 'cancelled' || task.status === 'done' || task.status === 'archived') {
       return;
     }
-    this.registerRunInterests(run.id, task.id, workflow.nodes);
+    this.registerRunInterests(run.id, task.id, workflow.nodes, options);
   }
 
   rebuildRunInterests(runId: string): void {
@@ -878,7 +882,7 @@ export class SpaceRuntime {
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return;
     try {
-      this.registerRunInterestsFromWorkflow(run, workflow);
+      this.registerRunInterestsFromWorkflow(run, workflow, { clearQueuedDeliveries: true });
     } catch (err) {
       log.warn(
         `SpaceRuntime: failed to rebuild static interests for run ${runId}: ${formatCommandError(err)}`
