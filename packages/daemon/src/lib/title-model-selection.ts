@@ -137,6 +137,28 @@ export async function fallbackToVisibleCatalogStage(
   return withCatalog({ ...ctx, status: 'unavailable' }, catalogModels);
 }
 
+async function healFromCatalog(
+  ctx: TitleModelSelectionCtx,
+  buildError?: unknown
+): Promise<TitleModelSelectionCtx | null> {
+  const { providerId, provider } = ctx;
+  if (!provider) return null;
+  const catalogModels = await getProviderCatalogModels(ctx.providerId, provider).catch(() => []);
+  for (const model of catalogModels) {
+    if (isCuratedOutModel(model.id, providerId)) continue;
+    try {
+      const sdkConfig = provider.buildSdkConfig(model.id);
+      return {
+        ...ctx,
+        providerModelId: model.id,
+        sdkConfig,
+        ...(buildError ? { buildError } : {}),
+      };
+    } catch {}
+  }
+  return null;
+}
+
 export async function routeThroughProviderSdkStage(
   ctx: TitleModelSelectionCtx
 ): Promise<TitleModelSelectionCtx> {
@@ -147,17 +169,19 @@ export async function routeThroughProviderSdkStage(
   const { providerId, provider } = ctx;
   const modelId = ctx.providerModelId;
   await ctx.ensureBridges(provider, modelId);
+  const curatedNow = getProviderRegistry().getCuratedModels(providerId);
+  if (
+    curatedNow !== undefined &&
+    (curatedNow.length === 0 || isCuratedOutModel(modelId, providerId))
+  ) {
+    const healed = await healFromCatalog(ctx);
+    return healed ?? { ...ctx, providerModelId: undefined, sdkConfig: null, status: 'unavailable' };
+  }
   try {
     return { ...ctx, sdkConfig: provider.buildSdkConfig(modelId) };
   } catch (err) {
-    const catalogModels = await getProviderCatalogModels(ctx.providerId, provider).catch(() => []);
-    for (const model of catalogModels) {
-      if (isCuratedOutModel(model.id, providerId)) continue;
-      try {
-        const sdkConfig = provider.buildSdkConfig(model.id);
-        return { ...ctx, providerModelId: model.id, sdkConfig, buildError: err };
-      } catch {}
-    }
+    const healed = await healFromCatalog(ctx, err);
+    if (healed) return healed;
     return { ...ctx, sdkConfig: null, buildError: err };
   }
 }

@@ -809,6 +809,38 @@ describe('ProviderService', () => {
       expect(config).toBeNull();
     });
 
+    it('discards the selected title model when bridge startup changes curation', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class BridgeInvalidateMockProvider extends MockProvider {
+        constructor() {
+          super('bridge-invalidate', 'Bridge Invalidate Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'title-turbo';
+        }
+
+        async ensureBridgeStarted(): Promise<void> {
+          globalRegistry.setCuratedModels('bridge-invalidate', []);
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new BridgeInvalidateMockProvider());
+
+      const config = await realService.getTitleGenerationConfig(
+        'bridge-invalidate' as unknown as ProviderId
+      );
+
+      expect(config).toBeNull();
+    });
+
     it('heals a provider-rejected title override to an allowed catalog model', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

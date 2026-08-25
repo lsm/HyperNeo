@@ -1,6 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
+import { bumpProviderCatalogEpoch, clearModelsCache } from '../model-service.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { Database } from '../../storage/database.ts';
 import type { McpImportService } from '../mcp/index.ts';
@@ -31,11 +32,10 @@ export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
 ): Promise<void> {
   const previousProviderIds = providerIdsFromAllowlistEnv();
-  applyProviderModelAllowlistsToEnv(allowlists);
-  const { bumpProviderCatalogEpoch, clearModelsCache } = await import('../model-service.ts');
   for (const providerId of new Set([...previousProviderIds, ...Object.keys(allowlists ?? {})])) {
     bumpProviderCatalogEpoch(providerId);
   }
+  applyProviderModelAllowlistsToEnv(allowlists);
   clearModelsCache();
 }
 
