@@ -54,7 +54,10 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import type {
+  PendingAgentMessageRecord,
+  PendingAgentMessageRepository,
+} from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
@@ -129,6 +132,10 @@ import {
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import {
+  runSpaceAgentPendingDrain,
+  type SpaceAgentPendingDrainDeps,
+} from './space-agent-pending-drain.ts';
 import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
 import {
   formatPendingRowForNodeAgent,
@@ -1476,56 +1483,43 @@ export class TaskAgentManager {
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
 
-    const listedRows = repo.listPendingForTarget(workflowRunId, 'space-agent');
-
     const spaceChatSessionId = `space:chat:${spaceId}`;
-    for (const row of listedRows) {
-      const rowMessage = formatPendingRowForSpaceAgent(row);
-      const registry = this.config.replyRoutingRegistry;
-      const rowReplyTo =
-        extractReplyToSessionId(rowMessage) ??
-        (registry && row.taskId ? registry.get(row.taskId) : null);
-      const deliveredSessionId = rowReplyTo || spaceChatSessionId;
-      const settledStatus = this.config.db
-        .getSDKMessageRepo?.()
-        ?.getDeliveryContent(deliveredSessionId, row.id)?.sendStatus;
-      if (settledStatus === 'consumed') {
-        if (repo.getById(row.id)?.status === 'pending') {
-          repo.markDelivered(row.id, deliveredSessionId);
-          this.emitPendingDelivered(row.id, spaceChatSessionId, row);
-        }
-      }
-    }
+    const registry = this.config.replyRoutingRegistry;
+    const resolveReplySession = (row: PendingAgentMessageRecord): string | null => {
+      const message = formatPendingRowForSpaceAgent(row);
+      return (
+        extractReplyToSessionId(message) ??
+        (registry && row.taskId ? registry.get(row.taskId) : null)
+      );
+    };
+    const drainDeps: SpaceAgentPendingDrainDeps = {
+      repo,
+      resolveReplySession,
+      probeDeliveryStatus: (sessionId, messageId) =>
+        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      onSettled: (row, deliveredSessionId) =>
+        this.emitPendingDelivered(row.id, deliveredSessionId, row),
+    };
 
-    repo.enforceRetention({ runId: workflowRunId });
-    repo.expireStale(workflowRunId);
-
-    const drain = decidePendingDrainAdmission({
-      listings: [
-        {
-          targetName: 'space-agent',
-          rows: repo.listPendingForTarget(workflowRunId, 'space-agent'),
-        },
-      ],
-      admission: { executionPresent: true, targetKind: 'space_agent' },
+    const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
+      workflowRunId,
+      spaceChatSessionId,
     });
-    if (drain.action === 'skip') return;
+    if (drainOutcome.action === 'skip') return;
 
     log.info(
-      `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
+      `TaskAgentManager: flushing ${drainOutcome.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
     );
 
-    for (const row of drain.rows) {
+    for (const row of drainOutcome.rows) {
       const message = formatPendingRowForSpaceAgent(row);
       try {
-        const registry = this.config.replyRoutingRegistry;
-        const replyTo =
-          extractReplyToSessionId(message) ??
-          (registry && row.taskId ? registry.get(row.taskId) : null);
+        const replyTo = resolveReplySession(row);
+        const deliveredSessionId = replyTo || spaceChatSessionId;
         const settleDelivered = (): void => {
           if (repo.getById(row.id)?.status !== 'pending') return;
-          repo.markDelivered(row.id, spaceChatSessionId);
-          this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+          repo.markDelivered(row.id, deliveredSessionId);
+          this.emitPendingDelivered(row.id, deliveredSessionId, row);
         };
         const outcome = await inject(spaceId, message, replyTo, row.id, {
           onConsumed: settleDelivered,

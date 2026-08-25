@@ -1991,6 +1991,36 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(JSON.stringify(result)).toContain('ghost');
   });
 
+  test('preserves queued coordinator delivery when facade resolution rejects', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+      messageResolver: {
+        resolveTargets: async () => {
+          throw new Error('resolver down');
+        },
+      } as unknown as NonNullable<AgentMessageRouterConfig['messageResolver']>,
+      longTermAgentDelivery: {},
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: ['@coordinator', '@role:reviewer'],
+      message: 'queued coordinator plus failing resolver',
+    });
+
+    expect(result.success).toBe('partial');
+    expect(result.delivered).toEqual([]);
+    expect(result.failed).toEqual([]);
+    expect(result.queued).toEqual([
+      { agentName: 'space-agent', messageId: 'msg-queued-coordinator' },
+    ]);
+    expect(result.reason).toBe('resolver down');
+  });
+
   test('keeps earlier delivered results when a later generic target is invalid', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);

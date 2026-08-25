@@ -685,6 +685,49 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
   });
 
+  it('settles reply-routed rows against their reply session and falls back to the chat session', async () => {
+    const registry = {
+      get: mock((taskId: string | null) => (taskId === 'task-gone' ? 'gone-session' : null)),
+    };
+    const h = makeSpaceAgentHarness({ registry });
+    dbByTest.push(h.db);
+    const footerRow = h.enqueue({
+      message: formatAgentMessage({
+        fromLevel: 'node-agent',
+        fromAgentName: 'reviewer',
+        toLevel: 'space-agent',
+        body: 'consumed at footer session',
+        taskId: 'task-a',
+        replyToSessionId: 'footer-session',
+      }),
+      taskId: 'task-a',
+    });
+    const fallbackRow = h.enqueue({ message: 'plain', taskId: 'task-gone' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (sessionId: string, uuid: string) => {
+          if (uuid === footerRow.id && sessionId === 'footer-session') {
+            return { content: 'x', sendStatus: 'consumed' };
+          }
+          if (uuid === fallbackRow.id && sessionId === `space:chat:${h.spaceId}`) {
+            return { content: 'x', sendStatus: 'consumed' };
+          }
+          return null;
+        },
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.spyRepo.repo.getById(footerRow.id)?.deliveredSessionId).toBe('footer-session');
+    expect(h.spyRepo.repo.getById(fallbackRow.id)?.deliveredSessionId).toBe(
+      `space:chat:${h.spaceId}`
+    );
+    expect(h.spyRepo.calls).toContain(`delivered:${footerRow.id}`);
+    expect(h.spyRepo.calls).toContain(`delivered:${fallbackRow.id}`);
+  });
+
   it('settles space_agent rows already consumed before this drain pass', async () => {
     const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);

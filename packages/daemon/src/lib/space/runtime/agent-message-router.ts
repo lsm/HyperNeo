@@ -384,11 +384,24 @@ export class AgentMessageRouter {
           ...(taskId ? { taskId } : {}),
           createdAt: Date.now(),
         };
-        const routed = await new SpaceDeliveryFacade({
-          resolver: messageResolver!,
-          deliverToSession: longTermAgentDelivery!.deliverToSession,
-          queueForActivation: longTermAgentDelivery!.queueForActivation,
-        }).routeMessage(messageRecord);
+        let routed;
+        try {
+          routed = await new SpaceDeliveryFacade({
+            resolver: messageResolver!,
+            deliverToSession: longTermAgentDelivery!.deliverToSession,
+            queueForActivation: longTermAgentDelivery!.queueForActivation,
+          }).routeMessage(messageRecord);
+        } catch (err) {
+          return {
+            success:
+              delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+            delivered,
+            failed,
+            reason: err instanceof Error ? err.message : String(err),
+            queued: queued.length > 0 ? queued : undefined,
+            notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
+          };
+        }
         for (const delivery of routed.deliveries) {
           const targetName = delivery.targetActorId ?? target;
           if (delivery.state === 'delivered' && delivery.deliveredSessionId) {
