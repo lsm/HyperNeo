@@ -184,6 +184,20 @@ describe('OllamaProvider', () => {
     expect(models[0]).toMatchObject({ id: 'qwen3:14b' });
   });
 
+  it('returns an empty scoped catalog when the session API key is rejected', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(async () => new Response('unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'bad-key' });
+
+    expect(models).toEqual([]);
+  });
+
   it('bypasses the Ollama model cache for forced remote discovery', async () => {
     let callCount = 0;
     const fetchMock = mock(async () => {

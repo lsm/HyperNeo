@@ -48,7 +48,7 @@ export async function syncProviderToRegistry(
   isStartupSync = false
 ): Promise<void> {
   const registry = getProviderRegistry();
-  bumpProviderCatalogEpoch();
+  bumpProviderCatalogEpoch(record.providerId);
 
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);
@@ -81,14 +81,14 @@ export async function syncProviderToRegistry(
         const own = await provider.getCredentials();
         if (!own) {
           logger.info(`Skipping stale stored credentials for ${record.providerId}`);
-          bumpProviderCatalogEpoch();
+          bumpProviderCatalogEpoch(record.providerId);
           return;
         }
       }
       provider.setCredentials(credentials);
       logger.info(`Applied credentials to built-in provider ${record.providerId}`);
     }
-    bumpProviderCatalogEpoch();
+    bumpProviderCatalogEpoch(record.providerId);
     return;
   }
 
@@ -131,7 +131,7 @@ export async function syncProviderToRegistry(
     } catch (err) {
       logger.warn(`Failed to register custom endpoint provider ${providerId}:`, err);
     }
-    bumpProviderCatalogEpoch();
+    bumpProviderCatalogEpoch(providerId);
   }
 }
 
@@ -177,5 +177,6 @@ export async function removeProviderFromRegistry(
   }
 
   registry.unregister(providerId);
+  bumpProviderCatalogEpoch(providerId);
   logger.info(`Unregistered provider ${providerId}`);
 }

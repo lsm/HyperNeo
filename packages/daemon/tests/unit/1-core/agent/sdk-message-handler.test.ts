@@ -2486,7 +2486,7 @@ describe('SDKMessageHandler', () => {
         providerId: 'anthropic-codex',
         primaryModel: 'gpt-5.4',
         fallbackModel: 'gpt-5.4-mini',
-        providerEpoch: getProviderCatalogEpoch() + 5,
+        providerEpoch: getProviderCatalogEpoch('anthropic-codex') + 5,
       });
 
       await handler.handleMessage({

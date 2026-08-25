@@ -357,11 +357,19 @@ const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
 
 let providerCatalogEpoch = 0;
 
-export function bumpProviderCatalogEpoch(): void {
+const providerCatalogRevisions = new Map<string, number>();
+
+export function bumpProviderCatalogEpoch(providerId?: string): void {
   providerCatalogEpoch += 1;
+  if (providerId) {
+    providerCatalogRevisions.set(providerId, (providerCatalogRevisions.get(providerId) ?? 0) + 1);
+  }
 }
 
-export function getProviderCatalogEpoch(): number {
+export function getProviderCatalogEpoch(providerId?: string): number {
+  if (providerId) {
+    return providerCatalogRevisions.get(providerId) ?? 0;
+  }
   return providerCatalogEpoch;
 }
 
@@ -396,13 +404,13 @@ function peekSessionCatalogModels(cacheKey: string): ModelInfo[] | null {
 }
 
 function scopedCatalogStamp(providerId: string, sessionConfig: ProviderSessionConfig): string {
-  return [
+  return JSON.stringify([
     providerId,
     sessionConfig.baseUrl ?? '',
     sessionConfig.apiKey ?? '',
     typeof sessionConfig.region === 'string' ? sessionConfig.region : '',
-    String(getProviderCatalogEpoch()),
-  ].join('|');
+    getProviderCatalogEpoch(),
+  ]);
 }
 
 export async function ensureScopedProviderCatalogModels(

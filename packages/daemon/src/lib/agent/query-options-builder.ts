@@ -328,7 +328,7 @@ export class QueryOptionsBuilder {
     const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
-    const providerEpoch = getProviderCatalogEpoch();
+    const providerEpoch = getProviderCatalogEpoch(providerId);
     if (config.fallbackModel) {
       const sessionScopedProvider = Boolean(
         config.providerConfig?.apiKey ||
@@ -481,7 +481,7 @@ export class QueryOptionsBuilder {
         if (fallbackExcluded) {
           return { behavior: 'cancelled' };
         }
-        if (getProviderCatalogEpoch() !== providerEpoch) {
+        if (getProviderCatalogEpoch(providerId) !== providerEpoch) {
           return { behavior: 'cancelled' };
         }
         const configAfter = this.ctx.session.config;

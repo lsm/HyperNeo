@@ -1332,7 +1332,7 @@ export class SDKMessageHandler {
           ? session.config.providerConfig.region
           : undefined) ||
       (builtIdentity.providerEpoch !== undefined &&
-        builtIdentity.providerEpoch !== getProviderCatalogEpoch())
+        builtIdentity.providerEpoch !== getProviderCatalogEpoch(providerId))
     ) {
       return;
     }
@@ -1372,7 +1372,7 @@ export class SDKMessageHandler {
       liveConfig.providerConfig?.baseUrl !== scopedBaseUrlBefore ||
       liveConfig.providerConfig?.region !== scopedRegionBefore ||
       (builtIdentity.providerEpoch !== undefined &&
-        builtIdentity.providerEpoch !== getProviderCatalogEpoch())
+        builtIdentity.providerEpoch !== getProviderCatalogEpoch(providerId))
     ) {
       this.logger.warn(
         `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`

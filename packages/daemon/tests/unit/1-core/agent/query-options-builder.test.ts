@@ -382,11 +382,18 @@ describe('QueryOptionsBuilder', () => {
         }
       });
 
-      it('declines the refusal dialog when the provider catalog epoch changed after build', async () => {
+      it('declines the refusal dialog when the active provider catalog revision changed after build', async () => {
         mockSession.config.fallbackModel = 'haiku';
         const options = await builder.build();
-        bumpProviderCatalogEpoch();
+        bumpProviderCatalogEpoch('kimi');
 
+        const unaffected = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+        expect(unaffected).toEqual({ behavior: 'completed', result: { continue: true } });
+
+        bumpProviderCatalogEpoch('anthropic');
         const response = await options.onUserDialog?.(
           { dialogKind: 'refusal_fallback_prompt', payload: {} },
           { signal: new AbortController().signal, requestId: 'test' }

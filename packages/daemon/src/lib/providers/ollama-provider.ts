@@ -175,7 +175,10 @@ export class OllamaProvider implements Provider {
         apiKey || this.getApiKey(),
         DEFAULT_PROBE_TIMEOUT_MS
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof OllamaModelAuthError) {
+        return [];
+      }
       return this.fallbackModels();
     }
   }
