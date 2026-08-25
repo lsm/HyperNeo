@@ -97,6 +97,7 @@ export class RateLimitWatchdog {
   private lastHint: LimitRetryHint | null = null;
   private billingPauseSurfaced = false;
   private retryCallbackInFlight = false;
+  private retryCallbackInFlightOwner: number | null = null;
 
   constructor(
     sessionId: string,
@@ -164,10 +165,23 @@ export class RateLimitWatchdog {
 
     const { provider, model } = this.deps.getCurrentModel();
     const currentCanonical = (await this.deps.resolveModelId?.(provider, model)) ?? model;
+    if (entryGeneration !== this.generation) {
+      this.logger.info(
+        'Current-model resolution completed but episode was superseded; aborting schedule.'
+      );
+      return true;
+    }
     this.triedKeys.add(`${provider}/${currentCanonical}`);
 
     if (this.chain === null) {
-      this.chain = await this.deps.resolveChain();
+      const resolvedChain = await this.deps.resolveChain();
+      if (entryGeneration !== this.generation) {
+        this.logger.info(
+          'Fallback chain resolution completed but episode was superseded; aborting schedule.'
+        );
+        return true;
+      }
+      this.chain = resolvedChain;
     }
 
     if (this.chain.length > 0) {
@@ -229,15 +243,15 @@ export class RateLimitWatchdog {
       );
       return false;
     }
-    if (trip.charge) {
-      this.retryCount++;
-    }
-
     if (entryGeneration !== this.generation) {
       this.logger.info(
         'Cooldown resolution completed but episode was superseded; aborting schedule.'
       );
       return true;
+    }
+
+    if (trip.charge) {
+      this.retryCount++;
     }
 
     const armed = await this.scheduleCooldown(errorMessage, trip.decision, entryGeneration);
@@ -377,10 +391,14 @@ export class RateLimitWatchdog {
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
     const entryGeneration = this.generation;
     this.retryCallbackInFlight = true;
+    this.retryCallbackInFlightOwner = entryGeneration;
     try {
       await this.runCooldownRetry(errorMessage, entryGeneration);
     } finally {
-      this.retryCallbackInFlight = false;
+      if (this.retryCallbackInFlightOwner === entryGeneration) {
+        this.retryCallbackInFlight = false;
+        this.retryCallbackInFlightOwner = null;
+      }
     }
   }
 
@@ -462,6 +480,7 @@ export class RateLimitWatchdog {
 
     let ok = false;
     this.retryCallbackInFlight = true;
+    this.retryCallbackInFlightOwner = episodeGeneration;
     try {
       ok = await this.deps.switchAndRetry(lastUserMessage, entry, episodeGeneration);
     } catch (err) {
@@ -471,8 +490,13 @@ export class RateLimitWatchdog {
       );
       ok = false;
     } finally {
-      this.retryCallbackInFlight = false;
-      this.fallbackPending = false;
+      if (this.retryCallbackInFlightOwner === episodeGeneration) {
+        this.retryCallbackInFlight = false;
+        this.retryCallbackInFlightOwner = null;
+      }
+      if (episodeGeneration === this.generation) {
+        this.fallbackPending = false;
+      }
     }
 
     if (episodeGeneration !== this.generation) {
