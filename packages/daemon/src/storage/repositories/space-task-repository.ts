@@ -170,8 +170,8 @@ export class SpaceTaskRepository {
       const initialStatus = params.status ?? 'open';
       this.db
         .prepare(
-          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, evolution_scope_id, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at, terminal_generation)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, preferred_workflow_id, created_by_task_id, goal_id, evolution_scope_id, workspace_path, depends_on, task_agent_session_id, created_by, created_by_session, created_by_task_schedule_id, created_at, updated_at, terminal_generation)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
@@ -187,6 +187,7 @@ export class SpaceTaskRepository {
           params.createdByTaskId ?? null,
           params.goalId ?? null,
           params.evolutionScopeId ?? null,
+          params.workspacePath ?? null,
           JSON.stringify(params.dependsOn ?? []),
           params.taskAgentSessionId ?? null,
           params.createdBy ?? null,
@@ -485,6 +486,10 @@ export class SpaceTaskRepository {
     if (params.evolutionScopeId !== undefined) {
       fields.push('evolution_scope_id = ?');
       values.push(params.evolutionScopeId ?? null);
+    }
+    if (params.workspacePath !== undefined) {
+      fields.push('workspace_path = ?');
+      values.push(params.workspacePath ?? null);
     }
     if (params.workflowModelOverrides !== undefined) {
       fields.push('workflow_model_overrides = ?');
@@ -845,6 +850,7 @@ export class SpaceTaskRepository {
       createdByTaskScheduleId: (row.created_by_task_schedule_id as string | null) ?? undefined,
       goalId: (row.goal_id as string | null) ?? undefined,
       evolutionScopeId: (row.evolution_scope_id as string | null) ?? undefined,
+      workspacePath: (row.workspace_path as string | null) ?? null,
       workflowModelOverrides,
       result: (row.result as string | null) ?? null,
       dependsOn: JSON.parse((row.depends_on as string | null) ?? '[]') as string[],
