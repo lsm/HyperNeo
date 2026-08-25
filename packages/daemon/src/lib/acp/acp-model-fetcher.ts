@@ -1,6 +1,7 @@
 import { AcpClient } from './acp-client.ts';
 import { buildAcpSafeEnv, parseAcpCommand } from './acp-command.ts';
 import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
+import { buildCommandEnv } from '../spawn-env.ts';
 import {
   flattenModelChoices,
   getAcpCredentialEnvBaseline,
@@ -11,8 +12,6 @@ import {
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
 const FETCH_OVERALL_TIMEOUT_MS = 9000;
 
-export const buildAcpDiscoveryEnv = buildAcpSafeEnv;
-
 function definedEnvEntries(
   baseline: Readonly<Record<string, string | undefined>>
 ): Record<string, string> {
@@ -21,6 +20,14 @@ function definedEnvEntries(
     if (value !== undefined) env[key] = value;
   }
   return env;
+}
+
+function buildAcpClientEnv(): Record<string, string> {
+  return {
+    ...buildAcpSafeEnv(),
+    ...buildCommandEnv(),
+    ...definedEnvEntries(getAcpCredentialEnvBaseline()),
+  };
 }
 
 export async function disposeAcpSessions(
@@ -39,7 +46,7 @@ export async function disposeAcpSessions(
     command,
     args,
     cwd: workspace,
-    env: { ...buildAcpSafeEnv(), ...definedEnvEntries(getAcpCredentialEnvBaseline()) },
+    env: buildAcpClientEnv(),
     replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner: owner,
@@ -75,7 +82,7 @@ export async function fetchAcpModels(
     command,
     args,
     cwd: workspace,
-    env: buildAcpDiscoveryEnv(),
+    env: buildAcpClientEnv(),
     replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner,

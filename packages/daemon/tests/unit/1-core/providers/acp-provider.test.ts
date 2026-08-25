@@ -57,7 +57,7 @@ describe('AcpProvider', () => {
       const previous: Record<string, string | undefined> = { ...process.env };
       _setStartupEnvBaselineForTesting({
         ...previous,
-        HYPERNEO_ACP_ENV_KEYS: 'OPENAI_API_KEY, NOT_A_CREDENTIAL_KEY, MISSING_KEY',
+        HYPERNEO_ACP_ENV_KEYS: 'OPENAI_API_KEY, MISSING_KEY',
         OPENAI_API_KEY: 'openai-key',
         ANTHROPIC_API_KEY: 'anthropic-key',
         NOT_A_CREDENTIAL_KEY: 'nope',

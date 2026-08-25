@@ -226,14 +226,16 @@ describe('createTaskWorktree', () => {
     ).rejects.toThrow('Space not found');
   });
 
-  test.skipIf(() => {
-    try {
-      execSync('git lfs version', { stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
-  })('fails creation when LFS detection fails in an LFS-declaring repo', async () => {
+  test.skipIf(
+    (() => {
+      try {
+        execSync('git lfs version', { stdio: 'pipe' });
+        return true;
+      } catch {
+        return false;
+      }
+    })()
+  )('fails creation when LFS detection fails in an LFS-declaring repo', async () => {
     writeFileSync(join(repoDir, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
     execSync('git add .gitattributes', { cwd: repoDir, stdio: 'pipe' });
     execSync('git commit -m "track lfs"', { cwd: repoDir, stdio: 'pipe' });

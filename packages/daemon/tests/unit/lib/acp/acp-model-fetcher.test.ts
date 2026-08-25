@@ -94,6 +94,25 @@ describe('fetchAcpModels', () => {
     expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['configured-model']);
   });
 
+  test('carries selected credentials and TLS inputs into the discovery client env', async () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN',
+      MY_ACP_TOKEN: 'acp-token',
+      REQUESTS_CA_BUNDLE: '/tmp/requests-ca.pem',
+    });
+    const provider = new AcpProvider({}, async () => {});
+    provider.setAcpCommand('devin acp');
+    try {
+      await fetchAcpModels(provider, { command: 'devin acp', cwd: '/tmp' });
+      expect(clientOptions?.env?.MY_ACP_TOKEN).toBe('acp-token');
+      expect(clientOptions?.env?.REQUESTS_CA_BUNDLE).toBe('/tmp/requests-ca.pem');
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
+
   test('does not replace an uncurated negotiated model cache', async () => {
     const provider = new AcpProvider({}, async () => {});
     provider.setAcpCommand('devin acp');
