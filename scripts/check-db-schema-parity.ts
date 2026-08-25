@@ -94,6 +94,7 @@ export const HELPER_SCHEMA_TABLES = [
   'space_workflow_runs',
   'space_workflows',
   'space_worktrees',
+  'space_workspaces',
   'spaces',
   'task_schedules',
   'workflow_hook_result_artifacts',

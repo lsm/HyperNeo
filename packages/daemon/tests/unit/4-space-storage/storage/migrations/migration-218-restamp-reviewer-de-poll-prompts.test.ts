@@ -4,8 +4,8 @@ import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/see
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
   OLD_REVIEWER_PROMPT_PRE_DE_POLL,
-  runMigration217,
-} from '../../../../../src/storage/schema/m217-restamp-reviewer-de-poll-prompts.ts';
+  runMigration218,
+} from '../../../../../src/storage/schema/m218-restamp-reviewer-de-poll-prompts.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 interface AgentRow {
@@ -88,7 +88,7 @@ beforeEach(() => {
   db.prepare(`DELETE FROM spaces`).run();
 });
 
-describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
+describe('migration 218 — reviewer de-poll-polling contract restamp', () => {
   test('re-stamps a pristine Reviewer row carrying the pre-de-poll-polling contract', () => {
     const spaceId = 'space-m217-a';
     insertSpace(db, spaceId);
@@ -102,7 +102,7 @@ describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
       templateHash: 'stale-hash',
     });
 
-    runMigration217(db);
+    runMigration218(db);
 
     const row = getAgentRow(db, 'agent-reviewer');
     expect(row.custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
@@ -131,7 +131,7 @@ describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
       description: REVIEWER_PRESET.description,
     });
 
-    runMigration217(db);
+    runMigration218(db);
 
     const row = getAgentRow(db, 'agent-orphan');
     expect(row.custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
@@ -152,7 +152,7 @@ describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
       templateName: 'Reviewer',
     });
 
-    runMigration217(db);
+    runMigration218(db);
 
     const row = getAgentRow(db, 'agent-reordered');
     expect(row.custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
@@ -171,7 +171,7 @@ describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
       tools: JSON.stringify([...(REVIEWER_PRESET.tools ?? []), 'Bash(git log:*)']),
     });
 
-    runMigration217(db);
+    runMigration218(db);
 
     const row = getAgentRow(db, 'agent-tools-custom');
     expect(row.custom_prompt).toBe(OLD_REVIEWER_PROMPT_PRE_DE_POLL);
@@ -201,7 +201,7 @@ describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
       templateName: 'Reviewer',
     });
 
-    runMigration217(db);
+    runMigration218(db);
 
     expect(getAgentRow(db, 'agent-custom').custom_prompt).toContain('Custom house rules.');
     expect(getAgentRow(db, 'agent-custom').template_hash).toBe('custom-hash');
@@ -222,7 +222,7 @@ describe('migration 217 — reviewer de-poll-polling contract restamp', () => {
       templateName: 'Coder',
     });
 
-    runMigration217(db);
+    runMigration218(db);
 
     const row = getAgentRow(db, 'agent-coder');
     expect(row.custom_prompt).toBe(OLD_REVIEWER_PROMPT_PRE_DE_POLL);

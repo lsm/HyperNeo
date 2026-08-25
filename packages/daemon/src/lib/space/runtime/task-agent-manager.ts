@@ -4800,7 +4800,7 @@ export class TaskAgentManager {
     const workflowRunId = task.workflowRunId;
     const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
 
-    const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
+    const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
     const poolAgent = this.config.spaceAgentManager.getById(matchedSlot.agentId);
