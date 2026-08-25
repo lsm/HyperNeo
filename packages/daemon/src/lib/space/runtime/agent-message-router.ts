@@ -434,10 +434,13 @@ export class AgentMessageRouter {
         );
       } catch (err) {
         return {
-          success: false,
-          delivered: [],
-          failed: [],
+          success:
+            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+          delivered,
+          failed,
           reason: err instanceof Error ? err.message : String(err),
+          queued: queued.length > 0 ? queued : undefined,
+          notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
         };
       }
       const matchesTargetNode = (peer: { agentName: string; nodeName?: string }) =>

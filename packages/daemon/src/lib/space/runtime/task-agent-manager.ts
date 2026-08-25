@@ -1480,12 +1480,18 @@ export class TaskAgentManager {
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
     for (const row of listedRows) {
+      const rowMessage = formatPendingRowForSpaceAgent(row);
+      const registry = this.config.replyRoutingRegistry;
+      const rowReplyTo =
+        extractReplyToSessionId(rowMessage) ??
+        (registry && row.taskId ? registry.get(row.taskId) : null);
+      const deliveredSessionId = rowReplyTo || spaceChatSessionId;
       const settledStatus = this.config.db
         .getSDKMessageRepo?.()
-        ?.getDeliveryContent(spaceChatSessionId, row.id)?.sendStatus;
+        ?.getDeliveryContent(deliveredSessionId, row.id)?.sendStatus;
       if (settledStatus === 'consumed') {
         if (repo.getById(row.id)?.status === 'pending') {
-          repo.markDelivered(row.id, spaceChatSessionId);
+          repo.markDelivered(row.id, deliveredSessionId);
           this.emitPendingDelivered(row.id, spaceChatSessionId, row);
         }
       }
