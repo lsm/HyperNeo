@@ -238,6 +238,7 @@ function applyRefreshedModels(
   unavailableProviders?: ReadonlySet<string>
 ): void {
   if (fetchedModels.length > 0) {
+    discardMarkedPendingSlices(cacheKey);
     const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
     if (preservePreviousOnShrink && previousModels && previousModels.length > mergedModels.length) {
       const superseded = new Set(supersededProviderIds);
@@ -760,6 +761,7 @@ export async function initializeModels(): Promise<void> {
       }
       applyProviderLoadOutcome(pruneSupersededProviders(result));
       if (result.models.length > 0) {
+        discardMarkedPendingSlices(cacheKey);
         const mergedModels = mergePendingProviderSlices(
           cacheKey,
           mergeWithFallbackModels(result.models)
@@ -894,7 +896,6 @@ export async function refreshModels(
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
   const previousModels = modelsCache.get(cacheKey);
   clearProviderModelCaches(forceRemote);
-  if (forceRemote) discardMarkedPendingSlices(cacheKey);
 
   const refreshPromise = (async () => {
     if (signal?.aborted) {
@@ -1040,7 +1041,7 @@ export function schedulePendingSliceRelease(providerId: string, cacheKey: string
   pendingSliceReleases.add(pendingSliceKey(cacheKey, providerId));
 }
 
-function discardMarkedPendingSlices(cacheKey: string): void {
+export function discardMarkedPendingSlices(cacheKey: string): void {
   for (const key of [...pendingSliceReleases]) {
     if (key.startsWith(`${cacheKey}:`)) {
       pendingSliceReleases.delete(key);

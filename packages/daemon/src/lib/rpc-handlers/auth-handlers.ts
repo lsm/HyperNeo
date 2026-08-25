@@ -38,9 +38,16 @@ async function clearCacheAndNotifyProvidersChanged(
   if (providerId && providerRepo && stripPersisted) {
     const record = providerRepo.getProviderByProviderId(providerId);
     if (record) {
-      const stripped = stripPersistedDiscovery(record.configJson);
-      if (stripped !== record.configJson) {
-        providerRepo.updateProvider(record.id, { configJson: stripped });
+      try {
+        const stripped = stripPersistedDiscovery(record.configJson);
+        if (stripped !== record.configJson) {
+          providerRepo.updateProvider(record.id, { configJson: stripped });
+        }
+      } catch (error) {
+        log.warn(
+          `Failed to strip persisted discovery for ${providerId}; in-memory clear will still run:`,
+          error
+        );
       }
     }
   }
@@ -158,11 +165,19 @@ export function setupAuthHandlers(
       try {
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
+          let storeError: unknown;
           if (credentials.type === 'oauth') {
-            await credentialManager?.storeOAuthTokens(providerId, credentials);
+            try {
+              await credentialManager?.storeOAuthTokens(providerId, credentials);
+            } catch (error) {
+              storeError = error;
+            }
           }
           unsubscribe?.();
           await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
+          if (storeError !== undefined) {
+            throw storeError;
+          }
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();

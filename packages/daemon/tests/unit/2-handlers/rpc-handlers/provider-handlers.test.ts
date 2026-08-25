@@ -1110,7 +1110,40 @@ describe('Provider RPC handlers', () => {
       expect(afterIds).not.toContain('refreshed-a');
     });
 
-    it('retains the deferred slice for the next initialization when no load is in flight', async () => {
+    it('does not discard the persisted discovery when forced strict fetch fails', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const refreshed = [makeDiscoveredModel('refreshed-a')];
+      const { listRemoteModels: listRemoteModelsMock, getModels: getModelsMock } =
+        registerRemoteProvider({
+          listRemoteModels: async () => refreshed,
+          getModels: async () => refreshed,
+        });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      listRemoteModelsMock.mockImplementation(async () => []);
+      getModelsMock.mockImplementation(async () => []);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow();
+
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        discoveredModels: { models: Array<{ id: string }> };
+      };
+      expect(persisted.discoveredModels.models.map((m) => m.id)).toContain('refreshed-a');
+    });
+
+    it('treats a forced rebuild as authoritative over a scheduled deferred slice', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
@@ -1142,10 +1175,14 @@ describe('Provider RPC handlers', () => {
       listRemoteModelsMock.mockImplementation(async () => []);
       getModelsMock.mockImplementation(async () => []);
       const { refreshModels } = await import('../../../../src/lib/model-service');
-      await refreshModels();
+      const forced = [makeDiscoveredModel('forced-a')];
+      listRemoteModelsMock.mockImplementation(async () => forced);
+      getModelsMock.mockImplementation(async () => forced);
+      await refreshModels(undefined, { forceRemote: true });
 
       const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
-      expect(ids).toContain('refreshed-a');
+      expect(ids).toContain('forced-a');
+      expect(ids).not.toContain('refreshed-a');
       expect(ids).toContain('later-model');
     });
 
