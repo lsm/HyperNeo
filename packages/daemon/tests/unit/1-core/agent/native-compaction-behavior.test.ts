@@ -39,11 +39,11 @@ describe('N1: native SDK auto-compaction is used (never disabled for kimi/codex)
     expected: 'native' | { autoCompactEnabled: true; autoCompactWindow: number };
   }> = [
     {
-      label: 'kimi K2.7 (262144) — non-K3 id, scaled to the default 90%',
+      label: 'kimi K2.7 (262144) — non-K3 id, full window armed',
       provider: 'kimi',
       contextWindow: 262_144,
       model: 'kimi-k2.7-code',
-      expected: { autoCompactEnabled: true, autoCompactWindow: 235_929 },
+      expected: { autoCompactEnabled: true, autoCompactWindow: 262_144 },
     },
     {
       label: 'kimi K3 (1M) — armed with 1M window',
@@ -177,10 +177,10 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     );
   });
 
-  it("the daemon passes Kimi K3's real 1M window; K2.7 rides the scaled default", () => {
+  it('the daemon arms Kimi models with their full windows (K3 1M, K2.7 262144)', () => {
     const k2Window = buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')?.autoCompactWindow;
     const k3Window = buildProviderSettings('kimi', 1_048_576, 'kimi-k3')?.autoCompactWindow;
-    expect(k2Window).toBe(Math.floor((262_144 * 90) / 100));
+    expect(k2Window).toBe(262_144);
     expect(k3Window).toBe(1_048_576);
 
     const SDK_FALLBACK_WINDOW = 200_000;
@@ -211,10 +211,9 @@ describe('N3: enforcement boundary — native providers untouched, fallback set 
     ['anthropic-copilot', 200_000],
     ['anthropic-codex', 272_000],
     ['glm', 1_000_000],
-  ] as const)('%s ignores window and percent entirely (SDK keeps its own compaction)', (providerId, window) => {
+  ] as const)('%s ignores the configured window entirely (SDK keeps its own compaction)', (providerId, window) => {
     expect(buildProviderSettings(providerId, window)).toBeUndefined();
-    expect(buildProviderSettings(providerId, window, undefined, 55)).toBeUndefined();
-    expect(buildProviderSettings(providerId, window, undefined, 100)).toBeUndefined();
+    expect(buildProviderSettings(providerId, window, 'any-model')).toBeUndefined();
   });
 });
 
@@ -402,7 +401,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
   });
 
   it('Codex-mini (128k) session near capacity does NOT enqueue /compact', async () => {
@@ -435,7 +434,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
   });
 
   it('Kimi K3 (1M) session near capacity now enqueues /compact exactly once (daemon backstop)', async () => {
@@ -471,7 +470,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
     expect(harness.enqueueSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -506,7 +505,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
   });
 
   it('splits across the Kimi/Codex model matrix near capacity (kimi backstops, codex native)', async () => {
@@ -695,7 +694,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
   });
 
   it('autoCompactPercent 100 opts a custom provider out of the daemon backstop', async () => {
@@ -728,7 +727,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
   });
 
   it('an active SDK compaction suppresses the backstop', async () => {
@@ -761,6 +760,6 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
   });
 });

@@ -1467,11 +1467,12 @@ export class SDKMessageHandler {
   }
 
   private async handleCompactBoundary(message: SDKMessage): Promise<void> {
-    const { stateManager } = this.ctx;
+    const { stateManager, contextTracker } = this.ctx;
 
     if (!isSDKCompactBoundary(message)) return;
 
     await stateManager.setCompacting(false);
+    contextTracker.markCompactionTriggered();
 
     void this.refreshContextUsage('compact-boundary');
   }
@@ -1513,9 +1514,11 @@ export class SDKMessageHandler {
         if (!providerId || NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
           return;
         }
+        const effectiveWindow =
+          contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
         const decision = decideContextBudgetCompaction({
           totalUsed: contextInfo.totalUsed,
-          configuredWindow: modelInfo?.contextWindow,
+          configuredWindow: effectiveWindow,
           autoCompactPercent: modelInfo?.autoCompactPercent,
           sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
           sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
@@ -1523,7 +1526,7 @@ export class SDKMessageHandler {
           compactingActive: this.ctx.stateManager.getIsCompacting(),
         });
         if (decision.action === 'compact') {
-          const configuredWindow = modelInfo?.contextWindow ?? 0;
+          const configuredWindow = effectiveWindow ?? 0;
           const threshold = contextBudgetThreshold(configuredWindow, modelInfo?.autoCompactPercent);
           contextTracker.markCompactionTriggered();
           this.logger.info(
@@ -1531,7 +1534,7 @@ export class SDKMessageHandler {
               `(provider=${providerId}, reason=${decision.reason}, ` +
               `${contextInfo.totalUsed} >= ${threshold} of ${configuredWindow} tokens)`
           );
-          void this.ctx.messageQueue.enqueue('/compact', true).catch((error) => {
+          void this.ctx.messageQueue.enqueue('/compact', true, { prepend: true }).catch((error) => {
             this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
           });
         }

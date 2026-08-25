@@ -60,9 +60,13 @@ export class MessageQueue {
     this.waiters = [];
   }
 
-  async enqueue(content: string | MessageContent[], internal: boolean = false): Promise<string> {
+  async enqueue(
+    content: string | MessageContent[],
+    internal: boolean = false,
+    options?: { prepend?: boolean }
+  ): Promise<string> {
     const messageId = generateUUID();
-    await this.enqueueWithId(messageId, content, internal);
+    await this.enqueueWithId(messageId, content, internal, options);
     return messageId;
   }
 
