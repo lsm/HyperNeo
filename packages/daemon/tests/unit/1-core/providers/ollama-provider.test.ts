@@ -198,6 +198,22 @@ describe('OllamaProvider', () => {
     expect(models).toEqual([]);
   });
 
+  it('keeps a successful empty scoped response explicit instead of substituting fallback models', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(
+      async () => new Response(JSON.stringify({ models: [] }), { status: 200 })
+    );
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'session-key' });
+
+    expect(models).toEqual([]);
+  });
+
   it('bypasses the Ollama model cache for forced remote discovery', async () => {
     let callCount = 0;
     const fetchMock = mock(async () => {

@@ -193,6 +193,8 @@ export function setupAuthHandlers(
       }
 
       try {
+        const { bumpProviderCatalogEpoch } = await import('../model-service.js');
+        bumpProviderCatalogEpoch(providerId);
         const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
           'provider-credential-manager.hasEnvironmentCredentials',
           () => credentialManager?.hasEnvironmentCredentials(providerId) ?? false
@@ -291,6 +293,8 @@ export function setupAuthHandlers(
       }
 
       try {
+        const { bumpProviderCatalogEpoch } = await import('../model-service.js');
+        bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
           await removeCredentialsOrKeychainError(credentialManager, providerId);

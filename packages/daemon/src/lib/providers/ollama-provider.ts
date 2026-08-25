@@ -173,7 +173,8 @@ export class OllamaProvider implements Provider {
         baseUrl ?? this.getBaseUrl(),
         false,
         apiKey || this.getApiKey(),
-        DEFAULT_PROBE_TIMEOUT_MS
+        DEFAULT_PROBE_TIMEOUT_MS,
+        true
       );
     } catch (error) {
       if (error instanceof OllamaModelAuthError) {
@@ -292,7 +293,8 @@ export class OllamaProvider implements Provider {
     baseUrl = this.getBaseUrl(),
     updateCache = true,
     apiKey = this.getApiKey(),
-    timeoutMs?: number
+    timeoutMs?: number,
+    keepEmptyResult = false
   ): Promise<ModelInfo[]> {
     const response = await this.fetchImpl(`${normalizeBaseUrl(baseUrl)}/api/tags`, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
@@ -311,7 +313,7 @@ export class OllamaProvider implements Provider {
     const models = (body.models ?? [])
       .map((model) => this.toModelInfo(model))
       .filter((model): model is ModelInfo => model !== null);
-    const result = models.length > 0 ? models : this.fallbackModels();
+    const result = models.length > 0 || keepEmptyResult ? models : this.fallbackModels();
     if (updateCache) {
       this.modelCache = result;
       this.modelCacheAt = Date.now();
