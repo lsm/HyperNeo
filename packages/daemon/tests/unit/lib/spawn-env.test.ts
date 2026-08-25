@@ -35,6 +35,9 @@ const SOURCE: Record<string, string> = {
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
   GIT_ALLOW_PROTOCOL: 'file:https',
+  GIT_PROXY_SSL_CAINFO: '/tmp/proxy-ca.pem',
+  GIT_PROXY_SSL_CERT: '/tmp/proxy-cert.pem',
+  GIT_PROXY_SSL_KEY: '/tmp/proxy-key.pem',
   GIT_EXEC_PATH: '/usr/libexec/git-core',
   ANTHROPIC_API_KEY: 'anthropic-secret',
   CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
@@ -120,6 +123,9 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
     expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
     expect(env.GIT_ALLOW_PROTOCOL).toBe('file:https');
+    expect(env.GIT_PROXY_SSL_CAINFO).toBe(SOURCE.GIT_PROXY_SSL_CAINFO);
+    expect(env.GIT_PROXY_SSL_CERT).toBe(SOURCE.GIT_PROXY_SSL_CERT);
+    expect(env.GIT_PROXY_SSL_KEY).toBe(SOURCE.GIT_PROXY_SSL_KEY);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
