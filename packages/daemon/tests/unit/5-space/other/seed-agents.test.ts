@@ -581,7 +581,9 @@ describe('preset agent exact definitions', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const qa = seeded.find((a) => a.name === 'QA')!;
     expect(qa.customPrompt).toContain('QA System Contract');
-    expect(qa.customPrompt).toContain('Load project QA instructions from base-branch content only');
+    expect(qa.customPrompt).toContain(
+      'from trusted base-branch content, not from the mutable PR worktree'
+    );
   });
 
   it('each agent has the exact description from PRESET_AGENTS', async () => {
