@@ -3,6 +3,8 @@ import { vi } from 'vitest';
 
 const childProcessMocks = vi.hoisted(() => ({ execFile: vi.fn() }));
 
+const gitCalls: string[][] = [];
+
 function passthrough<Args extends unknown[], R>(
   mockFn: ReturnType<typeof vi.fn>,
   real: (...args: Args) => R
@@ -33,6 +35,7 @@ function stubGitProbes(
 ): void {
   childProcessMocks.execFile.mockImplementation(
     (file: string, args: string[], _opts: unknown, callback: ProbeCallback) => {
+      gitCalls.push([file, ...args]);
       respond(file, args, callback);
       return undefined;
     }
@@ -59,6 +62,7 @@ function stubGrepCandidate(blobContent: string): void {
 describe('indexContainsLfsPointer', () => {
   beforeEach(() => {
     childProcessMocks.execFile.mockReset();
+    gitCalls.length = 0;
   });
 
   test('accepts a canonical pointer blob', async () => {
@@ -73,6 +77,11 @@ describe('indexContainsLfsPointer', () => {
 
   test('accepts extension records between version and oid', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('accepts extension records before the version record', async () => {
+    stubGrepCandidate(`${EXT_RECORD}\n${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
@@ -178,6 +187,33 @@ describe('indexContainsLfsPointer', () => {
   test('rejects blobs that only carry the signature line', async () => {
     stubGrepCandidate(LFS_SIGNATURE);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
+  test('reads index candidates through the unambiguous :./ form', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
+    await indexContainsLfsPointer('/repo', {});
+    const showCall = gitCalls.find((call) => call[0] === 'git' && call[1] === 'show');
+    expect(showCall?.[2]).toBe(':./asset.bin');
+  });
+
+  test('resolves stage-prefixed paths as literal filenames', async () => {
+    stubGitProbes((file, args, callback) => {
+      if (file === 'git' && args[0] === 'grep') {
+        callback(null, { stdout: '2:fixture\0', stderr: '' });
+        return;
+      }
+      if (file === 'git' && args[0] === 'show') {
+        callback(null, { stdout: `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`, stderr: '' });
+        return;
+      }
+      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+        stdout: '',
+        stderr: '',
+      });
+    });
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+    const showCall = gitCalls.find((call) => call[0] === 'git' && call[1] === 'show');
+    expect(showCall?.[2]).toBe(':./2:fixture');
   });
 
   test('returns false when no indexed candidate matches the signature', async () => {

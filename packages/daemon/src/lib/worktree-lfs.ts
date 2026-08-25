@@ -33,10 +33,13 @@ function isLfsPointerContent(content: string): boolean {
     .replace(/\r\n/g, '\n')
     .split('\n')
     .filter((line) => line !== '');
-  if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
   const seenPriorities = new Set<number>();
 
-  const afterHeadExtensions = scanExtensionRun(lines, 1, seenPriorities);
+  const beforeVersion = scanExtensionRun(lines, 0, seenPriorities);
+  if (beforeVersion === undefined) return false;
+  if (lines[beforeVersion] !== LFS_POINTER_SIGNATURE) return false;
+
+  const afterHeadExtensions = scanExtensionRun(lines, beforeVersion + 1, seenPriorities);
   if (afterHeadExtensions === undefined) return false;
   if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[afterHeadExtensions] ?? '')) return false;
 
@@ -75,7 +78,7 @@ export async function indexContainsLfsPointer(
     throw err;
   }
   for (const rel of candidates.split('\0').filter(Boolean)) {
-    const { stdout } = await execFileAsync('git', ['show', `:${rel}`], {
+    const { stdout } = await execFileAsync('git', ['show', `:./${rel}`], {
       cwd,
       encoding: 'utf8',
       timeout: LFS_PROBE_TIMEOUT_MS,
