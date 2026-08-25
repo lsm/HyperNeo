@@ -11,10 +11,21 @@ export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 
-function lfsExtensionPriority(line: string): number | undefined {
-  const match = LFS_EXT_LINE_PATTERN.exec(line);
-  if (!match) return undefined;
-  return Number(match[1]);
+function scanExtensionRun(
+  lines: string[],
+  start: number,
+  seenPriorities: Set<number>
+): number | undefined {
+  let index = start;
+  while (index < lines.length) {
+    const match = LFS_EXT_LINE_PATTERN.exec(lines[index]);
+    if (!match) break;
+    const priority = Number(match[1]);
+    if (seenPriorities.has(priority)) return undefined;
+    seenPriorities.add(priority);
+    index++;
+  }
+  return index;
 }
 
 function isLfsPointerContent(content: string): boolean {
@@ -24,22 +35,20 @@ function isLfsPointerContent(content: string): boolean {
     .filter((line) => line !== '');
   if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
   const seenPriorities = new Set<number>();
-  let index = 1;
-  while (index < lines.length) {
-    const priority = lfsExtensionPriority(lines[index]);
-    if (priority === undefined) break;
-    if (seenPriorities.has(priority)) return false;
-    seenPriorities.add(priority);
-    index++;
-  }
-  if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[index] ?? '')) return false;
-  const sizeRecord = /^size \+?(\d+)\s*$/.exec(lines[index + 1] ?? '');
+
+  const afterHeadExtensions = scanExtensionRun(lines, 1, seenPriorities);
+  if (afterHeadExtensions === undefined) return false;
+  if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[afterHeadExtensions] ?? '')) return false;
+
+  const beforeSize = scanExtensionRun(lines, afterHeadExtensions + 1, seenPriorities);
+  if (beforeSize === undefined) return false;
+  const sizeRecord = /^size \+?(\d+)\s*$/.exec(lines[beforeSize] ?? '');
   if (!sizeRecord) return false;
   const digits = sizeRecord[1];
   if (digits.length > 19 || (digits.length === 19 && digits > '9223372036854775807')) {
     return false;
   }
-  return index + 2 === lines.length;
+  return beforeSize + 1 === lines.length;
 }
 
 export async function indexContainsLfsPointer(

@@ -27,6 +27,8 @@ const SOURCE: Record<string, string> = {
   CI: 'true',
   JAVA_HOME: '/Library/Java/JavaVirtualMachines/jdk-21/Contents/Home',
   GNUPGHOME: '/tmp/gnupg-keyring',
+  GPG_TTY: '/dev/ttys000',
+  NODE_ENV: 'production',
   WINDIR: 'C:\\Windows',
   DISPLAY: ':0',
   WAYLAND_DISPLAY: 'wayland-0',
@@ -87,6 +89,7 @@ describe('buildOsBaselineEnv', () => {
     expect(env.LC_NUMERIC).toBe(SOURCE.LC_NUMERIC);
     expect(env.USERNAME).toBe(SOURCE.USERNAME);
     expect(env.CI).toBe('true');
+    expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
     expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
     expect(env.WINDIR).toBe(SOURCE.WINDIR);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
@@ -209,6 +212,7 @@ describe('buildGitSshEnv', () => {
     expect(env.DISPLAY).toBe(SOURCE.DISPLAY);
     expect(env.DBUS_SESSION_BUS_ADDRESS).toBe(SOURCE.DBUS_SESSION_BUS_ADDRESS);
     expect(env.XDG_RUNTIME_DIR).toBe(SOURCE.XDG_RUNTIME_DIR);
+    expect(env.WAYLAND_DISPLAY).toBe(SOURCE.WAYLAND_DISPLAY);
     expect(env.SSH_ASKPASS_REQUIRE).toBe('force');
     expect(env.SSH_ASKPASS).toBe('/tmp/askpass.sh');
     expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/gitconfig-global');
@@ -276,6 +280,7 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.EDITOR).toBe(SOURCE.EDITOR);
     expect(env.VISUAL).toBe(SOURCE.VISUAL);
     expect(env.GNUPGHOME).toBe(SOURCE.GNUPGHOME);
+    expect(env.GPG_TTY).toBe(SOURCE.GPG_TTY);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);

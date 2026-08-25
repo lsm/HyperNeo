@@ -141,6 +141,17 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
+  test('accepts extension records between oid and size', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\n${EXT_RECORD}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('rejects duplicate priorities across head and tail extension runs', async () => {
+    const tailDup = `ext-0-other sha256:${'c'.repeat(64)}`;
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${POINTER_OID}\n${tailDup}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('rejects duplicate extension priorities', async () => {
     const dup = `ext-0-other sha256:${'c'.repeat(64)}`;
     stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${dup}\n${POINTER_OID}\nsize 1234\n`);
