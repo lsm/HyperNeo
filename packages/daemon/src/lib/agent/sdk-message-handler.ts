@@ -1315,6 +1315,7 @@ export class SDKMessageHandler {
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
+    const fallbackModelBeforeResolve = this.ctx.session.config.fallbackModel;
     const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
     const providerId = session.config.provider ?? 'anthropic';
@@ -1332,6 +1333,13 @@ export class SDKMessageHandler {
           : undefined) ||
       (builtIdentity.providerEpoch !== undefined &&
         builtIdentity.providerEpoch !== getProviderCatalogEpoch())
+    ) {
+      return;
+    }
+    if (
+      fallbackModelBeforeResolve !== fallbackModel ||
+      fallbackModelBeforeResolve !== builtIdentity.fallbackModel ||
+      this.ctx.session.config.fallbackModel !== fallbackModel
     ) {
       return;
     }

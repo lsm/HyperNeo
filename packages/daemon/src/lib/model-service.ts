@@ -392,7 +392,8 @@ function scopedCatalogStamp(providerId: string, sessionConfig: ProviderSessionCo
     sessionConfig.baseUrl ?? '',
     sessionConfig.apiKey ?? '',
     typeof sessionConfig.region === 'string' ? sessionConfig.region : '',
-  ].join(' ');
+    String(getProviderCatalogEpoch()),
+  ].join('|');
 }
 
 export async function ensureScopedProviderCatalogModels(
@@ -401,7 +402,15 @@ export async function ensureScopedProviderCatalogModels(
   sessionConfig: ProviderSessionConfig
 ): Promise<void> {
   const stamp = scopedCatalogStamp(providerId, sessionConfig);
-  if (readCachedModels(sessionCacheKey) && scopedCatalogStamps.get(sessionCacheKey) === stamp) {
+  const cached = modelsCache.get(sessionCacheKey);
+  const cachedAt = cacheTimestamps.get(sessionCacheKey);
+  if (
+    cached &&
+    cached.length > 0 &&
+    cachedAt !== undefined &&
+    Date.now() - cachedAt < CACHE_TTL &&
+    scopedCatalogStamps.get(sessionCacheKey) === stamp
+  ) {
     return;
   }
   const provider = getProviderRegistry().get(providerId);
@@ -426,7 +435,42 @@ const providerCatalogCache = new WeakMap<
   }
 >();
 
-export async function getProviderCatalogModels(
+const providerCatalogInFlight = new WeakMap<
+  Provider,
+  { key: string; promise: Promise<ModelInfo[]> }
+>();
+
+export function getProviderCatalogModels(
+  providerId: string,
+  provider: Provider
+): Promise<ModelInfo[]> {
+  const curatedNow = getProviderRegistry().getCuratedModels(providerId);
+  const curatedStamp =
+    curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(',');
+  const cached = providerCatalogCache.get(provider);
+  if (
+    cached &&
+    cached.curatedStamp === curatedStamp &&
+    cached.epoch === providerCatalogEpoch &&
+    Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
+  ) {
+    return Promise.resolve(cached.models);
+  }
+  const inflightKey = `${curatedStamp ?? ''}|${providerCatalogEpoch}`;
+  const existing = providerCatalogInFlight.get(provider);
+  if (existing && existing.key === inflightKey) {
+    return existing.promise;
+  }
+  const promise = loadProviderCatalogModels(providerId, provider);
+  providerCatalogInFlight.set(provider, { key: inflightKey, promise });
+  void promise.finally(() => {
+    const entry = providerCatalogInFlight.get(provider);
+    if (entry?.promise === promise) providerCatalogInFlight.delete(provider);
+  });
+  return promise;
+}
+
+async function loadProviderCatalogModels(
   providerId: string,
   provider: Provider
 ): Promise<ModelInfo[]> {

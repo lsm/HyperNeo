@@ -3000,6 +3000,47 @@ describe('Model Service', () => {
       expect(fetchCount).toBe(2);
     });
 
+    it('shares one in-flight discovery across concurrent cold-cache callers', async () => {
+      const registry = getProviderRegistry();
+      let fetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return [
+            {
+              id: 'ollama-qwen',
+              name: 'Qwen',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Qwen',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+      setModelsCache(new Map());
+      const provider = registry.get('ollama')!;
+
+      const [first, second] = await Promise.all([
+        getProviderCatalogModels('ollama', provider),
+        getProviderCatalogModels('ollama', provider),
+      ]);
+
+      expect(fetchCount).toBe(1);
+      expect(second).toBe(first);
+    });
+
     it('re-fetches after refreshModels commits refreshed catalogs', async () => {
       const registry = getProviderRegistry();
       let fetchCount = 0;
@@ -3202,6 +3243,54 @@ describe('Model Service', () => {
       expect(scopedFetchCount).toBe(2);
       expect(getAvailableModels('session-scoped-4').map((model) => model.id)).toEqual([
         'scoped-http://127.0.0.1:11500-session-key',
+      ]);
+    });
+
+    it('refetches the scoped catalog when the provider epoch changes', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async () => {
+          scopedFetchCount += 1;
+          return [
+            {
+              id: `scoped-gen-${scopedFetchCount}`,
+              name: 'Scoped Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-5', 'ollama', {
+        baseUrl: 'http://[IP_ADDRESS]:11434',
+      });
+      await ensureScopedProviderCatalogModels('session-scoped-5', 'ollama', {
+        baseUrl: 'http://[IP_ADDRESS]:11434',
+      });
+      expect(scopedFetchCount).toBe(1);
+
+      bumpProviderCatalogEpoch();
+      await ensureScopedProviderCatalogModels('session-scoped-5', 'ollama', {
+        baseUrl: 'http://[IP_ADDRESS]:11434',
+      });
+      expect(scopedFetchCount).toBe(2);
+      expect(getAvailableModels('session-scoped-5').map((model) => model.id)).toEqual([
+        'scoped-gen-2',
       ]);
     });
   });
