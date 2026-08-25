@@ -21,6 +21,7 @@ import type { TableChangeScope } from '../../storage/reactive-database';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters';
 import { Logger } from '../logger';
+import { hashString32 } from '../runtime-hash';
 import { mapActiveTurnEntryRow } from './activity-preview';
 
 export { buildActiveTurnSummariesFromRows } from './activity-preview';
@@ -99,29 +100,33 @@ function projectCompactPreview(value: unknown): unknown {
 function buildCompactMessagePreview(raw: string): {
   preview: string;
   contentBytes: number;
+  contentHash: number;
   contentTruncated: boolean;
 } {
   const contentBytes = raw.length;
   if (contentBytes <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD) {
-    return { preview: raw, contentBytes, contentTruncated: false };
+    return { preview: raw, contentBytes, contentHash: hashString32(raw), contentTruncated: false };
   }
   const parsed = parseJsonOptional<Record<string, unknown>>(raw);
   if (!parsed) {
     return {
       preview: `${raw.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`,
       contentBytes,
+      contentHash: hashString32(raw),
       contentTruncated: true,
     };
   }
   const preview = JSON.stringify(projectCompactPreview(parsed));
-  return { preview, contentBytes, contentTruncated: true };
+  return { preview, contentBytes, contentHash: hashString32(raw), contentTruncated: true };
 }
 
 function mapSpaceTaskMessageCompactRow(row: Record<string, unknown>): Record<string, unknown> {
   const rawContent = typeof row.content === 'string' ? row.content : String(row.content ?? '');
-  const { preview, contentBytes, contentTruncated } = buildCompactMessagePreview(rawContent);
+  const { preview, contentBytes, contentHash, contentTruncated } =
+    buildCompactMessagePreview(rawContent);
   const mapped = mapSpaceTaskMessageRow({ ...row, content: preview });
   mapped.contentBytes = contentBytes;
+  mapped.contentHash = contentHash;
   mapped.contentTruncated = contentTruncated;
   return mapped;
 }
@@ -2491,6 +2496,9 @@ selected_ids AS (
 -- bounded), unresolved hyperneo_action cards (the task pane's resolution
 -- controls), and user deliveries still in flight (queued/processing/retrying
 -- badges, which sdk_rows deliberately admits beyond the turn cutoff).
+-- The limit ranks ONLY ordinary rows (#2901 review): if pinned/tail rows were
+-- ranked together, a burst of new-enough exempt rows would consume the window's
+-- slots and silently evict the ordinary context the limit exists to show.
 ranked_rows AS (
   SELECT
     j.id AS id,
@@ -2510,7 +2518,6 @@ ranked_rows AS (
     j.parentToolUseId AS parentToolUseId,
     j.insOrder AS insOrder,
     j.isTerminal AS isTerminalRow,
-    ROW_NUMBER() OVER (ORDER BY j.createdAt DESC, j.insOrder DESC) AS overallRank,
     ROW_NUMBER() OVER (
       PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
     ) AS sessionRank,
@@ -2534,6 +2541,14 @@ active_session_tails AS (
     AND sessionId IS NOT NULL
     AND kind != 'github'
     AND COALESCE(isTerminalRow, 0) = 0
+),
+ordinary_ranked AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (ORDER BY createdAt DESC, insOrder DESC) AS ordinaryRank
+  FROM ranked_rows
+  WHERE NOT pinned
+    AND id NOT IN (SELECT id FROM active_session_tails)
 )
 SELECT
   id,
@@ -2553,9 +2568,9 @@ SELECT
   parentToolUseId,
   insOrder
 FROM ranked_rows
-WHERE overallRank <= ?
-  OR pinned
+WHERE pinned
   OR id IN (SELECT id FROM active_session_tails)
+  OR id IN (SELECT id FROM ordinary_ranked WHERE ordinaryRank <= ?)
 ORDER BY createdAt ASC, insOrder ASC
 `.trim();
 

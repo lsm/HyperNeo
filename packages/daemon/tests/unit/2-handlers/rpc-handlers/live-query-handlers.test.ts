@@ -4916,9 +4916,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
       const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
       const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
-      expect(rows.length).toBe(3);
-      const ids = rows.map((r) => r.id);
-      expect(ids).toContain('a-4');
+      expect(rows.map((r) => String(r.id))).toEqual(['u-3', 'a-3', 'u-4', 'a-4']);
     });
 
     test('compact window keeps unresolved action rows and in-flight deliveries when they age out', () => {
@@ -4973,6 +4971,44 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(ids).toContain('queued-old');
       expect(ids).toContain('quiet-only-row');
       expect(ids).not.toContain('action-old-resolved');
+      expect(rows.length).toBe(7);
+    });
+
+    test('pinned rows do not consume the ordinary-row window slots', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      for (let i = 0; i < 4; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
+      }
+      for (let i = 0; i < 3; i += 1) {
+        insertSdkMessageAt(
+          `action-new-${i}`,
+          sessionId,
+          now + 5000 + i * 10,
+          'hyperneo_action',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'hyperneo_action',
+            uuid: `action-new-${i}`,
+            action: 'sdk_resume_choice',
+            resolved: false,
+          }
+        );
+      }
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      const ids = rows.map((r) => String(r.id));
+      expect(ids.filter((id) => id.startsWith('action-new-'))).toHaveLength(3);
+      expect(ids).toContain('a-3');
+      expect(ids).toContain('u-3');
+      expect(ids).toContain('a-2');
       expect(rows.length).toBe(6);
     });
 
@@ -5022,7 +5058,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const ids = rows.map((r) => r.id);
       expect(ids).toContain('action-ancient-unresolved');
       expect(ids).not.toContain('action-ancient-resolved');
-      expect(rows.length).toBe(6);
+      expect(rows.length).toBe(7);
     });
 
     test('compact rows expose contentBytes and contentTruncated for oversized messages', () => {
@@ -5043,6 +5079,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(5000) }] },
         }
       );
+      insertSdkMessageAt(
+        'big-assistanz',
+        sessionId,
+        now + 1100,
+        'assistant',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'assistant',
+          uuid: 'big-assistanz',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'y'.repeat(5000) }] },
+        }
+      );
 
       backfillConversationTurns();
       const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
@@ -5052,6 +5102,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(big).toBeDefined();
       expect(big!.contentBytes).toBeGreaterThan(5000);
       expect(big!.contentTruncated).toBe(true);
+      expect(typeof big!.contentHash).toBe('number');
+
+      const twin = rows.find((r) => r.id === 'big-assistanz');
+      expect(twin).toBeDefined();
+      expect(twin!.contentBytes).toBe(big!.contentBytes);
+      expect(twin!.contentHash).not.toBe(big!.contentHash);
 
       const parsed = JSON.parse(big!.content as string) as Record<string, unknown>;
       const content = (parsed.message as Record<string, unknown>).content as Array<{
