@@ -2662,6 +2662,44 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const executions = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
       expect(executions.every((exec) => exec.status === 'pending')).toBe(true);
     });
+
+    test('persistent worktree creation failure fails closed with bounded retry then blocked task', async () => {
+      const WORKTREE_ERROR =
+        'Task worktree creation failed for workflow task; refusing to spawn a node agent in the shared space workspace: git worktree add failed';
+      let spawnAttempts = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnAttempts++;
+          throw new Error(WORKTREE_ERROR);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const runId = tasks[0].workflowRunId!;
+
+      await rt.executeTick();
+      await rt.executeTick();
+      let execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('pending');
+      expect(execution.agentSessionId).toBeNull();
+
+      await rt.executeTick();
+      execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('blocked');
+      expect(execution.result).toContain('worktree');
+      expect(execution.result).toContain('3 times');
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.status).toBe('blocked');
+      expect(task.result).toContain('worktree');
+      expect(task.blockReason).toBe('agent_crashed');
+
+      expect(spawnAttempts).toBe(3);
+    });
   });
 
   describe('rehydration does not duplicate executors from startWorkflowRun', () => {

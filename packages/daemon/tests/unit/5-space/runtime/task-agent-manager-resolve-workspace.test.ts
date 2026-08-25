@@ -14,13 +14,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   const SPACE_WORKSPACE = '/space/ws02a';
   const CREATED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-abc';
   const CACHED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-cached';
+  const CREATE_ERROR = 'git worktree add failed';
 
   type Row = {
     name: string;
     cachedTaskWorktreePath: string | undefined;
     hasWorktreeManager: boolean;
     createResult: 'success' | 'fail' | 'n/a';
-    expectedWorkspacePath: string;
+    expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
     expectedCreateCalled: boolean;
     expectedCachedPath: string | undefined;
     expectedWarning: string;
@@ -71,7 +72,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
 
   async function runRow(row: Row) {
     const createTaskWorktree = mock(async () => {
-      if (row.createResult === 'fail') throw new Error('git worktree add failed');
+      if (row.createResult === 'fail') throw new Error(CREATE_ERROR);
       return { path: CREATED_PATH, slug: 'task-9-abc' };
     });
 
@@ -91,9 +92,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
       manager as unknown as { buildSpawnExecutionFlowDeps: BuildDeps }
     ).buildSpawnExecutionFlowDeps({ reservationHeld: false, reservedExecution: false });
 
-    const workspacePath = await deps.resolveWorkspacePath(makeTask(), makeSpace());
-
-    expect(workspacePath).toBe(row.expectedWorkspacePath);
+    if (row.expectedOutcome.kind === 'error') {
+      await expect(deps.resolveWorkspacePath(makeTask(), makeSpace())).rejects.toThrow(
+        row.expectedOutcome.message
+      );
+    } else {
+      const workspacePath = await deps.resolveWorkspacePath(makeTask(), makeSpace());
+      expect(workspacePath).toBe(row.expectedOutcome.value);
+    }
 
     if (row.expectedCreateCalled) {
       expect(createTaskWorktree).toHaveBeenCalledTimes(1);
@@ -122,20 +128,24 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         cachedTaskWorktreePath: undefined,
         hasWorktreeManager: true,
         createResult: 'success',
-        expectedWorkspacePath: CREATED_PATH,
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
         expectedCreateCalled: true,
         expectedCachedPath: CREATED_PATH,
         expectedWarning: '',
       },
       {
-        name: 'create fails, warns, and falls back to the space workspace',
+        name: 'create fails and rejects the spawn instead of falling back to space workspace',
         cachedTaskWorktreePath: undefined,
         hasWorktreeManager: true,
         createResult: 'fail',
-        expectedWorkspacePath: SPACE_WORKSPACE,
+        expectedOutcome: {
+          kind: 'error',
+          message:
+            'Task worktree creation failed for workflow task task-ws02a; refusing to spawn a node agent in the shared space workspace: git worktree add failed',
+        },
         expectedCreateCalled: true,
         expectedCachedPath: undefined,
-        expectedWarning: 'falling back to space workspace',
+        expectedWarning: 'failing the spawn instead of falling back to the space workspace',
       },
     ] as Row[])('%s', async (row: Row) => {
       await runRow(row);
@@ -149,7 +159,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         cachedTaskWorktreePath: undefined,
         hasWorktreeManager: false,
         createResult: 'n/a',
-        expectedWorkspacePath: SPACE_WORKSPACE,
+        expectedOutcome: { kind: 'path', value: SPACE_WORKSPACE },
         expectedCreateCalled: false,
         expectedCachedPath: undefined,
         expectedWarning: '',
@@ -164,7 +174,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         cachedTaskWorktreePath: CACHED_PATH,
         hasWorktreeManager: true,
         createResult: 'n/a',
-        expectedWorkspacePath: CACHED_PATH,
+        expectedOutcome: { kind: 'path', value: CACHED_PATH },
         expectedCreateCalled: false,
         expectedCachedPath: CACHED_PATH,
         expectedWarning: '',
@@ -174,7 +184,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         cachedTaskWorktreePath: CACHED_PATH,
         hasWorktreeManager: false,
         createResult: 'n/a',
-        expectedWorkspacePath: CACHED_PATH,
+        expectedOutcome: { kind: 'path', value: CACHED_PATH },
         expectedCreateCalled: false,
         expectedCachedPath: CACHED_PATH,
         expectedWarning: '',
