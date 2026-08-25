@@ -44,7 +44,9 @@ export type TurnEndPipelineInput = Omit<
 function applyUsageAccountingGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
   const result = ctx.event.kind === 'result' ? ctx.event.result : null;
   const accountUsage =
-    result?.isTopLevel === true && result.isSuccess && result.isLimitRecoveryEngaged !== null;
+    result?.isTopLevel === true &&
+    (result.isLimitRecoveryEngaged === true ||
+      (result.isSuccess && result.isLimitRecoveryEngaged === false));
   if (ctx.resultUsage === null || !accountUsage) {
     return { ...ctx, usage: ctx.usageState };
   }

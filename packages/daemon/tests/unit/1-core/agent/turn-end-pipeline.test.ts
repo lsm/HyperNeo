@@ -114,9 +114,14 @@ describe('decideTurnEnd', () => {
       usageFolded: true,
     },
     {
-      label: 'an engaged limit recovery skips the fallback-ack loop but still accounts usage',
+      label:
+        'an engaged limit recovery on an error-subtype result skips the fallback-ack loop but still accounts usage',
       overrides: {
-        event: resultEvent({ isLimitError: true, isLimitRecoveryEngaged: true }),
+        event: resultEvent({
+          isSuccess: false,
+          isLimitError: true,
+          isLimitRecoveryEngaged: true,
+        }),
       },
       usageFolded: true,
     },
