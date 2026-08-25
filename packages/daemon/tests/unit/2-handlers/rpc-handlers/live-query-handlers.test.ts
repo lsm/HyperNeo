@@ -5079,6 +5079,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(5000) }] },
         }
       );
+      insertSdkMessageAt('u-mid', sessionId, now + 1050, 'user');
       insertSdkMessageAt(
         'big-assistanz',
         sessionId,
