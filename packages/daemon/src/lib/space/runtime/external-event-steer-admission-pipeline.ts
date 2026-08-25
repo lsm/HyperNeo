@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   classifyExternalEventDirectSteer,
   type DirectSteerEventClass,
@@ -5,7 +6,6 @@ import {
 
 export type { DirectSteerEventClass } from '../../external-events/event-tiers.ts';
 import type { ExternalEventEssenceEntry } from '../../external-events/deferred-event-digest.ts';
-import { decisionRun } from './decision-pipeline.ts';
 
 export type ExternalEventSteerAdmissionDecision =
   | { action: 'skip' }
@@ -15,6 +15,9 @@ export type ExternalEventSteerAdmissionDecision =
       action: 'admit';
       eventClass: DirectSteerEventClass;
       essences: ExternalEventEssenceEntry[];
+      steerEssences: ExternalEventEssenceEntry[];
+      passengerEssences: ExternalEventEssenceEntry[];
+      classes: DirectSteerEventClass[];
       droppedEventCount?: number;
     };
 
@@ -31,9 +34,16 @@ export interface ExternalEventSteerAdmissionCtx {
   bufferMaxEntries: number;
   hydrate: (essence: ExternalEventEssenceEntry) => ExternalEventEssenceEntry;
   decision: ExternalEventSteerAdmissionDecision | null;
+  steerEssences?: ExternalEventEssenceEntry[];
+  passengerEssences?: ExternalEventEssenceEntry[];
+  classes?: DirectSteerEventClass[];
+  eventClass?: DirectSteerEventClass;
 }
 
-export type ExternalEventSteerAdmissionInput = Omit<ExternalEventSteerAdmissionCtx, 'decision'>;
+export type ExternalEventSteerAdmissionInput = Omit<
+  ExternalEventSteerAdmissionCtx,
+  'decision' | 'steerEssences' | 'passengerEssences' | 'classes' | 'eventClass'
+>;
 
 const DIRECT_TOPIC_SUFFIXES: ReadonlySet<string> = new Set([
   'review_submitted',
@@ -51,44 +61,65 @@ function potentiallyDirect(essence: ExternalEventEssenceEntry): boolean {
   return DIRECT_TOPIC_SUFFIXES.has(topicSuffix(essence.topic));
 }
 
-export function directSteerClassesOf(
-  essences: ExternalEventEssenceEntry[]
-): DirectSteerEventClass[] {
-  const classes = new Set<DirectSteerEventClass>();
-  for (const essence of essences) {
-    const eventClass = classifyExternalEventDirectSteer(essence);
-    if (eventClass) classes.add(eventClass);
-  }
-  return [...classes];
-}
-
-export function enrichDirectSteerEssences(
+function hydratePotentiallyDirectEssences(
   essences: ExternalEventEssenceEntry[],
   hydrate: (essence: ExternalEventEssenceEntry) => ExternalEventEssenceEntry
 ): ExternalEventEssenceEntry[] {
   return essences.map((essence) => (potentiallyDirect(essence) ? hydrate(essence) : essence));
 }
 
-function decided<Ctx extends { decision: unknown }>(
-  ctx: Ctx,
-  decision: NonNullable<Ctx['decision']>
-): Ctx {
+interface DirectSteerPartition {
+  steerEssences: ExternalEventEssenceEntry[];
+  passengerEssences: ExternalEventEssenceEntry[];
+  classes: DirectSteerEventClass[];
+  eventClass: DirectSteerEventClass | undefined;
+}
+
+function partitionDirectSteerEssences(essences: ExternalEventEssenceEntry[]): DirectSteerPartition {
+  const steer: ExternalEventEssenceEntry[] = [];
+  const passenger: ExternalEventEssenceEntry[] = [];
+  const classes = new Set<DirectSteerEventClass>();
+  for (const essence of essences) {
+    const eventClass = classifyExternalEventDirectSteer(essence);
+    if (eventClass) {
+      steer.push(essence);
+      classes.add(eventClass);
+    } else {
+      passenger.push(essence);
+    }
+  }
+  return {
+    steerEssences: steer,
+    passengerEssences: passenger,
+    classes: [...classes],
+    eventClass: [...classes][0],
+  };
+}
+
+function decided(
+  ctx: ExternalEventSteerAdmissionCtx,
+  decision: ExternalEventSteerAdmissionDecision
+): ExternalEventSteerAdmissionCtx {
   return { ...ctx, decision };
 }
 
-export function applyDeliveryV2Gate(
+function admissionSettled(ctx: ExternalEventSteerAdmissionCtx): boolean {
+  return ctx.decision !== null;
+}
+
+export function gateDeliveryV2Enabled(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
   return ctx.deliveryV2Enabled ? ctx : decided(ctx, { action: 'skip' });
 }
 
-export function applyProvenanceGate(
+export function gateSystemProvenance(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
   return ctx.isSynthetic && ctx.inputKind === 'system' ? ctx : decided(ctx, { action: 'skip' });
 }
 
-export function applySessionStateGate(
+export function gateSessionAdmissible(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
   return ctx.processingStatus === 'processing' && !ctx.inRateLimitCooldown && !ctx.parentTaskLimited
@@ -96,44 +127,77 @@ export function applySessionStateGate(
     : decided(ctx, { action: 'skip' });
 }
 
-export function applyDirectClassGate(
+export function enrichDirectEssences(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
-  const enriched = enrichDirectSteerEssences(ctx.essences, ctx.hydrate);
-  const withEnriched = enriched === ctx.essences ? ctx : { ...ctx, essences: enriched };
-  return directSteerClassesOf(enriched).length > 0
-    ? withEnriched
-    : decided(withEnriched, { action: 'notDirect' });
+  return { ...ctx, essences: hydratePotentiallyDirectEssences(ctx.essences, ctx.hydrate) };
 }
 
-export function applyBufferCapacityGate(
+export function partitionDirectSteer(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
-  const directCount = ctx.essences.filter(
-    (essence) => classifyExternalEventDirectSteer(essence) !== null
-  ).length;
+  const partition = partitionDirectSteerEssences(ctx.essences);
+  if (partition.steerEssences.length === 0) {
+    return decided(ctx, { action: 'notDirect' });
+  }
+  return {
+    ...ctx,
+    essences: ctx.essences,
+    steerEssences: partition.steerEssences,
+    passengerEssences: partition.passengerEssences,
+    classes: partition.classes,
+    eventClass: partition.eventClass,
+  };
+}
+
+export function gateBufferCapacity(
+  ctx: ExternalEventSteerAdmissionCtx
+): ExternalEventSteerAdmissionCtx {
+  const directCount = ctx.steerEssences?.length ?? 0;
   return ctx.bufferedDirectEventCount + directCount <= ctx.bufferMaxEntries
     ? ctx
     : decided(ctx, { action: 'suppressBufferCap' });
 }
 
-export function applyAdmissionFinalGate(
+export function finalizeSteerAdmission(
   ctx: ExternalEventSteerAdmissionCtx
 ): ExternalEventSteerAdmissionCtx {
-  const eventClass = directSteerClassesOf(ctx.essences)[0]!;
   return decided(ctx, {
     action: 'admit',
-    eventClass,
+    eventClass: ctx.eventClass!,
     essences: ctx.essences,
+    steerEssences: ctx.steerEssences!,
+    passengerEssences: ctx.passengerEssences!,
+    classes: ctx.classes!,
     ...(ctx.droppedEventCount ? { droppedEventCount: ctx.droppedEventCount } : {}),
   });
 }
 
-export const decideExternalEventSteerAdmission = decisionRun('external-event-steer-admission', [
-  applyDeliveryV2Gate,
-  applyProvenanceGate,
-  applySessionStateGate,
-  applyDirectClassGate,
-  applyBufferCapacityGate,
-  applyAdmissionFinalGate,
-]);
+const steerAdmissionPipeline = (
+  superpipe<{ admissionSettled: (ctx: ExternalEventSteerAdmissionCtx) => boolean }>({
+    admissionSettled,
+  })('external-event-steer-admission') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(gateDeliveryV2Enabled, 'ctx', 'ctx')
+  .pipe('!admissionSettled', 'ctx')
+  .pipe(gateSystemProvenance, 'ctx', 'ctx')
+  .pipe('!admissionSettled', 'ctx')
+  .pipe(gateSessionAdmissible, 'ctx', 'ctx')
+  .pipe('!admissionSettled', 'ctx')
+  .pipe(enrichDirectEssences, 'ctx', 'ctx')
+  .pipe('!admissionSettled', 'ctx')
+  .pipe(partitionDirectSteer, 'ctx', 'ctx')
+  .pipe('!admissionSettled', 'ctx')
+  .pipe(gateBufferCapacity, 'ctx', 'ctx')
+  .pipe('!admissionSettled', 'ctx')
+  .pipe(finalizeSteerAdmission, 'ctx', 'ctx')
+  .end('ctx');
+
+const run = steerAdmissionPipeline as (input: ExternalEventSteerAdmissionCtx) => unknown;
+
+export function decideExternalEventSteerAdmission(
+  input: ExternalEventSteerAdmissionInput
+): ExternalEventSteerAdmissionCtx {
+  return run({ ...input, decision: null }) as ExternalEventSteerAdmissionCtx;
+}

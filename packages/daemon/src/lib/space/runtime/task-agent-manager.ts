@@ -40,10 +40,8 @@ import {
 } from '../../../lib/external-events/deferred-event-digest.ts';
 import {
   decideExternalEventSteerAdmission,
-  directSteerClassesOf,
   type DirectSteerEventClass,
 } from './external-event-steer-admission-pipeline.ts';
-import { classifyExternalEventDirectSteer } from '../../../lib/external-events/event-tiers.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -302,7 +300,10 @@ const DIRECT_STEER_HYDRATABLE_FIELDS = [
 ] as const;
 
 interface DirectSteerBufferEntry {
-  essences: ExternalEventEssenceEntry[];
+  steerEssences: ExternalEventEssenceEntry[];
+  passengerEssences: ExternalEventEssenceEntry[];
+  classes: DirectSteerEventClass[];
+  eventClass: DirectSteerEventClass;
   messageId: string;
   dbId: string;
   receivedAt: number;
@@ -3758,7 +3759,13 @@ export class TaskAgentManager {
       return;
     }
     if (decision.action !== 'admit') return;
-    const { eventClass, droppedEventCount: admittedDropped } = decision;
+    const {
+      eventClass,
+      steerEssences,
+      passengerEssences,
+      classes,
+      droppedEventCount: admittedDropped,
+    } = decision;
     const settledRow = this.config.db
       .getSDKMessageRepo()
       .getMessageByStatusAndUuid(args.sessionId, 'deferred', args.messageId);
@@ -3768,7 +3775,10 @@ export class TaskAgentManager {
     if (buffer.some((item) => item.messageId === args.messageId)) return;
     const now = Date.now();
     buffer.push({
-      essences: decision.essences,
+      steerEssences,
+      passengerEssences,
+      classes,
+      eventClass,
       messageId: args.messageId,
       dbId: claimDbId,
       receivedAt: now,
@@ -3783,13 +3793,7 @@ export class TaskAgentManager {
     let total = 0;
     for (const [key, entries] of this.directSteerBuffers) {
       if (!key.startsWith(`${sessionId}\u0000`)) continue;
-      total += entries.reduce(
-        (sum, item) =>
-          sum +
-          item.essences.filter((essence) => classifyExternalEventDirectSteer(essence) !== null)
-            .length,
-        0
-      );
+      total += entries.reduce((sum, item) => sum + item.steerEssences.length, 0);
     }
     return total;
   }
@@ -3863,15 +3867,13 @@ export class TaskAgentManager {
     if (entries.length === 0) return;
     const separator = key.indexOf('\u0000');
     const sessionId = key.slice(0, separator);
-    const bufferClass = key.slice(separator + 1) as DirectSteerEventClass;
     await withSessionResetCoordination(sessionId, async () => {
-      await this.deliverDirectSteerUnderCoordination(sessionId, bufferClass, entries);
+      await this.deliverDirectSteerUnderCoordination(sessionId, entries);
     });
   }
 
   private async deliverDirectSteerUnderCoordination(
     sessionId: string,
-    bufferClass: DirectSteerEventClass,
     entries: DirectSteerBufferEntry[]
   ): Promise<void> {
     const session = this.getTrackedSession(sessionId);
@@ -3909,10 +3911,7 @@ export class TaskAgentManager {
       );
       return;
     }
-    const allEssences = steerable.flatMap((entry) => entry.essences);
-    const steerEssences = allEssences.filter(
-      (essence) => classifyExternalEventDirectSteer(essence) !== null
-    );
+    const steerEssences = steerable.flatMap((entry) => entry.steerEssences);
     if (steerEssences.length === 0) {
       log.debug(
         `TaskAgentManager: direct steer for session ${sessionId} has no direct-class events ` +
@@ -3920,9 +3919,7 @@ export class TaskAgentManager {
       );
       return;
     }
-    const passengerEssences = allEssences.filter(
-      (essence) => classifyExternalEventDirectSteer(essence) === null
-    );
+    const passengerEssences = steerable.flatMap((entry) => entry.passengerEssences);
     const carriedDropped = steerable.reduce(
       (sum, entry) => sum + (entry.droppedEventCount ?? 0),
       0
@@ -4018,7 +4015,7 @@ export class TaskAgentManager {
     }
     const sourceDbIds = steerable.map((entry) => entry.dbId);
     this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
-    const steeredClasses = new Set(directSteerClassesOf(steerEssences));
+    const steeredClasses = new Set(steerable.flatMap((entry) => entry.classes));
     this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueued();
     for (const eventClass of steeredClasses) {
       this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueuedClass(

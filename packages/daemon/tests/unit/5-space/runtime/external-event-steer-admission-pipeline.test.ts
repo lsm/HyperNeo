@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 import type { ExternalEventEssenceEntry } from '../../../../src/lib/external-events/deferred-event-digest';
 import {
-  applyAdmissionFinalGate,
-  applyBufferCapacityGate,
-  applyDirectClassGate,
-  applyDeliveryV2Gate,
-  applyProvenanceGate,
-  applySessionStateGate,
   decideExternalEventSteerAdmission,
+  enrichDirectEssences,
+  finalizeSteerAdmission,
+  gateBufferCapacity,
+  gateDeliveryV2Enabled,
+  gateSessionAdmissible,
+  gateSystemProvenance,
+  partitionDirectSteer,
+  type ExternalEventSteerAdmissionCtx,
   type ExternalEventSteerAdmissionInput,
 } from '../../../../src/lib/space/runtime/external-event-steer-admission-pipeline';
 
@@ -46,19 +48,31 @@ function input(
   };
 }
 
+function ctx(
+  overrides: Partial<ExternalEventSteerAdmissionInput> = {}
+): ExternalEventSteerAdmissionCtx {
+  return { ...input(overrides), decision: null } as ExternalEventSteerAdmissionCtx;
+}
+
 describe('direct-steer admission pipeline', () => {
   it('admits a hydrated direct-class event from a processing session', () => {
     const outcome = decideExternalEventSteerAdmission(input());
-    expect(outcome.decision).toEqual({
+    expect(outcome.decision).toMatchObject({
       action: 'admit',
       eventClass: 'review',
       essences: [REVIEW_ESSENCE],
+      steerEssences: [REVIEW_ESSENCE],
+      passengerEssences: [],
+      classes: ['review'],
     });
   });
 
   it('carries the fold omission count into the admission', () => {
     const outcome = decideExternalEventSteerAdmission(input({ droppedEventCount: 4 }));
-    expect(outcome.decision).toMatchObject({ action: 'admit', droppedEventCount: 4 });
+    expect(outcome.decision).toMatchObject({
+      action: 'admit',
+      droppedEventCount: 4,
+    });
   });
 
   it('skips when delivery v2 is disabled', () => {
@@ -117,7 +131,13 @@ describe('direct-steer admission pipeline', () => {
     const outcome = decideExternalEventSteerAdmission(
       input({ essences: [CHECK_ESSENCE, ...passengers], bufferedDirectEventCount: 199 })
     );
-    expect(outcome.decision).toMatchObject({ action: 'admit', eventClass: 'check' });
+    expect(outcome.decision).toMatchObject({
+      action: 'admit',
+      eventClass: 'check',
+      steerEssences: [CHECK_ESSENCE],
+      passengerEssences: passengers,
+      classes: ['check'],
+    });
   });
 
   it('admits at exactly the capacity boundary', () => {
@@ -129,31 +149,37 @@ describe('direct-steer admission pipeline', () => {
     const outcome = decideExternalEventSteerAdmission(
       input({ essences: [CHECK_ESSENCE, REVIEW_ESSENCE, DIGEST_ESSENCE] })
     );
-    expect(outcome.decision).toMatchObject({ action: 'admit', eventClass: 'check' });
+    expect(outcome.decision).toMatchObject({
+      action: 'admit',
+      eventClass: 'check',
+      steerEssences: [CHECK_ESSENCE, REVIEW_ESSENCE],
+      passengerEssences: [DIGEST_ESSENCE],
+      classes: ['check', 'review'],
+    });
+  });
+
+  it('partitions a mixed fold into steer and passenger essences', () => {
+    const essences = [CHECK_ESSENCE, REVIEW_ESSENCE, DIGEST_ESSENCE];
+    const afterEnrich = enrichDirectEssences(ctx({ essences }));
+    const afterPartition = partitionDirectSteer(afterEnrich);
+    expect(afterPartition.steerEssences).toEqual([CHECK_ESSENCE, REVIEW_ESSENCE]);
+    expect(afterPartition.passengerEssences).toEqual([DIGEST_ESSENCE]);
+    expect(afterPartition.classes).toEqual(['check', 'review']);
+    expect(afterPartition.eventClass).toBe('check');
   });
 });
 
-describe('direct-steer admission gate order', () => {
-  it('provenance gates fire before classification', () => {
-    const ctx = applyDeliveryV2Gate({
-      ...input(),
-      decision: null,
-    });
-    expect(ctx.decision).toBeNull();
-    const skipped = applyProvenanceGate({ ...ctx, isSynthetic: false });
-    expect(skipped.decision).toEqual({ action: 'skip' });
-  });
-
+describe('direct-steer admission stage order', () => {
   it('the final gate is reachable only when every earlier gate passes', () => {
-    const ctx = applyAdmissionFinalGate(
-      applyBufferCapacityGate(
-        applyDirectClassGate(
-          applySessionStateGate(
-            applyProvenanceGate(applyDeliveryV2Gate({ ...input(), decision: null }))
+    const afterAll = finalizeSteerAdmission(
+      gateBufferCapacity(
+        partitionDirectSteer(
+          enrichDirectEssences(
+            gateSessionAdmissible(gateSystemProvenance(gateDeliveryV2Enabled(ctx())))
           )
         )
       )
     );
-    expect(ctx.decision).toMatchObject({ action: 'admit', eventClass: 'review' });
+    expect(afterAll.decision).toMatchObject({ action: 'admit', eventClass: 'review' });
   });
 });
