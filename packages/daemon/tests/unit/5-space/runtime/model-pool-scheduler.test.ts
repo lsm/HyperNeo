@@ -131,6 +131,11 @@ test('slot model override skips the pool entirely', () => {
   });
 });
 
+test('agent-level model override skips the pool entirely', () => {
+  const agent = { ...makeAgent(pool), model: 'sonnet-fixed' };
+  expect(apply({ agent })).toEqual({ slot, model: '' });
+});
+
 test('task workflowModelOverrides skip the pool entirely', () => {
   const overridden = {
     workflowModelOverrides: { 'node-1:coder': 'kimi-k3[1m]' },

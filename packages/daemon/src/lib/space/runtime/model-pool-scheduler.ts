@@ -69,7 +69,7 @@ export function applyModelPoolToSlot(input: {
   now: number;
 }): ModelPoolApplication {
   const overrideKey = `${input.node.id}:${input.slot.name}`;
-  if (input.slot.model || input.task.workflowModelOverrides?.[overrideKey]) {
+  if (input.slot.model || input.agent.model || input.task.workflowModelOverrides?.[overrideKey]) {
     return { slot: input.slot, model: input.slot.model ?? '' };
   }
   const pool = input.agent.modelPool;
