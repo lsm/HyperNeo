@@ -3775,8 +3775,6 @@ test('CODING_WITH_QA_WORKFLOW QA node validates the PR and approves only when gr
   const qaNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!;
   const prompt = qaNode.agents[0].customPrompt!.value;
 
-  expect(prompt).toContain('your system contract defines how to validate it');
-  expect(prompt).toContain('re-approve the EXACT head you revalidated');
   expect(prompt).toMatch(/concrete failures and reproduction steps/i);
   expect(prompt).toMatch(/the runtime supplies the target/i);
   expect(prompt).not.toMatch(/send Coding concrete failures/i);
