@@ -181,7 +181,11 @@ describe('fetchAcpModels', () => {
   test('carries startup credentials for non-Anthropic ACP agents in the replacement env', async () => {
     clientCanCloseSession = true;
     const previousBaseline: Record<string, string | undefined> = { ...process.env };
-    _setStartupEnvBaselineForTesting({ ...previousBaseline, OPENAI_API_KEY: 'openai-key' });
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'OPENAI_API_KEY',
+      OPENAI_API_KEY: 'openai-key',
+    });
     try {
       await disposeAcpSessions('devin acp', ['session-a'], undefined);
       expect(clientOptions?.env?.OPENAI_API_KEY).toBe('openai-key');

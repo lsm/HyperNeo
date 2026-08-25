@@ -11,6 +11,7 @@ import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
+import { worktreeDeclaresLfsAttributes } from '../../worktree-lfs.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -233,6 +234,22 @@ export class SpaceWorktreeManager {
       });
       tracked = stdout;
     } catch (err) {
+      const declaresLfs = await worktreeDeclaresLfsAttributes(worktreePath, async () => {
+        const { stdout } = await execFileAsync('git', ['ls-files'], {
+          cwd: worktreePath,
+          encoding: 'utf8',
+          timeout: 60_000,
+          env: buildGitCommandEnv(),
+        });
+        return stdout;
+      });
+      if (declaresLfs) {
+        throw new Error(
+          `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
       this.logger.warn(
         `Git LFS hydration skipped for ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`
       );

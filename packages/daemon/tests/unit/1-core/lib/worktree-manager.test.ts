@@ -58,6 +58,16 @@ vi.mock('node:os', async (importOriginal) => {
   };
 });
 
+const fsPromisesMocks = vi.hoisted(() => ({ readFile: vi.fn() }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    readFile: passthrough(fsPromisesMocks.readFile, actual.readFile),
+  };
+});
+
 let existsSyncResults: Map<string, boolean>;
 const mkdirSyncSpy = fsOsMocks.mkdirSync;
 const writeFileSyncSpy = fsOsMocks.writeFileSync;
@@ -385,6 +395,38 @@ describe('WorktreeManager', () => {
           repoPath: '/test/repo',
         })
       ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
+    it('should fail worktree creation when LFS detection fails in an LFS-declaring repo', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      fsPromisesMocks.readFile.mockResolvedValue('*.bin filter=lfs diff=lfs merge=lfs -text');
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '.gitattributes';
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Repository tracks Git LFS files');
 
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });

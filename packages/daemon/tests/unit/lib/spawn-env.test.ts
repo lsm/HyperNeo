@@ -172,11 +172,13 @@ describe('buildSdkRuntimeEnv', () => {
       API_TIMEOUT_MS: '300000',
       CLAUDE_CODE_GIT_BASH_PATH: 'C:\\Program Files\\Git\\bin\\bash.exe',
       CLAUDE_CONFIG_DIR: '/custom/claude-config',
+      DEBUG_CLAUDE_AGENT_SDK: '1',
     });
     expect(env.ANTHROPIC_BASE_URL).toBe('https://router.corp.example');
     expect(env.API_TIMEOUT_MS).toBe('300000');
     expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
     expect(env.CLAUDE_CONFIG_DIR).toBe('/custom/claude-config');
+    expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('1');
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();

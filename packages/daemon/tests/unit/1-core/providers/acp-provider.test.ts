@@ -53,17 +53,38 @@ describe('AcpProvider', () => {
   });
 
   describe('getAcpCredentialEnvBaseline', () => {
-    it('collects only known credential keys from the startup baseline', () => {
+    it('carries only explicitly selected credential keys from the startup baseline', () => {
       const previous: Record<string, string | undefined> = { ...process.env };
       _setStartupEnvBaselineForTesting({
         ...previous,
+        HYPERNEO_ACP_ENV_KEYS: 'OPENAI_API_KEY, NOT_A_CREDENTIAL_KEY, MISSING_KEY',
         OPENAI_API_KEY: 'openai-key',
+        ANTHROPIC_API_KEY: 'anthropic-key',
         NOT_A_CREDENTIAL_KEY: 'nope',
       });
       try {
         const baseline = getAcpCredentialEnvBaseline();
         expect(baseline.OPENAI_API_KEY).toBe('openai-key');
+        expect(baseline.ANTHROPIC_API_KEY).toBeUndefined();
         expect(baseline.NOT_A_CREDENTIAL_KEY).toBeUndefined();
+        expect(baseline.MISSING_KEY).toBeUndefined();
+        expect(baseline.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
+    });
+
+    it('returns an empty baseline when no ACP env keys are configured', () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      const withoutSelector = { ...previous };
+      delete withoutSelector.HYPERNEO_ACP_ENV_KEYS;
+      _setStartupEnvBaselineForTesting({
+        ...withoutSelector,
+        OPENAI_API_KEY: 'openai-key',
+        ANTHROPIC_API_KEY: 'anthropic-key',
+      });
+      try {
+        expect(getAcpCredentialEnvBaseline()).toEqual({});
       } finally {
         _setStartupEnvBaselineForTesting(previous);
       }

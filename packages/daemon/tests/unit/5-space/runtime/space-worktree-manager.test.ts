@@ -225,6 +225,27 @@ describe('createTaskWorktree', () => {
       manager.createTaskWorktree('nonexistent-space', 'any-task-id', 'Title', 1)
     ).rejects.toThrow('Space not found');
   });
+
+  test.skipIf(() => {
+    try {
+      execSync('git lfs version', { stdio: 'pipe' });
+      return true;
+    } catch {
+      return false;
+    }
+  })('fails creation when LFS detection fails in an LFS-declaring repo', async () => {
+    writeFileSync(join(repoDir, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
+    execSync('git add .gitattributes', { cwd: repoDir, stdio: 'pipe' });
+    execSync('git commit -m "track lfs"', { cwd: repoDir, stdio: 'pipe' });
+
+    const taskId = seedTask(db, spaceId, 'task-lfs-fail', 88);
+    await expect(manager.createTaskWorktree(spaceId, taskId, 'LFS Fail Task', 88)).rejects.toThrow(
+      'Failed to hydrate Git LFS objects'
+    );
+
+    const branches = execSync('git branch --list', { cwd: repoDir }).toString();
+    expect(branches).not.toContain('space/lfs-fail-task');
+  });
 });
 
 describe('removeTaskWorktree', () => {

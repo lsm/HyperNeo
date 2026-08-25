@@ -52,38 +52,17 @@ function parseContextWindow(value: string | undefined): number {
 
 export type AcpCredentialEnvBaseline = Readonly<Record<string, string>>;
 
-const ACP_CREDENTIAL_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'OPENAI_API_KEY',
-  'GLM_API_KEY',
-  'ZHIPU_API_KEY',
-  'KIMI_API_KEY',
-  'MOONSHOT_API_KEY',
-  'MINIMAX_API_KEY',
-  'DEEPSEEK_API_KEY',
-  'OPENROUTER_API_KEY',
-  'OLLAMA_API_KEY',
-  'OLLAMA_CLOUD_API_KEY',
-] as const;
-
 const ACP_ENV_KEYS_VAR = 'HYPERNEO_ACP_ENV_KEYS';
 
 export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
   const baseline: Record<string, string> = {};
-  for (const key of ACP_CREDENTIAL_ENV_KEYS) {
+  const configured = envValue(STARTUP_ENV_BASELINE, ACP_ENV_KEYS_VAR);
+  if (!configured) return baseline;
+  for (const entry of configured.split(',')) {
+    const key = entry.trim();
+    if (!key || key in baseline) continue;
     const value = envValue(STARTUP_ENV_BASELINE, key);
     if (value !== undefined) baseline[key] = value;
-  }
-  const configured = envValue(STARTUP_ENV_BASELINE, ACP_ENV_KEYS_VAR);
-  if (configured) {
-    for (const entry of configured.split(',')) {
-      const key = entry.trim();
-      if (!key || key in baseline) continue;
-      const value = envValue(STARTUP_ENV_BASELINE, key);
-      if (value !== undefined) baseline[key] = value;
-    }
   }
   return baseline;
 }

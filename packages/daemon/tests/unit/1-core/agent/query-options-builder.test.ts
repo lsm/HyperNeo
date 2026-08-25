@@ -967,6 +967,28 @@ describe('QueryOptionsBuilder', () => {
       }
     );
 
+    it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
+      'should strip ambient subagent and tool-search settings for bridge providers',
+      async () => {
+        const previousBaseline: Record<string, string | undefined> = { ...process.env };
+        _setStartupEnvBaselineForTesting({
+          ...previousBaseline,
+          CLAUDE_CODE_SUBAGENT_MODEL: 'ambient-subagent',
+          ENABLE_TOOL_SEARCH: 'ambient',
+        });
+        mockSession.config.provider = 'anthropic-codex';
+        mockSession.config.model = 'gpt-5.3-codex';
+
+        try {
+          const options = await builder.build();
+          expect(options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL');
+          expect(options.env).not.toHaveProperty('ENABLE_TOOL_SEARCH');
+        } finally {
+          _setStartupEnvBaselineForTesting(previousBaseline);
+        }
+      }
+    );
+
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       const options = await builder.build();
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });

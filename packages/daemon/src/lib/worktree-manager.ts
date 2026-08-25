@@ -2,6 +2,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
+import { worktreeDeclaresLfsAttributes } from './worktree-lfs.ts';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -45,11 +46,18 @@ function literalPathspec(path: string): string {
   return `:(literal)${path}`;
 }
 
-async function hydrateLfsObjects(git: SimpleGit): Promise<void> {
+async function hydrateLfsObjects(git: SimpleGit, worktreePath: string): Promise<void> {
   let tracked: string;
   try {
     tracked = await git.raw(['lfs', 'ls-files']);
-  } catch {
+  } catch (err) {
+    if (await worktreeDeclaresLfsAttributes(worktreePath, () => git.raw(['ls-files']))) {
+      throw new Error(
+        `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
     return;
   }
   if (tracked.trim().length > 0) {
@@ -770,7 +778,7 @@ export class WorktreeManager {
         await networkGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */
       } catch {}
-      await hydrateLfsObjects(networkGit);
+      await hydrateLfsObjects(networkGit, worktreePath);
 
       return {
         isWorktree: true,

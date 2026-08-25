@@ -889,6 +889,8 @@ CRITICAL RULES:
         mergedEnv.ANTHROPIC_API_KEY = apiKey;
       }
     } else {
+      delete mergedEnv.CLAUDE_CODE_SUBAGENT_MODEL;
+      delete mergedEnv.ENABLE_TOOL_SEARCH;
       const providerVars = [
         'ANTHROPIC_BASE_URL',
         'ANTHROPIC_API_KEY',
