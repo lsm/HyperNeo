@@ -811,7 +811,14 @@ describe('SpaceAgentEditor model pool', () => {
     await waitFor(() => {
       expect(mockCreateAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          modelPool: [{ model: 'claude-sonnet-4-6', maxConcurrent: 8, weight: 50 }],
+          modelPool: [
+            {
+              model: 'claude-sonnet-4-6',
+              provider: 'anthropic',
+              maxConcurrent: 8,
+              weight: 50,
+            },
+          ],
         })
       );
     });

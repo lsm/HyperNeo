@@ -254,6 +254,7 @@ export function setupSpaceAgentHandlers(
       settingSources?: import('@hyperneo/shared').SettingSource[];
       templateName?: string | null;
       templateHash?: string | null;
+      modelPool?: import('@hyperneo/shared').WorkerAgentModelPoolEntry[];
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.sessionId) throw new Error('sessionId is required');
@@ -284,6 +285,7 @@ export function setupSpaceAgentHandlers(
       settingSources: params.settingSources,
       templateName: params.templateName,
       templateHash: params.templateHash,
+      modelPool: params.modelPool,
     });
     if (!result.ok) throw new Error(result.error);
 

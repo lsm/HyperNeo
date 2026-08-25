@@ -366,7 +366,7 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(exported.tools).toEqual(['read_file']);
       expect(exported.id).toBeUndefined();
       expect(exported.spaceId).toBeUndefined();
-      expect(exported.version).toBe(3);
+      expect(exported.version).toBe(4);
       expect(exported.type).toBe('agent');
     });
 

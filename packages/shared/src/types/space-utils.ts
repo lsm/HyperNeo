@@ -57,15 +57,15 @@ export function pickModelPoolEntry(
   random: () => number = Math.random
 ): WorkerAgentModelPoolEntry | null {
   if (entries.length === 0) return null;
-  const scored = scoreModelPoolEntries(entries, runningCounts);
-  const total = scored.reduce((sum, item) => sum + item.score, 0);
+  const eligible = scoreModelPoolEntries(entries, runningCounts).filter((item) => item.score > 0);
+  const total = eligible.reduce((sum, item) => sum + item.score, 0);
   if (total <= 0) return null;
   let cursor = random() * total;
-  for (const item of scored) {
+  for (const item of eligible) {
     cursor -= item.score;
     if (cursor <= 0) return item.entry;
   }
-  return scored[scored.length - 1].entry;
+  return eligible[eligible.length - 1].entry;
 }
 
 const WORKFLOW_RUN_EXECUTION_STATUS_LABELS: Record<WorkflowRunStatus | 'failed', string> = {

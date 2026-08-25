@@ -68,6 +68,7 @@ export interface SlotResolutionContext {
 
 export interface SlotOverrides {
   model?: string;
+  provider?: string;
   thinkingLevel?: SpaceWorkerAgent['thinkingLevel'];
   customPrompt?: string;
   replaceAgentPrompt?: boolean;
@@ -448,7 +449,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
   const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
   const provider = slotOverrides?.model
-    ? inferProviderForModel(model)
+    ? (slotOverrides?.provider ?? inferProviderForModel(model))
     : (customAgent.provider ?? inferProviderForModel(model));
 
   const resolvedPrompt = resolveCustomAgentPrompt(customAgent, slotOverrides);

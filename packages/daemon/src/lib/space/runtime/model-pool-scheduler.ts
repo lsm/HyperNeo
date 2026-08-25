@@ -1,5 +1,10 @@
 import { modelPoolEntryKey, pickModelPoolEntry } from '@hyperneo/shared';
-import type { SpaceTask, SpaceWorkerAgent, WorkflowNodeAgent } from '@hyperneo/shared';
+import type {
+  NodeExecution,
+  SpaceTask,
+  SpaceWorkerAgent,
+  WorkflowNodeAgent,
+} from '@hyperneo/shared';
 import { TransientSpawnError } from './workflow-node-execution-validation.ts';
 
 const SPAWN_GRACE_MS = 15_000;
@@ -9,15 +14,21 @@ export interface ModelPoolAssignment {
   taskId: string;
   model: string;
   assignedAt: number;
+  pending?: boolean;
 }
 
 export type ModelPoolAssignmentMap = Map<string, ModelPoolAssignment>;
+
+export function modelPoolReservationKey(executionId: string): string {
+  return `pending:${executionId}`;
+}
 
 export function isPoolSessionActive(
   assignment: ModelPoolAssignment,
   sessionStatus: string | undefined,
   now: number
 ): boolean {
+  if (assignment.pending) return true;
   if (sessionStatus === 'processing' || sessionStatus === 'queued') return true;
   if (sessionStatus === undefined) return false;
   return now - assignment.assignedAt < SPAWN_GRACE_MS;
@@ -43,6 +54,10 @@ export function countRunningModels(input: {
   return counts;
 }
 
+export type ModelPoolApplication =
+  | { slot: WorkflowNodeAgent; model: string; provider?: string }
+  | { deferred: true };
+
 export function applyModelPoolToSlot(input: {
   slot: WorkflowNodeAgent;
   task: Pick<SpaceTask, 'workflowModelOverrides'>;
@@ -52,14 +67,14 @@ export function applyModelPoolToSlot(input: {
   assignments: ModelPoolAssignmentMap;
   getSessionStatus: (sessionId: string) => string | undefined;
   now: number;
-}): WorkflowNodeAgent {
+}): ModelPoolApplication {
   const overrideKey = `${input.node.id}:${input.slot.name}`;
   if (input.slot.model || input.task.workflowModelOverrides?.[overrideKey]) {
-    return input.slot;
+    return { slot: input.slot, model: input.slot.model ?? '' };
   }
   const pool = input.agent.modelPool;
   if (!pool || pool.length === 0) {
-    return input.slot;
+    return { slot: input.slot, model: input.slot.model ?? '' };
   }
   const runningCounts = countRunningModels({
     assignments: input.assignments,
@@ -69,10 +84,46 @@ export function applyModelPoolToSlot(input: {
   });
   const entry = pickModelPoolEntry(pool, runningCounts);
   if (!entry) {
-    throw new TransientSpawnError(
-      `Model pool for agent "${input.agent.name}" is at capacity in space ${input.spaceId} ` +
-        `(${pool.map((candidate) => candidate.model).join(', ')}) — deferring spawn`
-    );
+    return { deferred: true };
   }
-  return { ...input.slot, model: entry.model };
+  return {
+    slot: { ...input.slot, model: entry.model },
+    model: entry.model,
+    provider: entry.provider,
+  };
+}
+
+export function reserveModelPoolSlot(
+  assignments: ModelPoolAssignmentMap,
+  execution: Pick<NodeExecution, 'id'>,
+  assignment: Omit<ModelPoolAssignment, 'pending' | 'assignedAt'>
+): void {
+  assignments.set(modelPoolReservationKey(execution.id), {
+    ...assignment,
+    assignedAt: Date.now(),
+    pending: true,
+  });
+}
+
+export function commitModelPoolAssignment(
+  assignments: ModelPoolAssignmentMap,
+  execution: Pick<NodeExecution, 'id'>,
+  sessionId: string,
+  assignment: Omit<ModelPoolAssignment, 'pending' | 'assignedAt'>
+): void {
+  assignments.delete(modelPoolReservationKey(execution.id));
+  assignments.set(sessionId, { ...assignment, assignedAt: Date.now() });
+}
+
+export function releaseModelPoolReservation(
+  assignments: ModelPoolAssignmentMap,
+  execution: Pick<NodeExecution, 'id'>
+): void {
+  assignments.delete(modelPoolReservationKey(execution.id));
+}
+
+export function raiseModelPoolDeferred(agentName: string, spaceId: string): never {
+  throw new TransientSpawnError(
+    `Model pool for agent "${agentName}" is at capacity in space ${spaceId} — deferring spawn`
+  );
 }

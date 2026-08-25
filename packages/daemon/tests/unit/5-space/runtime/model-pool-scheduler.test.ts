@@ -1,12 +1,20 @@
 import { describe, expect, test } from 'bun:test';
-import type { SpaceTask, SpaceWorkerAgent, WorkflowNodeAgent } from '@hyperneo/shared';
+import type {
+  NodeExecution,
+  SpaceTask,
+  SpaceWorkerAgent,
+  WorkflowNodeAgent,
+} from '@hyperneo/shared';
 import {
   applyModelPoolToSlot,
+  commitModelPoolAssignment,
   countRunningModels,
   isPoolSessionActive,
   type ModelPoolAssignment,
+  modelPoolReservationKey,
+  releaseModelPoolReservation,
+  reserveModelPoolSlot,
 } from '../../../../src/lib/space/runtime/model-pool-scheduler';
-import { isTransientSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation';
 
 const NOW = 1_000_000;
 
@@ -44,7 +52,7 @@ const pool = [
 
 function apply(
   overrides: Partial<Parameters<typeof applyModelPoolToSlot>[0]> = {}
-): WorkflowNodeAgent {
+): ReturnType<typeof applyModelPoolToSlot> {
   return applyModelPoolToSlot({
     slot,
     task,
@@ -72,7 +80,12 @@ describe('isPoolSessionActive', () => {
     expect(isPoolSessionActive(stale, 'idle', NOW)).toBe(false);
   });
 
-  test('missing session never counts', () => {
+  test('pending reservations always count', () => {
+    const pending = makeAssignment({ pending: true, assignedAt: NOW - 60_000 });
+    expect(isPoolSessionActive(pending, undefined, NOW)).toBe(true);
+  });
+
+  test('missing session never counts once no longer pending', () => {
     const fresh = makeAssignment({ assignedAt: NOW - 1_000 });
     expect(isPoolSessionActive(fresh, undefined, NOW)).toBe(false);
   });
@@ -99,36 +112,84 @@ test('countRunningModels purges dead sessions and groups by model', () => {
 });
 
 test('pool picks a model with capacity and stamps it on the slot', () => {
-  expect(apply().model).toBe('sonnet');
+  expect(apply()).toEqual({ slot: { ...slot, model: 'sonnet' }, model: 'sonnet' });
+});
+
+test('pool preserves the provider captured per entry', () => {
+  const withProvider = [{ model: 'sonnet', provider: 'copilot', maxConcurrent: 2, weight: 10 }];
+  expect(apply({ agent: makeAgent(withProvider) })).toEqual({
+    slot: { ...slot, model: 'sonnet' },
+    model: 'sonnet',
+    provider: 'copilot',
+  });
 });
 
 test('slot model override skips the pool entirely', () => {
-  expect(apply({ slot: { ...slot, model: 'kimi-k3[1m]' } }).model).toBe('kimi-k3[1m]');
+  expect(apply({ slot: { ...slot, model: 'kimi-k3[1m]' } })).toEqual({
+    slot: { ...slot, model: 'kimi-k3[1m]' },
+    model: 'kimi-k3[1m]',
+  });
 });
 
 test('task workflowModelOverrides skip the pool entirely', () => {
   const overridden = {
     workflowModelOverrides: { 'node-1:coder': 'kimi-k3[1m]' },
   } as unknown as SpaceTask;
-  expect(apply({ task: overridden })).toEqual(slot);
+  expect(apply({ task: overridden })).toEqual({ slot, model: '' });
 });
 
 test('agent without a pool keeps the slot unchanged', () => {
-  const untouched = apply({ agent: makeAgent(undefined) });
-  expect(untouched).toEqual(slot);
+  expect(apply({ agent: makeAgent(undefined) })).toEqual({ slot, model: '' });
 });
 
-test('pool at capacity raises a transient spawn error so the tick defers', () => {
+test('pool at capacity defers instead of throwing', () => {
   const assignments = new Map<string, ModelPoolAssignment>([
     ['s1', makeAssignment()],
     ['s2', makeAssignment({ taskId: 'task-2' })],
   ]);
-  let raised: unknown = null;
-  try {
-    apply({ assignments });
-  } catch (err) {
-    raised = err;
-  }
-  expect(isTransientSpawnError(raised)).toBe(true);
-  expect((raised as Error).message).toContain('at capacity');
+  expect(apply({ assignments })).toEqual({ deferred: true });
+});
+
+describe('reservation lifecycle', () => {
+  const execution = { id: 'exec-1' } as NodeExecution;
+
+  test('reserve commits and releases atomically', () => {
+    const assignments = new Map<string, ModelPoolAssignment>();
+    reserveModelPoolSlot(assignments, execution, {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'sonnet',
+    });
+    const key = modelPoolReservationKey(execution.id);
+    expect(assignments.get(key)).toMatchObject({ pending: true, model: 'sonnet' });
+
+    commitModelPoolAssignment(assignments, execution, 'session-9', {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'sonnet',
+    });
+    expect(assignments.has(key)).toBe(false);
+    expect(assignments.get('session-9')).toMatchObject({ model: 'sonnet' });
+    expect(assignments.get('session-9')?.pending).toBeUndefined();
+
+    releaseModelPoolReservation(assignments, execution);
+    expect(assignments.size).toBe(1);
+  });
+
+  test('pending reservations hold capacity against concurrent spawns', () => {
+    const assignments = new Map<string, ModelPoolAssignment>();
+    reserveModelPoolSlot(assignments, { id: 'exec-1' } as NodeExecution, {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'sonnet',
+    });
+    const counts = countRunningModels({
+      assignments,
+      spaceId: 'space-1',
+      getSessionStatus: () => undefined,
+      now: NOW,
+    });
+    expect(counts).toEqual({ sonnet: 1 });
+    expect(apply({ assignments })).toEqual({ deferred: true });
+  });
 });

@@ -397,6 +397,9 @@ export class SpaceAgentManager {
       const modelError = await this.validateModel(entry.model);
       if (modelError) return modelError;
     }
+    if (!pool.some((entry) => entry.weight > 0)) {
+      return 'Model pool must have at least one entry with weight > 0';
+    }
     return null;
   }
 }
