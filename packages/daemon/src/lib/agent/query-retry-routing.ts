@@ -66,7 +66,7 @@ export interface QueryRetryFinalizer {
   skipQueueClear: boolean;
   skipStop: boolean;
   skipCatchIdle: boolean;
-  skipFinalizerIdle: boolean;
+  skipFinalizerIdle: (env: QueryRetryEnvironment) => boolean;
   skipBeginTerminalIdle: boolean;
   skipErrorManager: boolean;
 }
@@ -142,8 +142,8 @@ function resolveTerminalMessageHint(
 
 export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetryRoute {
   const { errorSignal, env } = input;
-  if (env.isCleaningUp) return { action: 'cleanup_noop' };
   if (env.isSuperseded) return { action: 'superseded_noop' };
+  if (env.isCleaningUp) return { action: 'cleanup_noop' };
   if (
     errorSignal.isStartupTimeout &&
     env.attempt === 0 &&
@@ -183,7 +183,7 @@ function makeFinalizer(overrides: Partial<QueryRetryFinalizer>): QueryRetryFinal
     skipQueueClear: false,
     skipStop: false,
     skipCatchIdle: false,
-    skipFinalizerIdle: false,
+    skipFinalizerIdle: () => false,
     skipBeginTerminalIdle: false,
     skipErrorManager: false,
     ...overrides,
@@ -204,7 +204,13 @@ function skipFinalizerIdleDueToLifecycle(env: QueryRetryEnvironment): boolean {
   );
 }
 
-function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): QueryRetryDecision {
+const skipFinalizerIdleAlways = () => true;
+
+function resolveDecision(
+  route: QueryRetryRoute,
+  env: QueryRetryEnvironment,
+  errorSignal?: QueryRetryErrorSignal
+): QueryRetryDecision {
   const handoff = env.rateLimitHandoffResult ?? null;
   if (route.action === 'rate_limit_handoff') {
     if (handoff === 'accepted') {
@@ -212,7 +218,7 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
         route,
         finalizer: makeFinalizer({
           skipCatchIdle: true,
-          skipFinalizerIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
@@ -223,24 +229,39 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
         route,
         finalizer: makeFinalizer({
           skipCatchIdle: true,
-          skipFinalizerIdle: skipIdleDueToRecovery(env),
+          skipFinalizerIdle: skipIdleDueToRecovery,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
       };
     }
     if (handoff === 'declined') {
-      return {
-        route: { action: 'terminal', category: ErrorCategory.RATE_LIMIT, messageHint: undefined },
-        finalizer: makeFinalizer({
-          skipFinalizerIdle: skipFinalizerIdleDueToLifecycle(env),
-        }),
-      };
+      if (errorSignal && isQueryInterrupted(errorSignal, env.lifecycle)) {
+        return {
+          route: { action: 'aborted_noop' },
+          finalizer: makeFinalizer({
+            skipCatchIdle: true,
+            skipFinalizerIdle: skipIdleDueToRecovery,
+            skipBeginTerminalIdle: true,
+            skipErrorManager: true,
+          }),
+        };
+      }
+      const nonHandoffEnv: QueryRetryEnvironment = { ...env, hasRateLimitHandoff: false };
+      const recomputedRoute = errorSignal
+        ? classifyQueryRetryRoute({ errorSignal, env: nonHandoffEnv })
+        : ({
+            action: 'terminal',
+            category: ErrorCategory.RATE_LIMIT,
+            messageHint: undefined,
+          } as QueryRetryRoute);
+      return resolveDecision(recomputedRoute, nonHandoffEnv, errorSignal);
     }
     return {
       route,
       finalizer: makeFinalizer({
         skipCatchIdle: true,
+        skipFinalizerIdle: skipFinalizerIdleAlways,
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
@@ -255,18 +276,31 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
           skipQueueClear: true,
           skipStop: true,
           skipCatchIdle: true,
-          skipFinalizerIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
       };
     case 'cleanup_noop':
+      if (env.isSuperseded) {
+        return {
+          route: { action: 'superseded_noop' },
+          finalizer: makeFinalizer({
+            skipQueueClear: true,
+            skipStop: true,
+            skipCatchIdle: true,
+            skipFinalizerIdle: skipFinalizerIdleAlways,
+            skipBeginTerminalIdle: true,
+            skipErrorManager: true,
+          }),
+        };
+      }
       return {
         route,
         finalizer: makeFinalizer({
           skipQueueClear: true,
           skipCatchIdle: true,
-          skipFinalizerIdle: true,
+          skipFinalizerIdle: skipFinalizerIdleAlways,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
@@ -276,7 +310,7 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
         route,
         finalizer: makeFinalizer({
           skipCatchIdle: true,
-          skipFinalizerIdle: skipIdleDueToRecovery(env),
+          skipFinalizerIdle: skipIdleDueToRecovery,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
@@ -286,7 +320,7 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
         route,
         finalizer: makeFinalizer({
           skipCatchIdle: env.recoveryState.rateLimitCooldownScheduled,
-          skipFinalizerIdle: skipIdleDueToRecovery(env),
+          skipFinalizerIdle: skipIdleDueToRecovery,
           skipErrorManager: true,
         }),
       };
@@ -294,7 +328,7 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
       return {
         route,
         finalizer: makeFinalizer({
-          skipFinalizerIdle: skipFinalizerIdleDueToLifecycle(env),
+          skipFinalizerIdle: skipFinalizerIdleDueToLifecycle,
         }),
       };
     case 'startup_timeout_retry':
@@ -305,6 +339,7 @@ function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): Qu
         route,
         finalizer: makeFinalizer({
           skipQueueClear: true,
+          skipCatchIdle: true,
           skipBeginTerminalIdle: true,
           skipErrorManager: true,
         }),
@@ -328,7 +363,7 @@ function applyClassifierGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx 
 function applyArmMappingGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
   const route =
     ctx.route ?? classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env });
-  return decided(ctx, resolveDecision(route, ctx.env));
+  return decided(ctx, resolveDecision(route, ctx.env, ctx.errorSignal));
 }
 
 const queryRetryDecisionRun = decisionRun<QueryRetryDecisionCtx>('query-retry-arm', [
@@ -342,5 +377,8 @@ export function decideQueryRetry(input: QueryRetryRouteInput): QueryRetryDecisio
     env: input.env,
     route: null,
   });
-  return ctx.decision ?? resolveDecision(ctx.route ?? classifyQueryRetryRoute(input), input.env);
+  return (
+    ctx.decision ??
+    resolveDecision(ctx.route ?? classifyQueryRetryRoute(input), input.env, input.errorSignal)
+  );
 }

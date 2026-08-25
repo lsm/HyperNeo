@@ -45,16 +45,35 @@ function signal(overrides: Partial<QueryRetryErrorSignal> = {}): QueryRetryError
   };
 }
 
-function finalizer(overrides: Partial<QueryRetryFinalizer> = {}): QueryRetryFinalizer {
-  return {
+function finalizer(
+  overrides: Partial<Omit<QueryRetryFinalizer, 'skipFinalizerIdle'>> & {
+    skipFinalizerIdle?: boolean | ((env: QueryRetryEnvironment) => boolean);
+  } = {}
+): QueryRetryFinalizer {
+  const { skipFinalizerIdle: skipIdle, ...rest } = overrides;
+  const skipFn = typeof skipIdle === 'boolean' ? () => skipIdle : (skipIdle ?? (() => false));
+  const base = {
     skipQueueClear: false,
     skipStop: false,
     skipCatchIdle: false,
-    skipFinalizerIdle: false,
+    skipFinalizerIdle: skipFn,
     skipBeginTerminalIdle: false,
     skipErrorManager: false,
-    ...overrides,
   };
+  return { ...base, ...rest, skipFinalizerIdle: skipFn };
+}
+
+function assertFinalizer(
+  actual: QueryRetryFinalizer,
+  expected: QueryRetryFinalizer,
+  testEnv: QueryRetryEnvironment
+): void {
+  expect(actual.skipQueueClear).toBe(expected.skipQueueClear);
+  expect(actual.skipStop).toBe(expected.skipStop);
+  expect(actual.skipCatchIdle).toBe(expected.skipCatchIdle);
+  expect(actual.skipBeginTerminalIdle).toBe(expected.skipBeginTerminalIdle);
+  expect(actual.skipErrorManager).toBe(expected.skipErrorManager);
+  expect(actual.skipFinalizerIdle(testEnv)).toBe(expected.skipFinalizerIdle(testEnv));
 }
 
 describe('query-retry-routing', () => {
@@ -178,6 +197,12 @@ describe('query-retry-routing', () => {
       expected: { action: 'superseded_noop' },
     },
     {
+      name: 'superseded takes precedence over cleanup',
+      signal: { isStartupTimeout: true },
+      env: { isSuperseded: true, isCleaningUp: true },
+      expected: { action: 'superseded_noop' },
+    },
+    {
       name: 'parseable 4xx routes to api_validation',
       signal: {
         rawText: '400 prompt is too long',
@@ -233,6 +258,7 @@ describe('decideQueryRetry', () => {
       expectedRoute: { action: 'startup_timeout_retry', redeliver: 'consumed' },
       expectedFinalizer: finalizer({
         skipQueueClear: true,
+        skipCatchIdle: true,
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
@@ -261,6 +287,7 @@ describe('decideQueryRetry', () => {
       expectedRoute: { action: 'message_not_found_retry' },
       expectedFinalizer: finalizer({
         skipQueueClear: true,
+        skipCatchIdle: true,
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
@@ -272,6 +299,7 @@ describe('decideQueryRetry', () => {
       expectedRoute: { action: 'transient_retry' },
       expectedFinalizer: finalizer({
         skipQueueClear: true,
+        skipCatchIdle: true,
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
@@ -317,6 +345,7 @@ describe('decideQueryRetry', () => {
       expectedRoute: { action: 'provider_backoff', nextAttempt: 1 },
       expectedFinalizer: finalizer({
         skipQueueClear: true,
+        skipCatchIdle: true,
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
@@ -584,6 +613,48 @@ describe('decideQueryRetry', () => {
       expectedFinalizer: finalizer(),
     },
     {
+      name: 'rate limit handoff declined preserves provider availability category',
+      signal: {
+        rawText: '429 service unavailable',
+        isRateLimit: true,
+        rateLimitHint: { kind: 'rate_limit', billingTerminal: false },
+      },
+      env: {
+        providerFamily: 'provider',
+        hasRateLimitHandoff: true,
+        rateLimitHandoffResult: 'declined',
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.PROVIDER_UNAVAILABLE,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'rate limit handoff declined with interrupted session routes aborted_noop',
+      signal: {
+        rawText: '429 please upgrade your plan',
+        isRateLimit: true,
+        rateLimitHint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      env: {
+        hasRateLimitHandoff: true,
+        rateLimitHandoffResult: 'declined',
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: { action: 'aborted_noop' },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
       name: 'rate limit handoff thrown skips terminal but keeps finalizer idle',
       signal: {
         rawText: '429 please upgrade your plan',
@@ -620,6 +691,7 @@ describe('decideQueryRetry', () => {
       },
       expectedFinalizer: finalizer({
         skipCatchIdle: true,
+        skipFinalizerIdle: true,
         skipBeginTerminalIdle: true,
         skipErrorManager: true,
       }),
@@ -628,14 +700,38 @@ describe('decideQueryRetry', () => {
 
   for (const { name, signal: sig, env: e, expectedRoute, expectedFinalizer } of cases) {
     it(name, () => {
+      const testEnv = env(e ?? {});
       const decision = decideQueryRetry({
         errorSignal: signal(sig ?? {}),
-        env: env(e ?? {}),
+        env: testEnv,
       });
       expect(decision.route).toEqual(expectedRoute);
-      expect(decision.finalizer).toEqual(expectedFinalizer);
+      assertFinalizer(decision.finalizer, expectedFinalizer, testEnv);
     });
   }
+
+  it('terminal finalizer recomputes on resnapshotted recovery state', () => {
+    const initialEnv = env({
+      lifecycle: {
+        processingStatus: 'processing',
+        abortSignalAborted: false,
+        isLimitRecoveryPending: false,
+      },
+    });
+    const resnappedEnv = env({
+      lifecycle: {
+        processingStatus: 'rate_limit_cooldown',
+        abortSignalAborted: false,
+        isLimitRecoveryPending: false,
+      },
+    });
+    const decision = decideQueryRetry({
+      errorSignal: signal({ rawText: 'invalid_api_key' }),
+      env: initialEnv,
+    });
+    expect(decision.finalizer.skipFinalizerIdle(initialEnv)).toBe(false);
+    expect(decision.finalizer.skipFinalizerIdle(resnappedEnv)).toBe(true);
+  });
 
   describe('lifecycle status × abort signal × cleanup matrix', () => {
     const PROVIDER_5XX_MSG = '503 Service Unavailable';
@@ -715,6 +811,12 @@ describe('decideQueryRetry', () => {
         signal: { rawText: PROVIDER_5XX_MSG, isRetryableProviderError: true },
         env: { isCleaningUp: true, hasConsumedPrompt: true },
         expectedAction: 'cleanup_noop',
+      },
+      {
+        name: 'cleanup with superseded routes superseded_noop',
+        signal: { rawText: PROVIDER_5XX_MSG, isRetryableProviderError: true },
+        env: { isCleaningUp: true, isSuperseded: true, hasConsumedPrompt: true },
+        expectedAction: 'superseded_noop',
       },
       {
         name: 'transient with cleanup routes cleanup_noop',
