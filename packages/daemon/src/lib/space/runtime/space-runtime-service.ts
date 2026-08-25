@@ -1,98 +1,99 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   AgentDefinition,
   McpServerConfig,
   Session,
   Space,
-  SpaceWorkerAgent,
   SpaceGoalOutcomeNotification,
   SpaceLongHorizonAgent,
   SpaceTask,
+  SpaceWorkerAgent,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
-import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository';
 import { generateUUID, isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
-import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
-import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
-import { SpaceMessageResolver } from '../messaging-adapter';
-import type { SpaceManager } from '../managers/space-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceRepository } from '../../../storage/repositories/space-repository';
-import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository';
-import type { SessionRepository } from '../../../storage/repositories/session-repository';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
+import type {
+  SpaceAgentInboxMessageRecord,
+  SpaceAgentInboxRepository,
+} from '../../../storage/repositories/space-agent-inbox-repository.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   coordinatorSessionId,
   type SpaceLongHorizonAgentRepository,
-} from '../../../storage/repositories/space-long-horizon-agent-repository';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
-import type {
-  SpaceAgentInboxMessageRecord,
-  SpaceAgentInboxRepository,
-} from '../../../storage/repositories/space-agent-inbox-repository';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
-import type { WorkflowArtifactProfile } from './artifact-profile';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { TaskAgentManager } from './task-agent-manager';
-import type { SessionManager } from '../../session-manager';
-import type { AgentSession } from '../../agent/agent-session';
+} from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
+import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { AgentSession } from '../../agent/agent-session.ts';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
-} from '../../agent/message-delivery';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import { SpaceRuntime } from './space-runtime';
-import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
-import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
-import { ChannelRouter } from './channel-router';
-import { SpaceTaskManager } from '../managers/space-task-manager';
-import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
-import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent';
-import { resolveCustomAgentPrompt } from '../agents/custom-agent';
-import { inferPersistableProviderForModel } from '../../providers/registry';
-import { findInModels, getAvailableModels } from '../../model-service';
-import { Logger } from '../../logger';
-import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
+} from '../../agent/message-delivery.ts';
+import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
+import type { ExternalEventService } from '../../external-events/external-event-service.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import {
-  resolveSpaceMcpSessionPolicy,
-  type SpaceMcpSessionPolicy,
-} from './space-mcp-session-policy';
+  ExternalEventQueueMetrics,
+  type QueueHealthSnapshot,
+} from '../../external-events/queue-health-metrics.ts';
+import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
+import { findInModels, getAvailableModels } from '../../model-service.ts';
+import { inferPersistableProviderForModel } from '../../providers/registry.ts';
+import type { SessionManager } from '../../session-manager.ts';
+import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
+import {
+  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
+  LONG_HORIZON_OWNER_REVIEW_CONTRACT,
+  LONG_HORIZON_SCHEDULING_GUARDRAIL,
+} from '../agents/long-horizon-agent-tools.ts';
+import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
+import { deriveWorkerDisallowedTools } from '../agents/tool-policy.ts';
+import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import { SpaceMessageResolver } from '../messaging-adapter.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { createSpaceAgentMcpServer } from '../tools/space-agent-tools.ts';
+import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import { ChannelRouter } from './channel-router.ts';
+import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
+import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
+import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import {
   SpaceAgentNotificationService,
   type SpaceAgentNotificationServiceConfig,
-} from './space-agent-notification-service';
-import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session';
-import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
+} from './space-agent-notification-service.ts';
 import {
-  type QueueHealthSnapshot,
-  ExternalEventQueueMetrics,
-} from '../../external-events/queue-health-metrics';
-import type { ExternalEventService } from '../../external-events/external-event-service';
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import {
-  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
-  LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from '../agents/long-horizon-agent-tools';
-import { deriveWorkerDisallowedTools } from '../agents/tool-policy';
-import type { UUID } from 'crypto';
+  resolveSpaceMcpSessionPolicy,
+  type SpaceMcpSessionPolicy,
+} from './space-mcp-session-policy.ts';
+import { SpaceRuntime } from './space-runtime.ts';
+import type { TaskAgentManager } from './task-agent-manager.ts';
+import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
 
@@ -105,6 +106,17 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
 } as const;
 
 const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
+
+type LongTermAgentDirectDelivery =
+  | { state: 'delivered'; sessionId: string }
+  | { state: 'recipient_stale' }
+  | { state: 'failed' };
+
+type LongTermAgentQueueing =
+  | { state: 'delivered'; sessionId: string }
+  | { state: 'queued'; messageId: string }
+  | { state: 'recipient_stale' }
+  | { state: 'undeliverable' };
 
 export interface SpaceRuntimeServiceConfig {
   db: BunDatabase;
@@ -126,7 +138,7 @@ export interface SpaceRuntimeServiceConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  scheduleService?: import('../schedule/schedule-service').ScheduleService;
+  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
@@ -145,9 +157,9 @@ export interface SpaceRuntimeServiceConfig {
     pendingMessageRepo?: PendingAgentMessageRepository;
   };
   spaceAgentInboxRepo?: SpaceAgentInboxRepository;
-  goalService?: import('../goals/goal-service').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
-  evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
+  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
 }
@@ -249,8 +261,15 @@ export class SpaceRuntimeService {
     | undefined {
     if (!this.config.sessionManager) return undefined;
     return {
-      deliverToSession: (actor, message) => this.deliverToLongTermAgent(actor, message),
-      queueForActivation: (actor, message) => this.queueLongTermAgentMessage(actor, message),
+      deliverToSession: async (actor, message) => {
+        const outcome = await this.deliverToLongTermAgent(actor, message);
+        return outcome.state === 'delivered' ? outcome.sessionId : null;
+      },
+      queueForActivation: async (actor, message) => {
+        const outcome = await this.queueLongTermAgentMessage(actor, message);
+        if (outcome.state === 'delivered') return outcome.sessionId;
+        return outcome.state === 'queued' ? outcome.messageId : null;
+      },
     };
   }
 
@@ -322,31 +341,70 @@ export class SpaceRuntimeService {
   private async deliverToLongTermAgent(
     actor: ActorRef,
     message: MessageRecord
-  ): Promise<string | null> {
+  ): Promise<LongTermAgentDirectDelivery> {
+    if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) {
+      return { state: 'recipient_stale' };
+    }
     const session = await this.ensureLongTermAgentSession(actor);
-    if (!session) return null;
-    if (message.idempotencyKey?.startsWith('goal-outcome:')) {
-      const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
-      const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
-      if (notification == null || notification.status !== 'pending') return null;
-      const space = await this.config.spaceManager.getSpace(actor.spaceId);
-      if (!space || space.status !== 'active' || space.paused || space.stopped) return null;
+    if (!session) return { state: 'failed' };
+    if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) {
+      return { state: 'recipient_stale' };
     }
     await this.injectLongTermAgentMessage(
       session,
       message.body,
       message.idempotencyKey ?? message.messageId
     );
-    return session.getSessionData().id;
+    return { state: 'delivered', sessionId: session.getSessionData().id };
+  }
+
+  private async isGoalOutcomeWakeDeliverable(
+    actor: ActorRef,
+    message: MessageRecord
+  ): Promise<boolean> {
+    if (!message.idempotencyKey?.startsWith('goal-outcome:')) return true;
+    const notificationId = message.idempotencyKey.slice('goal-outcome:'.length);
+    const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
+    if (notification == null || notification.status !== 'pending') return false;
+    const space = await this.config.spaceManager.getSpace(message.spaceId);
+    if (!space || space.status !== 'active' || space.paused || space.stopped) return false;
+    const goal = this.config.goalService?.getGoal(notification.goalId);
+    if (!goal || goal.spaceId !== notification.spaceId) return false;
+    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    let authorizedId: string | null = null;
+    if (resolution?.action === 'resolved') {
+      authorizedId = resolution.owner.agentId;
+    } else if (resolution?.action === 'coordinator_fallback') {
+      authorizedId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
+      authorizedId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+    }
+    return authorizedId != null && agentIdFromActorId(actor.actorId) === authorizedId;
   }
 
   async deliverGoalOutcomeWake(notification: SpaceGoalOutcomeNotification): Promise<void> {
     if (!this.config.enableGoalOutcomeWake) return;
+    const maxRecipientReroutes = 3;
+    for (let attempt = 0; attempt < maxRecipientReroutes; attempt += 1) {
+      const shouldRetry = await this.deliverGoalOutcomeWakeToResolvedRecipient(notification);
+      if (!shouldRetry) return;
+      log.warn(
+        `Goal outcome wake recipient went stale for notification "${notification.id}"; re-resolving recipient`
+      );
+    }
+    log.warn(
+      `Goal outcome wake recipient kept going stale for notification "${notification.id}"; leaving it pending for recovery`
+    );
+  }
+
+  private async deliverGoalOutcomeWakeToResolvedRecipient(
+    notification: SpaceGoalOutcomeNotification
+  ): Promise<boolean> {
     if (this.config.outcomeNotificationRepo?.getById(notification.id)?.status !== 'pending') {
-      return;
+      return false;
     }
     const goal = this.config.goalService?.getGoal(notification.goalId);
-    if (!goal || goal.spaceId !== notification.spaceId) return;
+    if (!goal || goal.spaceId !== notification.spaceId) return false;
     const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
     let targetAgentId: string | null = null;
     if (resolution?.action === 'resolved') {
@@ -360,10 +418,10 @@ export class SpaceRuntimeService {
       log.warn(
         `Goal outcome wake has no owner or coordinator for notification "${notification.id}"`
       );
-      return;
+      return false;
     }
     const agent = this.config.longHorizonAgentRepo?.getById(targetAgentId);
-    if (!agent) return;
+    if (!agent) return false;
     const actor: ActorRef = {
       actorId: `agent:${encodeActorIdComponent(agent.id)}`,
       kind: 'agent',
@@ -385,22 +443,26 @@ export class SpaceRuntimeService {
       idempotencyKey: `goal-outcome:${notification.id}`,
       createdAt: Date.now(),
     };
-    await this.queueLongTermAgentMessage(actor, message);
+    const routed = await this.queueLongTermAgentMessage(actor, message);
+    return routed.state === 'recipient_stale';
   }
 
   private async queueLongTermAgentMessage(
     actor: ActorRef,
     message: MessageRecord
-  ): Promise<string | null> {
+  ): Promise<LongTermAgentQueueing> {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     const agentId = agentIdFromActorId(actor.actorId);
-    if (!agentId) return null;
+    if (!agentId) return { state: 'undeliverable' };
     const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
     if (longHorizonAgent?.spaceId === actor.spaceId) {
       const delivered = await this.deliverToLongTermAgent(actor, message);
-      if (delivered) return delivered;
+      if (delivered.state === 'delivered') {
+        return { state: 'delivered', sessionId: delivered.sessionId };
+      }
+      if (delivered.state === 'recipient_stale') return { state: 'recipient_stale' };
     }
-    if (!inboxRepo) return null;
+    if (!inboxRepo) return { state: 'undeliverable' };
     const sourceSessionId = sourceSessionIdFromActorId(message.senderActorId);
     const { record } = inboxRepo.enqueue({
       spaceId: message.spaceId,
@@ -417,7 +479,7 @@ export class SpaceRuntimeService {
         `Long-term Space agent activation failed for ${actor.actorId}: ${err instanceof Error ? err.message : String(err)}`
       );
     });
-    return record.id;
+    return { state: 'queued', messageId: record.id };
   }
 
   private async activateLongTermAgentAndFlush(
@@ -487,7 +549,19 @@ export class SpaceRuntimeService {
     if (!row.idempotencyKey?.startsWith('goal-outcome:')) return false;
     const notificationId = row.idempotencyKey.slice('goal-outcome:'.length);
     const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
-    return notification == null || notification.status !== 'pending';
+    if (notification == null || notification.status !== 'pending') return true;
+    const goal = this.config.goalService?.getGoal(notification.goalId);
+    if (!goal || goal.spaceId !== notification.spaceId) return true;
+    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
+    let targetAgentId: string | null = null;
+    if (resolution?.action === 'resolved') {
+      targetAgentId = resolution.owner.agentId;
+    } else if (resolution?.action === 'coordinator_fallback') {
+      targetAgentId = resolution.coordinatorAgentId;
+    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
+      targetAgentId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
+    }
+    return targetAgentId == null || row.targetAgentId !== targetAgentId;
   }
 
   private async injectLongTermAgentMessage(
@@ -617,8 +691,8 @@ export class SpaceRuntimeService {
         : undefined)) as Session['config']['provider'];
     const instructions = agent.instructions?.trim();
     const systemPromptAppend = instructions
-      ? `${instructions}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
-      : LONG_HORIZON_SCHEDULING_GUARDRAIL;
+      ? `${instructions}\n\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
+      : `${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`;
     return {
       model,
       provider,
@@ -755,7 +829,11 @@ export class SpaceRuntimeService {
     if (!agentId) return null;
     const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
     if (longHorizonAgent?.spaceId === actor.spaceId) {
-      if (longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId)) {
+      const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(actor.spaceId);
+      if (
+        longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId) ||
+        coordinator?.id === longHorizonAgent.id
+      ) {
         if (longHorizonAgent.status !== 'active') return null;
         return this.resolveCoordinatorSession(actor.spaceId);
       }
@@ -1116,6 +1194,7 @@ export class SpaceRuntimeService {
     this.provisioningPromise = (async () => {
       await this.provisionExistingSpaces();
       await this.recoverLongTermAgentInbox();
+      await this.recoverPendingOutcomeNotifications();
       await this.recoverStalledWorkflowRuns();
     })().catch((err) => {
       log.error('Failed to provision existing spaces during startup:', err);
@@ -1187,6 +1266,48 @@ export class SpaceRuntimeService {
     } catch (err) {
       log.error('SpaceRuntimeService: recoverLongTermAgentInbox failed:', err);
     }
+  }
+
+  async recoverPendingOutcomeNotificationsForSpace(spaceId: string): Promise<void> {
+    const repo = this.config.outcomeNotificationRepo;
+    if (!repo || !this.config.enableGoalOutcomeWake) return;
+    try {
+      if (!(await this.isSpaceWakeable(spaceId))) return;
+      for (const notification of repo.listPendingBySpace(spaceId)) {
+        void this.deliverGoalOutcomeWake(notification).catch((err) => {
+          log.warn(
+            `Outcome wake recovery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.error(
+        `SpaceRuntimeService: recoverPendingOutcomeNotifications failed for ${spaceId}:`,
+        err
+      );
+    }
+  }
+
+  private async recoverPendingOutcomeNotifications(): Promise<void> {
+    const repo = this.config.outcomeNotificationRepo;
+    if (!repo || !this.config.enableGoalOutcomeWake) return;
+    try {
+      for (const notification of repo.listPending()) {
+        if (!(await this.isSpaceWakeable(notification.spaceId))) continue;
+        void this.deliverGoalOutcomeWake(notification).catch((err) => {
+          log.warn(
+            `Outcome wake recovery failed for notification "${notification.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } catch (err) {
+      log.error('SpaceRuntimeService: recoverPendingOutcomeNotifications failed:', err);
+    }
+  }
+
+  private async isSpaceWakeable(spaceId: string): Promise<boolean> {
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    return space != null && space.status === 'active' && !space.paused && !space.stopped;
   }
 
   async ready(): Promise<void> {
@@ -1705,6 +1826,7 @@ export class SpaceRuntimeService {
       },
       myAgentName: 'space-agent',
       myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
+      myAgentId: coordinator ? coordinator.id : undefined,
       mySessionId: spaceChatSessionId,
       callerRole: 'coordinator',
       auditLogRepo: this.auditLogRepo,

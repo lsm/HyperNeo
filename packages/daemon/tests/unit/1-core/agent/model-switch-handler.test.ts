@@ -638,6 +638,22 @@ describe('ModelSwitchHandler', () => {
         expect(result.model).toBe('default');
       });
 
+      it('rejects a curated-out model before mutating the session', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        handler = createHandler();
+
+        const result = await handler.switchModel('opus', 'anthropic');
+
+        expect(result).toMatchObject({ success: false, model: 'default' });
+        expect(result.error).toContain('Invalid model');
+        expect(mockSession.config).toMatchObject({ model: 'default', provider: 'anthropic' });
+        expect(updateSessionSpy).not.toHaveBeenCalled();
+        expect(setModelTrackerSpy).not.toHaveBeenCalled();
+        expect(restartSpy).not.toHaveBeenCalled();
+        expect(publishSpy).not.toHaveBeenCalled();
+        expect(emitSpy).not.toHaveBeenCalled();
+      });
+
       it('should return success with message when already using model', async () => {
         handler = createHandler({ queryObject: null });
         await handler.switchModel('haiku', 'anthropic');

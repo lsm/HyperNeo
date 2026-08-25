@@ -39,6 +39,8 @@ export interface ProviderSessionConfig {
   [key: string]: unknown;
 }
 
+export type ProviderFailureErrorKind = 'transient' | 'credential';
+
 export interface ProviderAuthStatusInfo {
   isAuthenticated: boolean;
   method?: 'api_key' | 'oauth';
@@ -49,6 +51,7 @@ export interface ProviderAuthStatusInfo {
     name?: string;
   };
   error?: string;
+  errorKind?: ProviderFailureErrorKind;
 }
 
 export interface ProviderOAuthFlowData {
@@ -57,6 +60,17 @@ export interface ProviderOAuthFlowData {
   userCode?: string;
   verificationUri?: string;
   message: string;
+}
+
+export interface CuratedModel {
+  id: string;
+  name?: string;
+}
+
+export interface ListRemoteModelsOptions {
+  force?: boolean;
+  command?: string;
+  baseUrl?: string;
 }
 
 export interface Provider {
@@ -72,11 +86,17 @@ export interface Provider {
 
   getCachedModels?(): ModelInfo[] | null;
 
+  hasCuratedModelList?(): boolean;
+
+  listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
+
   ownsModel(modelId: string): boolean;
 
   getModelForTier(tier: ModelTier): string | undefined;
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig;
+
+  ensureBridgeStarted?(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void>;
 
   translateModelIdForSdk?(modelId: string): string;
 
@@ -106,6 +126,8 @@ export interface Provider {
   shutdown?(): Promise<void>;
 
   clearModelCache?(): void;
+
+  setCuratedModels?(models: CuratedModel[] | undefined): void;
 
   getModelThinkingMode?(modelId: string): 'off' | 'on' | 'granular' | undefined;
 }

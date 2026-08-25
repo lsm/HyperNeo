@@ -53,6 +53,7 @@ export {
 } from './logger.ts';
 export type {
   LoggerConfig,
+  LoggerOptions,
   StructuredLogContext,
   StructuredLogEvent,
   StructuredLogLevel,

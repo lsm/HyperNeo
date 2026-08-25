@@ -1,5 +1,5 @@
 import type { GlobalSettings } from '@hyperneo/shared';
-import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
+import type { ExternalEventPublishedPayload } from './external-events/external-event-service.ts';
 
 export interface HandlerFailure {
   subscriberName: string;
@@ -246,6 +246,7 @@ export interface SessionEvents {
   'session.deleted': { sessionId: string };
   'commands.updated': { sessionId: string; commands: string[] };
   'session.error': { sessionId: string; error: string; details?: unknown };
+  'session.errorObserved': { sessionId: string; details: unknown };
   'session.errorClear': { sessionId: string };
   'session.rate_limit_pause': {
     sessionId: string;
@@ -376,6 +377,7 @@ export interface SpaceWorkflowRunNeedsAttentionEvent {
   reason: string;
   retriesExhausted: number;
   timestamp: string;
+  handledBySpaceService?: boolean;
 }
 
 export interface SpaceTaskAwaitingApprovalEvent {

@@ -1,4 +1,4 @@
-import { RESERVED_SPACE_AGENT_HANDLES } from './slug';
+import { RESERVED_SPACE_AGENT_HANDLES } from './slug.ts';
 
 export function normalizeAgentNameToken(value: string): string {
   return value.trim().toLowerCase();

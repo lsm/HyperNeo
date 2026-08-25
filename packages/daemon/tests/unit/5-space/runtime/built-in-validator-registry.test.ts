@@ -11,6 +11,7 @@ import {
 import '../../../../src/lib/space/runtime/built-in-validators';
 import { registerProductionBuiltInValidators } from '../../../../src/lib/space/runtime/built-in-validators';
 import { createPrMergedValidator } from '../../../../src/lib/space/runtime/connectors/presets';
+import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';
 
@@ -23,7 +24,7 @@ function streamFromString(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function mockSpawn(stdout: string, exitCode = 0): typeof Bun.spawn {
+function mockSpawn(stdout: string, exitCode = 0): SpawnFn {
   return (() =>
     ({
       stdout: streamFromString(stdout),
@@ -31,7 +32,7 @@ function mockSpawn(stdout: string, exitCode = 0): typeof Bun.spawn {
       exited: Promise.resolve(exitCode),
       pid: 12345,
       kill() {},
-    }) as unknown) as ReturnType<typeof Bun.spawn>;
+    }) as unknown) as SpawnProcess;
 }
 
 function ctx(): HookExecutorContext {

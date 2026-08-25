@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { JobQueueProcessorSnapshot } from '../../storage/job-queue-processor';
-import { emitStructuredLogEvent } from '../logger';
+import type { JobQueueProcessorSnapshot } from '../../storage/job-queue-processor.ts';
+import { emitStructuredLogEvent } from '../logger.ts';
 
 export type MessageDeliveryLifecycleEventName =
   | 'claim'
@@ -74,6 +74,7 @@ export interface DeliveryMetricsSnapshot {
   residualWindowP99: number | null;
   residualWindowSamples: number;
   deadLetters: number;
+  zeroProgressWedges: number;
 }
 
 export interface MessageDeliveryDiagnostics {
@@ -102,6 +103,7 @@ export class DeliveryMetrics {
   };
   private residualWindows: number[] = [];
   private deadLetters = 0;
+  private zeroProgressWedges = 0;
 
   recordFeed(messageUuid: string): void {
     this.feedsObserved++;
@@ -140,6 +142,10 @@ export class DeliveryMetrics {
     this.deadLetters++;
   }
 
+  recordZeroProgressWedge(): void {
+    this.zeroProgressWedges++;
+  }
+
   snapshot(): DeliveryMetricsSnapshot {
     return {
       feedsObserved: this.feedsObserved,
@@ -150,6 +156,7 @@ export class DeliveryMetrics {
       residualWindowP99: percentile(this.residualWindows, 0.99),
       residualWindowSamples: this.residualWindows.length,
       deadLetters: this.deadLetters,
+      zeroProgressWedges: this.zeroProgressWedges,
     };
   }
 }

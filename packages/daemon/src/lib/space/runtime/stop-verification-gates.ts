@@ -1,5 +1,5 @@
 import type { AgentProcessingState } from '@hyperneo/shared';
-import type { VerifiedSessionStop } from './task-agent-manager';
+import type { VerifiedSessionStop } from './task-agent-manager.ts';
 
 export const VERIFIED_STOP_MAX_INTERRUPT_ATTEMPTS = 2;
 

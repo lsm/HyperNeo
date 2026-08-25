@@ -279,11 +279,11 @@ describe('SessionRepository', () => {
 
     it('updates message search row titles when title changes', () => {
       db.exec(`
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       repository.createSession(createDefaultSession({ title: 'Old Title' }));
       db.prepare(
@@ -329,11 +329,11 @@ describe('SessionRepository', () => {
 					completed_at INTEGER,
 					updated_at INTEGER NOT NULL
 				);
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       repository.createSession(createDefaultSession({ status: 'archived' }));
       db.prepare(
@@ -356,7 +356,7 @@ describe('SessionRepository', () => {
 
       const rows = db
         .prepare(
-          `SELECT msc.source_id, msc.title, msc.timestamp FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+          `SELECT msc.source_id, msc.title, msc.timestamp FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
         )
         .all('restored') as Array<{ source_id: string; title: string; timestamp: number }>;
       expect(rows).toEqual([
@@ -390,11 +390,11 @@ describe('SessionRepository', () => {
 						kind TEXT NOT NULL,
 						PRIMARY KEY (source_message_id, target_uuid, kind)
 					);
-					CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+					CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 				`);
       repository.createSession(createDefaultSession({ status: 'archived' }));
       const insertMessage = (
@@ -458,7 +458,7 @@ describe('SessionRepository', () => {
       expect(
         db
           .prepare(
-            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ? ORDER BY msc.source_id`
+            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ? ORDER BY msc.source_id`
           )
           .all('marker')
       ).toEqual([{ source_id: 'replacement' }, { source_id: 'visible' }]);
@@ -486,11 +486,11 @@ describe('SessionRepository', () => {
 					kind TEXT NOT NULL,
 					PRIMARY KEY (source_message_id, target_uuid, kind)
 				);
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       repository.createSession(createDefaultSession());
       db.prepare(
@@ -512,7 +512,7 @@ describe('SessionRepository', () => {
       expect(
         db
           .prepare(
-            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
           )
           .all('context')
       ).toEqual([]);
@@ -521,7 +521,7 @@ describe('SessionRepository', () => {
       expect(
         db
           .prepare(
-            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
           )
           .all('context')
       ).toEqual([{ source_id: 'msg-1' }]);
@@ -530,7 +530,7 @@ describe('SessionRepository', () => {
       expect(
         db
           .prepare(
-            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
           )
           .all('context')
       ).toEqual([]);
@@ -558,11 +558,11 @@ describe('SessionRepository', () => {
 					kind TEXT NOT NULL,
 					PRIMARY KEY (source_message_id, target_uuid, kind)
 				);
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       repository.createSession(createDefaultSession({ status: 'archived' }));
       db.prepare(
@@ -590,7 +590,7 @@ describe('SessionRepository', () => {
       expect(
         db
           .prepare(
-            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+            `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
           )
           .all('valid')
       ).toEqual([{ source_id: 'good-json' }]);
@@ -1027,11 +1027,11 @@ describe('SessionRepository', () => {
 
     it('deletes message search rows before sdk_messages cascade', () => {
       db.exec(`
-				CREATE TABLE message_search_content (kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
-					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='rowid', detail=column, tokenize = 'unicode61');
-					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END;
-					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); END;
-					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body); END
+				CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT, message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER, message_type TEXT, title TEXT, body TEXT, timestamp INTEGER);
+					CREATE VIRTUAL TABLE message_search_fts USING fts5(title, body, content='message_search_content', content_rowid='id', detail=column, tokenize = 'unicode61');
+					CREATE TRIGGER message_search_content_ai AFTER INSERT ON message_search_content BEGIN INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
       repository.createSession(createDefaultSession({ id: 'session-1' }));
       repository.createSession(createDefaultSession({ id: 'session-2' }));
@@ -1048,7 +1048,7 @@ describe('SessionRepository', () => {
 
       const rows = db
         .prepare(
-          `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+          `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
         )
         .all('needle') as Array<{ source_id: string }>;
       expect(rows.map((row) => row.source_id)).toEqual(['msg-2']);

@@ -4,7 +4,7 @@ import type {
   SpaceGoalOutcomeNotificationPayload,
   SpaceGoalOutcomeNotificationStatus,
 } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export interface CreateGoalOutcomeNotificationParams {
   spaceId: string;
@@ -52,6 +52,26 @@ export class SpaceGoalOutcomeNotificationRepository {
       .prepare(`SELECT * FROM space_goal_outcome_notifications WHERE id = ?`)
       .get(id) as Record<string, unknown> | undefined;
     return row ? rowToNotification(row) : null;
+  }
+
+  listPendingBySpace(spaceId: string): SpaceGoalOutcomeNotification[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_goal_outcome_notifications
+				 WHERE space_id = ? AND status = 'pending' ORDER BY created_at ASC LIMIT 1000`
+      )
+      .all(spaceId) as Record<string, unknown>[];
+    return rows.map(rowToNotification);
+  }
+
+  listPending(): SpaceGoalOutcomeNotification[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_goal_outcome_notifications
+				 WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1000`
+      )
+      .all() as Record<string, unknown>[];
+    return rows.map(rowToNotification);
   }
 
   listPendingByGoal(goalId: string): SpaceGoalOutcomeNotification[] {

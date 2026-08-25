@@ -119,6 +119,14 @@ describe('DatabaseCore', () => {
 
       await dbCore.initialize();
     });
+
+    it('should release the lock when initialization fails', async () => {
+      writeFileSync(dbPath, 'not a sqlite database');
+      dbCore = new DatabaseCore(dbPath);
+
+      await expect(dbCore.initialize()).rejects.toThrow();
+      expect(existsSync(dbPath + '.lock')).toBe(false);
+    });
   });
 
   describe('getDb', () => {
@@ -423,6 +431,10 @@ describe('DatabaseCore', () => {
         raw.exec('ROLLBACK');
         raw.close();
       }
+
+      dbCore.close();
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
 
       const backups = listBackups();
       expect(backups).toHaveLength(1);

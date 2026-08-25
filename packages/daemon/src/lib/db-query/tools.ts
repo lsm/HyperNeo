@@ -1,7 +1,7 @@
-import { Database } from '../../storage/sqlite-compat';
+import { Database } from '../../storage/sqlite-compat.ts';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import { DbQueryWorkerService, DbQueryWorkerUnavailableError } from './db-query-worker-service.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
 import { DEFAULT_LIMIT, MAX_LIMIT, runScopedQuery } from './scoped-query.ts';

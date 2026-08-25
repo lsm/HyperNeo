@@ -1,4 +1,4 @@
-import type { GitHubWatchedRepo } from './github-repository';
+import type { GitHubWatchedRepo } from './github-repository.ts';
 
 export function gitHubRepoPath(owner: string, repo: string): string {
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;

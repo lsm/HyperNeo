@@ -48,7 +48,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         apiKey: 'sk-test-key',
         fetchImpl: fetchMock as typeof fetch,
@@ -72,7 +72,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         apiKey: 'sk-test-key',
         headers: { 'x-api-key': 'override-key', 'x-custom-tenant': 'acme' },
@@ -97,7 +97,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -119,7 +119,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -150,7 +150,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         headers: { 'anthropic-version': 'pinned-by-integrator' },
         fetchImpl: fetchMock as typeof fetch,
@@ -178,7 +178,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -207,7 +207,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -225,7 +225,7 @@ describe('AnthropicMessagesBridge', () => {
   describe.skipIf(!isBun)('error envelope normalisation', () => {
     it('maps upstream non-2xx into an Anthropic-format error body', async () => {
       const fetchMock = mock(async () => new Response('upstream blew up', { status: 500 }));
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -247,7 +247,7 @@ describe('AnthropicMessagesBridge', () => {
 
     it('maps 401 to authentication_error', async () => {
       const fetchMock = mock(async () => new Response('forbidden', { status: 401 }));
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -263,7 +263,7 @@ describe('AnthropicMessagesBridge', () => {
 
     it('maps 529 to overloaded_error', async () => {
       const fetchMock = mock(async () => new Response('overloaded', { status: 529 }));
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -281,7 +281,7 @@ describe('AnthropicMessagesBridge', () => {
 
   describe.skipIf(!isBun)('/v1/models with model metadata', () => {
     it('returns enriched model metadata when models are configured', async () => {
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         apiKey: 'sk-test-key',
         models: [
@@ -316,7 +316,7 @@ describe('AnthropicMessagesBridge', () => {
     });
 
     it('returns the default stub when no models are configured', async () => {
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
       });
       servers.push(server);
@@ -333,7 +333,7 @@ describe('AnthropicMessagesBridge', () => {
     });
 
     it('supports multiple models', async () => {
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         models: [
           { id: 'model-a', display_name: 'Model A', context_window: 200000 },
@@ -352,7 +352,7 @@ describe('AnthropicMessagesBridge', () => {
     });
 
     it('respects custom max_tokens', async () => {
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         models: [
           { id: 'custom', display_name: 'Custom', context_window: 128000, max_tokens: 8192 },
@@ -378,7 +378,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -401,7 +401,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com/v1/messages',
         fetchImpl: fetchMock as typeof fetch,
       });
@@ -423,7 +423,7 @@ describe('AnthropicMessagesBridge', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://api.example.com/v1/messages/',
         fetchImpl: fetchMock as typeof fetch,
       });

@@ -15,37 +15,42 @@ import type {
   WorkflowNodeAgent,
   Session,
 } from '@hyperneo/shared';
-import type { SkillsManager } from '../../skills-manager';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
+import type { SkillsManager } from '../../skills-manager.ts';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { AgentSessionInit } from '../../../lib/agent/agent-session';
-import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session';
+import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
+import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import {
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
-} from '../../../lib/agent/message-delivery';
-import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline';
-import { validateImageSizes } from '../../session/message-persistence';
-import type { Database } from '../../../storage/database';
-import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import type { SessionManager } from '../../session-manager';
-import type { SpaceManager } from '../managers/space-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { SpaceRuntimeService } from './space-runtime-service';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
-import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
-import type { ActorResolver } from '../../../../../messaging/src/contracts';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
-import { SpaceTaskManager } from '../managers/space-task-manager';
+} from '../../../lib/agent/message-delivery.ts';
+import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+import {
+  DEFERRED_EXTERNAL_EVENT_ROW_CAP,
+  foldDeferredExternalEventOverflow,
+  parseDeferredExternalEventText,
+} from '../../../lib/external-events/deferred-event-digest.ts';
+import { validateImageSizes } from '../../session/message-persistence.ts';
+import type { Database } from '../../../storage/database.ts';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import type { SessionManager } from '../../session-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
+import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
+import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -59,16 +64,16 @@ export interface VerifiedSessionStop {
   stopped: boolean;
   detail?: string;
 }
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
-} from '../tools/end-node-handlers';
-import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
-import { createGithubConnector } from './connectors/github-connector';
-import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
-import { jsonResult } from '../tools/tool-result';
+} from '../tools/end-node-handlers.ts';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
+import { createGithubConnector } from './connectors/github-connector.ts';
+import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import { jsonResult } from '../tools/tool-result.ts';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
@@ -77,59 +82,59 @@ import {
   SpawnSupersededError,
   isSpawnSupersededError,
   validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation';
-import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing';
+} from './workflow-node-execution-validation.ts';
+import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
   type SpawnExecutionFlowDeps,
-} from './spawn-flow';
+} from './spawn-flow.ts';
 import {
   assembleNodeAgentSessionInit,
   buildExecutionBaseSessionId,
   buildSlotOverrides,
   findAvailableSessionId,
   resolveSpawnWorkspace,
-} from './spawn-slot-resolution';
-import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
-import { ChannelResolver } from './channel-resolver';
-import { ChannelRouter } from './channel-router';
-import { AgentMessageRouter } from './agent-message-router';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
-import type { WorkflowArtifactProfile } from './artifact-profile';
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
-import type { EvolutionScopeService } from '../evolution-scope-service';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import { HookExecutor } from './hook-executor';
+} from './spawn-slot-resolution.ts';
+import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
+import { ChannelResolver } from './channel-resolver.ts';
+import { ChannelRouter } from './channel-router.ts';
+import { AgentMessageRouter } from './agent-message-router.ts';
+import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
+import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import { HookExecutor } from './hook-executor.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
-} from './workflow-hook-engine';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-agent';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import { Logger } from '../../logger';
-import { extractReplyToSessionId } from '../agent-message-envelope';
-import { derivePendingQueueTargetNames } from './pending-drain-gates';
-import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline';
+} from './workflow-hook-engine.ts';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
+import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-agent.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+import { Logger } from '../../logger.ts';
+import { extractReplyToSessionId } from '../agent-message-envelope.ts';
+import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
+import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 import {
   formatPendingRowForNodeAgent,
   formatPendingRowForSpaceAgent,
   isHumanPendingSource,
-} from './pending-envelope';
-import type { InjectionDeliveryRowDeps } from './injection-delivery-steps';
+} from './pending-envelope.ts';
+import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
 import {
   deliverInjectedMessage,
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
-} from './injection-delivery-steps';
+} from './injection-delivery-steps.ts';
 
 const log = new Logger('task-agent-manager');
 
@@ -213,7 +218,7 @@ export interface TaskAgentManagerConfig {
     replyToSessionId?: string | null,
     explicitMessageId?: string
   ) => Promise<void>;
-  scheduleService?: import('../schedule/schedule-service').ScheduleService;
+  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
   messageResolverFactory?: (
@@ -230,9 +235,9 @@ export interface TaskAgentManagerConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  goalService?: import('../goals/goal-service').SpaceGoalService;
+  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
-  externalEventStore?: import('../../external-events/external-event-store').ExternalEventStore;
+  externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
 }
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
@@ -1347,17 +1352,23 @@ export class TaskAgentManager {
     repo.enforceRetention({ runId: workflowRunId });
     repo.expireStale(workflowRunId);
 
-    const pending = repo
-      .listPendingForTarget(workflowRunId, 'space-agent')
-      .filter((r) => r.targetKind === 'space_agent');
-    if (pending.length === 0) return;
+    const drain = decidePendingDrainAdmission({
+      listings: [
+        {
+          targetName: 'space-agent',
+          rows: repo.listPendingForTarget(workflowRunId, 'space-agent'),
+        },
+      ],
+      admission: { executionPresent: true, targetKind: 'space_agent' },
+    });
+    if (drain.action === 'skip') return;
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
     log.info(
-      `TaskAgentManager: flushing ${pending.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
+      `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
     );
 
-    for (const row of pending) {
+    for (const row of drain.rows) {
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const registry = this.config.replyRoutingRegistry;
@@ -3387,7 +3398,7 @@ export class TaskAgentManager {
       if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
-      return settleDeliveryRowStatus(deliveryRows, {
+      const deferredDbId = settleDeliveryRowStatus(deliveryRows, {
         sessionId,
         message: sdkUserMessage,
         messageId,
@@ -3395,6 +3406,8 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
+      await this.enforceDeferredExternalEventCap(sessionId, message);
+      return deferredDbId;
     }
     if (
       outcome.decision.action === 'clear_before_deliver' &&
@@ -3485,6 +3498,50 @@ export class TaskAgentManager {
         origin,
       }
     );
+  }
+
+  private async enforceDeferredExternalEventCap(
+    sessionId: string,
+    deferredMessageText: string
+  ): Promise<void> {
+    if (!parseDeferredExternalEventText(deferredMessageText)) return;
+    const { messages } = this.config.db.getUserMessagesByStatus(sessionId, 'deferred');
+    const foldedRows = await foldDeferredExternalEventOverflow({
+      sessionId,
+      rows: messages,
+      cap: DEFERRED_EXTERNAL_EVENT_ROW_CAP,
+      ops: {
+        findByUuid: async (uuid) => {
+          const repo = this.config.db.getSDKMessageRepo();
+          return (
+            repo.getMessageByStatusAndUuid(sessionId, 'deferred', uuid) ??
+            repo.getMessageByStatusAndUuid(sessionId, 'enqueued', uuid)
+          );
+        },
+        saveRow: async (message, sendStatus) => {
+          const dbId = this.config.db.saveUserMessage(sessionId, message, sendStatus);
+          await this.publishMessageStatusChanged(sessionId, dbId, sendStatus);
+          return dbId;
+        },
+        markSuperseded: async (dbIds) => {
+          this.config.db.updateMessageStatus(dbIds, 'consumed');
+          await this.config.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: dbIds,
+              status: 'consumed',
+            })
+            .catch(() => {});
+        },
+      },
+    });
+    if (foldedRows > 0) {
+      log.warn(
+        `TaskAgentManager: deferred external-event backlog exceeded ` +
+          `${DEFERRED_EXTERNAL_EVENT_ROW_CAP} for session ${sessionId}; folded ` +
+          `${foldedRows} oldest rows into an early digest`
+      );
+    }
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {

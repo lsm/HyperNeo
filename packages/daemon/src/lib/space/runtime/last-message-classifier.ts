@@ -64,7 +64,7 @@ export function classifyLastMessageForIdleAgent(
   return { terminal: false, reason: 'assistant message has no terminal end_turn/result signal' };
 }
 
-function isHollowTaskNotificationResult(message: SDKMessage): boolean {
+export function isHollowTaskNotificationResult(message: SDKMessage): boolean {
   if ((message as { is_error?: unknown }).is_error === true) return false;
   if (getSdkResultOriginKind(message) !== 'task-notification') return false;
   const result = (message as { result?: unknown }).result;

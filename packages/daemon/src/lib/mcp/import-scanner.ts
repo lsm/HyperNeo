@@ -6,8 +6,8 @@ import type {
   CreateAppMcpServerRequest,
   UpdateAppMcpServerRequest,
 } from '@hyperneo/shared';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository';
-import { Logger } from '../logger';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
+import { Logger } from '../logger.ts';
 
 const log = new Logger('mcp-import-scanner');
 

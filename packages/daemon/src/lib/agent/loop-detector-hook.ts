@@ -4,7 +4,7 @@ import type {
   PostToolUseHookInput,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import {
   advanceLoopStreak,
   bashFingerprintKey,
@@ -17,7 +17,7 @@ import {
   summariseArgs,
   type BashFailureRing,
   type LoopStreakState,
-} from './loop-detector-gates';
+} from './loop-detector-gates.ts';
 
 export interface LoopDetectorConfig {
   enabled: boolean;

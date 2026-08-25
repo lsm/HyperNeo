@@ -1,4 +1,4 @@
-import { parseGitHubTimestamp } from './github-normalizer';
+import { parseGitHubTimestamp } from './github-normalizer.ts';
 
 export function pullRequestUpdatedAt(row: unknown): number {
   if (!row || typeof row !== 'object') return 0;

@@ -1,5 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
+import {
+  recordProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 describe('AnthropicProvider', () => {
   let provider: AnthropicProvider;
@@ -10,10 +14,12 @@ describe('AnthropicProvider', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
+    resetProviderFailureStore();
     provider = new AnthropicProvider();
   });
 
   afterEach(() => {
+    resetProviderFailureStore();
     process.env = originalEnv;
   });
 
@@ -202,7 +208,7 @@ describe('AnthropicProvider', () => {
       expect(models.map((model) => model.id)).toEqual(['sonnet']);
     });
 
-    it('should return empty array when SDK loading fails', async () => {
+    it('should propagate SDK loading failures instead of swallowing them', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
 
       class MockMcpServer {
@@ -212,8 +218,8 @@ describe('AnthropicProvider', () => {
       }
       let _toolBatch: Array<{ name: string; def: object }> = [];
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: async () => ({
-          interrupt: () => {},
+        query: () => ({
+          interrupt: async () => {},
           supportedModels: async () => {
             throw new Error('SDK unavailable');
           },
@@ -246,9 +252,145 @@ describe('AnthropicProvider', () => {
       const providerWithCreds = new AnthropicProvider();
       providerWithCreds.clearModelCache();
 
-      const models = await providerWithCreds.getModels();
+      await expect(providerWithCreds.getModels()).rejects.toThrow('SDK unavailable');
+    });
+  });
 
-      expect(models).toEqual([]);
+  describe('listRemoteModels', () => {
+    beforeEach(() => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+    });
+
+    const cachedModels = [
+      {
+        id: 'cached-sonnet',
+        name: 'Cached Sonnet',
+        alias: 'cached-sonnet',
+        family: 'sonnet' as const,
+        provider: 'anthropic' as const,
+        contextWindow: 200000,
+        description: 'Cached',
+        releaseDate: '',
+        available: true,
+      },
+    ];
+    const refreshedModels = [
+      {
+        id: 'refreshed-opus',
+        name: 'Refreshed Opus',
+        alias: 'refreshed-opus',
+        family: 'opus' as const,
+        provider: 'anthropic' as const,
+        contextWindow: 200000,
+        description: 'Refreshed',
+        releaseDate: '',
+        available: true,
+      },
+    ];
+
+    it('reuses cached models unless force refreshes and replaces the cache', async () => {
+      const loadModels = spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      ).mockResolvedValue(refreshedModels as never);
+      const clearCache = spyOn(provider, 'clearModelCache');
+      provider.setModelCache(cachedModels);
+
+      expect(await provider.listRemoteModels()).toEqual(cachedModels);
+      expect(loadModels).not.toHaveBeenCalled();
+
+      expect(await provider.listRemoteModels({ force: true })).toEqual(refreshedModels);
+      expect(clearCache).toHaveBeenCalledTimes(1);
+      expect(loadModels).toHaveBeenCalledTimes(1);
+
+      expect(await provider.listRemoteModels()).toEqual(refreshedModels);
+      expect(loadModels).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects cached and forced discovery when credentials are no longer available', async () => {
+      const loadModels = spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      );
+      provider.setModelCache(cachedModels);
+      delete process.env.ANTHROPIC_API_KEY;
+
+      await expect(provider.listRemoteModels()).rejects.toThrow('not authenticated');
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow('not authenticated');
+      expect(loadModels).not.toHaveBeenCalled();
+    });
+
+    it('propagates a forced SDK failure instead of serving the stale cache', async () => {
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      ).mockRejectedValue(new Error('SDK refresh failed') as never);
+      provider.setModelCache(cachedModels);
+
+      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+        'SDK refresh failed'
+      );
+      await expect(provider.getModels()).rejects.toThrow('SDK refresh failed');
+    });
+
+    it('discards discovery results that cross a credential change', async () => {
+      let resolveModels: ((models: typeof refreshedModels) => void) | undefined;
+      spyOn(
+        provider as unknown as Record<string, unknown>,
+        'loadModelsFromSdk' as never
+      ).mockImplementation(
+        () =>
+          new Promise<typeof refreshedModels>((resolve) => {
+            resolveModels = resolve;
+          }) as never
+      );
+
+      const discovery = provider.listRemoteModels({ force: true });
+      while (!resolveModels) {
+        await Promise.resolve();
+      }
+
+      provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+      resolveModels(refreshedModels);
+
+      await expect(discovery).rejects.toThrow('credentials changed during model discovery');
+      expect((provider as unknown as Record<string, unknown>)['modelCache']).toBeNull();
+    });
+  });
+
+  describe('getAuthStatus', () => {
+    it('reports plain credential presence when no failure is recorded', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+
+      const status = await provider.getAuthStatus();
+
+      expect(status).toEqual({
+        isAuthenticated: true,
+        method: 'api_key',
+        error: undefined,
+      });
+    });
+
+    it('surfaces a recorded credential failure as unauthenticated', async () => {
+      process.env.ANTHROPIC_API_KEY = 'revoked-key';
+      recordProviderFailure('anthropic', new Error('SDK credential rejected (HTTP 401)'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('SDK credential rejected (HTTP 401)');
+    });
+
+    it('stays authenticated but degraded for a recorded transient failure', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+      recordProviderFailure('anthropic', new Error('SDK model load timeout'));
+
+      const status = await provider.getAuthStatus();
+
+      expect(status.isAuthenticated).toBe(true);
+      expect(status.errorKind).toBe('transient');
+      expect(status.error).toBe('SDK model load timeout');
     });
   });
 
@@ -349,6 +491,97 @@ describe('AnthropicProvider', () => {
 
       const models = await provider.getModels();
       expect(models).toEqual([]);
+    });
+
+    it('clears the model cache when credentials are replaced', async () => {
+      provider.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+      provider.setModelCache([
+        {
+          id: 'cached',
+          name: 'Cached',
+          alias: 'cached',
+          family: 'sonnet' as const,
+          provider: 'anthropic' as const,
+          contextWindow: 100000,
+          description: 'Cached',
+          releaseDate: '',
+          available: true,
+        },
+      ]);
+
+      provider.setCredentials({ type: 'api_key', apiKey: '' });
+
+      const models = await provider.getModels();
+      expect(models).toEqual([]);
+    });
+
+    it('discards an in-flight SDK load when credentials change mid-flight', async () => {
+      let loadCount = 0;
+      let releaseFirstLoad:
+        | ((models: Array<{ value: string; displayName: string; description: string }>) => void)
+        | null = null;
+      class MockMcpServer {
+        readonly _registeredTools: Record<string, object> = {};
+        connect(): void {}
+        disconnect(): void {}
+      }
+      mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+        query: () => {
+          loadCount++;
+          return {
+            interrupt: mock(async () => {}),
+            supportedModels: () =>
+              new Promise<Array<{ value: string; displayName: string; description: string }>>(
+                (resolve) => {
+                  if (loadCount === 1) {
+                    releaseFirstLoad = resolve;
+                  } else {
+                    resolve([
+                      { value: 'opus', displayName: 'Opus', description: 'Opus 4.6 · Test' },
+                    ]);
+                  }
+                }
+              ),
+          };
+        },
+        interrupt: mock(async () => {}),
+        createSdkMcpServer: mock((_options: { name: string; tools?: unknown[] }) => ({
+          type: 'sdk' as const,
+          name: _options.name,
+          version: '1.0.0',
+          tools: _options.tools ?? [],
+          instance: new MockMcpServer(),
+        })),
+        tool: mock((name: string, description: string, inputSchema: unknown, handler: unknown) => ({
+          name,
+          description,
+          inputSchema,
+          handler,
+        })),
+      }));
+
+      const providerWithInFlightLoad = new AnthropicProvider();
+      providerWithInFlightLoad.setCredentials({ type: 'api_key', apiKey: 'first-key' });
+
+      const firstLoad = providerWithInFlightLoad.getModels();
+      for (let i = 0; i < 50 && loadCount < 1; i++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      expect(loadCount).toBe(1);
+
+      providerWithInFlightLoad.setCredentials({ type: 'api_key', apiKey: 'second-key' });
+      releaseFirstLoad?.([
+        { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 4.5 · Test' },
+      ]);
+      await expect(firstLoad).rejects.toThrow('credentials changed during model discovery');
+      expect((providerWithInFlightLoad as unknown as Record<string, unknown>)['modelCache']).toBe(
+        null
+      );
+
+      const reloaded = await providerWithInFlightLoad.getModels();
+
+      expect(loadCount).toBe(2);
+      expect(reloaded.map((model) => model.id)).toEqual(['opus']);
     });
   });
 

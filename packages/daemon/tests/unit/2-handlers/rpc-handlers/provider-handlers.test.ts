@@ -228,6 +228,221 @@ describe('Provider RPC handlers', () => {
     });
   });
 
+  describe('providers.listRemoteModels', () => {
+    it('routes options through the provider capability and returns curation candidates', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      const listRemoteModels = mock(async () => [
+        {
+          id: 'remote-model',
+          name: 'Remote Model',
+          alias: 'remote',
+          family: 'remote',
+          provider: 'remote',
+          contextWindow: 1000,
+          description: 'Remote model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      getProviderRegistry().register({
+        id: 'remote',
+        listRemoteModels,
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = await handlers.get('providers.listRemoteModels')!(
+        { id: created.id, options: { force: true, baseUrl: ' https://models.example/v1 ' } },
+        {}
+      );
+
+      expect(listRemoteModels).toHaveBeenCalledWith({
+        force: true,
+        baseUrl: 'https://models.example/v1',
+      });
+      expect(result).toEqual({ models: [{ id: 'remote-model', name: 'Remote Model' }] });
+    });
+
+    it('rejects unknown, unregistered, and unsupported providers', async () => {
+      const unregistered = repo.createProvider({
+        providerId: 'unregistered',
+        displayName: 'Unregistered',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const unsupported = repo.createProvider({
+        providerId: 'unsupported',
+        displayName: 'Unsupported',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().register({ id: 'unsupported' } as Provider);
+      const handlers = setup();
+      const handler = handlers.get('providers.listRemoteModels')!;
+
+      await expect(handler({ id: 'missing' }, {})).rejects.toThrow('Provider missing not found');
+      await expect(handler({ id: unregistered.id }, {})).rejects.toThrow(
+        'Provider unregistered is not registered'
+      );
+      await expect(handler({ id: unsupported.id }, {})).rejects.toThrow(
+        'Provider unsupported does not support remote model listing'
+      );
+    });
+
+    it.each([
+      [null, 'Invalid remote model request'],
+      [{}, 'Provider id is required'],
+      [{ id: 'provider', extra: true }, 'Unknown remote model request field: extra'],
+      [{ id: 'provider', options: null }, 'Remote model options must be an object'],
+      [{ id: 'provider', options: { extra: true } }, 'Unknown remote model option: extra'],
+      [{ id: 'provider', options: { force: 'yes' } }, 'force must be a boolean'],
+      [{ id: 'provider', options: { command: 42 } }, 'ACP command must be a string'],
+      [{ id: 'provider', options: { command: '   ' } }, 'ACP command is required'],
+      [
+        { id: 'provider', options: { command: 'x'.repeat(64 * 1024 + 1) } },
+        'ACP command must be ≤ 65536 chars',
+      ],
+      [{ id: 'provider', options: { baseUrl: 42 } }, 'baseUrl must be a string'],
+      [
+        { id: 'provider', options: { baseUrl: `https://${'x'.repeat(2048)}` } },
+        'baseUrl must be ≤ 2048 chars',
+      ],
+      [{ id: 'provider', options: { baseUrl: 'not a URL' } }, 'Invalid baseUrl'],
+      [
+        { id: 'provider', options: { baseUrl: 'file:///tmp/models' } },
+        'baseUrl must use http:// or https://',
+      ],
+    ])('rejects invalid request %#', async (data: unknown, error: string) => {
+      const created = repo.createProvider({
+        providerId: 'provider',
+        displayName: 'Provider',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const handlers = setup();
+      const request =
+        data && typeof data === 'object' && !Array.isArray(data) && 'id' in data
+          ? { ...(data as Record<string, unknown>), id: created.id }
+          : data;
+
+      await expect(handlers.get('providers.listRemoteModels')!(request, {})).rejects.toThrow(error);
+    });
+
+    it('rejects provider-inappropriate options before discovery', async () => {
+      const acp = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const remote = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const listRemoteModels = mock(async () => [] as ModelInfo[]);
+      getProviderRegistry().register({ id: 'remote', listRemoteModels } as unknown as Provider);
+      const handlers = setup();
+      const handler = handlers.get('providers.listRemoteModels')!;
+
+      await expect(
+        handler({ id: acp.id, options: { baseUrl: 'https://models.example' } }, {})
+      ).rejects.toThrow('baseUrl is not supported for ACP providers');
+      await expect(
+        handler({ id: remote.id, options: { command: 'devin acp' } }, {})
+      ).rejects.toThrow('command is only supported for ACP providers');
+      expect(listRemoteModels).not.toHaveBeenCalled();
+    });
+
+    it('preserves ACP override parity and leaves saved and cached state unchanged', async () => {
+      const fixture = `${process.execPath} ${process.cwd()}/tests/fixtures/mock-acp-server.ts`;
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      const provider = new AcpProvider({}, async () => {});
+      provider.setAcpCommand('registered acp');
+      provider.setCachedModels([
+        {
+          id: 'acp-cached',
+          name: 'ACP Cached',
+          alias: 'acp-cached',
+          family: 'acp',
+          provider: 'acp',
+          contextWindow: 100000,
+          description: 'Cached ACP model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      getProviderRegistry().register(provider);
+      const globalModels: ModelInfo[] = [
+        {
+          id: 'global-cached',
+          name: 'Global Cached',
+          alias: 'global-cached',
+          family: 'anthropic',
+          provider: 'anthropic',
+          contextWindow: 100000,
+          description: 'Cached global model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ];
+      setModelsCache(new Map([['global', globalModels]]));
+      const handlers = setup();
+
+      const canonical = await handlers.get('providers.listRemoteModels')!(
+        { id: created.id, options: { command: `  ${fixture}  ` } },
+        {}
+      );
+      const legacy = await handlers.get('providers.fetchAcpModels')!(
+        { id: created.id, command: fixture },
+        {}
+      );
+
+      expect(canonical).toEqual({ models: [{ id: 'default', name: 'Default' }] });
+      expect(legacy).toEqual(canonical);
+      expect(repo.getProvider(created.id)?.configJson).toBe(created.configJson);
+      expect(provider.getAcpCommand()).toBe('registered acp');
+      expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['acp-cached']);
+      expect(getModelsCache().get('global')).toEqual(globalModels);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('uses persisted and explicit environment commands through the canonical route', async () => {
+      const originalCommand = process.env.HYPERNEO_ACP_COMMAND;
+      process.env.HYPERNEO_ACP_COMMAND = 'hyperneo-env-acp-binary';
+      const created = repo.createProvider({
+        providerId: 'acp',
+        displayName: 'ACP Agent',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'hyperneo-saved-acp-binary' }),
+      });
+      const handlers = setup();
+      const handler = handlers.get('providers.listRemoteModels')!;
+
+      try {
+        await expect(handler({ id: created.id }, {})).rejects.toThrow('hyperneo-saved-acp-binary');
+        await expect(handler({ id: created.id, options: { command: '' } }, {})).rejects.toThrow(
+          'hyperneo-env-acp-binary'
+        );
+      } finally {
+        if (originalCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+        else process.env.HYPERNEO_ACP_COMMAND = originalCommand;
+      }
+    });
+  });
+
   describe('providers.fetchAcpModels', () => {
     it('rejects unknown and non-ACP providers', async () => {
       const anthropic = repo.createProvider({
@@ -699,11 +914,17 @@ describe('Provider RPC handlers', () => {
         kind: 'built_in',
         authType: 'none',
       });
+      const cachedModels = [{ id: 'sonnet', provider: 'anthropic' } as ModelInfo];
+      setModelsCache(new Map([['global', cachedModels]]));
       const handlers = setup();
 
       await handlers.get('providers.setDefault')!({ id: b.id }, {});
       expect(repo.getProvider(a.id)?.isDefault).toBe(false);
       expect(repo.getProvider(b.id)?.isDefault).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+      expect(getModelsCache().get('global')).toEqual(cachedModels);
     });
   });
 
@@ -1158,6 +1379,9 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(true);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('probes the ACP command during provider tests even when models are cached', async () => {
@@ -1227,6 +1451,9 @@ describe('Provider RPC handlers', () => {
       };
 
       expect(result.healthy).toBe(false);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
   });
 
@@ -1274,6 +1501,9 @@ describe('Provider RPC handlers', () => {
       expect(anthropic?.healthy).toBe(true);
       expect(openrouter?.healthy).toBe(false);
       expect(openrouter?.error).toBe('Not registered');
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
     });
 
     it('probes ACP providers during bulk health checks even when models are cached', async () => {

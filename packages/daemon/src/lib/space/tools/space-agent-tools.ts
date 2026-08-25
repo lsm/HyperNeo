@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import {
@@ -34,45 +34,45 @@ import type {
   TaskScheduleStatus,
   TaskScheduleTriggerType,
 } from '@hyperneo/shared';
-import { parseAddress } from '../../../../../messaging/src/address';
+import { parseAddress } from '../../../../../messaging/src/address.ts';
 import { z } from 'zod';
-import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
-import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { AgentSession } from '../../agent/agent-session';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import { Logger } from '../../logger';
-import type { SessionManager } from '../../session/session-manager';
-import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
-import { requireAgentFamily } from '../agents/agent-family-resolver';
-import { formatAgentMessage } from '../agent-message-envelope';
-import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates';
-import { getPresetAgentTemplates } from '../agents/seed-agents';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils';
-import { mergeEvolutionPolicy } from '../evolution-scope-service';
-import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation';
-import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync';
-import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceManager } from '../managers/space-manager';
+import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { AgentSession } from '../../agent/agent-session.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { Logger } from '../../logger.ts';
+import type { SessionManager } from '../../session/session-manager.ts';
+import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
+import { requireAgentFamily } from '../agents/agent-family-resolver.ts';
+import { formatAgentMessage } from '../agent-message-envelope.ts';
+import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
+import { getPresetAgentTemplates } from '../agents/seed-agents.ts';
+import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
+import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
+import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync.ts';
+import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import {
   assertValidSpaceTaskTransition,
   type SpaceTaskManager,
-} from '../managers/space-task-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
-import type { ActorResolver } from '../../../../../messaging/src/contracts';
-import type { SpaceRuntime } from '../runtime/space-runtime';
-import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router';
-import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
-import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates';
-import type { ToolResult } from './tool-result';
-import { jsonResult } from './tool-result';
-import { decideUpdateTask } from './space-tool-pipeline';
+} from '../managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
+import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import type { SpaceRuntime } from '../runtime/space-runtime.ts';
+import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
+import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router.ts';
+import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
+import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
+import type { ToolResult } from './tool-result.ts';
+import { jsonResult } from './tool-result.ts';
+import { decideUpdateTask } from './space-tool-pipeline.ts';
 import {
   routeApproveTask,
   routeArchiveTask,
@@ -81,23 +81,31 @@ import {
   routePublishTask,
   routeReassignTask,
   routeRetryTask,
-} from './task-transition-routing';
+} from './task-transition-routing.ts';
 import {
   decideAutonomyAdmission,
   getToolAutonomyRequirement,
   resolveEffectiveAutonomyLevel,
-} from './tool-admission-gates';
-import { SpaceTaskStatusSchema, UpdateTaskStatusParamDescription } from './task-agent-tool-schemas';
-import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
-import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils';
-import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
+} from './tool-admission-gates.ts';
+import {
+  SpaceTaskStatusSchema,
+  UpdateTaskStatusParamDescription,
+} from './task-agent-tool-schemas.ts';
+import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
+import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
+import {
+  getAvailableModels,
+  getModelsCache,
+  getModelInfoUnfiltered,
+  isValidModel,
+} from '../../model-service.ts';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import {
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
-} from '../agent-handle';
+} from '../agent-handle.ts';
 
 const log = new Logger('space-agent-tools');
 
@@ -232,7 +240,7 @@ async function validateLongHorizonModel(
   provider?: string | null
 ): Promise<string | null> {
   const available = getAvailableModels('global');
-  if (available.length === 0) return null;
+  if (available.length === 0 && !getModelsCache().has('global')) return null;
 
   if (provider) {
     const valid = await isValidModel(model, 'global', provider);
@@ -435,12 +443,12 @@ export interface SpaceAgentToolsConfig {
 
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   auditLogRepo?: McpAuditLogRepository;
-  scheduleService?: import('../schedule/schedule-service').ScheduleService;
+  scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
-  goalService?: import('../goals/goal-service').SpaceGoalService;
-  evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
-  goalRepo?: import('../../../storage/repositories/space-goal-repository').SpaceGoalRepository;
-  evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
+  goalService?: import('../goals/goal-service.ts').SpaceGoalService;
+  evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
+  goalRepo?: import('../../../storage/repositories/space-goal-repository.ts').SpaceGoalRepository;
+  evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
   messageResolver?: ActorResolver;
   longTermAgentDelivery?: {
     deliverToSession?: (
@@ -3446,7 +3454,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.episode_judge_provider !== undefined;
 
         const serviceParams: Parameters<
-          import('../evolution-scope-service').EvolutionScopeService['updateScope']
+          import('../evolution-scope-service.ts').EvolutionScopeService['updateScope']
         >[1] = {
           spaceGoalId: args.goal_id,
           kind: args.kind,
@@ -5239,7 +5247,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             )
             .optional()
             .describe('Accumulate metric observations as numeric deltas'),
-          progress: z.number().int().min(0).max(100).optional().describe('Set goal progress 0-100'),
+          progress: z
+            .number()
+            .int()
+            .min(0)
+            .max(100)
+            .optional()
+            .describe('Set goal progress 0-100 (rejected for recurring goals)'),
         },
         (args) => handlers.review_goal_outcome(args)
       )

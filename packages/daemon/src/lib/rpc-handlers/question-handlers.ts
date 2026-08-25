@@ -1,7 +1,7 @@
 import type { MessageHub, QuestionDraftResponse } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { SessionManager } from '../session-manager';
-import type { AgentSession } from '../agent/agent-session';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { SessionManager } from '../session-manager.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 
 interface QuestionRespondPayload {
   sessionId: string;

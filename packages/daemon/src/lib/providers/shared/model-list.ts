@@ -78,3 +78,74 @@ export function normalizeModelList(
     })
     .filter((m): m is { id: string; name?: string } => m !== null);
 }
+
+const DEFAULT_REMOTE_LIST_TIMEOUT_MS = 10_000;
+const DEFAULT_REMOTE_LIST_CACHE_TTL_MS = 30_000;
+
+export interface RemoteModelListEntry {
+  models: Array<{ id: string; name?: string }>;
+  fetchedAt: number;
+}
+
+export interface RemoteModelListParams {
+  url: string;
+  type?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  force?: boolean;
+  cache?: Map<string, RemoteModelListEntry>;
+  cacheTtlMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+function remoteModelListCacheKey(params: {
+  url: string;
+  type?: string;
+  headers?: Record<string, string>;
+}): string {
+  return JSON.stringify([
+    params.url,
+    params.type ?? 'openai-chat',
+    JSON.stringify(params.headers ?? {}),
+  ]);
+}
+
+export async function fetchRemoteModelList(
+  params: RemoteModelListParams
+): Promise<Array<{ id: string; name?: string }>> {
+  const type = params.type ?? 'openai-chat';
+  const cacheTtlMs = params.cacheTtlMs ?? DEFAULT_REMOTE_LIST_CACHE_TTL_MS;
+
+  if (params.cache && !params.force) {
+    const cached = params.cache.get(remoteModelListCacheKey(params));
+    if (cached && Date.now() - cached.fetchedAt < cacheTtlMs) {
+      return cached.models;
+    }
+  }
+
+  const timeoutMs = params.timeoutMs ?? DEFAULT_REMOTE_LIST_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await (params.fetchImpl ?? fetch)(params.url, {
+      method: 'GET',
+      headers: params.headers,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Endpoint returned HTTP ${response.status}`);
+    }
+    const data: unknown = await response.json();
+    const models = normalizeModelList(type, data);
+    params.cache?.set(remoteModelListCacheKey(params), { models, fetchedAt: Date.now() });
+    return models;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}

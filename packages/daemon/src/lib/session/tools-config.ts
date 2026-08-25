@@ -1,4 +1,4 @@
-import type { Database } from '../../storage/database';
+import type { Database } from '../../storage/database.ts';
 
 export class ToolsConfigManager {
   constructor(private db: Database) {}

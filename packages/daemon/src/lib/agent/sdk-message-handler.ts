@@ -33,24 +33,24 @@ import {
   isToolUseBlock,
 } from '@hyperneo/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
-import type { Database } from '../../storage/database';
-import { ErrorCategory, type ErrorManager } from '../error-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import { getSessionModelInfo } from '../model-service';
-import { getProviderContextManager } from '../providers/factory';
-import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker';
-import { ContextFetcher } from './context-fetcher';
-import type { ContextTracker } from './context-tracker';
+import type { Database } from '../../storage/database.ts';
+import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { getSessionModelInfo } from '../model-service.ts';
+import { getProviderContextManager } from '../providers/factory.ts';
+import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
+import { ContextFetcher } from './context-fetcher.ts';
+import type { ContextTracker } from './context-tracker.ts';
 import { reserveBasedThreshold } from './context-tracker.js';
-import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
-import { signalDeliveryConsumed } from './message-delivery';
-import type { MessageQueue } from './message-queue';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { QueryLifecycleManager } from './query-lifecycle-manager';
-import type { QueryLike } from './query-like';
+import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
+import { signalDeliveryConsumed } from './message-delivery.ts';
+import type { MessageQueue } from './message-queue.ts';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
+import type { QueryLike } from './query-like.ts';
 import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
-import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail';
+import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
@@ -83,8 +83,11 @@ export interface SDKMessageHandlerContext {
 
   isLimitRecoveryPending?(): boolean;
 
+  resetTaskNotificationRequery?(): void;
+
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
+  onDeliveryTurnAccepted?(): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -319,6 +322,7 @@ export class SDKMessageHandler {
 
     try {
       messageQueue.clear();
+      this.ctx.resetTaskNotificationRequery?.();
       this.resetCircuitBreaker();
       await internalEventBus.publish('session.errorClear', {
         sessionId: session.id,
@@ -555,6 +559,7 @@ export class SDKMessageHandler {
     );
     if (consumed) {
       this.completeDeliveryAcceptance(messageId);
+      this.ctx.onDeliveryTurnAccepted?.();
     }
   }
 
@@ -1301,7 +1306,7 @@ export class SDKMessageHandler {
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
-    const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
+    const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
 
     session.config = {
@@ -1316,7 +1321,9 @@ export class SDKMessageHandler {
     });
   }
 
-  private resolveConfiguredFallbackModel(sdkFallbackModel: string | undefined): string | undefined {
+  private async resolveConfiguredFallbackModel(
+    sdkFallbackModel: string | undefined
+  ): Promise<string | undefined> {
     const configuredFallbackModel = this.ctx.session.config.fallbackModel;
     if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
 
@@ -1327,9 +1334,9 @@ export class SDKMessageHandler {
         model: configuredFallbackModel,
       },
     };
-    const fallbackSdkModel = getProviderContextManager()
-      .createContext(fallbackSession)
-      .getSdkModelId();
+    const contextManager = getProviderContextManager();
+    await contextManager.ensureContextReady(fallbackSession);
+    const fallbackSdkModel = contextManager.createContext(fallbackSession).getSdkModelId();
     return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
   }
 

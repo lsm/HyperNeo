@@ -1,5 +1,5 @@
-import { getDataDir } from './data-dir';
-import { hashString32 } from './runtime-hash';
+import { getDataDir } from './data-dir.ts';
+import { hashString32 } from './runtime-hash.ts';
 import { basename, join, normalize } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 

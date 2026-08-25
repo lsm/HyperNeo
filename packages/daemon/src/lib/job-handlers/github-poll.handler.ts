@@ -1,7 +1,7 @@
-import { GITHUB_POLL } from '../job-queue-constants';
-import { Logger } from '../logger';
-import type { GitHubPollingService } from '../github/polling-service';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import { GITHUB_POLL } from '../job-queue-constants.ts';
+import { Logger } from '../logger.ts';
+import type { GitHubPollingService } from '../github/polling-service.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 
 const log = new Logger('github-poll-handler');
 

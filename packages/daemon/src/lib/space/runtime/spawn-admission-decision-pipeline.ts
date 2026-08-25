@@ -1,9 +1,9 @@
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import { decisionRun } from './decision-pipeline';
+import { decisionRun } from './decision-pipeline.ts';
 import type {
   SpawnExecutionAdmissionDecision,
   SpawnExecutionAdmissionInput,
-} from './spawn-admission-gates';
+} from './spawn-admission-gates.ts';
 
 export interface SpawnAdmissionCtx extends SpawnExecutionAdmissionInput {
   decision: SpawnExecutionAdmissionDecision | null;

@@ -1,10 +1,10 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
   type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution';
+} from '../../lib/space/goals/goal-owner-resolution.ts';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
@@ -19,8 +19,8 @@ import type {
   SpaceLongHorizonAgentStatus,
   UpdateSpaceLongHorizonAgentParams,
 } from '@hyperneo/shared';
-import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates';
-import type { SQLiteValue } from '../types';
+import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import type { SQLiteValue } from '../types.ts';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
 
@@ -183,7 +183,33 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   delete(id: string): void {
-    this.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(id);
+    this.db.transaction(() => {
+      const row = this.db
+        .prepare(`SELECT space_id FROM space_long_horizon_agents WHERE id = ?`)
+        .get(id) as { space_id: string } | null;
+      const hasInbox = !!this.db
+        .prepare(
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
+        )
+        .get();
+      const hasSiblingWorker =
+        row != null &&
+        !!this.db
+          .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
+          .get()
+          ? !!this.db
+              .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
+              .get(id, row.space_id)
+          : false;
+      if (hasInbox && !hasSiblingWorker && row != null) {
+        this.db
+          .prepare(
+            `DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ? AND space_id = ?`
+          )
+          .run(id, row.space_id);
+      }
+      this.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(id);
+    })();
   }
 
   assignGoal(

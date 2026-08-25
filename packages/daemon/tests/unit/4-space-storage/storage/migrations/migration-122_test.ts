@@ -100,10 +100,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
       expect(indexExists(db, 'idx_sdk_messages_task_id')).toBe(true);
     });
 
-    test('sdk_messages (task_id, session_id) composite index exists', () => {
-      expect(indexExists(db, 'idx_sdk_messages_task_session')).toBe(true);
-    });
-
     test('sdk_messages new derived-column indexes exist', () => {
       expect(indexExists(db, 'idx_sdk_messages_parent_tool_use_id')).toBe(true);
       expect(indexExists(db, 'idx_sdk_messages_renderable_terminal')).toBe(true);

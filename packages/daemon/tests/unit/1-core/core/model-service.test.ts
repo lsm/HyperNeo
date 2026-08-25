@@ -1,14 +1,16 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import {
   getAvailableModels,
   getModelInfo,
   getModelInfoUnfiltered,
+  isCuratedOutModel,
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
   clearModelsCache,
   getModelsCache,
   setModelsCache,
+  updateProviderModelsInCache,
   getSupportedModelsFromQuery,
   initializeModels,
   getSessionModelInfo,
@@ -16,8 +18,15 @@ import {
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import {
+  getProviderFailure,
+  resetProviderFailureStore,
+  subscribeProviderFailureChanges,
+  type ProviderFailureChange,
+} from '../../../../src/lib/providers/provider-failure-store';
 import { MinimaxProvider } from '../../../../src/lib/providers/minimax-provider';
 import { COPILOT_ANTHROPIC_MODELS } from '../../../../src/lib/providers/anthropic-copilot/models';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
@@ -63,12 +72,14 @@ describe('Model Service', () => {
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
+    resetProviderFailureStore();
   });
 
   afterEach(() => {
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
+    resetProviderFailureStore();
   });
 
   describe('stranded-provider retry tracking', () => {
@@ -78,6 +89,20 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       expect(hasRefreshBeenAttemptedFor('kimi')).toBe(true);
       expect(hasRefreshBeenAttemptedFor('minimax')).toBe(false);
+    });
+
+    it('attempt markers expire after the retry backoff window', () => {
+      jest.useFakeTimers();
+      try {
+        markRefreshAttemptedFor(['glm']);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+        jest.advanceTimersByTime(59_999);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+        jest.advanceTimersByTime(2);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('clearModelsCache resets the tracking', () => {
@@ -92,6 +117,1617 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache('session-123');
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+    });
+  });
+
+  describe('scheduled transient retry', () => {
+    type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+    function glmModel(id: string): ModelInfo {
+      return {
+        id,
+        name: id,
+        alias: id,
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 128000,
+        description: id,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    function registerGlmProvider(
+      getModels: () => Promise<ModelInfo[]>,
+      isAvailable: () => Promise<boolean> = async () => true,
+      hasCuratedModelList: () => boolean = () => false
+    ): { getModels: ReturnType<typeof mock> } {
+      const getModelsMock = mock(getModels);
+      getProviderRegistry().register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable,
+        getModels: getModelsMock,
+        hasCuratedModelList,
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as ProviderLike);
+      return { getModels: getModelsMock };
+    }
+
+    it('arms a scheduled retry for a transient failure and replaces the cache slice on recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let failing = true;
+        const { getModels } = registerGlmProvider(async () => {
+          if (failing) throw new Error('Endpoint returned HTTP 503');
+          return [glmModel('glm-5-new'), glmModel('glm-5-air-new')];
+        });
+
+        await refreshModels();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-new')).toBe(false);
+
+        const changes: ProviderFailureChange[] = [];
+        subscribeProviderFailureChanges((change) => changes.push(change));
+        failing = false;
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-new', 'glm-5-air-new']);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+        expect(changes.some((c) => c.providerId === 'glm' && c.record === null)).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('re-arms the retry while the provider keeps failing transiently', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('stays dormant for definitive credential failures (HTTP 401)', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Request failed (http 401)');
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('stays dormant for definitive ACP spawn failures', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('ACP agent process error: spawn acp-agent ENOENT');
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('cancels a pending transient retry when a later load classifies the failure as definitive', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let message = 'Endpoint returned HTTP 503';
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error(message);
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        message = 'Request failed (http 401)';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('clearModelsCache cancels pending retry timers', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+
+        clearModelsCache();
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('drops in-flight retry results when a global clear lands mid-probe', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let resolveProbe: (models: ModelInfo[]) => void = () => {};
+        let failFirst = true;
+        const { getModels } = registerGlmProvider(async () => {
+          if (failFirst) throw new Error('Endpoint returned HTTP 503');
+          return new Promise<ModelInfo[]>((resolve) => {
+            resolveProbe = resolve;
+          });
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        failFirst = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        clearModelsCache();
+
+        resolveProbe([glmModel('glm-5-new')]);
+        await flushMicrotasks();
+
+        expect(getModelsCache().size).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('skips the fetch when the provider is unregistered before the timer fires', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+
+        getProviderRegistry().unregister('glm');
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps a still-failing marker set across refreshes and clears it only on recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let failing = true;
+        registerGlmProvider(async () => {
+          if (failing) throw new Error('Endpoint returned HTTP 503');
+          return [glmModel('glm-5-new')];
+        });
+
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        failing = false;
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+        expect(getProviderFailure('glm')).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('treats an uncurated empty catalog as transient but a curated empty list as recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let empty = false;
+        let curated = false;
+        const { getModels } = registerGlmProvider(
+          async () => {
+            if (!empty) throw new Error('Endpoint returned HTTP 503');
+            return [];
+          },
+          async () => true,
+          () => curated
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        empty = true;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('glm')?.message).toBe('Provider returned no models');
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        curated = true;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+        expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('discards a scheduled probe when a foreground refresh overtakes it', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let resolveProbe: (models: ModelInfo[]) => void = () => {};
+        let calls = 0;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          calls += 1;
+          if (calls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((resolve) => {
+              resolveProbe = resolve;
+            });
+          }
+          return [glmModel('glm-5-foreground')];
+        });
+
+        await refreshModels();
+        setModelsCache(new Map([['global', [glmModel('glm-stale-slice')]]]));
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        resolveProbe([glmModel('glm-5-stale')]);
+        await flushMicrotasks();
+
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-foreground']);
+        expect(getProviderFailure('glm')).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('clearModelsCache with the global key cancels pending retry timers', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        const { getModels } = registerGlmProvider(async () => {
+          throw new Error('Endpoint returned HTTP 503');
+        });
+
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(1);
+
+        clearModelsCache('global');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps the stranded gate shut for definitive failures until they recover', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let definitive = true;
+        const { getModels } = registerGlmProvider(async () => {
+          if (definitive) throw new Error('Request failed (http 401)');
+          return [glmModel('glm-5-new')];
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(180_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        definitive = false;
+        await refreshModels();
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+        expect(getProviderFailure('glm')).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('re-arms while the provider is unavailable and recovers when it returns', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let available = true;
+        let failing = true;
+        const { getModels } = registerGlmProvider(
+          async () => {
+            if (failing) throw new Error('Endpoint returned HTTP 503');
+            return [glmModel('glm-5-back')];
+          },
+          async () => available
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        available = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        available = true;
+        failing = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-back')).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps a transient failure when a foreground refresh sees the provider unavailable', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let available = true;
+        let failing = true;
+        registerGlmProvider(
+          async () => {
+            if (failing) throw new Error('Endpoint returned HTTP 503');
+            return [glmModel('glm-5-back')];
+          },
+          async () => available
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        available = false;
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        available = true;
+        failing = false;
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-back']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not reinstate a failure when an older foreground load settles after recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let failForeground: () => void = () => {};
+        let calls = 0;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          calls += 1;
+          if (calls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((_resolve, reject) => {
+              failForeground = () => reject(new Error('Endpoint returned HTTP 503'));
+            });
+          }
+          return [glmModel('glm-5-recovered')];
+        });
+
+        await refreshModels();
+        setModelsCache(new Map([['global', [glmModel('glm-stale')]]]));
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+
+        failForeground();
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('preserves a recovered slice when an overlapping foreground merge installs a larger list', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const stubModel = (id: string): ModelInfo => ({
+          ...glmModel(id),
+          provider: 'stub-b',
+          family: 'stub-b',
+        });
+        let releaseForegroundProviders: () => void = () => {};
+        const foregroundGate = new Promise<void>((resolve) => {
+          releaseForegroundProviders = () => resolve();
+        });
+        let glmCalls = 0;
+        let otherCalls = 0;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          glmCalls += 1;
+          if (glmCalls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (glmCalls === 2) {
+            await foregroundGate;
+            throw new Error('Endpoint returned HTTP 503');
+          }
+          return [glmModel('glm-5-recovered')];
+        });
+        getProviderRegistry().register({
+          id: 'stub-b',
+          isAvailable: async () => true,
+          getModels: async (): Promise<ModelInfo[]> => {
+            otherCalls += 1;
+            if (otherCalls === 1) return [stubModel('stub-b-1')];
+            await foregroundGate;
+            return Array.from({ length: 20 }, (_v, i) => stubModel(`stub-b-${i + 1}`));
+          },
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as ProviderLike);
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-recovered')).toBe(true);
+
+        releaseForegroundProviders();
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+        expect(getAvailableModels('global').filter((m) => m.provider === 'stub-b').length).toBe(20);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('overlays a recovered slice when the shrink guard keeps the larger previous catalog', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const stubModel = (id: string): ModelInfo => ({
+          ...glmModel(id),
+          provider: 'stub-b',
+          family: 'stub-b',
+        });
+        let releaseForegroundProviders: () => void = () => {};
+        const foregroundGate = new Promise<void>((resolve) => {
+          releaseForegroundProviders = () => resolve();
+        });
+        let glmCalls = 0;
+        let otherCalls = 0;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          glmCalls += 1;
+          if (glmCalls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (glmCalls === 2) {
+            await foregroundGate;
+            throw new Error('Endpoint returned HTTP 503');
+          }
+          return [glmModel('glm-5-recovered')];
+        });
+        getProviderRegistry().register({
+          id: 'stub-b',
+          isAvailable: async () => true,
+          getModels: async (): Promise<ModelInfo[]> => {
+            otherCalls += 1;
+            if (otherCalls === 1) return [stubModel('stub-b-1'), stubModel('stub-b-2')];
+            await foregroundGate;
+            return [stubModel('stub-b-1')];
+          },
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as ProviderLike);
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getAvailableModels('global').filter((m) => m.provider === 'glm').length).toBe(
+          GlmProvider.MODELS.length
+        );
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-recovered')).toBe(true);
+
+        releaseForegroundProviders();
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+        expect(getAvailableModels('global').filter((m) => m.provider === 'stub-b').length).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('re-arms the retry when a scheduled probe never settles', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let calls = 0;
+        let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          calls += 1;
+          if (calls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseProbe = resolve;
+            });
+          }
+          return [glmModel('glm-5-late')];
+        });
+
+        await refreshModels();
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(30_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        releaseProbe?.([glmModel('glm-5-late')]);
+        await flushMicrotasks();
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-late')).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps the marker through an empty foreground catalog and notifies on scheduled recovery', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let catalog: ModelInfo[] | null = null;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (catalog === null) throw new Error('Endpoint returned HTTP 503');
+          return catalog;
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        const changes: ProviderFailureChange[] = [];
+        subscribeProviderFailureChanges((change) => changes.push(change));
+
+        catalog = [];
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        catalog = [glmModel('glm-5-real')];
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(changes.some((c) => c.providerId === 'glm' && c.record === null)).toBe(true);
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-real']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('probes again after a global clear releases a stalled probe slot', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseStall: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseStall = resolve;
+            });
+          }
+          return [glmModel('glm-5-after-mutation')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(30_001);
+        await flushMicrotasks();
+
+        clearModelsCache('global');
+
+        mode = 'fail';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        mode = 'ok';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(4);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-after-mutation')).toBe(
+          true
+        );
+
+        releaseStall?.([glmModel('glm-stale')]);
+        await flushMicrotasks();
+
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-after-mutation')).toBe(
+          true
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('rejects a foreground result when a scheduled recovery commits in the same turn', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let calls = 0;
+        let failForeground: ((error: Error) => void) | null = null;
+        let resolveScheduled: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          calls += 1;
+          if (calls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((_resolve, reject) => {
+              failForeground = reject;
+            });
+          }
+          return new Promise<ModelInfo[]>((resolve) => {
+            resolveScheduled = resolve;
+          });
+        });
+
+        await refreshModels();
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        failForeground?.(new Error('Endpoint returned HTTP 503'));
+        resolveScheduled?.([glmModel('glm-5-recovered')]);
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('reclassifies a credential failure as transient when the catalog answers empty without curation', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'reject' | 'empty' | 'ok' = 'reject';
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'reject') throw new Error('Request failed (http 401)');
+          if (mode === 'empty') return [];
+          return [glmModel('glm-5-back')];
+        });
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        mode = 'empty';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(2);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('glm')?.message).toBe('Provider returned no models');
+
+        mode = 'ok';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-back')).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps the stranded gate shut while a timed-out probe is re-armed', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseStall: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseStall = resolve;
+            });
+          }
+          return [glmModel('glm-5-late')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(30_001);
+        await flushMicrotasks();
+
+        jest.advanceTimersByTime(45_000);
+        expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+        mode = 'ok';
+        releaseStall?.([]);
+        await flushMicrotasks();
+        jest.advanceTimersByTime(16_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        releaseStall?.([glmModel('glm-stale')]);
+        await flushMicrotasks();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('restores every superseded slice when two providers recover around a foreground load', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+        const stubModel = (id: string): ModelInfo => ({
+          ...glmModel(id),
+          provider: 'stub-b',
+          family: 'stub-b',
+        });
+        let glmMode: 'fail' | 'stall' | 'ok' = 'fail';
+        let stubMode: 'fail' | 'stall' | 'ok' = 'fail';
+        let resolveGlmForeground: ((models: ModelInfo[]) => void) | null = null;
+        let resolveGlmScheduled: ((models: ModelInfo[]) => void) | null = null;
+        let resolveStubForeground: ((models: ModelInfo[]) => void) | null = null;
+        let resolveStubScheduled: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (glmMode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (glmMode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              if (resolveGlmForeground) resolveGlmScheduled = resolve;
+              else resolveGlmForeground = resolve;
+            });
+          }
+          return [glmModel('glm-5-recovered')];
+        });
+        getProviderRegistry().register({
+          id: 'stub-b',
+          isAvailable: async () => true,
+          getModels: async (): Promise<ModelInfo[]> => {
+            if (stubMode === 'fail') throw new Error('Stub probe failed (HTTP 503)');
+            if (stubMode === 'stall') {
+              return new Promise<ModelInfo[]>((resolve) => {
+                if (resolveStubForeground) resolveStubScheduled = resolve;
+                else resolveStubForeground = resolve;
+              });
+            }
+            return [stubModel('stub-b-recovered')];
+          },
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as ProviderLike);
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('stub-b')?.errorKind).toBe('transient');
+
+        glmMode = 'stall';
+        stubMode = 'stall';
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        resolveGlmScheduled?.([glmModel('glm-5-recovered')]);
+        await flushMicrotasks();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-recovered')).toBe(true);
+
+        resolveGlmForeground?.([glmModel('glm-stale')]);
+        resolveStubForeground?.([stubModel('stub-b-stale')]);
+        resolveStubScheduled?.([stubModel('stub-b-recovered')]);
+        await foreground;
+        await flushMicrotasks();
+
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getProviderFailure('stub-b')).toBeUndefined();
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-recovered']);
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'stub-b')
+            .map((m) => m.id)
+        ).toEqual(['stub-b-recovered']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('cancels a timer re-armed while the scheduled probe was in flight', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let calls = 0;
+        let failForeground: ((error: Error) => void) | null = null;
+        let resolveScheduled: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          calls += 1;
+          if (calls === 1) throw new Error('Endpoint returned HTTP 503');
+          if (calls === 2) {
+            return new Promise<ModelInfo[]>((_resolve, reject) => {
+              failForeground = reject;
+            });
+          }
+          if (calls === 3) {
+            return new Promise<ModelInfo[]>((resolve) => {
+              resolveScheduled = resolve;
+            });
+          }
+          return [glmModel('glm-5-phantom')];
+        });
+
+        await refreshModels();
+
+        const foreground = refreshModels();
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        failForeground?.(new Error('Endpoint returned HTTP 503'));
+        await foreground;
+        await flushMicrotasks();
+
+        resolveScheduled?.([glmModel('glm-5-recovered')]);
+        await flushMicrotasks();
+        expect(getProviderFailure('glm')).toBeUndefined();
+
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(3);
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-phantom')).toBe(false);
+        expect(getProviderFailure('glm')).toBeUndefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('prefers an externally updated slice over an in-flight scheduled probe result', async () => {
+      const { refreshModels, updateProviderModelsInCache } = await import(
+        '../../../../src/lib/model-service'
+      );
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+        registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseProbe = resolve;
+            });
+          }
+          return [glmModel('glm-5-probe-stale')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        updateProviderModelsInCache('glm', [glmModel('glm-5-external')]);
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-external')).toBe(true);
+
+        releaseProbe?.([glmModel('glm-5-probe-stale')]);
+        await flushMicrotasks();
+
+        expect(
+          getAvailableModels('global')
+            .filter((m) => m.provider === 'glm')
+            .map((m) => m.id)
+        ).toEqual(['glm-5-external']);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('releases the probe slot when a foreground load recovers the provider', async () => {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      jest.useFakeTimers();
+      try {
+        let mode: 'fail' | 'stall' | 'ok' = 'fail';
+        let releaseStall: ((models: ModelInfo[]) => void) | null = null;
+        const { getModels } = registerGlmProvider(async (): Promise<ModelInfo[]> => {
+          if (mode === 'fail') throw new Error('Endpoint returned HTTP 503');
+          if (mode === 'stall') {
+            return new Promise<ModelInfo[]>((resolve) => {
+              releaseStall = resolve;
+            });
+          }
+          return [glmModel('glm-5-back')];
+        });
+
+        await refreshModels();
+
+        mode = 'stall';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+        expect(getModels).toHaveBeenCalledTimes(2);
+
+        mode = 'ok';
+        await refreshModels();
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getModels).toHaveBeenCalledTimes(3);
+
+        mode = 'fail';
+        await refreshModels();
+        expect(getModels).toHaveBeenCalledTimes(4);
+        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+        mode = 'ok';
+        jest.advanceTimersByTime(60_001);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(5);
+        expect(getProviderFailure('glm')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-back')).toBe(true);
+        releaseStall?.([glmModel('glm-stale')]);
+        await flushMicrotasks();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('credential dormancy exit (OAuth refresh recovery)', () => {
+    type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+    function glmModel(id: string): ModelInfo {
+      return {
+        id,
+        name: id,
+        alias: id,
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 128000,
+        description: id,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    async function flushMicrotasks(): Promise<void> {
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    function registerGlmProvider(
+      getModels: () => Promise<ModelInfo[]>,
+      isAvailable: () => Promise<boolean> = async () => true
+    ): {
+      getModels: ReturnType<typeof mock>;
+    } {
+      const getModelsMock = mock(getModels);
+      getProviderRegistry().register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable,
+        getModels: getModelsMock,
+        ownsModel: () => true,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as ProviderLike);
+      return { getModels: getModelsMock };
+    }
+
+    it('clears a definitive failure, refreshes the cache slice, and releases the stranded gate', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let failing = true;
+      const { getModels } = registerGlmProvider(async () => {
+        if (failing) throw new Error('Request failed (http 401)');
+        return [glmModel('glm-recovered-model')];
+      });
+
+      await refreshModels();
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-recovered-model')).toBe(false);
+
+      const changes: ProviderFailureChange[] = [];
+      subscribeProviderFailureChanges((change) => changes.push(change));
+      failing = false;
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe('recovered');
+
+      expect(getModels).toHaveBeenCalledTimes(2);
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-recovered-model')).toBe(true);
+      expect(changes.some((c) => c.providerId === 'glm' && c.record === null)).toBe(true);
+    });
+
+    it('is a no-op when no failure is recorded', async () => {
+      const { recoverDormantProvider } = await import('../../../../src/lib/model-service');
+      const { getModels } = registerGlmProvider(async () => [glmModel('glm-fine')]);
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe('no-op');
+
+      expect(getModels).toHaveBeenCalledTimes(0);
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('leaves transient failures to the scheduled retry machinery', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const { getModels } = registerGlmProvider(async () => {
+        throw new Error('Endpoint returned HTTP 503');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe('no-op');
+
+      expect(getModels).toHaveBeenCalledTimes(1);
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('skips recovery when the provider is no longer registered', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      registerGlmProvider(async () => {
+        throw new Error('Request failed (http 401)');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      getProviderRegistry().unregister('glm');
+      await expect(recoverDormantProvider('glm')).resolves.toBe('no-op');
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+    });
+
+    it('re-records the failure when the post-recovery probe still rejects', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const { getModels } = registerGlmProvider(async () => {
+        throw new Error('Request failed (http 401)');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      await expect(recoverDormantProvider('glm')).resolves.toBe('failed');
+
+      expect(getModels).toHaveBeenCalledTimes(2);
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+    });
+
+    it('keeps the recorded failure and arms a scheduled retry when the provider is unavailable after the refresh', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let available = true;
+      registerGlmProvider(
+        async () => {
+          throw new Error('Request failed (http 401)');
+        },
+        async () => available
+      );
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      available = false;
+      await expect(recoverDormantProvider('glm')).resolves.toBe('failed');
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+    });
+
+    it('does not rearm a retry when a global clear supersedes an unavailable probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      jest.useFakeTimers();
+      try {
+        let availableCalls = 0;
+        let releaseAvailable: ((available: boolean) => void) | null = null;
+        const { getModels } = registerGlmProvider(
+          async (): Promise<ModelInfo[]> => {
+            throw new Error('Request failed (http 401)');
+          },
+          (): Promise<boolean> => {
+            availableCalls++;
+            if (availableCalls === 1) return Promise.resolve(true);
+            return new Promise<boolean>((resolve) => {
+              releaseAvailable = resolve;
+            });
+          }
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        const recovery = recoverDormantProvider('glm');
+        await flushMicrotasks();
+        expect(availableCalls).toBe(2);
+
+        clearModelsCache();
+        releaseAvailable?.(false);
+        await recovery;
+
+        jest.advanceTimersByTime(120_000);
+        await flushMicrotasks();
+
+        expect(getModels).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('reports no-op when a global clear supersedes an unavailable probe and a newer refresh recovered the provider', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const foregroundModels = GlmProvider.MODELS.map((_model, index) =>
+        glmModel(`glm-newer-${index}`)
+      );
+      let probeCall = 0;
+      let availableCalls = 0;
+      let releaseAvailable: ((available: boolean) => void) | null = null;
+      registerGlmProvider(
+        (): Promise<ModelInfo[]> => {
+          probeCall++;
+          if (probeCall === 1) return Promise.reject(new Error('Request failed (http 401)'));
+          return Promise.resolve(foregroundModels);
+        },
+        (): Promise<boolean> => {
+          availableCalls++;
+          if (availableCalls === 2) {
+            return new Promise<boolean>((resolve) => {
+              releaseAvailable = resolve;
+            });
+          }
+          return Promise.resolve(true);
+        }
+      );
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(availableCalls).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')).toBeUndefined();
+
+      clearModelsCache();
+      releaseAvailable?.(false);
+
+      await expect(recovery).resolves.toBe('no-op');
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('does not install a stale slice when a global clear lands mid-probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider(async (): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) throw new Error('Request failed (http 401)');
+        return new Promise<ModelInfo[]>((resolve) => {
+          releaseProbe = resolve;
+        });
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      clearModelsCache();
+      releaseProbe?.([glmModel('glm-after-clear')]);
+      await recovery;
+
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('re-records the failure when a global clear lands mid-probe and the probe still rejects', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let rejectProbe: ((err: Error) => void) | null = null;
+      registerGlmProvider(
+        (): Promise<ModelInfo[]> =>
+          new Promise<ModelInfo[]>((_resolve, reject) => {
+            probeCall++;
+            if (probeCall === 1) {
+              reject(new Error('Request failed (http 401)'));
+            } else {
+              rejectProbe = reject;
+            }
+          })
+      );
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      clearModelsCache();
+      rejectProbe?.(new Error('Request failed (http 401)'));
+      await recovery;
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('does not rearm or downgrade a transient rejection that lands after a global clear', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      jest.useFakeTimers();
+      try {
+        let probeCall = 0;
+        let rejectProbe: ((err: Error) => void) | null = null;
+        registerGlmProvider(
+          (): Promise<ModelInfo[]> =>
+            new Promise<ModelInfo[]>((_resolve, reject) => {
+              probeCall++;
+              if (probeCall === 1) {
+                reject(new Error('Request failed (http 401)'));
+              } else {
+                rejectProbe = reject;
+              }
+            })
+        );
+
+        await refreshModels();
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        const recovery = recoverDormantProvider('glm');
+        await flushMicrotasks();
+        expect(probeCall).toBe(2);
+
+        clearModelsCache();
+        rejectProbe?.(new Error('fetch failed'));
+        const outcome = await recovery;
+
+        expect(outcome).toBe('failed');
+        expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+        jest.advanceTimersByTime(120_000);
+        await flushMicrotasks();
+
+        expect(probeCall).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not clobber a foreground refresh that overtakes the recovery probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const foregroundModels = GlmProvider.MODELS.map((_model, index) =>
+        glmModel(`glm-foreground-${index}`)
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider(async (): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) throw new Error('Request failed (http 401)');
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((resolve) => {
+            releaseProbe = resolve;
+          });
+        }
+        return foregroundModels;
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-foreground-0')).toBe(true);
+
+      releaseProbe?.([glmModel('glm-recovery-model')]);
+      await recovery;
+
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-recovery-model')).toBe(false);
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-foreground-0')).toBe(true);
+    });
+
+    it('discards a stale rejection when a newer refresh already recovered the provider', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      const foregroundModels = GlmProvider.MODELS.map((_model, index) =>
+        glmModel(`glm-newer-${index}`)
+      );
+      let probeCall = 0;
+      let rejectProbe: ((err: Error) => void) | null = null;
+      registerGlmProvider((): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) return Promise.reject(new Error('Request failed (http 401)'));
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((_resolve, reject) => {
+            rejectProbe = reject;
+          });
+        }
+        return Promise.resolve(foregroundModels);
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-newer-0')).toBe(true);
+
+      rejectProbe?.(new Error('Request failed (http 401)'));
+      await recovery;
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getAvailableModels('global').some((m) => m.id === 'glm-newer-0')).toBe(true);
+    });
+
+    it('preserves a newer failure when a global clear supersedes a successful probe', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider((): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) return Promise.reject(new Error('Request failed (http 401)'));
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((resolve) => {
+            releaseProbe = resolve;
+          });
+        }
+        throw new Error('Endpoint returned HTTP 503');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+      clearModelsCache();
+      releaseProbe?.([glmModel('glm-recovery-model')]);
+
+      await expect(recovery).resolves.toBe('failed');
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('reports failed when a newer refresh overtook the probe and recorded a failure', async () => {
+      const { refreshModels, recoverDormantProvider } = await import(
+        '../../../../src/lib/model-service'
+      );
+      let probeCall = 0;
+      let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
+      registerGlmProvider(async (): Promise<ModelInfo[]> => {
+        probeCall++;
+        if (probeCall === 1) throw new Error('Request failed (http 401)');
+        if (probeCall === 2) {
+          return new Promise<ModelInfo[]>((resolve) => {
+            releaseProbe = resolve;
+          });
+        }
+        throw new Error('Endpoint returned HTTP 503');
+      });
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const recovery = recoverDormantProvider('glm');
+      await flushMicrotasks();
+      expect(probeCall).toBe(2);
+
+      await refreshModels();
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+
+      releaseProbe?.([glmModel('glm-recovery-model')]);
+      await expect(recovery).resolves.toBe('failed');
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
     });
   });
 
@@ -135,6 +1771,549 @@ describe('Model Service', () => {
 
       const cache = getModelsCache();
       expect(cache.size).toBe(0);
+    });
+  });
+
+  describe('updateProviderModelsInCache', () => {
+    const acpModels: ModelInfo[] = [
+      {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      },
+    ];
+
+    function seedCache(entries: Record<string, ModelInfo[]>, timestamp?: number) {
+      setModelsCache(new Map(Object.entries(entries)), timestamp);
+    }
+
+    it('replaces the provider slice while preserving other providers', () => {
+      seedCache({
+        global: [...mockModels, { ...acpModels[0], id: 'stale-acp-model', contextWindow: 1000 }],
+      });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+    });
+
+    it('appends the provider models when the cached entry has no slice for the provider', () => {
+      seedCache({ global: mockModels });
+
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('removes the provider slice when the replacement list is empty', () => {
+      seedCache({ global: [...mockModels, ...acpModels] });
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('does not create a missing cache entry', () => {
+      const applied = updateProviderModelsInCache('acp', acpModels);
+
+      expect(applied).toBe(false);
+      expect(getModelsCache().size).toBe(0);
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('retains a provider slice stashed while the cache is missing and merges it into the next refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+    });
+
+    it('replaces the rebuilt provider slice with a retained one on the next refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [{ ...acpModels[0], id: 'acp-default' }],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+    });
+
+    it('drops retained provider slices when the cache is cleared', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'empty-provider',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+      clearModelsCache();
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('keeps a retained provider slice across repeated rebuilds until superseded', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const providerModel: ModelInfo = { ...acpModels[0], id: 'acp-from-provider' };
+      getProviderRegistry().register({
+        id: 'acp',
+        getModels: async () => [providerModel],
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(acpModels);
+
+      const supersedingModels: ModelInfo[] = [{ ...acpModels[0], id: 'newer-acp-model' }];
+      expect(updateProviderModelsInCache('acp', supersedingModels)).toBe(true);
+
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual(supersedingModels);
+    });
+
+    it('skips the post-refresh re-apply when the cache is cleared mid-refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'slow-reapply-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [{ ...acpModels[0], id: 'acp-default', provider: 'slow-reapply-provider' }];
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+      clearModelsCache();
+
+      await refreshPromise;
+
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('leaves other cache keys untouched', () => {
+      seedCache(
+        {
+          global: [...mockModels, ...acpModels],
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', []);
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getAvailableModels('session-123')).toEqual([...mockModels, ...acpModels]);
+    });
+
+    it('supports an explicit cache key', () => {
+      seedCache(
+        {
+          'session-123': [...mockModels, ...acpModels],
+        },
+        Date.now() - 60 * 60 * 1000
+      );
+
+      const applied = updateProviderModelsInCache('acp', [], 'session-123');
+
+      expect(applied).toBe(true);
+      expect(getAvailableModels('session-123')).toEqual(mockModels);
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('re-applies the provider slice after an in-flight refresh rebuilds the entry', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'slow-splice-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [
+            'slow-splice-model-1',
+            'slow-splice-model-2',
+            'slow-splice-model-3',
+            'slow-splice-model-4',
+          ].map((id) => ({
+            id,
+            name: 'Slow Splice Model',
+            family: 'test',
+            provider: 'slow-splice-provider',
+            contextWindow: 100000,
+            description: 'Slow splice model',
+            releaseDate: '2026-01-01',
+            available: true,
+          }));
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      await refreshPromise;
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual(acpModels);
+      expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
+    });
+
+    it('keeps a stale entry stale so the next read re-triggers a background refresh', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'fresh-model',
+          name: 'Fresh Model',
+          family: 'test',
+          provider: 'fresh-provider',
+          contextWindow: 100000,
+          description: 'Fresh model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'fresh-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      seedCache({ global: mockModels }, Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(updateProviderModelsInCache('acp', acpModels)).toBe(true);
+
+      getAvailableModels('global');
+
+      const deadline = Date.now() + 3_000;
+      let loadTriggered = false;
+      while (Date.now() < deadline) {
+        if (getModels.mock.calls.length > 0) {
+          loadTriggered = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      const registryState = getProviderRegistry()
+        .getAll()
+        .map((provider) => provider.id)
+        .join(',');
+      expect(
+        loadTriggered,
+        `stale entry should trigger a provider load on read; registry=[${registryState}]`
+      ).toBe(true);
+    });
+  });
+
+  describe('model curation', () => {
+    it('filters cached and fallback models to the configured provider subset', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
+      expect(await getModelInfo('sonnet', 'global', 'anthropic')).not.toBeNull();
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+      expect(await isValidModel('opus', 'global', 'anthropic')).toBe(false);
+    });
+
+    it('accepts curated aliases by keeping their canonical model visible', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3' }]);
+      setModelsCache(new Map([['global', [...mockModels, ...KimiProvider.MODELS]]]));
+
+      expect(
+        getAvailableModels('global')
+          .filter((model) => model.provider === 'kimi')
+          .map((model) => model.id)
+      ).toEqual(['kimi-k3[1m]']);
+      expect(await getModelInfo('kimi-k3', 'global', 'kimi')).toMatchObject({
+        id: 'kimi-k3[1m]',
+        contextWindow: 1_048_576,
+      });
+      expect(await isValidModel('kimi-k3', 'global', 'kimi')).toBe(true);
+      expect(await isValidModel('kimi-for-coding', 'global', 'kimi')).toBe(false);
+    });
+
+    it('keeps capacity-tagged curated models exact without enabling their static prefix parent', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'moonshot-k3-128k' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              ...mockModels,
+              ...KimiProvider.MODELS,
+              {
+                id: 'moonshot-k3-128k',
+                name: 'moonshot-k3-128k',
+                alias: 'moonshot-k3-128k',
+                family: 'kimi',
+                provider: 'kimi',
+                contextWindow: 131_072,
+                preferContextWindowMetadata: true,
+                thinkingModes: 'granular',
+                description: 'moonshot-k3-128k via Kimi',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(
+        getAvailableModels('global')
+          .filter((model) => model.provider === 'kimi')
+          .map((model) => model.id)
+      ).toEqual(['moonshot-k3-128k']);
+    });
+
+    it('treats an empty curation as no visible models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => true,
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('anthropic', []);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global')).toEqual([]);
+      expect(await getModelInfo('sonnet', 'global', 'anthropic')).toBeNull();
+      expect(await isValidModel('sonnet', 'global', 'anthropic', 'session-key')).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('preserves current cache, lookup, and validation behavior when curation is absent', async () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toMatchObject({ id: 'opus' });
+      expect(await isValidModel('opus', 'global', 'anthropic')).toBe(true);
+    });
+
+    it('filters provider-slice updates at the read boundary while storing them raw', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const visibleModel: ModelInfo = {
+        id: 'acp-default',
+        name: 'ACP Default',
+        alias: 'acp',
+        family: 'acp',
+        provider: 'acp',
+        contextWindow: 200000,
+        description: 'ACP-compatible agent default model',
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+      getProviderRegistry().setCuratedModels('acp', [{ id: visibleModel.id }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(
+        updateProviderModelsInCache('acp', [
+          visibleModel,
+          { ...visibleModel, id: 'curated-out-acp-model' },
+        ])
+      ).toBe(true);
+
+      expect(getAvailableModels('global').filter((model) => model.provider === 'acp')).toEqual([
+        visibleModel,
+      ]);
+      expect(
+        getModelsCache()
+          .get('global')
+          ?.map((model) => model.id)
+      ).toContain('curated-out-acp-model');
+    });
+
+    it('keeps the raw cache across refreshes so the unfiltered seam still resolves curated-out models', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => mockModels,
+        isAvailable: async () => true,
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getAvailableModels('global').map((model) => model.id)).toEqual(['sonnet']);
+      expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
+    });
+  });
+
+  describe('isCuratedOutModel', () => {
+    it('reports a cached model excluded by the provider curation as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('opus', 'anthropic')).toBe(true);
+    });
+
+    it('does not report a curated-in model as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(false);
+    });
+
+    it('keeps the canonical form of a curated alias curated-in for session validation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3' }]);
+      setModelsCache(new Map([['global', [...mockModels, ...KimiProvider.MODELS]]]));
+
+      expect(isCuratedOutModel('kimi-k3[1m]', 'kimi')).toBe(false);
+      expect(isCuratedOutModel('kimi-for-coding', 'kimi')).toBe(true);
+    });
+
+    it('reports a known model as curated out under an empty curation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', []);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('sonnet', 'anthropic')).toBe(true);
+    });
+
+    it('preserves behavior when the provider has no configured curation', async () => {
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('opus', 'anthropic')).toBe(false);
+    });
+
+    it('reports an unknown model as curated out under a configured curation', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(true);
+    });
+
+    it('does not report an undiscovered model whose ID is a curated entry as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [
+        { id: 'sonnet' },
+        { id: 'claude-future-model' },
+      ]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(isCuratedOutModel('claude-future-model', 'anthropic')).toBe(false);
+    });
+
+    it('reports a model known to a different provider as curated out under this provider allowlist', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              ...mockModels,
+              {
+                id: 'glm-5',
+                name: 'GLM 5',
+                alias: 'glm5',
+                family: 'glm',
+                provider: 'glm',
+                contextWindow: 200000,
+                description: 'GLM 5',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+            ],
+          ],
+        ])
+      );
+
+      expect(isCuratedOutModel('glm-5', 'anthropic')).toBe(true);
+    });
+
+    it('reports a static-metadata model excluded by the provider curation as curated out', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      expect(isCuratedOutModel('glm-5.1', 'glm')).toBe(true);
+    });
+
+    it('does not report a curated-in static-metadata model when the provider is unavailable', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: async () => false,
+        getModels: async () => [],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      await expect(isValidModel('glm-5', 'global', 'glm')).resolves.toBe(false);
+      expect(isCuratedOutModel('glm-5', 'glm')).toBe(false);
     });
   });
 
@@ -198,6 +2377,26 @@ describe('Model Service', () => {
       const model = await getModelInfo('opus', 'global', 'anthropic');
       expect(model).not.toBeNull();
       expect(model?.id).toBe('opus');
+    });
+
+    it('does not resolve curated-out static aliases', async () => {
+      clearModelsCache();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+
+      expect(await getModelInfo('deepseek-pro', 'global', 'deepseek')).toBeNull();
+      expect(await getModelInfo('deepseek-flash', 'global', 'deepseek')).toMatchObject({
+        id: 'deepseek-v4-flash',
+      });
+    });
+
+    it('still resolves curated-out models through the unfiltered seam', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+      expect(await getModelInfoUnfiltered('opus')).toMatchObject({ id: 'opus' });
     });
 
     it('should return null for unknown model', async () => {
@@ -397,6 +2596,15 @@ describe('Model Service', () => {
       expect(await isValidModel('unknown-deepseek', 'global', 'deepseek', 'session-key')).toBe(
         false
       );
+    });
+
+    it('does not let a session-scoped API key bypass curation', async () => {
+      clearModelsCache();
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('deepseek', [{ id: 'deepseek-v4-flash' }]);
+
+      expect(await isValidModel('deepseek-pro', 'global', 'deepseek', 'session-key')).toBe(false);
+      expect(await isValidModel('deepseek-flash', 'global', 'deepseek', 'session-key')).toBe(true);
     });
   });
 
@@ -711,6 +2919,46 @@ describe('Model Service', () => {
       expect(models1).toEqual(models2);
       expect(models1.length).toBe(3);
     });
+
+    it('re-arms the background refresh for a stale empty cache', async () => {
+      const getModels = mock(async () => [
+        {
+          id: 'recovered-model',
+          name: 'Recovered Model',
+          family: 'test',
+          provider: 'stale-empty-provider',
+          contextWindow: 100000,
+          description: 'Recovered model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ]);
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'stale-empty-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      setModelsCache(new Map([['global', []]]), Date.now() - 5 * 60 * 60 * 1000);
+
+      expect(getAvailableModels('global')).toEqual([]);
+
+      const deadline = Date.now() + 3_000;
+      let loadTriggered = false;
+      while (Date.now() < deadline) {
+        if (getModels.mock.calls.length > 0) {
+          loadTriggered = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      expect(loadTriggered, 'stale empty cache should re-trigger a provider load on read').toBe(
+        true
+      );
+    });
   });
 
   describe('provider loading', () => {
@@ -874,6 +3122,93 @@ describe('Model Service', () => {
 
       expect(model?.id).toBe('gpt-5.6-sol');
       expect(model?.contextWindow).toBe(1050000);
+    });
+
+    it('preserves metadata for a session already on a curated-out model', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      expect(await getModelInfo('opus', 'global', 'anthropic')).toBeNull();
+
+      const model = await getSessionModelInfo({
+        config: { model: 'opus', provider: 'anthropic' },
+      } as any);
+
+      expect(model).toMatchObject({ id: 'opus' });
+    });
+
+    it('overlays Codex metadata for a copilot session on a curated-out model', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'gpt-5.3-codex',
+                name: 'GPT-5.3 Codex (Copilot API)',
+                alias: 'copilot-gpt-5-3-codex',
+                family: 'gpt',
+                provider: 'anthropic-copilot',
+                contextWindow: 200000,
+                description: 'GPT-5.3 Codex via GitHub Copilot',
+                releaseDate: '2026-01-01',
+                available: true,
+              },
+            ] as ModelInfo[],
+          ],
+        ])
+      );
+
+      expect(await getModelInfo('gpt-5.3-codex', 'global', 'anthropic-copilot')).toBeNull();
+
+      const model = await getSessionModelInfo({
+        config: { model: 'gpt-5.3-codex', provider: 'anthropic-copilot' },
+      } as any);
+
+      expect(model).toMatchObject({ id: 'gpt-5.3-codex', contextWindow: 272000 });
+      expect(model?.preferContextWindowMetadata).toBe(true);
+    });
+
+    it('scopes the preserved session metadata to the session provider', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      getProviderRegistry().setCuratedModels('anthropic-copilot', [{ id: 'other-model' }]);
+      const sharedId = 'claude-sonnet-4.6';
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: sharedId,
+                name: 'Claude Sonnet 4.6 (Anthropic)',
+                alias: 'sonnet-4.6',
+                family: 'sonnet',
+                provider: 'anthropic',
+                contextWindow: 200000,
+                available: true,
+              },
+              {
+                id: sharedId,
+                name: 'Claude Sonnet 4.6 (Copilot)',
+                alias: 'copilot-sonnet',
+                family: 'sonnet',
+                provider: 'anthropic-copilot',
+                contextWindow: 272000,
+                available: true,
+              },
+            ] as ModelInfo[],
+          ],
+        ])
+      );
+
+      const model = await getSessionModelInfo({
+        config: { model: sharedId, provider: 'anthropic-copilot' },
+      } as any);
+
+      expect(model).toMatchObject({ id: sharedId, provider: 'anthropic-copilot' });
     });
 
     it('should return null when the session provider is missing', async () => {
@@ -1207,6 +3542,390 @@ describe('Model Service', () => {
   });
 
   describe('refreshModels', () => {
+    it('uses strict forced discovery when the provider supports it', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const calls: unknown[] = [];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          throw new Error('resilient path should not run');
+        },
+        listRemoteModels: async (options?: unknown) => {
+          calls.push(options);
+          return [{ ...mockModels[0], provider: 'remote-provider' }];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(calls).toEqual([{ force: true }]);
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider' }),
+      ]);
+    });
+
+    it('replaces a larger cache after successful forced discovery', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          throw new Error('resilient path should not run');
+        },
+        listRemoteModels: async () => [{ ...mockModels[0], provider: 'remote-provider' }],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider', id: 'sonnet' }),
+      ]);
+    });
+
+    it('propagates and records forced discovery failures', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => mockModels,
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Remote discovery failed'
+      );
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getProviderFailure('remote-provider')).toEqual(
+        expect.objectContaining({ errorKind: 'transient', message: 'Remote discovery failed' })
+      );
+    });
+
+    it('keeps curated capability-provider caches intact when forced discovery fails', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let clearCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        hasCuratedModelList: () => true,
+        clearModelCache: () => {
+          clearCalls++;
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Remote discovery failed'
+      );
+      expect(clearCalls).toBe(0);
+
+      await refreshModels();
+      expect(clearCalls).toBe(1);
+    });
+
+    it('clears non-curated provider caches when forced discovery fails', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let clearCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        clearModelCache: () => {
+          clearCalls++;
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Remote discovery failed'
+      );
+      expect(clearCalls).toBe(1);
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('treats an empty curated remote catalog as a successful load', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        hasCuratedModelList: () => true,
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getProviderFailure('remote-provider')).toBeUndefined();
+    });
+
+    it('rejects a forced refresh when strict discovery returns an empty catalog', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Provider returned no models'
+      );
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      expect(getProviderFailure('remote-provider')).toEqual(
+        expect.objectContaining({
+          errorKind: 'transient',
+          message: 'Provider returned no models',
+        })
+      );
+    });
+
+    it('publishes successful providers when a mixed forced refresh fails', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      const refreshedModel: ModelInfo = {
+        ...mockModels[0],
+        id: 'copilot-fresh',
+        provider: 'mixed-success',
+      };
+      registry.register({
+        id: 'mixed-success',
+        getModels: async () => [],
+        listRemoteModels: async () => [refreshedModel],
+        hasCuratedModelList: () => true,
+        clearModelCache: () => {},
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      registry.register({
+        id: 'mixed-failure',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Mixed discovery failed');
+        },
+        clearModelCache: () => {},
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Mixed discovery failed'
+      );
+
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ id: 'copilot-fresh', provider: 'mixed-success' }),
+      ]);
+    });
+
+    it('preserves the prior cache when a forced failure has no loaded providers', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'unavailable-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+      registry.register({
+        id: 'failing-provider',
+        getModels: async () => [],
+        clearModelCache: () => {},
+        listRemoteModels: async () => {
+          throw new Error('Solo discovery failed');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Solo discovery failed'
+      );
+
+      expect(getAvailableModels('global')).toEqual(mockModels);
+    });
+
+    it('does not inherit a forced failure when a resilient refresh joins it', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Remote discovery failed');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      const forced = refreshModels(undefined, { forceRemote: true });
+      const resilient = refreshModels();
+
+      await expect(forced).rejects.toThrow('Remote discovery failed');
+      await expect(resilient).resolves.toBeUndefined();
+    });
+
+    it('runs strict discovery after joining a resilient replacement refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, clearModelsCache } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let resolveGetModels: (() => void) | undefined;
+      let forcedCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          await new Promise<void>((resolve) => {
+            resolveGetModels = resolve;
+          });
+          return [];
+        },
+        listRemoteModels: async () => {
+          forcedCalls++;
+          return [{ ...mockModels[0], provider: 'remote-provider' }];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      clearModelsCache();
+      const resilient = refreshModels();
+      while (!resolveGetModels) {
+        await Promise.resolve();
+      }
+      const forced = refreshModels(undefined, { forceRemote: true });
+      resolveGetModels();
+
+      await resilient;
+      await forced;
+
+      expect(forcedCalls).toBe(1);
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider' }),
+      ]);
+    });
+
+    it('reruns strict discovery when the joined forced refresh was superseded', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, clearModelsCache } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const resolvers: Array<(models: ModelInfo[]) => void> = [];
+      let calls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          calls++;
+          return new Promise<ModelInfo[]>((resolve) => {
+            resolvers.push(resolve);
+          });
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      clearModelsCache();
+      const first = refreshModels(undefined, { forceRemote: true });
+      while (resolvers.length < 1) {
+        await Promise.resolve();
+      }
+      const second = refreshModels(undefined, { forceRemote: true });
+      clearModelsCache();
+      resolvers[0]?.([{ ...mockModels[0], provider: 'remote-provider' }]);
+      await expect(first).resolves.toBeUndefined();
+
+      while (resolvers.length < 2) {
+        await Promise.resolve();
+      }
+      resolvers[1]?.([{ ...mockModels[0], provider: 'remote-provider' }]);
+      await second;
+
+      expect(calls).toBe(2);
+      expect(getAvailableModels('global')).toEqual([
+        expect.objectContaining({ provider: 'remote-provider' }),
+      ]);
+    });
+
+    it('drops previous models when a forced refresh succeeds with nothing', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('excludes unavailable providers from forced-refresh fallbacks', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      expect(getAvailableModels('global')).toEqual([]);
+    });
+
+    it('excludes unavailable providers from fallbacks merged into nonempty forced refreshes', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'remote-provider',
+        getModels: async () => [],
+        listRemoteModels: async () => [{ ...mockModels[0], provider: 'remote-provider' }],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      registry.register({
+        id: 'anthropic',
+        getModels: async () => [],
+        isAvailable: async () => false,
+      } as unknown as ProviderLike);
+
+      await refreshModels(undefined, { forceRemote: true });
+
+      const models = getAvailableModels('global');
+      expect(models.some((m) => m.provider === 'remote-provider')).toBe(true);
+      expect(models.some((m) => m.provider === 'anthropic')).toBe(false);
+    });
+
     it('should preserve both provider entries for shared model IDs after refresh', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
@@ -1445,57 +4164,337 @@ describe('Model Service', () => {
     });
   });
 
+  describe('per-provider failure recording', () => {
+    interface MockProviderBehavior {
+      available?: boolean;
+      models?: ModelInfo[];
+      error?: Error;
+      rejectDelayMs?: number;
+      onFirstProbe?: () => void;
+      unregisterDuringGetModels?: boolean;
+    }
+
+    async function registerProvider(id: string, behavior: MockProviderBehavior): Promise<void> {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id,
+        getModels: async () => {
+          if (behavior.rejectDelayMs) {
+            await new Promise((resolve) => setTimeout(resolve, behavior.rejectDelayMs));
+          }
+          if (behavior.unregisterDuringGetModels) {
+            getProviderRegistry().unregister(id);
+          }
+          if (behavior.error) throw behavior.error;
+          return behavior.models ?? [];
+        },
+        isAvailable: async () => {
+          behavior.onFirstProbe?.();
+          return behavior.available ?? true;
+        },
+      } as ProviderLike);
+    }
+
+    async function refreshProviderModels(): Promise<void> {
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+    }
+
+    it('records a credential failure when getModels rejects with a 401 probe error', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+      });
+
+      await refreshProviderModels();
+
+      const failure = getProviderFailure('glm');
+      expect(failure?.errorKind).toBe('credential');
+      expect(failure?.message).toBe('Z.ai API key rejected (HTTP 401)');
+      expect(failure?.firstRecordedAt).toBeGreaterThan(0);
+    });
+
+    it('records a transient failure when getModels rejects with a 5xx probe error', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('records a failure when isAvailable itself rejects', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'broken-provider',
+        getModels: async () => [],
+        isAvailable: async () => {
+          throw new Error('Codex probe timed out after 8000ms');
+        },
+      } as ProviderLike);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('broken-provider')?.errorKind).toBe('transient');
+    });
+
+    it('does not record a failure for an unavailable provider', async () => {
+      await registerProvider('glm', { available: false, models: mockModels });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('records failures even while the provider has models in the cache', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      const glmModels: ModelInfo[] = mockModels.map((m) => ({ ...m, provider: 'glm' }));
+      setModelsCache(new Map([['global', glmModels]]));
+
+      await refreshProviderModels();
+
+      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(true);
+      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+    });
+
+    it('clears a previously recorded failure once the provider succeeds', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      expect(getProviderFailure('glm')).toBeDefined();
+
+      resetProviderRegistry();
+      await registerProvider('glm', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('accepts an explicitly curated empty provider catalog', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { AcpProvider } = await import('../../../../src/lib/providers/acp-provider');
+      const provider = new AcpProvider({ HYPERNEO_ACP_COMMAND: 'claude --acp' }, async () => {});
+      provider.setCuratedModels([]);
+      getProviderRegistry().register(provider);
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('acp')).toBeUndefined();
+      expect(getAvailableModels('global').some((model) => model.provider === 'acp')).toBe(false);
+    });
+
+    it('propagates a recorded remote rejection into the provider auth status', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'glm',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Endpoint returned HTTP 401');
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Endpoint returned HTTP 401'
+      );
+
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
+
+      const status = await new GlmProvider({ GLM_API_KEY: 'invalid-key' }).getAuthStatus();
+      expect(status.isAuthenticated).toBe(false);
+      expect(status.errorKind).toBe('credential');
+      expect(status.error).toBe('Endpoint returned HTTP 401');
+    });
+
+    it('notifies failure-change listeners once per transition during refreshes', async () => {
+      const changes: ProviderFailureChange[] = [];
+      subscribeProviderFailureChanges((change) => changes.push(change));
+
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      await refreshProviderModels();
+
+      expect(changes).toHaveLength(1);
+      expect(changes[0]?.providerId).toBe('glm');
+
+      resetProviderRegistry();
+      await registerProvider('glm', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(changes).toHaveLength(2);
+      expect(changes[1]).toEqual({ providerId: 'glm', record: null });
+    });
+
+    it('does not apply failure writes from a superseded refresh generation', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+      });
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const supersededRefresh = refreshModels();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      clearModelsCache();
+      await supersededRefresh;
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('does not apply failure writes from a superseded initialization', async () => {
+      const { initializeProviders } = await import('../../../../src/lib/providers/factory');
+      initializeProviders();
+      let signalFirstProbe: () => void = () => {};
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbe = resolve;
+      });
+      await registerProvider('stub-failing-provider', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+        onFirstProbe: signalFirstProbe,
+      });
+
+      const { initializeModels } = await import('../../../../src/lib/model-service');
+      const initialization = initializeModels();
+      await firstProbeStarted;
+      clearModelsCache();
+      await initialization;
+
+      expect(getProviderFailure('stub-failing-provider')).toBeUndefined();
+    });
+
+    it('preserves replacement refresh state when a superseded initialization settles', async () => {
+      const { initializeProviders } = await import('../../../../src/lib/providers/factory');
+      initializeProviders();
+      let signalFirstProbe: () => void = () => {};
+      const firstProbeStarted = new Promise<void>((resolve) => {
+        signalFirstProbe = resolve;
+      });
+      await registerProvider('stub-failing-provider', {
+        error: new Error('Z.ai API key rejected (HTTP 401)'),
+        models: mockModels,
+        rejectDelayMs: 150,
+        onFirstProbe: signalFirstProbe,
+      });
+
+      const { initializeModels, refreshModels } = await import('../../../../src/lib/model-service');
+      const initialization = initializeModels();
+      await firstProbeStarted;
+      clearModelsCache();
+      const replacement = refreshModels();
+      await initialization;
+      await replacement;
+
+      expect(getProviderFailure('stub-failing-provider')?.errorKind).toBe('credential');
+    });
+
+    it('drops failure records for providers no longer in the registry', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+      });
+      await refreshProviderModels();
+      expect(getProviderFailure('glm')).toBeDefined();
+
+      resetProviderRegistry();
+      await registerProvider('kimi', { models: mockModels });
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+    });
+
+    it('does not record failures for providers unregistered during the load', async () => {
+      await registerProvider('glm', {
+        error: new Error('Z.ai probe failed (HTTP 503)'),
+        models: mockModels,
+        unregisterDuringGetModels: true,
+      });
+      await registerProvider('kimi', { models: mockModels });
+
+      await refreshProviderModels();
+
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(getProviderFailure('kimi')).toBeUndefined();
+    });
+  });
+
   describe('probe-based provider failures (fallback)', () => {
-    it('serves a provider via the static fallback when its getModels probe rejects', async () => {
+    it('records and propagates a forced remote credential failure', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
 
-      const registry = getProviderRegistry();
-      registry.register({
-        id: 'anthropic',
-        getModels: async () => [mockModels[0]],
+      getProviderRegistry().register({
+        id: 'glm',
+        getModels: async () => [],
+        listRemoteModels: async () => {
+          throw new Error('Endpoint returned HTTP 401');
+        },
         isAvailable: async () => true,
-      } as ProviderLike);
+      } as unknown as ProviderLike);
 
-      const rejectingFetch = (async () =>
-        new Response(null, { status: 401 })) as unknown as typeof fetch;
-      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, rejectingFetch));
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Endpoint returned HTTP 401'
+      );
 
-      await refreshModels();
-
-      const models = getAvailableModels('global');
-      expect(models.some((m) => m.provider === 'anthropic')).toBe(true);
-      expect(models.filter((m) => m.provider === 'glm').map((m) => m.id)).toEqual(
-        GlmProvider.MODELS.map((m) => m.id)
+      expect(getAvailableModels('global')).toEqual([]);
+      expect(getProviderFailure('glm')).toEqual(
+        expect.objectContaining({
+          errorKind: 'credential',
+          message: 'Endpoint returned HTTP 401',
+        })
       );
     });
 
-    it('keeps the provider listed via fallback and still refreshes once the probe succeeds', async () => {
+    it('refreshes successfully after a forced remote failure recovers', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
 
       let upstreamAccepts = false;
-      const mutableFetch = (async () =>
-        new Response(null, { status: upstreamAccepts ? 200 : 401 })) as unknown as typeof fetch;
-
+      const glmModel: ModelInfo = { ...mockModels[0], id: 'glm-5', provider: 'glm' };
       const registry = getProviderRegistry();
       registry.register({
         id: 'anthropic',
         getModels: async () => [mockModels[0]],
         isAvailable: async () => true,
       } as ProviderLike);
-      registry.register(new GlmProvider({ GLM_API_KEY: 'glm-key' }, mutableFetch));
+      registry.register({
+        id: 'glm',
+        getModels: async () => [glmModel],
+        listRemoteModels: async () => {
+          if (!upstreamAccepts) throw new Error('Endpoint returned HTTP 401');
+          return [glmModel];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
 
-      await refreshModels();
-      expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(true);
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow(
+        'Endpoint returned HTTP 401'
+      );
+      expect(getProviderFailure('glm')?.errorKind).toBe('credential');
 
       upstreamAccepts = true;
-      await refreshModels();
+      await refreshModels(undefined, { forceRemote: true });
 
       const models = getAvailableModels('global');
       expect(models.some((m) => m.provider === 'glm' && m.id === 'glm-5')).toBe(true);
+      expect(getProviderFailure('glm')).toBeUndefined();
     });
 
     it('treats an empty getModels result from an available provider as a failed fetch', async () => {

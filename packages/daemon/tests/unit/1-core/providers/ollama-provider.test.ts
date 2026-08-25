@@ -105,16 +105,17 @@ describe('OllamaProvider', () => {
     });
   });
 
-  it('clears the Ollama model cache for forced refreshes', async () => {
-    const fetchMock = mock(
-      async () =>
-        new Response(
-          JSON.stringify({
-            models: [{ name: 'llama3.2:latest', model: 'llama3.2:latest' }],
-          }),
-          { status: 200 }
-        )
-    );
+  it('bypasses the Ollama model cache for forced remote discovery', async () => {
+    let callCount = 0;
+    const fetchMock = mock(async () => {
+      callCount++;
+      return new Response(
+        JSON.stringify({
+          models: [{ name: `llama3.2:${callCount}`, model: `llama3.2:${callCount}` }],
+        }),
+        { status: 200 }
+      );
+    });
     const provider = new OllamaProvider({
       kind: 'local',
       env: process.env,
@@ -122,11 +123,103 @@ describe('OllamaProvider', () => {
     });
 
     await provider.getModels();
-    await provider.getModels();
-    provider.clearModelCache();
-    await provider.getModels();
+    const cachedModels = await provider.listRemoteModels();
+    const forcedModels = await provider.listRemoteModels({ force: true });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(cachedModels[0].id).toBe('llama3.2:1');
+    expect(forcedModels[0].id).toBe('llama3.2:2');
+    expect(await provider.getModels()).toBe(forcedModels);
+  });
+
+  it('propagates Ollama remote discovery failures instead of returning fallback models', async () => {
+    let fail = false;
+    const fetchMock = mock(async () => {
+      if (fail) throw new Error('connection refused');
+      return new Response(
+        JSON.stringify({ models: [{ name: 'llama3.2:latest', model: 'llama3.2:latest' }] }),
+        { status: 200 }
+      );
+    });
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await provider.getModels();
+    fail = true;
+
+    await expect(provider.listRemoteModels({ force: true })).rejects.toThrow('connection refused');
+  });
+
+  it('propagates Ollama remote discovery HTTP failures', async () => {
+    const fetchMock = mock(async () => new Response('Bad gateway', { status: 502 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await expect(provider.listRemoteModels({ force: true })).rejects.toThrow(
+      'Ollama model listing returned HTTP 502'
+    );
+  });
+
+  it('uses a base URL override without replacing the configured endpoint cache', async () => {
+    let callCount = 0;
+    const fetchMock = mock(async () => {
+      callCount++;
+      return new Response(
+        JSON.stringify({
+          models: [{ name: `llama3.2:${callCount}`, model: `llama3.2:${callCount}` }],
+        }),
+        { status: 200 }
+      );
+    });
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const configuredModels = await provider.getModels();
+    const overrideModels = await provider.listRemoteModels({
+      baseUrl: 'https://ollama.example.test/',
+    });
+    const configuredModelsAgain = await provider.getModels();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://ollama.example.test/api/tags', {
+      headers: undefined,
+    });
+    expect(overrideModels[0].id).toBe('llama3.2:2');
+    expect(configuredModelsAgain).toBe(configuredModels);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replace configured auth status from a base URL override probe', async () => {
+    process.env.OLLAMA_API_KEY = 'local-key';
+    const fetchMock = mock(async (url: RequestInfo | URL) => {
+      if (String(url).startsWith('https://ollama.example.test')) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({ models: [{ name: 'llama3.2:latest', model: 'llama3.2:latest' }] }),
+        { status: 200 }
+      );
+    });
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await provider.getModels();
+    await expect(
+      provider.listRemoteModels({ baseUrl: 'https://ollama.example.test/' })
+    ).rejects.toThrow('Ollama API key was rejected');
+
+    expect((await provider.getAuthStatus()).error).toBeUndefined();
   });
 
   it('uses bearer auth and cloud base URL for Ollama Cloud model listing', async () => {
@@ -163,6 +256,41 @@ describe('OllamaProvider', () => {
     expect(status.error).toContain('OLLAMA_API_KEY');
   });
 
+  it('clears a stale auth error when the effective credential is replaced', async () => {
+    const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    provider.setCredentials({ type: 'api_key', apiKey: 'bad-stored-key' });
+
+    await provider.getModels();
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+
+    const status = await provider.getAuthStatus();
+    expect(status.error).toBeUndefined();
+    expect(status.isAuthenticated).toBe(true);
+  });
+
+  it('keeps a stale auth error while an environment key shadows the replacement', async () => {
+    process.env.OLLAMA_API_KEY = 'bad-local-key';
+    const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await provider.getModels();
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+  });
+
   it('routes Ollama shorthands and cloud-tagged gpt-oss models to the matching provider', () => {
     const local = new OllamaProvider({ kind: 'local' });
     const cloud = new OllamaProvider({ kind: 'cloud' });
@@ -186,9 +314,12 @@ describe('OllamaProvider', () => {
     expect(cloud.ownsModel('other-provider-cloud')).toBe(false);
   });
 
-  it.skipIf(!isBun)('builds Anthropic-compatible routing through a local bridge', () => {
+  it.skipIf(!isBun)('builds Anthropic-compatible routing through a local bridge', async () => {
     const provider = new OllamaProvider({ kind: 'local' });
 
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama.test',
+    });
     const config = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama.test',
     });
@@ -201,14 +332,23 @@ describe('OllamaProvider', () => {
     void provider.shutdown();
   });
 
-  it.skipIf(!isBun)('keeps distinct bridges for different session override upstreams', () => {
+  it.skipIf(!isBun)('keeps distinct bridges for different session override upstreams', async () => {
     const provider = new OllamaProvider({ kind: 'local' });
 
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama-one.test',
+    });
     const first = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama-one.test',
     });
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama-two.test',
+    });
     const second = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama-two.test',
+    });
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama-one.test',
     });
     const firstAgain = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama-one.test',
@@ -219,7 +359,7 @@ describe('OllamaProvider', () => {
     void provider.shutdown();
   });
 
-  it('requires an API key for cloud SDK routing', () => {
+  it('requires an API key for cloud SDK routing', async () => {
     const provider = new OllamaProvider({ kind: 'cloud' });
 
     expect(() => provider.buildSdkConfig('gpt-oss:120b-cloud')).toThrow(
@@ -227,9 +367,13 @@ describe('OllamaProvider', () => {
     );
   });
 
-  it.skipIf(!isBun)('uses session overrides for cloud API key and base URL', () => {
+  it.skipIf(!isBun)('uses session overrides for cloud API key and base URL', async () => {
     const provider = new OllamaProvider({ kind: 'cloud' });
 
+    await provider.ensureBridgeStarted('gpt-oss:120b-cloud', {
+      apiKey: 'session-key',
+      baseUrl: 'https://example.test',
+    });
     const config = provider.buildSdkConfig('gpt-oss:120b-cloud', {
       apiKey: 'session-key',
       baseUrl: 'https://example.test',

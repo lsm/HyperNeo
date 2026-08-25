@@ -85,34 +85,39 @@ export class WebSocketClientTransport implements IMessageTransport {
 
       try {
         this.ws = new WebSocket(this.url);
+        const ws = this.ws;
 
-        this.ws.onopen = () => {
+        ws.onopen = () => {
           if (connectResolved) return;
           connectResolved = true;
+          resolve();
+          if (this.ws !== ws) return;
           log.info(`Connected to ${this.url}`);
           this.setState('connected');
           this.reconnectAttempts = 0;
           this.startPing();
-          resolve();
         };
 
-        this.ws.onmessage = (event) => {
+        ws.onmessage = (event) => {
+          if (this.ws !== ws) return;
           this.handleMessage(event.data);
         };
 
-        this.ws.onerror = (error) => {
+        ws.onerror = (error) => {
+          if (this.ws !== ws) return;
           log.error(`WebSocket error:`, error);
           this.setState('error', new Error('WebSocket error'));
         };
 
-        this.ws.onclose = (event) => {
-          log.info(`Disconnected (code=${event.code})`);
-          this.setState('disconnected');
-          this.stopPing();
+        ws.onclose = (event) => {
           if (!connectResolved) {
             connectResolved = true;
             reject(new Error(`WebSocket to ${this.url} closed before open (code=${event.code})`));
           }
+          if (this.ws !== ws) return;
+          log.info(`Disconnected (code=${event.code})`);
+          this.setState('disconnected');
+          this.stopPing();
           this.handleDisconnect();
         };
       } catch (error) {
@@ -148,6 +153,10 @@ export class WebSocketClientTransport implements IMessageTransport {
       `Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`
     );
 
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch((error) => {
         log.error(`Reconnection failed:`, error);

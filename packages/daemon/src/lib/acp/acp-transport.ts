@@ -6,13 +6,13 @@ import type {
   AcpJsonRpcRequest,
   AcpJsonRpcResponse,
 } from '@hyperneo/shared';
-import { Logger } from '../logger';
+import { Logger } from '../logger.ts';
 import {
   acpProcessGroupAlive,
   type AcpProcessTree,
   type AcpProcessTreeOwner,
   basicAcpProcessTreeOwner,
-} from './acp-process-tree';
+} from './acp-process-tree.ts';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSE_SIGTERM_TIMEOUT_MS = 5_000;

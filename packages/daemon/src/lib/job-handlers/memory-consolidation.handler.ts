@@ -1,6 +1,6 @@
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { AgentMemoryRepository } from '../../storage/repositories/agent-memory-repository';
-import { MEMORY_CONSOLIDATION } from '../job-queue-constants';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { AgentMemoryRepository } from '../../storage/repositories/agent-memory-repository.ts';
+import { MEMORY_CONSOLIDATION } from '../job-queue-constants.ts';
 
 const NEXT_RUN_DELAY_MS = 24 * 60 * 60 * 1000;
 

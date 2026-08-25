@@ -34,9 +34,10 @@ describe('Model RPC Handlers', () => {
 
       const result = (await daemon.messageHub.request('session.model.get', {
         sessionId,
-      })) as { currentModel: string; modelInfo: unknown };
+      })) as { currentModel: string; currentProvider: string; modelInfo: unknown };
 
       expect(result.currentModel).toBeString();
+      expect(result.currentProvider).toBeString();
       expect(result.modelInfo).toBeDefined();
     });
 

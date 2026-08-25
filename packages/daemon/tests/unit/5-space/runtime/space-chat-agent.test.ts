@@ -50,6 +50,13 @@ describe('buildSpaceChatSystemPrompt — basic structure', () => {
     expect(() => buildSpaceChatSystemPrompt()).not.toThrow();
     expect(() => buildSpaceChatSystemPrompt({})).not.toThrow();
   });
+
+  test('coordinator prompt dynamically includes the owner-review contract (MC5-B1)', () => {
+    const prompt = buildSpaceChatSystemPrompt();
+    expect(prompt).toContain('## Goal Ownership & Outcome Review Contract');
+    expect(prompt).toContain('review_goal_outcome');
+    expect(prompt).toContain('## Scheduling & Task Systems');
+  });
 });
 
 describe('buildSpaceChatSystemPrompt — workflow information', () => {

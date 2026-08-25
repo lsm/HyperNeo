@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/migrations';
+import { reclaimPendingMigrationSpace } from '../../../../../src/storage/schema/migration-space-reclaim';
 
 function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
   return !!db
@@ -51,17 +52,22 @@ describe('migration runner markers', () => {
   test('does not rerun marked migrations or create another backup', () => {
     let backups = 0;
 
-    runMigrations(db, () => {
+    const firstReclaims = runMigrations(db, () => {
       backups++;
     });
     expect(backups).toBe(1);
+    expect(firstReclaims.length).toBeGreaterThan(0);
+    expect(firstReclaims.some((request) => request.migrationKey === 'migration_183')).toBe(true);
     expect(markerExists(db, 'migration_001')).toBe(true);
     expect(markerExists(db, 'migration_157')).toBe(true);
     expect(markerExists(db, 'migration_158')).toBe(true);
 
-    runMigrations(db, () => {
+    const retryReclaims = runMigrations(db, () => {
       backups++;
     });
+    expect(retryReclaims).toEqual(firstReclaims);
+    reclaimPendingMigrationSpace(db, retryReclaims);
+    expect(runMigrations(db, () => backups++)).toEqual([]);
     expect(backups).toBe(1);
   });
 

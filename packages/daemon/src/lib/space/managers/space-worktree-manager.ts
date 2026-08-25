@@ -1,14 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
-import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository';
-import { SpaceRepository } from '../../../storage/repositories/space-repository';
-import { worktreeSlug } from '../worktree-slug';
-import { Logger } from '../../logger';
-import { retryWithBackoff } from '../runtime/retry-utils';
-import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants';
-import { getWorktreeBaseDir } from '../../worktree-path-utils';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
+import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { worktreeSlug } from '../worktree-slug.ts';
+import { Logger } from '../../logger.ts';
+import { retryWithBackoff } from '../runtime/retry-utils.ts';
+import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
+import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;

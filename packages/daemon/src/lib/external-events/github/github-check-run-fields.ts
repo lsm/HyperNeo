@@ -1,4 +1,4 @@
-import { parseGitHubTimestamp } from './github-normalizer';
+import { parseGitHubTimestamp } from './github-normalizer.ts';
 
 export function checkRunIdFrom(row: unknown): number | string {
   if (!row || typeof row !== 'object') return 'unknown';
@@ -28,8 +28,13 @@ export function checkRunNameFrom(row: unknown): string {
   return typeof name === 'string' ? name : '';
 }
 
-export function isNonFailureConclusion(conclusion: string): boolean {
-  return conclusion === 'success' || conclusion === 'skipped' || conclusion === 'neutral';
+export type CheckRunTopicAction = 'failed' | 'cancelled' | 'skipped';
+
+export function checkRunTopicAction(conclusion: string): CheckRunTopicAction | null {
+  if (conclusion === 'cancelled') return 'cancelled';
+  if (conclusion === 'skipped') return 'skipped';
+  if (conclusion === '' || conclusion === 'success' || conclusion === 'neutral') return null;
+  return 'failed';
 }
 
 export function checkRunOccurredAt(row: unknown): number {

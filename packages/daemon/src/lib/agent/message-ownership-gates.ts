@@ -1,4 +1,4 @@
-import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery';
+import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery.ts';
 
 export type MessageOwnership = 'job_queue' | 'memory_queue' | 'unowned';
 
@@ -93,6 +93,16 @@ export function planFlushDelivery(args: {
 
 export type DeliveryRoleResolution = MessageDeliveryRole | 'explicit_role_rejected';
 
+export function resolveDeliveryRole(args: {
+  existingActiveRole: MessageDeliveryRole | null;
+  requestedRole?: MessageDeliveryRole;
+  uniqueConstraintHit: true;
+}): DeliveryRoleResolution;
+export function resolveDeliveryRole(args: {
+  existingActiveRole: MessageDeliveryRole | null;
+  requestedRole?: MessageDeliveryRole;
+  uniqueConstraintHit: false;
+}): MessageDeliveryRole;
 export function resolveDeliveryRole(args: {
   existingActiveRole: MessageDeliveryRole | null;
   requestedRole?: MessageDeliveryRole;

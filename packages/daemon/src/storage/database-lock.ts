@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { Logger } from '../lib/logger';
+import { Logger } from '../lib/logger.ts';
 
 export class DatabaseLock {
   private lockPath: string;

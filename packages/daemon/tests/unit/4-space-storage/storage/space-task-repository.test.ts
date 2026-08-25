@@ -51,6 +51,7 @@ describe('SpaceTaskRepository', () => {
   function createSearchIndex(): void {
     db.exec(`
 			CREATE TABLE message_search_content (
+					id INTEGER PRIMARY KEY,
 				kind TEXT NOT NULL,
 				source_id TEXT NOT NULL,
 				message_id TEXT,
@@ -62,7 +63,7 @@ describe('SpaceTaskRepository', () => {
 				title TEXT,
 				body TEXT,
 				timestamp INTEGER,
-				PRIMARY KEY (kind, source_id)
+				UNIQUE (kind, source_id)
 			);
 			CREATE TABLE message_search_pending (
 				message_id TEXT PRIMARY KEY,
@@ -72,24 +73,24 @@ describe('SpaceTaskRepository', () => {
 				title,
 				body,
 				content='message_search_content',
-				content_rowid='rowid',
+				content_rowid='id',
 				detail=column,
 				tokenize = 'unicode61'
 			);
 			CREATE TRIGGER message_search_content_ai
 			AFTER INSERT ON message_search_content BEGIN
-				INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+				INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
 			END;
 			CREATE TRIGGER message_search_content_ad
 			AFTER DELETE ON message_search_content BEGIN
 				INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
-				VALUES ('delete', old.rowid, old.title, old.body);
+				VALUES ('delete', old.id, old.title, old.body);
 			END;
 			CREATE TRIGGER message_search_content_au
 			AFTER UPDATE OF title, body ON message_search_content BEGIN
 				INSERT INTO message_search_fts(message_search_fts, rowid, title, body)
-				VALUES ('delete', old.rowid, old.title, old.body);
-				INSERT INTO message_search_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+				VALUES ('delete', old.id, old.title, old.body);
+				INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
 			END;
 		`);
   }
@@ -98,7 +99,7 @@ describe('SpaceTaskRepository', () => {
     return (
       (db as any)
         .prepare(
-          `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.rowid = message_search_fts.rowid WHERE message_search_fts MATCH ?`
+          `SELECT msc.source_id FROM message_search_fts JOIN message_search_content msc ON msc.id = message_search_fts.rowid WHERE message_search_fts MATCH ?`
         )
         .all(query) as Array<{ source_id: string }>
     ).map((row) => row.source_id);

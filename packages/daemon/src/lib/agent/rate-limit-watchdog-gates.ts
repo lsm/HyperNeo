@@ -1,6 +1,14 @@
-import { type CooldownDecision, computeCooldown, MAX_RESET_HORIZON_MS } from './fallback-recovery';
-import { cooldownFromReset, type LimitRetryHint, normalizeEpochMs } from './limit-error-classifier';
-import type { LlmLimitAssessment } from './limit-error-llm-classifier';
+import {
+  type CooldownDecision,
+  computeCooldown,
+  MAX_RESET_HORIZON_MS,
+} from './fallback-recovery.ts';
+import {
+  cooldownFromReset,
+  type LimitRetryHint,
+  normalizeEpochMs,
+} from './limit-error-classifier.ts';
+import type { LlmLimitAssessment } from './limit-error-llm-classifier.ts';
 
 export type RateLimitWatchdogStatus = 'idle' | 'cooldown' | 'fallback-pending';
 

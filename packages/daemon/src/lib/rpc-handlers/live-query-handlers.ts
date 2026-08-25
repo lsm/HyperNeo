@@ -16,14 +16,14 @@ import {
   sendStatusToDeliveryStatus,
 } from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
-import type { TableChangeScope } from '../../storage/reactive-database';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters';
-import { Logger } from '../logger';
-import { mapActiveTurnEntryRow } from './activity-preview';
+import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query.ts';
+import type { TableChangeScope } from '../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters.ts';
+import { Logger } from '../logger.ts';
+import { mapActiveTurnEntryRow } from './activity-preview.ts';
 
-export { buildActiveTurnSummariesFromRows } from './activity-preview';
+export { buildActiveTurnSummariesFromRows } from './activity-preview.ts';
 
 export interface NamedQuery {
   sql: string;
@@ -1314,13 +1314,15 @@ github_rows AS (
     tt.id AS taskId,
     'github' AS category,
     CASE
-      -- The normalizer only ingests failed CI conclusions (success/
-      -- skipped/neutral are dropped) and emits them as .check_failed (check_run),
-      -- .suite_failed (check_suite), or .status_failure / .status_error
-      -- (external/legacy CI — Jenkins/Travis/custom). So any of those topics IS
-      -- a CI failure. ee.state is the event-global state (any failed recipient
-      -- delivery flips it), so for non-CI events derive the danger tone from
-      -- THIS task's own delivery row, not the global event state.
+      -- The normalizer ingests CI conclusions as .check_failed /
+      -- .check_cancelled / .check_skipped (check_run), .suite_failed /
+      -- .suite_cancelled (check_suite), or .status_failure / .status_error
+      -- (external/legacy CI — Jenkins/Travis/custom); success/neutral are
+      -- dropped. Only the failed/error topics are CI failures; cancelled and
+      -- skipped fall through to neutral. ee.state is the event-global state
+      -- (any failed recipient delivery flips it), so for non-CI events derive
+      -- the danger tone from THIS task's own delivery row, not the global
+      -- event state.
       WHEN ee.topic LIKE '%.check_failed'
         OR ee.topic LIKE '%.suite_failed'
         OR ee.topic LIKE '%.status_failure'
@@ -2915,7 +2917,7 @@ const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
       timestamp,
       send_status,
       origin,
-      rowid,
+      rowid AS rowid,
       COALESCE(
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
         task_id
@@ -2946,7 +2948,7 @@ recent_progress AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     COALESCE(
       CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
       task_id
@@ -2985,7 +2987,7 @@ task_starts AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     COALESCE(
       CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
       task_id
@@ -3007,7 +3009,7 @@ latest_progress AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     task_id
   FROM (
     SELECT
@@ -3016,7 +3018,7 @@ latest_progress AS (
       timestamp,
       send_status,
       origin,
-      rowid,
+      rowid AS rowid,
       COALESCE(
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
         task_id
@@ -3059,7 +3061,7 @@ FROM (
 ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
-const MESSAGES_BY_SESSION_SQL = `
+export const MESSAGES_BY_SESSION_SQL = `
 WITH latest_shutdown_boundary AS MATERIALIZED (
   SELECT id
   FROM sdk_messages
@@ -3096,7 +3098,7 @@ top_level AS (
     timestamp,
     send_status,
     origin,
-    rowid,
+    rowid AS rowid,
     message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
   FROM sdk_messages

@@ -1,4 +1,4 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
@@ -14,18 +14,22 @@ import type {
   PostApprovalRoute,
   UpdateSpaceWorkflowParams,
 } from '@hyperneo/shared';
-import { Logger } from '../../lib/logger';
+import { Logger } from '../../lib/logger.ts';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
   verifyDefinitionVersion,
-} from '../../lib/space/workflows/definition-version';
+} from '../../lib/space/workflows/definition-version.ts';
 import {
   SpaceWorkflowDefinitionVersionRepository,
   type DefinitionVersionSource,
-} from './space-workflow-definition-version-repository';
+} from './space-workflow-definition-version-repository.ts';
 
 const log = new Logger('space-workflow-repository');
+
+export const LIST_SPACE_WORKFLOWS_SQL = `SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC, rowid ASC`;
+
+export const LIST_SPACE_WORKFLOW_NODES_SQL = `SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`;
 
 interface WorkflowRow {
   id: string;
@@ -260,11 +264,7 @@ export class SpaceWorkflowRepository {
   }
 
   listWorkflows(spaceId: string): SpaceWorkflow[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM space_workflows WHERE space_id = ? ORDER BY created_at ASC, rowid ASC`
-      )
-      .all(spaceId) as WorkflowRow[];
+    const rows = this.db.prepare(LIST_SPACE_WORKFLOWS_SQL).all(spaceId) as WorkflowRow[];
     return rows.map((r) => {
       const ctx: NodeMigrationContext = { strippedFields: new Set<string>() };
       const nodes = this.fetchNodes(r.id, ctx);
@@ -571,9 +571,7 @@ export class SpaceWorkflowRepository {
   }
 
   private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ? ORDER BY rowid ASC`)
-      .all(workflowId) as NodeRow[];
+    const rows = this.db.prepare(LIST_SPACE_WORKFLOW_NODES_SQL).all(workflowId) as NodeRow[];
     return rows.map((r) => rowToNode(r, ctx));
   }
 

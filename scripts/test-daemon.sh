@@ -6,7 +6,7 @@
 # Usage:
 #   ./scripts/test-daemon.sh                # All shards in parallel (fast, no coverage)
 #   ./scripts/test-daemon.sh --coverage     # All shards with coverage
-#   ./scripts/test-daemon.sh 5-space-runtime-a # Run a single shard
+#   ./scripts/test-daemon.sh 5-space-a # Run a single shard
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
 #   ./scripts/test-daemon.sh --verify       # Validate shard config without running tests
@@ -18,23 +18,23 @@ cd "$REPO_ROOT"
 
 export HYPERNEO_ALLOW_ROOT_TEST=1
 
+# Free-tier squeeze (task #1399 rebalance): the CI matrix runs these 6 shards
+# — one runner each, ~50s fixed setup per job, so shards are duration-merged
+# to keep the whole PR run inside the repo's 20 concurrent runners. Measured
+# CI junit times (2026-08-24 rebalance run) per shard:
+#   shared 7s · 1-core ~80s (whole tree + migration bucket 0) ·
+#   handlers-migrations ~130s · storage-migrations ~105s · 5-space-a/b ~117s
+#   each (weighted 2-way over the whole 5-space tree; the 117s migration
+#   chain is dealt 3-way across the three directory legs). Rebalance with the
+#   CI balance report + test:generate-shard-weights; no shard should exceed
+#   ~2min of test time.
 SHARDS=(
 	shared
-	2-handlers-github
-	2-handlers-other
-	1-core-a
-	1-core-b
-	4-space-storage
-	4-space-migrations-a
-	4-space-migrations-b
-	5-space-agent-other
-	5-space-runtime-a
-	5-space-runtime-b
-	5-space-runtime-c
-	5-space-runtime-d
-	5-space-runtime-e
-	5-space-runtime-f
-	5-space-runtime-g
+	1-core
+	handlers-migrations
+	storage-migrations
+	5-space-a
+	5-space-b
 )
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
@@ -74,8 +74,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
 HASH_SPLIT_SPECS=(
-	"5-space-runtime|7|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts|scripts/shard-weights.tsv"
-	"1-core|2|1-core/*.test.ts;1-core/agent/*.test.ts;1-core/core/*.test.ts;1-core/credentials/*.test.ts;1-core/lib/*.test.ts;1-core/providers/*.test.ts;1-core/providers/anthropic-copilot/*.test.ts;1-core/providers/anthropic-messages-bridge/*.test.ts;1-core/providers/openai-chat-bridge/*.test.ts;1-core/providers/openai-responses-bridge/*.test.ts;1-core/providers/shared/*.test.ts;1-core/session/*.test.ts;helpers/*.test.ts;lib/acp/*.test.ts;lib/job-handlers/*.test.ts"
+	"5-space|2|5-space/*.test.ts;5-space/agent/*.test.ts;5-space/goals/*.test.ts;5-space/other/*.test.ts;5-space/tools/*.test.ts;5-space/workflow/*.test.ts;5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts|scripts/shard-weights.tsv"
 )
 
 # Map a hash-split shard's suffix letter to a 0-based bucket index (a→0 … z→25).
@@ -95,7 +94,7 @@ shard_index_to_suffix() {
 	printf '%s' "${letters:i:1}"
 }
 
-# Resolve a hash-split shard name (e.g. 5-space-runtime-a) to its bucket's files.
+# Resolve a hash-split shard name (e.g. 5-space-a) to its bucket's files.
 # Prints absolute test paths and returns 0 on a match, 1 if $1 is not a hash split.
 # A spec with a 4th <weights> field resolves its bucket by duration-aware packing
 # (see HASH_SPLIT_SPECS above); the union of buckets is the full glob set either way.
@@ -192,7 +191,7 @@ verify_shards() {
 		# Parse the active shard matrix once: extract the `shard: [...]` flow
 		# sequence and normalize to one token per line. Membership is checked
 		# against THIS parsed list (grep -qxF per token), never by grepping the
-		# whole file — a commented-out matrix entry (`# 5-space-runtime-b`) must
+		# whole file — a commented-out matrix entry (`# 5-space-b`) must
 		# not satisfy the check, or CI silently drops the bucket.
 		local matrix_tokens=""
 		if [ -f "$workflow" ]; then
@@ -314,9 +313,12 @@ verify_shards() {
 }
 
 # Split storage migration tests dynamically so new files are picked up without
-# editing this script. Bash glob order is deterministic.
+# editing this script. Bash glob order is deterministic. The 117s migration
+# chain is dealt 3-way (modulo over glob order) across the 1-core,
+# handlers-migrations, and storage-migrations legs so no single leg carries it
+# all (task #1399 rebalance).
 migration_shard_paths() {
-	local parity="$1"
+	local bucket="$1"
 	local files=(
 		"$TEST_ROOT/4-space-storage/storage"/migration*.test.ts
 		"$TEST_ROOT/4-space-storage/storage/migrations"/*.test.ts
@@ -327,7 +329,7 @@ migration_shard_paths() {
 
 	for file in "${files[@]}"; do
 		[ -e "$file" ] || continue
-		if [ $((index % 2)) -eq "$parity" ]; then
+		if [ $((index % 3)) -eq "$bucket" ]; then
 			printf '%s\n' "$file"
 		fi
 		index=$((index + 1))
@@ -336,7 +338,7 @@ migration_shard_paths() {
 
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
-	# Hash-split shards (e.g. 5-space-runtime-a/b) are resolved dynamically by
+	# Hash-split shards (e.g. 5-space-a/b) are resolved dynamically by
 	# stable hash — no hand-listed files. See HASH_SPLIT_SPECS above.
 	local resolved
 	if resolved=$(hash_split_resolve "$1"); then
@@ -351,30 +353,39 @@ shard_paths() {
 		# here with its own vitest config.
 		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
 		;;
-	2-handlers-github)
-		# github/ is split out of 2-handlers by directory, NOT by the stable-hash
-		# machinery: its 19 files carry ~102s of local test time vs ~115s for the
-		# other seven dirs combined, while a 2-way hash split lands 41s/175s (the
-		# three heaviest files collide in one bucket) — a skew that would keep the
-		# slow bucket near the unsplit ~117s CI step. Revisit if duration-aware
-		# sharding ever lands; until then keep this boundary duration-balanced.
-		printf '%s\n' "$TEST_ROOT/2-handlers/github"
+	1-core)
+		# The whole 1-core tree plus its helpers/lib satellites (~80s measured)
+		# and migration bucket 0 — one unsplit leg (task #1399 rebalance: the
+		# former 2-way split made two ~40s legs while online legs carried ~150s).
+		# Directory args are recursive in vitest; a new 1-core subdirectory is
+		# picked up automatically.
+		printf '%s\n' \
+			"$TEST_ROOT/1-core" \
+			"$TEST_ROOT/helpers" \
+			"$TEST_ROOT/lib/acp" \
+			"$TEST_ROOT/lib/job-handlers" \
+			"$TEST_ROOT/lib/runtime-server.test.ts" \
+			"$TEST_ROOT/lib/runtime-spawn.test.ts"
+		migration_shard_paths 0
 		;;
-	2-handlers-other)
-		# Everything under 2-handlers/ except github/ (see above). A new
-		# 2-handlers subdirectory must be listed here — validate-test-matrix.sh
-		# fails loudly on any uncovered unit test file, so it cannot be silently
+	handlers-migrations)
+		# The whole 2-handlers tree plus migration bucket 1. A new 2-handlers
+		# subdirectory must be listed here — validate-test-matrix.sh fails
+		# loudly on any uncovered unit test file, so it cannot be silently
 		# dropped from CI.
 		printf '%s\n' \
 			"$TEST_ROOT/2-handlers/db-query" \
+			"$TEST_ROOT/2-handlers/github" \
 			"$TEST_ROOT/2-handlers/job-handlers" \
 			"$TEST_ROOT/2-handlers/mcp" \
 			"$TEST_ROOT/2-handlers/routes" \
 			"$TEST_ROOT/2-handlers/rpc" \
 			"$TEST_ROOT/2-handlers/rpc-handlers" \
 			"$TEST_ROOT/2-handlers/short-id"
+		migration_shard_paths 1
 		;;
-	4-space-storage)
+	storage-migrations)
+		# 4-space-storage (non-migration files) plus migration bucket 2.
 		printf '%s\n' "$TEST_ROOT/4-space-storage"/*.test.ts "$TEST_ROOT/4-space-storage/app"
 		for file in "$TEST_ROOT/4-space-storage/storage"/*.test.ts; do
 			case "$(basename "$file")" in
@@ -382,18 +393,11 @@ shard_paths() {
 			*) printf '%s\n' "$file" ;;
 			esac
 		done
+		migration_shard_paths 2
 		;;
-	4-space-migrations-a)
-		migration_shard_paths 0
-		;;
-	4-space-migrations-b)
-		migration_shard_paths 1
-		;;
-	5-space-agent-other)
-		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/goals" "$TEST_ROOT/5-space/other" "$TEST_ROOT/5-space/tools" "$TEST_ROOT/5-space/workflow"
-		;;
-	# 5-space-runtime-a/b are resolved by hash_split_resolve above (stable hash
-	# over the full 5-space/runtime tree, so no file is ever hand-listed or dropped).
+	# 5-space-a/b are resolved by hash_split_resolve above
+	# (duration-weighted packing over the full tree, so no file is ever
+	# hand-listed or dropped).
 	*)
 		return 1
 		;;
@@ -532,14 +536,15 @@ run_shard() {
 		pkg_dir="$REPO_ROOT/packages/daemon"
 	fi
 
-	# Migration shards replay the full migration chain on a fresh on-disk SQLite
-	# DB per test. That is I/O-heavy and intermittently exceeds vitest's 5s test /
-	# 10s hook defaults under CI parallel load — a different migration test flakes
-	# on different runs (28/29/33/34/35-36/47/94). Give the whole migration shard a
-	# generous budget instead of hardening each file one-by-one.
+	# Migration-carrying shards (both merged halves) replay the full migration
+	# chain on a fresh on-disk SQLite DB per test. That is I/O-heavy and
+	# intermittently exceeds vitest's 5s test / 10s hook defaults under CI
+	# parallel load — a different migration test flakes on different runs
+	# (28/29/33/34/35-36/47/94). Give the whole shard a generous budget instead
+	# of hardening each file one-by-one.
 	local timeout_flags=""
 	case "$shard" in
-		4-space-migrations-*) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
+		1-core | *-migrations) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
 	esac
 
 	# shellcheck disable=SC2086
@@ -570,10 +575,10 @@ for shard in "${RUN_SHARDS[@]}"; do
 	# Migration tests rebuild full old schemas and re-run the entire migration
 	# suite for idempotency checks — legitimately heavy work that flakes at
 	# vitest's 5s default under parallel shard load (migration-45/53 timeouts
-	# blocked this PR across rounds 11/19/21). Give the migration shards a
-	# generous per-test timeout; other shards keep the default.
+	# blocked this PR across rounds 11/19/21). Give the migration-carrying
+	# shards a generous per-test timeout; other shards keep the default.
 	case "$shard" in
-		4-space-migrations-*) EXTRA_FLAGS="--test-timeout=30000" ;;
+		*-migrations) EXTRA_FLAGS="--test-timeout=30000" ;;
 		*) EXTRA_FLAGS="" ;;
 	esac
 

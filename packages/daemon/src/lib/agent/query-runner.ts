@@ -5,34 +5,34 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { Database } from '../../storage/database';
-import { ErrorCategory, type ErrorManager } from '../error-manager';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import type { Logger } from '../logger';
-import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service';
+import type { Database } from '../../storage/database.ts';
+import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Logger } from '../logger.ts';
+import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
-} from '../space/runtime/space-mcp-session-policy';
-import type { AgentSession } from './agent-session';
-import type { AskUserQuestionHandler } from './ask-user-question-handler';
-import { assessLimitError, type LimitRetryHint } from './limit-error-classifier';
-import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
-import type { MessageQueue } from './message-queue';
-import type { ProcessingStateManager } from './processing-state-manager';
-import type { QueryLike } from './query-like';
-import type { QueryOptionsBuilder } from './query-options-builder';
-import type { SDKMessageHandler } from './sdk-message-handler';
-import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate';
+} from '../space/runtime/space-mcp-session-policy.ts';
+import type { AgentSession } from './agent-session.ts';
+import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
+import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
+import type { MessageQueue } from './message-queue.ts';
+import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { QueryLike } from './query-like.ts';
+import type { QueryOptionsBuilder } from './query-options-builder.ts';
+import type { SDKMessageHandler } from './sdk-message-handler.ts';
+import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
 import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
-} from './transient-error-patterns';
+} from './transient-error-patterns.ts';
 
-export type { OriginalEnvVars } from '../provider-service';
+export type { OriginalEnvVars } from '../provider-service.ts';
 
 export type TrackedAgentProcess = SpawnedProcess & {
   pid?: number;
@@ -359,16 +359,43 @@ export class QueryRunner {
 
   constructor(private ctx: QueryRunnerContext) {}
 
+  private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
+
+  private hasLiveQuery(): boolean {
+    const queryPromise = this.ctx.queryPromise;
+    if (!queryPromise) return false;
+    const tracked = this.queryLiveness;
+    if (tracked && tracked.promise === queryPromise) return tracked.isLive();
+    return true;
+  }
+
   async start(): Promise<void> {
     const { messageQueue, logger } = this.ctx;
 
     if (messageQueue.isRunning()) {
+      if (this.hasLiveQuery()) {
+        logger.warn(
+          `QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
+            `skipping start (generation=${messageQueue.getGeneration()}, ` +
+            `queryPromise=active)`
+        );
+        return;
+      }
+      const orphanedProcesses = this.ctx.snapshotTrackedAgentProcesses();
+      const stalePids = orphanedProcesses.map(([pid]) => pid).join(',');
       logger.warn(
-        `QueryRunner.start(): messageQueue already running for session ${this.ctx.session.id}, ` +
-          `skipping start (generation=${messageQueue.getGeneration()}, ` +
-          `queryPromise=${this.ctx.queryPromise ? 'active' : 'null'})`
+        `QueryRunner.start(): stale running messageQueue for session ${this.ctx.session.id} ` +
+          `(generation=${messageQueue.getGeneration()}, queryPromise=${
+            this.ctx.queryPromise ? 'settled' : 'null'
+          }, trackedPids=[${stalePids}] queueSize=${messageQueue.size()}) — ` +
+          `no live query behind it; force-stopping the queue and starting a fresh query`
       );
-      return;
+      messageQueue.stop();
+      this.ctx.queryObject = null;
+      this.ctx.terminateTrackedAgentProcesses({
+        forceDelayMs: 2000,
+        processes: orphanedProcesses,
+      });
     }
 
     logger.debug(
@@ -381,7 +408,18 @@ export class QueryRunner {
 
     this.ctx.firstMessageReceived = false;
 
-    this.ctx.queryPromise = this.runQuery(currentGeneration);
+    const queryPromise = this.runQuery(currentGeneration);
+    let queryLive = true;
+    queryPromise.then(
+      () => {
+        queryLive = false;
+      },
+      () => {
+        queryLive = false;
+      }
+    );
+    this.queryLiveness = { promise: queryPromise, isLive: () => queryLive };
+    this.ctx.queryPromise = queryPromise;
   }
 
   private async applyDeferredPermissionMode(
@@ -509,7 +547,7 @@ export class QueryRunner {
       }
 
       if (!provider?.isAvailable) {
-        const { getProviderService } = await import('../provider-service');
+        const { getProviderService } = await import('../provider-service.ts');
         const providerService = getProviderService();
 
         const hasAnthropicAuth = !!(
@@ -666,7 +704,7 @@ export class QueryRunner {
       const refreshAutoCompactWindow = true;
       let extraProviderManagedEnvVars: string[] = [];
       {
-        const { getProviderService } = await import('../provider-service');
+        const { getProviderService } = await import('../provider-service.ts');
         const providerService = getProviderService();
         const providerSession = {
           ...session,
@@ -676,6 +714,7 @@ export class QueryRunner {
             provider: resolvedProviderId as Session['config']['provider'],
           },
         };
+        await providerService.ensureSessionProviderBridges(providerSession);
         const providerEnvVars = providerService.getProviderEnvVars(providerSession);
         extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
@@ -1140,7 +1179,7 @@ export class QueryRunner {
         const envVarsToRestore = this.ctx.originalEnvVars;
         if (Object.keys(envVarsToRestore).length > 0) {
           const { getProviderService: getProviderServiceForRetry } = await import(
-            '../provider-service'
+            '../provider-service.ts'
           );
           getProviderServiceForRetry().restoreEnvVars(envVarsToRestore);
           this.ctx.originalEnvVars = {};
@@ -1344,7 +1383,7 @@ export class QueryRunner {
         const originalEnvVars = this.ctx.originalEnvVars;
         if (Object.keys(originalEnvVars).length > 0) {
           const { getProviderService: getProviderServiceRestore } = await import(
-            '../provider-service'
+            '../provider-service.ts'
           );
           const providerServiceRestore = getProviderServiceRestore();
           providerServiceRestore.restoreEnvVars(originalEnvVars);

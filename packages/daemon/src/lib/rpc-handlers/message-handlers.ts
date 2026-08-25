@@ -10,15 +10,15 @@ import {
   isThinkingBlock,
   type ContentBlock,
 } from '@hyperneo/shared/sdk';
-import type { SessionManager } from '../session-manager';
-import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
-import type { Database } from '../../storage/database';
+import type { SessionManager } from '../session-manager.ts';
+import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
+import type { Database } from '../../storage/database.ts';
 import {
   MESSAGE_SEARCH_MIN_TERM_LENGTH,
   type MessageSearchResponse,
-} from '../../storage/message-search';
-import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
-import { MessageSearchWorkerService } from '../message-search-worker-service';
+} from '../../storage/message-search.ts';
+import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
+import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
 
 export function setupMessageHandlers(
   messageHub: MessageHub,
