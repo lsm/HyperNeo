@@ -27,7 +27,7 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope` | List schedules, pause/update/create schedule records | Direct sync `superpipe` (`.end`) inside the optional `db` transaction (review correction: `stagedRun` is async-only) | Effects on `ScheduleService`; must commit atomically with the sync transaction. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification` | Inside `runAtomic`; snapshot notification/goal, `decideClaimAdmission`, `apply`, update status | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Atomic claim; effect stage is the goal update and notification status flip. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Most complex goal effect chain; needs gather/decide/effect stages. |
-| `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | `stagedRun` | Effects on `topicTrie` and repo; has in-memory rollback on repo failure. Compensation maps to `compensate`. |
+| `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | Direct sync `superpipe` (`.end`) — review correction: `registerSubscription` completes synchronously and callers like `registerRunInterests` inspect `result.success` immediately in a loop; `stagedRun` (`endAsync`) would change that contract to a Promise and add await gaps between the interest-count snapshot and trie mutations | In-memory rollback on repo failure stays; the redispatch best-effort move (below) still applies. |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:validateSubscriptionTargetTask` | Pure check: task exists, belongs to run, not terminal | `decisionRun` (or a `decide` stage inside the `registerSubscription` `stagedRun`) | Trivial target gate. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | `decisionRun` | Already called inside a per-target loop; replacing the if-cascade with a `decisionRun` makes the precedence testable. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets` | Pure multi-branch target resolution | `decisionRun` | Currently used to feed `agent-message-routing-pipeline.ts`. Make it a first-class `decisionRun` and the pipeline can read its `decision`. |
@@ -118,7 +118,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   7. `effect` `save-steer-row` saves the steer message.
   8. `effect` `enqueue-steer-delivery` calls `deliverMessage`. On throw, mark the steer row `failed` and trigger the passenger compensation.
   9. `effect` `consume-source-rows` updates source row statuses.
-  10. `halt` returns `{ enqueued: true, eventCount }`.
+  10. `effect` `record-steer-metrics` calls `recordDirectSteerEnqueued()` and
+      `recordDirectSteerEnqueuedClass(...)` for every steered class (review
+      correction: these counters feed external-event queue health reporting
+      and are asserted by the existing direct-steer suite; omitting them
+      makes migrated deliveries disappear from telemetry).
+  11. `halt` returns `{ enqueued: true, eventCount }`.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts` covers the existing behavior. Add a parity harness and per-stage unit tests (`task-agent-manager-direct-steer-pipeline.test.ts`) that mock `saveUserMessage`, `deliverMessage`, and `updateMessageStatus`.
 - **Risks/caveats**: This is the `#1398 continuation` site. The existing code intentionally stops if the session leaves `processing` while preserving passengers. A `stagedRun` must replicate that exact resnapshot timing. Do not add retries; the ADR forbids in-flow retry. Compensation is in-memory only; if the process dies between passenger save and consume, the passenger row is left `deferred` and will be reconciled by the normal flush path, which is acceptable.
 
@@ -193,7 +198,17 @@ The repo already has several proven pipelines. Use these as the model for each s
   1. `snapshot` gathers task (fresh), workflow, routes, liveness.
   2. `decide` runs `decidePostApprovalRoute`.
   3. Branch `notApproved` → `halt` with `skipped`.
-  4. Branch `noRoutes` → `effect` `terminalize-no-route` updates task to `done`, calls `goalService.handleTaskTerminal` if present, captures evidence. `compensate` is not practical here; wrap the branch in a repo transaction or use a `claimTaskStatus` CAS.
+  4. Branch `noRoutes` → `effect` `terminalize-no-route`: when the task
+     belongs to a goal, PASS the terminal updates to
+     `goalService.handleTaskTerminal` and do NOT independently update the
+     task or capture evidence — the handler performs both inside its atomic
+     bookkeeping path (review correction: doing the direct update + evidence
+     capture unconditionally creates a non-atomic task/goal transition and
+     invokes the Forge capture twice). The direct update + fallback evidence
+     capture runs ONLY when `handleTaskTerminal` returns `null` (non-goal
+     task or handler declined), and that fallback capture keeps its local
+     catch. `compensate` is not practical here; wrap the branch in a repo
+     transaction or use a `claimTaskStatus` CAS.
   5. Branch `alreadyRouted` → `halt`.
   6. Branch `missingWorkflow`/`emptyInstructions` → `effect` `clear-pending-state`, `halt`.
   7. Branch `proceed` → `effect` `reserve-dispatch` FIRST: an atomic
@@ -609,7 +624,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` and `validateSubscriptionTargetTask`
 
 - **Current summary**: `registerSubscription` validates and normalizes a topic, validates the target task for dynamic subscriptions, checks an interest limit, removes an existing entry, inserts into `topicTrie`, persists to `workflowEventSubscriptionRepo`, and triggers a redispatch. `validateSubscriptionTargetTask` is a pure task-status check.
-- **Proposed combinator**: `stagedRun` for `registerSubscription`; `decisionRun` for `validateSubscriptionTargetTask` (used as the target-validation `decide` stage).
+- **Proposed combinator**: Direct SYNCHRONOUS `superpipe` pipeline with `.end` for `registerSubscription` (review correction: it currently completes synchronously and production callers like `registerRunInterests` inspect `result.success` immediately while registering static interests in a loop — `stagedRun` executes through `endAsync`, which changes the contract to a Promise and adds await gaps between the interest-count snapshot and trie mutations; trie and repository operations here are synchronous, so the sync pipeline with the existing in-memory rollback preserves everything); `decisionRun` for `validateSubscriptionTargetTask` (used as the target-validation gate).
 - **Input snapshot design**:
   ```ts
   interface RegisterSubscriptionState {

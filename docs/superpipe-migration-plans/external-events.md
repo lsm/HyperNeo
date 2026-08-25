@@ -355,8 +355,13 @@ const formatEssencePipeline = superpipe<{ isDone: (ctx: FormatExternalEventEssen
   .end('ctx');
 ```
 
-- `buildBaseEssence` extracts `eventId`, `topic`, `eventType`, `action`, `actor`,
-  `repo`, `prNumber`, `prUrl`, `externalUrl`, `occurredAt`, `body`.
+- `buildBaseEssence` extracts `type: 'external_event'` (review correction:
+  the type discriminator is MANDATORY — `parseDeferredExternalEventText`
+  rejects any record whose `type !== 'external_event'`, so omitting it makes
+  every formatted envelope unparseable and silently breaks deferred folding,
+  cap enforcement, and direct-steer buffering), plus `eventId`, `topic`,
+  `eventType`, `action`, `actor`, `repo`, `prNumber`, `prUrl`, `externalUrl`,
+  `occurredAt`, `body`. Pin it in the round-trip test.
 - `decideFieldSet` (or a `decisionRun` embedded as a stage) returns the list of
   extra keys to copy for the current `eventType`.
 - `copyEventTypeFields` applies that list and any topic-suffix special cases
@@ -666,6 +671,7 @@ const parseDeferredTextPipeline = superpipe<{ hasEntry: (ctx: ParseDeferredTextC
 })('parse-deferred-external-event-text')
   .input(['ctx'])
   .pipe(tryJsonParse, 'ctx', 'ctx')
+  .pipe(populateRecord, 'ctx', 'ctx')
   .pipe('!hasEntry', 'ctx')
   .pipe(guardExternalEventJson, 'ctx', 'ctx')
   .pipe('!hasEntry', 'ctx')
@@ -676,6 +682,11 @@ const parseDeferredTextPipeline = superpipe<{ hasEntry: (ctx: ParseDeferredTextC
 ```
 
 - `tryJsonParse`: sets `json` or `jsonError`.
+- `populateRecord` (review correction): converts an object-valued `json`
+  into `record` (`json !== null && typeof json === 'object' ? json : null`);
+  without this stage the envelope guards always see `record === null` and
+  valid `external_event`/`external_event_digest` payloads fall through to
+  the rate-limit text parser and return `null`.
 - `guardExternalEventJson`: if `record.type === 'external_event'`, call
   `parseEssenceEntry` and set `entry`.
 - `guardDigestJson`: if `record.type === 'external_event_digest'`, validate the
