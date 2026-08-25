@@ -109,6 +109,9 @@ const PREVIOUS_QA_SYSTEM_CONTRACT =
   'Result artifacts must include data: { pr_url, ui_changed, dev_server_started, browser_validation } plus test output when useful.\n\n' +
   'Terminal-action contract: follow approve_task/submit_for_approval tool descriptions. They are final close actions and valid only when QA passes and no P0-P2 issue remains. If QA fails, send failures and repro steps upstream, save a failed result artifact, then stop.';
 
+const PREVIOUS_CODER_OWNED_QA_PROMPT =
+  'You are QA. Validate the reviewer-approved pull request using the project QA instructions and the relevant backend, frontend, browser, and CI checks. If validation fails, send the implementer concrete failures and reproduction steps via the feedback handoff in Your Role in This Workflow — the runtime supplies the target, so follow that contract exactly and do not restate or assume it here — save a non-terminal QA note, and stop. When the current head is green, save the PR link and a passing decision artifact, then call approve_task or submit_for_approval. Do not merge. If the implementer later reports a post-approval merge blocker, re-approve the EXACT head you revalidated — a concurrent push must not inherit your approval. Capture `VALIDATED_OID=$(gh pr view <pr_url> --json headRefOid --jq .headRefOid)` and echo it (`echo "VALIDATED_OID=$VALIDATED_OID"`) BEFORE you revalidate; revalidation spans later Bash invocations that do NOT retain shell variables, so copy the echoed OID into the posting step. Immediately before posting, re-check `gh pr view <pr_url> --json headRefOid --jq .headRefOid` still equals the carried `$VALIDATED_OID` — if it changed, revalidate the new head from scratch. Post the approval bound to that head via the GraphQL `addPullRequestReview` mutation with `commitOID: "$VALIDATED_OID"` (do NOT use `gh pr review`, which has no commit binding and would approve a head you never validated): `PR_ID=$(gh pr view <pr_url> --json id --jq .id)`, build a `{query,variables}` JSON with jq (`mutation($id:ID!,$head:GitObjectID!,$event:PullRequestReviewEvent!,$body:String!){addPullRequestReview(input:{pullRequestId:$id,commitOID:$head,event:$event,body:$body}){pullRequestReview{url}}}`), and submit it with `gh api graphql --hostname <host> --input`; use `event:"APPROVE"`, or — on an own-PR where GitHub rejects your self-APPROVE — `event:"COMMENT"` with a body carrying the exact line `Recommendation: APPROVE` (the implementer accepts that marked comment as covering the head, matching the own-PR fallback in the Reviewer System Contract). Then signal them to continue.';
+
 const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   'Coding|coder': [
     'You are a software engineer in a Coding→Review iterative workflow. Your job is implementation only: ' +
@@ -288,6 +291,7 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       'yourself; a post-approval reviewer session handles the merge and worktree ' +
       'sync after the task transitions to `approved`.' +
       FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
+    PREVIOUS_CODER_OWNED_QA_PROMPT,
   ],
 };
 
