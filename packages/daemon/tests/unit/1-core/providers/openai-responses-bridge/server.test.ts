@@ -441,7 +441,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('streams OpenAI text deltas as Anthropic text SSE', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -514,7 +514,7 @@ describe('openai-responses-bridge server', () => {
     'estimates tokens without throwing when a tool lacks input_schema',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -551,7 +551,7 @@ describe('openai-responses-bridge server', () => {
     'forwards real Codex model IDs directly (no alias resolution needed)',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         modelAliases: {},
@@ -588,7 +588,7 @@ describe('openai-responses-bridge server', () => {
     'uses per-session model override when setSessionModelConfig is called',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         modelAliases: {},
@@ -625,7 +625,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('applies session override only when incoming model matches alias', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       modelAliases: {},
@@ -663,7 +663,7 @@ describe('openai-responses-bridge server', () => {
     'preserves primary model override when fallback is also registered',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         modelAliases: {},
@@ -712,7 +712,7 @@ describe('openai-responses-bridge server', () => {
     'uses last-registered model when same-tier models share alias (last-wins)',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         modelAliases: {
@@ -750,7 +750,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('forwards image attachments to the OpenAI Responses API', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -809,7 +809,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('streams OpenAI function calls as Anthropic tool_use blocks', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -878,7 +878,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'skips an incomplete function_call in a truncated response (max_tokens, not tool_use)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -930,7 +930,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('continues tool_result turns with previous_response_id', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -1082,7 +1082,7 @@ describe('openai-responses-bridge server', () => {
     'can route continuation mappings with session-scoped URLs instead of auth headers',
     async () => {
       const capturedBodies: Record<string, unknown>[] = [];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -1198,7 +1198,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('keeps continuation mappings isolated by bridge session', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -1311,7 +1311,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('evicts stale tool_result continuations after the TTL', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       continuationTtlMs: 10,
@@ -1401,7 +1401,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'maps OpenAI incomplete responses to Anthropic max_tokens stop reason',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1440,7 +1440,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('normalizes OpenAI prompt/completion token usage fields', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -1477,7 +1477,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('returns an Anthropic 502 error when the upstream request fails', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () => {
@@ -1504,7 +1504,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'skips malformed upstream SSE blocks and preserves valid partial trailing data',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1541,7 +1541,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('maps upstream streaming failures to Anthropic SSE errors', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -1587,7 +1587,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a mid-stream error event directly (never the empty-stream overload guard)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1625,7 +1625,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a data-only terminal error frame with its real type (not retried as overload)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1661,7 +1661,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a data-only SSE error carrying only a code or numeric status',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1693,7 +1693,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('maps upstream streaming error events to Anthropic SSE errors', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -1731,7 +1731,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a retryable overloaded_error for an empty upstream 200 SSE stream',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1763,7 +1763,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a retryable overloaded_error when a 200 stream yields only non-content events',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1808,7 +1808,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'preserves max_tokens for a contentless response.incomplete (not overloaded)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1845,7 +1845,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a refusal as text content instead of retrying it as an overload',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1887,7 +1887,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'honors assistant text delivered only in response.completed.output',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -1929,7 +1929,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('honors a refusal delivered only in response.completed.output', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -1972,7 +1972,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a non-transient 200 JSON error as terminal (not retried as overload)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2004,7 +2004,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'classifies a 200 JSON error by its embedded status (not hardcoded 400)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2038,7 +2038,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('falls back to 400 when a 200 JSON error has no embedded status', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2066,7 +2066,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'classifies a 200 RFC 7807 problem+json error by its top-level string status',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2095,7 +2095,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'classifies a 200 JSON error by a symbolic type when no numeric status is present',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2127,7 +2127,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a flat (unwrapped) 200 JSON error as terminal (not retried as overload)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2157,7 +2157,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'surfaces a flat JSON error carrying a terminal provider code (not retried as overload)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2185,7 +2185,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('classifies a flat JSON error with a numeric code by that status', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2212,7 +2212,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('classifies a JSON error whose symbolic type lives in error.code', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2241,7 +2241,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'does not treat a 200 JSON body with error:null as a terminal error',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2272,7 +2272,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'does not duplicate text when both deltas and completed output are present',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2311,7 +2311,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('does not mark an empty output_text.delta frame as productive', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2350,7 +2350,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'does not open a thinking block or mark empty reasoning frames as productive',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2405,7 +2405,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'honors a non-streaming JSON success response (ignoring stream:true)',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2443,7 +2443,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'synthesizes response.incomplete for a non-streaming JSON response truncated by max_output_tokens',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2483,7 +2483,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'does not retry a contentless non-streaming incomplete JSON response as an overload',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -2521,7 +2521,7 @@ describe('openai-responses-bridge server', () => {
     'preserves the tool-turn continuation across an empty-stream retry',
     async () => {
       const capturedBodies: Record<string, unknown>[] = [];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -2629,7 +2629,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('returns 400 for unsupported user content blocks', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2669,7 +2669,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('returns 400 for unsupported image source types', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2709,7 +2709,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('maps upstream 429 responses to Anthropic rate_limit_error', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2736,7 +2736,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('maps upstream 529 responses to Anthropic overloaded_error', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -2787,7 +2787,7 @@ describe('openai-responses-bridge server', () => {
     it.skipIf(!isBun)(
       'logs the translated request body summary when upstream returns 400 "Unsupported content type"',
       async () => {
-        server = createOpenAIResponsesBridgeServer({
+        server = await createOpenAIResponsesBridgeServer({
           auth: { source: 'api_key', apiKey: 'sk-test' },
           models,
           fetchImpl: async () =>
@@ -2844,7 +2844,7 @@ describe('openai-responses-bridge server', () => {
     );
 
     it.skipIf(!isBun)('captures reasoning encrypted_content shape in the 4xx summary', async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -2922,7 +2922,7 @@ describe('openai-responses-bridge server', () => {
     it.skipIf(!isBun)(
       'does not log request body summary for 5xx (server-side errors)',
       async () => {
-        server = createOpenAIResponsesBridgeServer({
+        server = await createOpenAIResponsesBridgeServer({
           auth: { source: 'api_key', apiKey: 'sk-test' },
           models,
           fetchImpl: async () =>
@@ -3073,7 +3073,7 @@ describe('openai-responses-bridge server', () => {
     'self-heals: retries without reasoning on a 400 and completes the turn',
     async () => {
       const capturedInputs: Array<Record<string, unknown>[]> = [];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -3162,7 +3162,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('surfaces the 400 when the reasoning-strip retry also fails', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -3228,7 +3228,7 @@ describe('openai-responses-bridge server', () => {
       let capturedUrl = '';
       let capturedHeaders: Headers | undefined;
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: {
           source: 'chatgpt_oauth',
           apiKey: 'oauth-token',
@@ -3275,7 +3275,7 @@ describe('openai-responses-bridge server', () => {
     'refreshes ChatGPT OAuth auth once after an upstream 401 and reuses it',
     async () => {
       const seenAuthHeaders: string[] = [];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: {
           source: 'chatgpt_oauth',
           apiKey: 'expired-token',
@@ -3337,7 +3337,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('uses a fresh stream controller for SDK retry requests', async () => {
     let upstreamRequests = 0;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () => {
@@ -3728,7 +3728,7 @@ describe('openai-responses-bridge server', () => {
       const cumulativeTokenCounts = [50_000, 100_000, 150_000, 190_000, 231_000, 250_000];
       const capturedModels: string[] = [];
       const returnedInputTokens: number[] = [];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models: [
           {
@@ -3840,7 +3840,7 @@ describe('openai-responses-bridge server', () => {
           context_window: 1_000_000,
         },
       ];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models: nonCodexModels,
         fetchImpl: async () =>
@@ -3883,7 +3883,7 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)('falls back to Codex context window for Codex models in config', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models: [
         {
@@ -3938,7 +3938,7 @@ describe('openai-responses-bridge server', () => {
           context_window: 1_000_000,
         },
       ];
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models: nonCodexModels,
       });
@@ -3959,7 +3959,7 @@ describe('openai-responses-bridge server', () => {
     'advertises real Codex context windows and forwards correct model upstream',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models: [
           {
@@ -4018,7 +4018,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'falls back to Codex-only context window when model is NOT in config.models',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models: [
           {
@@ -4067,7 +4067,7 @@ describe('openai-responses-bridge server', () => {
     'propagates the original 401 when ChatGPT OAuth refresh is unavailable',
     async () => {
       let refreshAttempts = 0;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: {
           source: 'chatgpt_oauth',
           apiKey: 'expired-token',
@@ -4105,7 +4105,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('maps thinking budget_tokens to OpenAI reasoning.effort', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -4143,7 +4143,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('maps think32k to xhigh on GPT-5.6 models that support it', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models: [
         {
@@ -4184,7 +4184,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('maps think32k to xhigh on GPT-5.6 Terra', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models: [
         {
@@ -4227,7 +4227,7 @@ describe('openai-responses-bridge server', () => {
     'omits reasoning.summary_text from include for ChatGPT OAuth endpoint',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'chatgpt_oauth', apiKey: 'chatgpt-token', accountId: 'acc_123' },
         models,
         fetchImpl: async (_url, init) => {
@@ -4263,7 +4263,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('maps think32k to xhigh on GPT-5.6 Luna', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models: [
         {
@@ -4303,7 +4303,7 @@ describe('openai-responses-bridge server', () => {
   });
   it.skipIf(!isBun)('omits reasoning when thinking is off', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -4336,7 +4336,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('streams OpenAI reasoning events as Anthropic thinking SSE', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -4408,7 +4408,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)(
     'emits reasoning summary_text from a delta-less terminal response as thinking',
     async () => {
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () =>
@@ -4455,7 +4455,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('passes encrypted reasoning content through on multi-turn', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -4540,7 +4540,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('reports reasoning_tokens in message_delta usage', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async () =>
@@ -4586,7 +4586,7 @@ describe('openai-responses-bridge server', () => {
   it.skipIf(!isBun)('clears cached reasoning when response has no reasoning items', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
     let requestCount = 0;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_req, init) => {
@@ -4692,7 +4692,7 @@ describe('openai-responses-bridge server', () => {
     async () => {
       const capturedBodies: Record<string, unknown>[] = [];
       let requestCount = 0;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_req, init) => {
@@ -4783,7 +4783,7 @@ describe('openai-responses-bridge server', () => {
     'includes injected reasoning items in count_tokens and message_start estimates',
     async () => {
       let requestCount = 0;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async () => {
@@ -4859,7 +4859,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('evicts stale reasoning items after the TTL', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       continuationTtlMs: 10,
@@ -4939,7 +4939,7 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)('clears reasoning item timers on server stop', async () => {
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       continuationTtlMs: 60000,
@@ -4980,7 +4980,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('merges session thinking config when the request omits thinking', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {
@@ -5020,7 +5020,7 @@ describe('openai-responses-bridge server', () => {
     'does not override request thinking when session config is also present',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -5062,7 +5062,7 @@ describe('openai-responses-bridge server', () => {
     'overrides non-enabled SDK thinking payload with session enabled config',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;
-      server = createOpenAIResponsesBridgeServer({
+      server = await createOpenAIResponsesBridgeServer({
         auth: { source: 'api_key', apiKey: 'sk-test' },
         models,
         fetchImpl: async (_url, init) => {
@@ -5102,7 +5102,7 @@ describe('openai-responses-bridge server', () => {
 
   it.skipIf(!isBun)('clears session thinking config when undefined is passed', async () => {
     let capturedBody: Record<string, unknown> | undefined;
-    server = createOpenAIResponsesBridgeServer({
+    server = await createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
       models,
       fetchImpl: async (_url, init) => {

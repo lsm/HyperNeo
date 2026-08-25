@@ -12,6 +12,7 @@
     "./sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
     "./lib/agent/sdk-cli-resolver": "./src/lib/agent/sdk-cli-resolver.ts",
     "./lib/data-dir": "./src/lib/data-dir.ts",
+    "./lib/runtime-server": "./src/lib/runtime-server/index.ts",
     "./lib/internal-event-bus": "./src/lib/internal-event-bus.ts",
     "./lib/internal-command-bus": "./src/lib/internal-command-bus.ts",
     "./lib/internal-query-bus": "./src/lib/internal-query-bus.ts",
@@ -19,6 +20,7 @@
   },
   "scripts": {
     "dev": "bun run --watch main.ts",
+    "dev:deno": "deno run -A --watch main.ts",
     "start": "NODE_ENV=production bun run main.ts",
     "test": "bun run test:unit && bun run test:online",
     "test:unit": "cd ../.. && ./scripts/test-daemon.sh",

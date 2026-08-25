@@ -8,11 +8,11 @@ const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 type FetchImpl = typeof fetch;
 
-function makeServer(
+async function makeServer(
   upstream: FetchImpl,
   thinkingSupported?: boolean
 ): AnthropicMessagesBridgeServer {
-  return createAnthropicMessagesBridgeServer({
+  return await createAnthropicMessagesBridgeServer({
     baseUrl: 'https://open.bigmodel.cn/api/anthropic',
     apiKey: 'test-key',
     fetchImpl: upstream,
@@ -55,7 +55,7 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a 200-with-body GLM overloaded error to retryable overloaded_error', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -75,7 +75,7 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a 200-with-body GLM rate-limit code to rate_limit_error', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -93,7 +93,7 @@ describe.skipIf(!isBun)(
     });
 
     it('reclassifies a non-2xx GLM body carrying an overload code to retryable', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(JSON.stringify({ error: { code: '1305', message: '访问量过大' } }), {
             status: 400,
@@ -109,7 +109,7 @@ describe.skipIf(!isBun)(
     });
 
     it('falls back to status-based mapping for non-transient error bodies', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(JSON.stringify({ error: { code: '1301', message: 'invalid argument' } }), {
             status: 400,
@@ -125,7 +125,7 @@ describe.skipIf(!isBun)(
     });
 
     it('recognizes an Anthropic-shaped rate_limit_error body (even on a hard 4xx)', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(
             JSON.stringify({
@@ -147,7 +147,7 @@ describe.skipIf(!isBun)(
       const sseBody =
         'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n\n' +
         'event: message_stop\ndata: {"type":"message_stop"}\n\n';
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(sseBody, {
             status: 200,
@@ -164,7 +164,7 @@ describe.skipIf(!isBun)(
 
     it('re-wraps a non-transient 200-with-body unchanged (does not hide unknown errors)', async () => {
       const raw = JSON.stringify({ some: 'unexpected', body: true });
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(raw, { status: 200, headers: { 'Content-Type': 'application/json' } })
       );
@@ -175,7 +175,7 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a count_tokens 200-with-body GLM overload too', async () => {
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(JSON.stringify({ error: { code: '1305', message: '访问量过大' } }), {
             status: 200,
@@ -192,7 +192,7 @@ describe.skipIf(!isBun)(
 
     it('passes a normal count_tokens JSON response through unchanged', async () => {
       const raw = JSON.stringify({ input_tokens: 42 });
-      server = makeServer(
+      server = await makeServer(
         async () =>
           new Response(raw, { status: 200, headers: { 'Content-Type': 'application/json' } })
       );
@@ -229,7 +229,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('rewrites an adaptive thinking body to the session-configured enabled budget', async () => {
     let upstreamThinking: unknown = 'not-captured';
-    server = makeServer(async (_url, init) => {
+    server = await makeServer(async (_url, init) => {
       const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
         thinking?: unknown;
       };
@@ -255,7 +255,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('strips enabled thinking when the model does not support it', async () => {
     let upstreamThinking: unknown = 'not-captured';
-    server = makeServer(async (_url, init) => {
+    server = await makeServer(async (_url, init) => {
       const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
         thinking?: unknown;
       };
@@ -284,7 +284,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('strips thinking entirely for a session configured as off', async () => {
     let upstreamHadThinking: boolean | null = null;
-    server = makeServer(async (_url, init) => {
+    server = await makeServer(async (_url, init) => {
       const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
         thinking?: unknown;
       };
@@ -310,7 +310,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('leaves unknown sessions untouched (no rewrite without an explicit config)', async () => {
     let upstreamThinking: unknown = 'not-captured';
-    server = makeServer(async (_url, init) => {
+    server = await makeServer(async (_url, init) => {
       const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
         thinking?: unknown;
       };
@@ -335,7 +335,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('leaves short-output requests unchanged when their max tokens cannot fit the budget', async () => {
     let upstreamThinking: unknown = 'not-captured';
-    server = makeServer(async (_url, init) => {
+    server = await makeServer(async (_url, init) => {
       const body = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer)) as {
         thinking?: unknown;
       };
@@ -364,7 +364,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('leaves count-token request bodies unchanged', async () => {
     let upstreamBody: unknown;
-    server = makeServer(async (_url, init) => {
+    server = await makeServer(async (_url, init) => {
       upstreamBody = JSON.parse(new TextDecoder().decode(init?.body as ArrayBuffer));
       return new Response(JSON.stringify({ input_tokens: 1 }), {
         status: 200,
@@ -390,7 +390,7 @@ describe.skipIf(!isBun)('anthropic-messages-bridge: session thinking enforcement
 
   it('returns an Anthropic bad-request envelope for malformed configured-session JSON', async () => {
     let upstreamCalled = false;
-    server = makeServer(async () => {
+    server = await makeServer(async () => {
       upstreamCalled = true;
       return new Response('{}');
     });

@@ -162,6 +162,9 @@ export interface SpaceRuntimeServiceConfig {
   evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
   outcomeNotificationRepo?: SpaceGoalOutcomeNotificationRepository;
   enableGoalOutcomeWake?: boolean;
+  inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
+  inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
+  inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
 }
 
 export class SpaceRuntimeService {
@@ -336,6 +339,103 @@ export class SpaceRuntimeService {
     idempotencyKey: string;
   }): Promise<{ delivered: boolean }> {
     return this.deliverLongHorizonExternalEvent(args, { gateSpaceLifecycle: true });
+  }
+
+  async deliverLongHorizonAgentNag(args: {
+    spaceId: string;
+    agentId: string;
+    message: string;
+    idempotencyKey: string;
+    expectedConfigRevision?: number | null;
+  }): Promise<
+    | 'consumed'
+    | 'accepted'
+    | 'terminal_failure'
+    | 'terminal_failure_after_consumption'
+    | 'pre_admission_failure'
+  > {
+    const agent = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agent || agent.spaceId !== args.spaceId || agent.status !== 'active') {
+      return 'pre_admission_failure';
+    }
+    const space = await this.config.spaceManager.getSpace(args.spaceId);
+    if (!space || space.status !== 'active' || space.paused || space.stopped) {
+      return 'pre_admission_failure';
+    }
+    if (args.expectedConfigRevision !== undefined) {
+      const config = this.config.inactivityConfigRepo?.getByAgent(args.spaceId, args.agentId);
+      if (!config || !config.enabled || config.configRevision !== args.expectedConfigRevision) {
+        return 'pre_admission_failure';
+      }
+    }
+    const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(args.spaceId);
+    const isCoordinator =
+      agent.id === coordinatorLongHorizonAgentId(args.spaceId) || coordinator?.id === agent.id;
+    const session = isCoordinator
+      ? ((await this.resolveCoordinatorSession(args.spaceId)) ??
+        (await this.ensureCoordinatorSession(args.spaceId)))
+      : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    if (!session) return 'terminal_failure';
+    const spaceAfter = await this.config.spaceManager.getSpace(args.spaceId);
+    if (!spaceAfter || spaceAfter.status !== 'active' || spaceAfter.paused || spaceAfter.stopped) {
+      return 'pre_admission_failure';
+    }
+    const agentAfter = this.config.longHorizonAgentRepo?.getById(args.agentId);
+    if (!agentAfter || agentAfter.status !== 'active') return 'pre_admission_failure';
+    if (args.expectedConfigRevision !== undefined) {
+      const configAfter = this.config.inactivityConfigRepo?.getByAgent(args.spaceId, args.agentId);
+      if (
+        !configAfter ||
+        !configAfter.enabled ||
+        configAfter.configRevision !== args.expectedConfigRevision
+      ) {
+        return 'pre_admission_failure';
+      }
+    }
+    const sessionState = session.stateManager?.getState().status as string | undefined;
+    if (
+      sessionState === 'processing' ||
+      sessionState === 'queued' ||
+      sessionState === 'running' ||
+      sessionState === 'waiting_for_input' ||
+      sessionState === 'rate_limit_cooldown'
+    ) {
+      return 'pre_admission_failure';
+    }
+    const sessionId = session.getSessionData().id;
+    try {
+      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
+        terminalizeOnTimeout: false,
+      });
+      const row = this.config.reactiveDb?.db
+        .getSDKMessageRepo()
+        .getDeliveryContent(sessionId, args.idempotencyKey);
+      if (row !== null && row !== undefined && row.sendStatus === 'failed') {
+        return 'terminal_failure_after_consumption';
+      }
+      if (isMessageDeliveryV2Enabled()) return 'consumed';
+      for (let i = 0; i < 10; i++) {
+        const legacyRow = this.config.reactiveDb?.db
+          .getSDKMessageRepo()
+          .getDeliveryContent(sessionId, args.idempotencyKey);
+        if (legacyRow === null || legacyRow === undefined) break;
+        if (legacyRow.sendStatus === 'failed') {
+          return 'terminal_failure_after_consumption';
+        }
+        if (legacyRow.sendStatus === 'consumed') {
+          return 'consumed';
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return 'accepted';
+    } catch {
+      const row = this.config.reactiveDb?.db
+        .getSDKMessageRepo()
+        .getDeliveryContent(sessionId, args.idempotencyKey);
+      return row !== null && row !== undefined && row.sendStatus !== 'failed'
+        ? 'accepted'
+        : 'terminal_failure';
+    }
   }
 
   private async deliverToLongTermAgent(
@@ -575,7 +675,8 @@ export class SpaceRuntimeService {
       };
     },
     message: string,
-    messageId?: string
+    messageId?: string,
+    options: { terminalizeOnTimeout?: boolean } = {}
   ): Promise<string> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
@@ -631,7 +732,7 @@ export class SpaceRuntimeService {
               },
             })
           ),
-        ...(fresh
+        ...(fresh && options.terminalizeOnTimeout !== false
           ? {
               terminalizeOnTimeout: () => {
                 const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
@@ -643,10 +744,19 @@ export class SpaceRuntimeService {
           : {}),
       });
     } else {
+      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
       await session.ensureQueryStarted();
       const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
       await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-      await session.messageQueue.enqueueWithId(id, message);
+      try {
+        await session.messageQueue.enqueueWithId(id, message);
+      } catch (err) {
+        const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+        if (failedDbId) {
+          await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+        }
+        throw err;
+      }
     }
     return id;
   }
@@ -759,6 +869,35 @@ export class SpaceRuntimeService {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return null;
     return sessionManager.getSessionAsync(coordinatorSessionId(spaceId));
+  }
+
+  private async ensureCoordinatorSession(spaceId: string) {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager) return null;
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    if (!space) return null;
+    const sessionId = coordinatorSessionId(spaceId);
+    let session = await sessionManager.getSessionAsync(sessionId);
+    if (!session) {
+      try {
+        await sessionManager.createSession({
+          sessionId,
+          title: space.name,
+          workspacePath: space.workspacePath,
+          config: { model: space.defaultModel },
+          sessionType: 'space_chat',
+          spaceId: space.id,
+        });
+        await this.config.spaceManager.addSession(space.id, sessionId);
+      } catch (err) {
+        session = await sessionManager.getSessionAsync(sessionId);
+        if (!session) throw err;
+      }
+      session = session ?? (await sessionManager.getSessionAsync(sessionId));
+      if (!session) return null;
+    }
+    await this.setupSpaceAgentSession(space);
+    return session;
   }
 
   private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
@@ -1098,6 +1237,18 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
+      inactivityConfigRepo:
+        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
+          ? this.config.inactivityConfigRepo
+          : undefined,
+      inactivityClaimRepo:
+        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
+          ? this.config.inactivityClaimRepo
+          : undefined,
+      inactivityRunNow:
+        agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
+          ? this.config.inactivityRunNow
+          : undefined,
     });
   }
 
@@ -1839,6 +1990,9 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
+      inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
+      inactivityClaimRepo: coordinator ? this.config.inactivityClaimRepo : undefined,
+      inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
     });
 
     const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);

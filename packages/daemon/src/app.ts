@@ -446,11 +446,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     messageHub.registerTransport(transport);
 
     const internalEventBus = createDaemonInternalEventBus();
-    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges(() => {
+    unsubscribeProviderFailureChanges = subscribeProviderFailureChanges((change) => {
+      credentialManager.markProviderHealth(
+        change.providerId,
+        change.record === null ? 'healthy' : 'unhealthy'
+      );
       internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
     });
     const oauthRefreshScheduler = new OAuthRefreshScheduler(credentialManager, {
       registry: providerRegistry,
+      recoverDormantProvider: async (providerId) => {
+        const { recoverDormantProvider } = await import('./lib/model-service.ts');
+        return await recoverDormantProvider(providerId);
+      },
       onProviderChanged: () => {
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
@@ -697,6 +705,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceWorktreeManager,
       spaceGoalService,
       goalAutomationService,
+      spaceAgentInactivityWatchdog,
+      cancelInactivityWatchdog,
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
@@ -1033,6 +1043,44 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       reaperTimer.unref();
     }
 
+    let inactivityWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+    let inactivityScan: Promise<void> | null = null;
+    let inactivityShutdownStarted = false;
+    if (process.env.NODE_ENV !== 'test') {
+      const scanInactivityWatchdog = (): Promise<void> => {
+        if (inactivityScan !== null) return inactivityScan;
+        const run = (async () => {
+          try {
+            const spaces = await spaceManager.listSpaces(false);
+            for (const space of spaces) {
+              await spaceAgentInactivityWatchdog.scanSpace(space.id);
+            }
+          } catch (err) {
+            logError('[Daemon] Inactivity watchdog scan failed:', err);
+          }
+        })();
+        inactivityScan = run;
+        void run.finally(() => {
+          inactivityScan = null;
+        });
+        return run;
+      };
+      let inactivitySpaceRuntimeReady = false;
+      void spaceRuntimeReadyPromise.then(() => {
+        inactivitySpaceRuntimeReady = true;
+        if (!inactivityShutdownStarted) {
+          void scanInactivityWatchdog();
+        }
+      });
+      const INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+      inactivityWatchdogTimer = setInterval(() => {
+        if (inactivitySpaceRuntimeReady) {
+          void scanInactivityWatchdog();
+        }
+      }, INACTIVITY_WATCHDOG_SCAN_INTERVAL_MS);
+      inactivityWatchdogTimer.unref();
+    }
+
     let isCleanedUp = false;
     const cleanup = async () => {
       if (isCleanedUp) {
@@ -1046,6 +1094,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       if (reaperTimer !== null) {
         clearInterval(reaperTimer);
         reaperTimer = null;
+      }
+      if (inactivityWatchdogTimer !== null) {
+        clearInterval(inactivityWatchdogTimer);
+        inactivityWatchdogTimer = null;
+      }
+      inactivityShutdownStarted = true;
+      cancelInactivityWatchdog();
+      if (inactivityScan !== null) {
+        await Promise.race([inactivityScan, new Promise((resolve) => setTimeout(resolve, 5000))]);
       }
 
       try {
@@ -1089,7 +1146,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         processWatchdog.stop();
         logInfo('[Daemon] Process watchdog stopped');
-        oauthRefreshScheduler.stop();
+        await oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');

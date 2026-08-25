@@ -1,6 +1,7 @@
 import type { Provider, ProviderContext } from '@hyperneo/shared/provider';
 import type { Session, ProviderId } from '@hyperneo/shared';
 import type { ProviderRegistry } from './registry.js';
+import { providerSessionConfigForSession } from './session-config.js';
 
 class ContextImpl implements ProviderContext {
   readonly sessionConfig;
@@ -50,22 +51,19 @@ class ContextImpl implements ProviderContext {
 export class ProviderContextManager {
   constructor(private readonly registry: ProviderRegistry) {}
 
+  async ensureContextReady(session: Session): Promise<void> {
+    const provider = this.resolveProvider(session);
+    const modelId = session.config.model || 'default';
+    try {
+      await provider.ensureBridgeStarted?.(modelId, providerSessionConfigForSession(session));
+    } catch {}
+  }
+
   createContext(session: Session): ProviderContext {
     const provider = this.resolveProvider(session);
     const modelId = session.config.model || 'default';
 
-    const providerConfig = session.config.providerConfig;
-    const sessionConfig = {
-      workspacePath: session.worktree?.worktreePath ?? session.workspacePath ?? undefined,
-      sessionId: session.id,
-      ...(providerConfig
-        ? {
-            apiKey: providerConfig.apiKey,
-            baseUrl: providerConfig.baseUrl,
-            region: providerConfig.region,
-          }
-        : {}),
-    };
+    const sessionConfig = providerSessionConfigForSession(session);
     const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
 
     return new ContextImpl(provider, sdkConfig, modelId, sessionConfig);

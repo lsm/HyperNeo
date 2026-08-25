@@ -57,11 +57,19 @@ interface CustomEndpointBridge {
 export interface CustomEndpointProviderOptions {
   bridgeFetchImpl?: typeof fetch;
   bridgeFactories?: {
-    'openai-chat'?: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
-    'anthropic-messages'?: (config: AnthropicMessagesBridgeConfig) => AnthropicMessagesBridgeServer;
-    'ollama-native'?: (config: OllamaNativeBridgeConfig) => OllamaNativeBridgeServer;
+    'openai-chat'?: (
+      config: OpenAIChatBridgeConfig
+    ) => OpenAIChatBridgeServer | Promise<OpenAIChatBridgeServer>;
+    'anthropic-messages'?: (
+      config: AnthropicMessagesBridgeConfig
+    ) => AnthropicMessagesBridgeServer | Promise<AnthropicMessagesBridgeServer>;
+    'ollama-native'?: (
+      config: OllamaNativeBridgeConfig
+    ) => OllamaNativeBridgeServer | Promise<OllamaNativeBridgeServer>;
   };
-  bridgeFactory?: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
+  bridgeFactory?: (
+    config: OpenAIChatBridgeConfig
+  ) => OpenAIChatBridgeServer | Promise<OpenAIChatBridgeServer>;
 }
 
 export function resolveModelCapabilities(
@@ -91,6 +99,8 @@ export class CustomEndpointProvider implements Provider {
   private readonly type: CustomEndpointType;
   private readonly options: CustomEndpointProviderOptions;
   private bridges = new Map<string, CustomEndpointBridge>();
+  private bridgePromises = new Map<string, Promise<CustomEndpointBridge>>();
+  private shutdownStarted = false;
 
   constructor(config: CustomEndpointConfig, options: CustomEndpointProviderOptions = {}) {
     if (!config.id) throw new Error('CustomEndpointProvider: endpoint id is required');
@@ -183,6 +193,7 @@ export class CustomEndpointProvider implements Provider {
 
   async getModels(): Promise<ModelInfo[]> {
     await this.probeEndpoint();
+    void this.ensureBridgeStarted(this.getModelForTier('default') ?? 'default').catch(() => {});
     return this.config.models.map((model) => this.toModelInfo(model));
   }
 
@@ -203,19 +214,17 @@ export class CustomEndpointProvider implements Provider {
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
-    const model =
-      this.config.models.find((m) => m.id === modelId) ??
-      this.config.models.find((m) => m.id === this.config.defaultModelId) ??
-      this.config.models[0];
-    if (!model) {
+    const {
+      key,
+      params: { model },
+    } = this.bridgeParamsFor(modelId, sessionConfig);
+    const bridge = this.bridges.get(key);
+    if (!bridge) {
       throw new Error(
-        `Custom endpoint '${this.config.id}' has no models; cannot build SDK config for '${modelId}'`
+        `CustomEndpointProvider[${this.config.id}]: bridge not started. ` +
+          'Await ensureBridgeStarted() before calling buildSdkConfig().'
       );
     }
-    const caps = resolveModelCapabilities(model, this.type);
-    const baseUrl = sessionConfig?.baseUrl || this.config.baseUrl;
-    const apiKey = sessionConfig?.apiKey ?? this.config.apiKey;
-    const bridge = this.getOrCreateBridge({ baseUrl, apiKey, caps, model });
     const upstreamModel = providerModelStringFor(model);
     return {
       envVars: {
@@ -265,6 +274,8 @@ export class CustomEndpointProvider implements Provider {
   }
 
   async shutdown(): Promise<void> {
+    this.shutdownStarted = true;
+    this.bridgePromises.clear();
     for (const bridge of this.bridges.values()) bridge.stop();
     this.bridges.clear();
   }
@@ -277,13 +288,41 @@ export class CustomEndpointProvider implements Provider {
     return this.type;
   }
 
-  private getOrCreateBridge(params: {
+  private bridgeParamsFor(
+    modelId: string,
+    sessionConfig?: ProviderSessionConfig
+  ): {
+    key: string;
+    params: {
+      baseUrl: string;
+      apiKey?: string;
+      caps: CustomEndpointModelCapabilities;
+      model: CustomEndpointModel;
+    };
+  } {
+    const model =
+      this.config.models.find((m) => m.id === modelId) ??
+      this.config.models.find((m) => m.id === this.config.defaultModelId) ??
+      this.config.models[0];
+    if (!model) {
+      throw new Error(
+        `Custom endpoint '${this.config.id}' has no models; cannot build SDK config for '${modelId}'`
+      );
+    }
+    const caps = resolveModelCapabilities(model, this.type);
+    const baseUrl = sessionConfig?.baseUrl || this.config.baseUrl;
+    const apiKey = sessionConfig?.apiKey ?? this.config.apiKey;
+    const params = { baseUrl, apiKey, caps, model };
+    return { key: this.bridgeKey(params), params };
+  }
+
+  private bridgeKey(params: {
     baseUrl: string;
     apiKey?: string;
     caps: CustomEndpointModelCapabilities;
     model: CustomEndpointModel;
-  }): CustomEndpointBridge {
-    const key = [
+  }): string {
+    return [
       this.type,
       params.baseUrl,
       params.apiKey ?? '',
@@ -294,11 +333,43 @@ export class CustomEndpointProvider implements Provider {
       params.caps.streamUsage,
       JSON.stringify(params.caps.chatTemplateKwargs ?? {}),
     ].join(' ');
+  }
+
+  async ensureBridgeStarted(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void> {
+    const { params } = this.bridgeParamsFor(modelId, sessionConfig);
+    await this.getOrCreateBridge(params);
+  }
+
+  private async getOrCreateBridge(params: {
+    baseUrl: string;
+    apiKey?: string;
+    caps: CustomEndpointModelCapabilities;
+    model: CustomEndpointModel;
+  }): Promise<CustomEndpointBridge> {
+    const key = this.bridgeKey(params);
     const existing = this.bridges.get(key);
     if (existing) return existing;
-    const bridge = this.createBridgeForType(params);
-    this.bridges.set(key, bridge);
-    return bridge;
+    const pending = this.bridgePromises.get(key);
+    if (pending) return pending;
+    const created = this.createBridgeForType(params);
+    const ready = Promise.resolve(created).then(
+      (bridge) => {
+        if (this.shutdownStarted) {
+          bridge.stop();
+          this.bridgePromises.delete(key);
+          return bridge;
+        }
+        this.bridges.set(key, bridge);
+        this.bridgePromises.delete(key);
+        return bridge;
+      },
+      (error) => {
+        this.bridgePromises.delete(key);
+        throw error;
+      }
+    );
+    this.bridgePromises.set(key, ready);
+    return ready;
   }
 
   private createBridgeForType(params: {
@@ -306,7 +377,7 @@ export class CustomEndpointProvider implements Provider {
     apiKey?: string;
     caps: CustomEndpointModelCapabilities;
     model: CustomEndpointModel;
-  }): CustomEndpointBridge {
+  }): CustomEndpointBridge | Promise<CustomEndpointBridge> {
     const { baseUrl, apiKey, caps } = params;
     const fetchImpl = this.options.bridgeFetchImpl;
     switch (this.type) {

@@ -85,6 +85,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     };
     sessionSnapshot = {
       latestConsumedMessageAt: NOW - THRESHOLD_MS - 5000,
+      latestConsumedUserMessageAt: NOW - THRESHOLD_MS - 5000,
       sessionCreatedAt: NOW - THRESHOLD_MS - 9000,
       busyWithOtherWork: false,
       pendingOtherAcceptedDelivery: false,
@@ -111,6 +112,8 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: overrides.scannerToken ?? 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: overrides.getSessionSnapshot ?? (() => sessionSnapshot),
+      isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -151,6 +154,8 @@ describe('SpaceAgentInactivityWatchdogService', () => {
           latestConsumedMessageAt: calls <= 1 ? sessionSnapshot.latestConsumedMessageAt : NOW - 10,
         };
       },
+      isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -243,6 +248,8 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliveryTimeoutMs: 50,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
@@ -268,6 +275,56 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     expect(outcomes).toHaveLength(1);
     expect(claimRepo.getByAgent(spaceId, 'agent-1')?.state).toBe('accepted');
     await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+  });
+
+  it('releases an accepted claim whose delivery is no longer pending and re-nags', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    nextOutcome = 'accepted';
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => false,
+      isNagDeliveryFailed: () => false,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
+    expect(outcomes).toHaveLength(2);
+  });
+
+  it('degrades an accepted claim whose delivery failed', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    nextOutcome = 'accepted';
+    await makeService().scanSpace(spaceId);
+    expect(outcomes).toHaveLength(1);
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => false,
+      isNagDeliveryFailed: () => true,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
+    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    expect(claim?.degraded).toBe(true);
     expect(outcomes).toHaveLength(1);
   });
 
@@ -305,6 +362,8 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -340,6 +399,8 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       scannerToken: 'scanner-a',
       now: () => NOW,
       getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => true,
+      isNagDeliveryFailed: () => false,
       deliverNag: async (args) => {
         outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
         return nextOutcome;
@@ -365,8 +426,43 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     db.prepare(
       `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
     ).run(spaceId, 'agent-1');
-    await makeService().scanSpace(spaceId);
+    const service = new SpaceAgentInactivityWatchdogService({
+      configRepo,
+      claimRepo,
+      agentRepo: agentRepo as never,
+      spaceManager: spaceManager as never,
+      scannerToken: 'scanner-a',
+      now: () => NOW,
+      getSessionSnapshot: () => sessionSnapshot,
+      isNagDeliveryPending: () => false,
+      isNagDeliveryFailed: () => false,
+      deliverNag: async (args) => {
+        outcomes.push({ idempotencyKey: args.idempotencyKey, prompt: args.prompt });
+        return nextOutcome;
+      },
+    });
+    await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
     expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+  });
+
+  it('keeps the run-now baseline when only the invoking turn advanced activity', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    const baseline = NOW - THRESHOLD_MS - 5000;
+    const invokingUserMsgAt = NOW - THRESHOLD_MS - 1000;
+    sessionSnapshot.latestConsumedUserMessageAt = invokingUserMsgAt;
+    sessionSnapshot.latestConsumedMessageAt = NOW - 10;
+    await makeService().scanAgent(spaceId, 'agent-1', baseline, NOW - 100, invokingUserMsgAt);
+    expect(outcomes).toHaveLength(1);
+  });
+
+  it('cancels run-now admission when a newer turn started after invocation', async () => {
+    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    const baseline = NOW - THRESHOLD_MS - 5000;
+    const invokingUserMsgAt = NOW - THRESHOLD_MS - 1000;
+    sessionSnapshot.latestConsumedUserMessageAt = NOW - 50;
+    sessionSnapshot.latestConsumedMessageAt = NOW - 10;
+    await makeService().scanAgent(spaceId, 'agent-1', baseline, NOW - 100, invokingUserMsgAt);
+    expect(outcomes).toHaveLength(0);
   });
 });

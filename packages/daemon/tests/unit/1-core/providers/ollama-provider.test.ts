@@ -256,6 +256,41 @@ describe('OllamaProvider', () => {
     expect(status.error).toContain('OLLAMA_API_KEY');
   });
 
+  it('clears a stale auth error when the effective credential is replaced', async () => {
+    const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      fetchImpl: fetchMock as typeof fetch,
+    });
+    provider.setCredentials({ type: 'api_key', apiKey: 'bad-stored-key' });
+
+    await provider.getModels();
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+
+    const status = await provider.getAuthStatus();
+    expect(status.error).toBeUndefined();
+    expect(status.isAuthenticated).toBe(true);
+  });
+
+  it('keeps a stale auth error while an environment key shadows the replacement', async () => {
+    process.env.OLLAMA_API_KEY = 'bad-local-key';
+    const fetchMock = mock(async () => new Response('Unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await provider.getModels();
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+
+    provider.setCredentials({ type: 'api_key', apiKey: 'replacement-key' });
+
+    expect((await provider.getAuthStatus()).error).toContain('OLLAMA_API_KEY');
+  });
+
   it('routes Ollama shorthands and cloud-tagged gpt-oss models to the matching provider', () => {
     const local = new OllamaProvider({ kind: 'local' });
     const cloud = new OllamaProvider({ kind: 'cloud' });
@@ -279,9 +314,12 @@ describe('OllamaProvider', () => {
     expect(cloud.ownsModel('other-provider-cloud')).toBe(false);
   });
 
-  it.skipIf(!isBun)('builds Anthropic-compatible routing through a local bridge', () => {
+  it.skipIf(!isBun)('builds Anthropic-compatible routing through a local bridge', async () => {
     const provider = new OllamaProvider({ kind: 'local' });
 
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama.test',
+    });
     const config = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama.test',
     });
@@ -294,14 +332,23 @@ describe('OllamaProvider', () => {
     void provider.shutdown();
   });
 
-  it.skipIf(!isBun)('keeps distinct bridges for different session override upstreams', () => {
+  it.skipIf(!isBun)('keeps distinct bridges for different session override upstreams', async () => {
     const provider = new OllamaProvider({ kind: 'local' });
 
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama-one.test',
+    });
     const first = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama-one.test',
     });
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama-two.test',
+    });
     const second = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama-two.test',
+    });
+    await provider.ensureBridgeStarted('llama3.2:latest', {
+      baseUrl: 'http://ollama-one.test',
     });
     const firstAgain = provider.buildSdkConfig('llama3.2:latest', {
       baseUrl: 'http://ollama-one.test',
@@ -312,7 +359,7 @@ describe('OllamaProvider', () => {
     void provider.shutdown();
   });
 
-  it('requires an API key for cloud SDK routing', () => {
+  it('requires an API key for cloud SDK routing', async () => {
     const provider = new OllamaProvider({ kind: 'cloud' });
 
     expect(() => provider.buildSdkConfig('gpt-oss:120b-cloud')).toThrow(
@@ -320,9 +367,13 @@ describe('OllamaProvider', () => {
     );
   });
 
-  it.skipIf(!isBun)('uses session overrides for cloud API key and base URL', () => {
+  it.skipIf(!isBun)('uses session overrides for cloud API key and base URL', async () => {
     const provider = new OllamaProvider({ kind: 'cloud' });
 
+    await provider.ensureBridgeStarted('gpt-oss:120b-cloud', {
+      apiKey: 'session-key',
+      baseUrl: 'https://example.test',
+    });
     const config = provider.buildSdkConfig('gpt-oss:120b-cloud', {
       apiKey: 'session-key',
       baseUrl: 'https://example.test',

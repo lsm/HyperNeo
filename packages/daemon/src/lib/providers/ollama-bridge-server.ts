@@ -17,6 +17,7 @@ import { estimateAnthropicInputTokens } from './provider-anthropic-compat/token-
 import { createAnthropicErrorBody, type AnthropicErrorType } from './shared/error-envelope.js';
 import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
 import { Logger } from '../logger.js';
+import { createHttpWsServer } from '../runtime-server/index.js';
 
 const logger = new Logger('ollama-bridge-server');
 
@@ -353,19 +354,25 @@ async function streamOllamaToAnthropic(params: {
     );
     send(messageStopSSE());
   } catch (error) {
-    send(errorSSE('api_error', error instanceof Error ? error.message : 'Ollama stream failed'));
+    try {
+      send(errorSSE('api_error', error instanceof Error ? error.message : 'Ollama stream failed'));
+    } catch {}
   } finally {
-    controller.close();
+    try {
+      controller.close();
+    } catch {}
   }
 }
 
-export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): OllamaBridgeServer {
+export async function createOllamaAnthropicBridgeServer(
+  config: OllamaBridgeConfig
+): Promise<OllamaBridgeServer> {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseUrl = config.baseUrl.replace(/\/$/, '').replace(/\/api\/chat\/?$/i, '');
-  const server = Bun.serve({
-    ...(config.hostname ? { hostname: config.hostname } : {}),
+  const server = await createHttpWsServer({
+    hostname: config.hostname ?? '127.0.0.1',
     port: 0,
-    idleTimeout: 0,
+    idleTimeoutSeconds: 0,
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       if (url.pathname === '/health' || url.pathname === '/v1/health') return new Response('ok');
@@ -434,6 +441,12 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
           .filter(Boolean)
           .join('\n')
       );
+      const upstreamAbort = new AbortController();
+      if (req.signal.aborted) {
+        upstreamAbort.abort();
+      } else {
+        req.signal.addEventListener('abort', () => upstreamAbort.abort(), { once: true });
+      }
       let ollamaResponse: Response;
       try {
         ollamaResponse = await fetchImpl(`${baseUrl}/api/chat`, {
@@ -444,6 +457,7 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
             ...config.headers,
           },
           body: JSON.stringify(requestBody),
+          signal: upstreamAbort.signal,
         });
       } catch (error) {
         return sendJsonError(
@@ -469,6 +483,9 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
             model: body.model,
             inputTokens,
           });
+        },
+        cancel() {
+          upstreamAbort.abort();
         },
       });
       return new Response(stream, {

@@ -1092,7 +1092,7 @@ describe.skipIf(!isBun)(
           headers: { 'Content-Type': 'text/event-stream' },
         });
       };
-      const server = createOpenAIResponsesBridgeServer({
+      const server = await createOpenAIResponsesBridgeServer({
         auth: auth as never,
         models: [CODEX_MODEL],
         fetchImpl: fetchImpl as typeof fetch,
@@ -1210,7 +1210,7 @@ describe.skipIf(!isBun)(
           headers: { 'Content-Type': 'text/event-stream' },
         });
       };
-      const server = createOpenAIResponsesBridgeServer({
+      const server = await createOpenAIResponsesBridgeServer({
         auth: {
           apiKey: 'tok-old',
           source: 'chatgpt_oauth',
@@ -1257,7 +1257,7 @@ describe.skipIf(!isBun)(
           status: 200,
           headers: { 'Content-Type': 'text/event-stream' },
         });
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://upstream.test',
         apiKey: 'k',
         fetchImpl: fetchImpl as typeof fetch,
@@ -1286,7 +1286,7 @@ describe.skipIf(!isBun)(
           headers: { 'Content-Type': 'text/event-stream' },
         });
       };
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://upstream.test',
         apiKey: 'k',
         fetchImpl: fetchImpl as typeof fetch,
@@ -1322,7 +1322,7 @@ describe.skipIf(!isBun)(
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://upstream.test',
         fetchImpl: fetchImpl as typeof fetch,
       });
@@ -1355,7 +1355,7 @@ describe.skipIf(!isBun)(
           headers: { 'Content-Type': 'application/json' },
         });
       };
-      const server = createAnthropicMessagesBridgeServer({
+      const server = await createAnthropicMessagesBridgeServer({
         baseUrl: 'https://upstream.test/v1/messages',
         fetchImpl: fetchImpl as typeof fetch,
       });

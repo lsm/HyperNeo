@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/model switching, file/git operations, MCP servers, checkpoints, and Space multi-agent workflows.
 
-- **Runtime:** Bun 1.3.14 (pinned in root `package.json`)
+- **Runtimes:** Bun 1.3.14 (pinned release runtime, root `package.json`) and Deno 2.9.x (supported alternative for the daemon; see `docs/supported-runtimes.md`)
 - **Backend:** Hono, Claude Agent SDK, SQLite
 - **Frontend:** Preact + Signals + Vite + Tailwind; use Preact conventions, not React-specific APIs
 - **Transport:** custom MessageHub RPC/pub-sub protocol over WebSocket
@@ -32,6 +32,9 @@ Workspace aliases resolve directly to source: `@hyperneo/shared`, `@hyperneo/dae
 ```bash
 # Development — always isolate the DB in a worktree
 make dev PORT=8484 DB_PATH=/tmp/hyperneo-$(basename $PWD).db
+
+# Daemon under Deno (dual support) — same DB isolation rule; needs `bun install` first
+cd packages/daemon && DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db bun run dev:deno
 
 # Quality
 bun run check        # lint, types, knip, session/schema/test-quality guards
