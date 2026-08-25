@@ -1024,7 +1024,7 @@ export class AcpQueryRunner {
           : undefined;
 
       if (!recoveryState.rateLimitCooldownScheduled) {
-        stateManager.beginTerminalIdle();
+        const terminalFence = stateManager.beginTerminalIdle();
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),
@@ -1039,7 +1039,7 @@ export class AcpQueryRunner {
             startupTimeoutMs: getStartupTimeoutMs(),
           }
         );
-        await stateManager.setIdle();
+        await stateManager.setIdle({ fence: terminalFence });
       }
     }
   }

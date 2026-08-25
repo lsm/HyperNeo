@@ -566,26 +566,51 @@ describe('ProcessingStateManager', () => {
     test('a replacement settle consumes its own fence, not the stalled predecessor fence', async () => {
       const ownerA = manager.admitDeliveryTurn();
       const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
-      manager.beginTerminalIdle();
+      const fenceA = manager.beginTerminalIdle();
 
       manager.noteQueryOwnerGeneration(1);
       const ownerB = manager.admitDeliveryTurn();
       const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
-      manager.beginTerminalIdle();
+      const fenceB = manager.beginTerminalIdle();
       let resolvedB = false;
       void waiterB.promise.then(() => {
         resolvedB = true;
       });
 
-      await manager.setIdle();
+      await manager.setIdle({ fence: fenceB });
 
       expect(manager.getState().status).toBe('idle');
       expect(resolvedB).toBe(true);
       await waiterA.promise;
       expect(manager.isTerminalIdlePending()).toBe(true);
 
-      await manager.setIdle();
+      await manager.setIdle({ fence: fenceA });
       expect(manager.isTerminalIdlePending()).toBe(false);
+    });
+
+    test('a stalled predecessor settling first consumes only its own fence', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      const fenceA = manager.beginTerminalIdle();
+
+      manager.noteQueryOwnerGeneration(1);
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      const fenceB = manager.beginTerminalIdle();
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      await manager.setIdle({ fence: fenceA });
+
+      expect(resolvedB).toBe(false);
+      await waiterA.promise;
+      expect(manager.isTerminalIdlePending()).toBe(true);
+
+      await manager.setIdle({ fence: fenceB });
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      await waiterB.promise;
     });
 
     test('a suppressed reentrant fenced idle transfers its waiter to the enclosing drain', async () => {

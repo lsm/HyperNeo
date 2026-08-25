@@ -883,8 +883,9 @@ export class SDKMessageHandler {
       this.lastSdkErrorTag = null;
     }
 
+    let terminalFence: ReturnType<typeof stateManager.beginTerminalIdle> | undefined;
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      stateManager.beginTerminalIdle();
+      terminalFence = stateManager.beginTerminalIdle();
     }
 
     messageHub.event(
@@ -936,7 +937,7 @@ export class SDKMessageHandler {
 
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-        await stateManager.setIdle();
+        await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
       }
     }
 

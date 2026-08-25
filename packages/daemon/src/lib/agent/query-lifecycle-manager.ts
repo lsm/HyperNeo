@@ -327,7 +327,7 @@ export class QueryLifecycleManager {
       await this.ctx.startStreamingQuery();
     } catch (error) {
       if (error instanceof IdleRestartSupersededError) throw error;
-      if (reachedSuppressedIdle) {
+      if (reachedSuppressedIdle && this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
         this.ctx.stateManager.releaseIdleWaiters();
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

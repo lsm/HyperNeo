@@ -1186,17 +1186,18 @@ export class QueryRunner {
         }
 
         const { route, finalizer } = decision;
+        let terminalFence: ReturnType<typeof stateManager.beginTerminalIdle> | undefined;
 
         if (route.action === 'api_validation') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle();
+            terminalFence = stateManager.beginTerminalIdle();
           }
           await this.displayErrorAsAssistantMessage(route.text, {
             markAsError: true,
           });
         } else if (route.action === 'terminal') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle();
+            terminalFence = stateManager.beginTerminalIdle();
           }
           if (!finalizer.skipErrorManager) {
             await errorManager.handleError(
@@ -1218,7 +1219,7 @@ export class QueryRunner {
         }
 
         if (!finalizer.skipCatchIdle) {
-          await stateManager.setIdle();
+          await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
         }
       }
     } finally {

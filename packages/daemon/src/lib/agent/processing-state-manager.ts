@@ -138,7 +138,7 @@ export class ProcessingStateManager {
     return waiter.owner.turnToken <= fenceStartToken;
   }
 
-  beginTerminalIdle(owner?: IdleOwnerScope): void {
+  beginTerminalIdle(owner?: IdleOwnerScope): IdleOwnerScope {
     this.terminalIdleTransitions += 1;
     this.pendingTerminalIdleTransitions += 1;
     const fenceOwner = owner ?? this.getCurrentIdleOwner();
@@ -146,6 +146,7 @@ export class ProcessingStateManager {
     for (const waiter of this.idleWaiters.values()) {
       if (this.waiterOwnedByTransition(waiter, owner, fenceOwner.turnToken)) waiter.fireEnd();
     }
+    return fenceOwner;
   }
 
   restoreFromDatabase(): void {
@@ -208,21 +209,21 @@ export class ProcessingStateManager {
     suppressIdlePublish?: boolean;
     suppressIdleCallback?: boolean;
     owner?: IdleOwnerScope;
+    fence?: IdleOwnerScope;
   }): Promise<void> {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
     let fenceOwner: IdleOwnerScope | undefined;
     if (consumesTerminalFence) {
-      let fenceIndex = -1;
-      for (let i = this.pendingFenceOwners.length - 1; i >= 0; i--) {
-        if (this.isIdleOwnerCurrent(this.pendingFenceOwners[i])) {
-          fenceIndex = i;
-          break;
+      if (opts?.fence) {
+        const fenceIndex = this.pendingFenceOwners.indexOf(opts.fence);
+        if (fenceIndex >= 0) {
+          fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
         }
+      } else {
+        fenceOwner = this.pendingFenceOwners.shift();
       }
-      if (fenceIndex === -1) fenceIndex = 0;
-      fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
     }
     const transitionOwner = opts?.owner ?? fenceOwner ?? this.getCurrentIdleOwner();
     const fenceStartToken = fenceOwner ? fenceOwner.turnToken : this.turnOwnerToken;
