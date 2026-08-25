@@ -153,7 +153,7 @@ import {
   resolveQuiesceSourceNodeId,
   selectSiblingsToQuiesce,
 } from './run-completion-settlement.ts';
-import { parsePrUrl, resolveTopicFromInterest } from './parse-pr-url.ts';
+import { buildPrUrl, parsePrUrl, resolveTopicFromInterest } from './parse-pr-url.ts';
 import {
   decideSpawnAdmission,
   selectPromotablePendingExecutions,
@@ -823,17 +823,24 @@ export class SpaceRuntime {
     nodes: WorkflowNode[],
     options: { clearQueuedDeliveries?: boolean } = {}
   ): void {
+    const oldStaticTargets = this.topicTrie
+      .values()
+      .filter(
+        (target): target is WorkflowSubscriptionTarget =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.subscriptionKind === 'static'
+      );
+    const oldTopicsByKey = this.groupTopicsByQueueKey(oldStaticTargets);
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.subscriptionKind === 'static'
     );
-    if (options.clearQueuedDeliveries) {
-      this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
-    }
     const primaryLinkUrl = this.config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
     const allowedHosts = new Set(['github.com', process.env.GH_HOST ?? '']);
+    const newStaticTargets: WorkflowSubscriptionTarget[] = [];
     for (const node of nodes) {
       for (const agentEntry of resolveNodeAgents(node)) {
         for (const interest of agentEntry.eventInterests ?? []) {
@@ -858,8 +865,24 @@ export class SpaceRuntime {
                 (result.error ?? 'invalid pattern')
             );
           }
+          newStaticTargets.push({
+            workflowRunId,
+            taskId,
+            nodeId: node.id,
+            agentName: agentEntry.name,
+            topic,
+            subscriptionKind: 'static',
+          });
         }
       }
+    }
+    if (options.clearQueuedDeliveries) {
+      const newTopicsByKey = this.groupTopicsByQueueKey(newStaticTargets);
+      this.clearQueuedDeliveriesForChangedAgentSlots(
+        oldTopicsByKey,
+        newTopicsByKey,
+        'run_interests_rebuilt'
+      );
     }
   }
 
@@ -2776,6 +2799,83 @@ export class SpaceRuntime {
     }
   }
 
+  private groupTopicsByQueueKey(targets: WorkflowSubscriptionTarget[]): Map<string, Set<string>> {
+    const groups = new Map<string, Set<string>>();
+    for (const target of targets) {
+      const key = this.buildQueueKey(target);
+      const topics = groups.get(key) ?? new Set<string>();
+      if (target.topic) topics.add(target.topic);
+      groups.set(key, topics);
+    }
+    return groups;
+  }
+
+  private clearQueuedDeliveriesForChangedAgentSlots(
+    oldTopicsByKey: Map<string, Set<string>>,
+    newTopicsByKey: Map<string, Set<string>>,
+    reason: string
+  ): void {
+    const allKeys = new Set([...oldTopicsByKey.keys(), ...newTopicsByKey.keys()]);
+    for (const key of allKeys) {
+      const oldTopics = oldTopicsByKey.get(key) ?? new Set<string>();
+      const newTopics = newTopicsByKey.get(key) ?? new Set<string>();
+      if (this.topicSetsEqual(oldTopics, newTopics)) continue;
+      const target = this.parseQueueKeyTarget(key);
+      if (!target) continue;
+      this.clearQueuedDeliveriesForAgentSlot(target, reason);
+    }
+  }
+
+  private topicSetsEqual(a: Set<string>, b: Set<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const topic of a) {
+      if (!b.has(topic)) return false;
+    }
+    return true;
+  }
+
+  private parseQueueKeyTarget(
+    key: string
+  ): Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
+    const parsed = parseSubscriptionQueueKey(key);
+    if (!parsed) return null;
+    return {
+      workflowRunId: parsed.workflowRunId,
+      taskId: parsed.taskId,
+      nodeId: parsed.nodeId,
+      agentName: parsed.agentName,
+    };
+  }
+
+  private clearQueuedDeliveriesForAgentSlot(
+    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
+    reason: string
+  ): void {
+    const key = this.buildQueueKey(target);
+    const queued = this.pendingExternalEventQueue.get(key);
+    if (queued) {
+      this.failQueuedDeliveries(queued, reason);
+      for (const item of queued) {
+        this.clearExternalEventRetry(item.deliveryKey);
+      }
+      this.pendingExternalEventQueue.delete(key);
+    }
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    for (const delivery of store.listPendingDeliveries(target.workflowRunId)) {
+      if (
+        delivery.taskId !== target.taskId ||
+        delivery.nodeId !== target.nodeId ||
+        delivery.agentName !== target.agentName
+      ) {
+        continue;
+      }
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      this.clearExternalEventRetry(delivery.deliveryKey);
+    }
+  }
+
   private clearQueuedDeliveriesForTask(taskId: string): void {
     const store = this.config.externalEventStore;
     for (const [queueKey, queued] of this.pendingExternalEventQueue) {
@@ -4132,7 +4232,7 @@ export class SpaceRuntime {
           nodeId: startNode.id,
           artifactType: 'link',
           artifactKey: 'pr',
-          data: { kind: 'pr', url: description.trim() },
+          data: { kind: 'pr', url: buildPrUrl(parsed) },
         });
         this.rebuildRunInterests(run.id);
       }

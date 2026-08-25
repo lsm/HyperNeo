@@ -1,5 +1,10 @@
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
+import { parsePrUrl } from '../../space/runtime/parse-pr-url.ts';
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 export interface PollCursor {
   lastSeenAt?: number;
@@ -550,6 +555,53 @@ export class GitHubEventExtensionRepository {
         Date.now(),
         id
       );
+  }
+
+  getActivePrNumbersForRepo(spaceId: string, owner: string, repo: string): number[] {
+    const numbers = new Set<number>();
+    const lowerOwner = owner.toLowerCase();
+    const lowerRepo = repo.toLowerCase();
+    const artifactRows = this.db
+      .prepare(
+        `SELECT a.data
+         FROM workflow_run_artifacts a
+         JOIN space_workflow_runs r ON r.id = a.run_id
+         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress')
+           AND a.artifact_type = ? AND a.artifact_key = ?`
+      )
+      .all(spaceId, 'link', 'pr') as Array<{ data: string }>;
+    for (const { data } of artifactRows) {
+      try {
+        const parsedData = JSON.parse(data) as { url?: string };
+        const parsed = parsePrUrl(parsedData.url ?? '');
+        if (
+          parsed &&
+          parsed.owner.toLowerCase() === lowerOwner &&
+          parsed.repo.toLowerCase() === lowerRepo
+        ) {
+          numbers.add(Number(parsed.number));
+        }
+      } catch {
+        // skip malformed artifact data
+      }
+    }
+    const subRows = this.db
+      .prepare(
+        `SELECT s.topic
+         FROM space_workflow_event_subscriptions s
+         JOIN space_workflow_runs r ON r.id = s.workflow_run_id
+         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress')`
+      )
+      .all(spaceId) as Array<{ topic: string }>;
+    const topicPattern = new RegExp(
+      `^github/${escapeRegex(lowerOwner)}/${escapeRegex(lowerRepo)}/pull_request/([0-9]+)(?:[/.]|$)`,
+      'i'
+    );
+    for (const { topic } of subRows) {
+      const match = topic.match(topicPattern);
+      if (match) numbers.add(Number(match[1]));
+    }
+    return [...numbers];
   }
 
   private rowToRepo(row: Record<string, unknown>): GitHubWatchedRepo {

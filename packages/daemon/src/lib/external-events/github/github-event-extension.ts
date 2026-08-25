@@ -2532,6 +2532,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const hasBacklog = Object.values(processedPages).some((page) => page > 1);
     const pullsHasBacklog = (processedPages.pulls ?? 1) > 1 || pullsFetchedResumedPage;
 
+    const activePrNumbers = this.repo.getActivePrNumbersForRepo(
+      watched.spaceId,
+      watched.owner,
+      watched.repo
+    );
+    const trackedPullRequestNumbers = new Set<number>([
+      ...recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT),
+      ...activePrNumbers,
+    ]);
+
     if (!partialScan && !pullsHasBacklog) {
       const checkRunEndpointKey = 'check_runs';
       let checkRunPermissionDenied = false;
@@ -2768,7 +2778,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -2877,7 +2887,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -3016,7 +3026,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT)) {
+    for (const prNumber of trackedPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         reactionsFullyPolled = false;

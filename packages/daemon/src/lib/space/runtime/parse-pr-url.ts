@@ -7,11 +7,16 @@ export interface ParsedPrUrl {
   number: string;
 }
 
-const PR_URL_PATTERN = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)(?:[/?#]|$)/;
+const PR_URL_PATTERN = /https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)(?:[/?#]|$|\b)/;
+
+export function buildPrUrl(parsed: ParsedPrUrl): string {
+  const host = parsed.host.toLowerCase();
+  return `https://${host}/${parsed.owner}/${parsed.repo}/pull/${parsed.number}`;
+}
 
 export function parsePrUrl(url: string): ParsedPrUrl | null {
   if (typeof url !== 'string' || url.length === 0) return null;
-  const match = url.match(PR_URL_PATTERN);
+  const match = new RegExp(PR_URL_PATTERN.source, 'g').exec(url);
   if (!match) return null;
   return { host: match[1]!, owner: match[2]!, repo: match[3]!, number: match[4]! };
 }
