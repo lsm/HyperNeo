@@ -87,6 +87,8 @@ export interface SDKMessageHandlerContext {
 
   isLimitRecoveryPending?(): boolean;
 
+  getQueryGeneration?(): number;
+
   resetTaskNotificationRequery?(): void;
 
   bumpDeliveryTurnActivity?(): void;
@@ -107,6 +109,7 @@ export class SDKMessageHandler {
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
   private pendingTerminalFence: IdleOwnerScope | null = null;
+  private pendingTerminalFenceGeneration: number | null = null;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
   private lastSdkErrorTag: string | null = null;
   private clearAwaitingTrailingIdle: boolean = false;
@@ -885,10 +888,9 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      if (this.pendingTerminalFence) {
-        stateManager.cancelTerminalFence(this.pendingTerminalFence);
-      }
+      this.retirePendingTerminalFence();
       this.pendingTerminalFence = stateManager.beginTerminalIdle();
+      this.pendingTerminalFenceGeneration = this.ctx.getQueryGeneration?.() ?? null;
     }
 
     messageHub.event(
@@ -1235,9 +1237,29 @@ export class SDKMessageHandler {
     };
   }
 
-  private consumePendingTerminalFence(): IdleOwnerScope | null {
+  retirePendingTerminalFence(): void {
     const fence = this.pendingTerminalFence;
     this.pendingTerminalFence = null;
+    this.pendingTerminalFenceGeneration = null;
+    if (fence) {
+      this.ctx.stateManager.cancelTerminalFence(fence);
+    }
+  }
+
+  private consumePendingTerminalFence(): IdleOwnerScope | null {
+    const fence = this.pendingTerminalFence;
+    const generation = this.pendingTerminalFenceGeneration;
+    this.pendingTerminalFence = null;
+    this.pendingTerminalFenceGeneration = null;
+    if (!fence) return null;
+    if (
+      generation !== null &&
+      this.ctx.getQueryGeneration &&
+      this.ctx.getQueryGeneration() !== generation
+    ) {
+      this.ctx.stateManager.cancelTerminalFence(fence);
+      return null;
+    }
     return fence;
   }
 

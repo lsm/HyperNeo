@@ -1025,20 +1025,25 @@ export class AcpQueryRunner {
 
       if (!recoveryState.rateLimitCooldownScheduled) {
         const terminalFence = stateManager.beginTerminalIdle();
-        await errorManager.handleError(
-          session.id,
-          error instanceof Error ? error : new Error(errorMessage),
-          category,
-          userMessage,
-          stateManager.getState(),
-          {
-            errorMessage,
-            queueSize: messageQueue.size(),
-            providerId: 'acp',
-            workspacePath: session.workspacePath ?? undefined,
-            startupTimeoutMs: getStartupTimeoutMs(),
-          }
-        );
+        try {
+          await errorManager.handleError(
+            session.id,
+            error instanceof Error ? error : new Error(errorMessage),
+            category,
+            userMessage,
+            stateManager.getState(),
+            {
+              errorMessage,
+              queueSize: messageQueue.size(),
+              providerId: 'acp',
+              workspacePath: session.workspacePath ?? undefined,
+              startupTimeoutMs: getStartupTimeoutMs(),
+            }
+          );
+        } catch (reportError) {
+          stateManager.cancelTerminalFence(terminalFence);
+          throw reportError;
+        }
         await stateManager.setIdle({ fence: terminalFence });
       }
     }

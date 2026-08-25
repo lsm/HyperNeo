@@ -123,6 +123,7 @@ describe('QueryLifecycleManager', () => {
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
         cancelSuppressedResultWait: mock(() => {}),
+        retirePendingTerminalFence: mock(() => {}),
       } as unknown as SDKMessageHandler,
       interruptHandler: {
         getInterruptPromise: getInterruptPromiseSpy,

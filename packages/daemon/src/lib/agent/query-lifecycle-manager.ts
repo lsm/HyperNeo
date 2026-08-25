@@ -196,6 +196,7 @@ export class QueryLifecycleManager {
     const { messageQueue } = this.ctx;
 
     this.ctx.messageHandler.cancelSuppressedResultWait();
+    this.ctx.messageHandler.retirePendingTerminalFence();
 
     const processExitedPromise = this.ctx.processExitedPromise;
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();

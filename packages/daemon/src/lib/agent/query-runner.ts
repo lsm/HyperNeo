@@ -1192,29 +1192,39 @@ export class QueryRunner {
           if (!finalizer.skipBeginTerminalIdle) {
             terminalFence = stateManager.beginTerminalIdle();
           }
-          await this.displayErrorAsAssistantMessage(route.text, {
-            markAsError: true,
-          });
+          try {
+            await this.displayErrorAsAssistantMessage(route.text, {
+              markAsError: true,
+            });
+          } catch (error) {
+            if (terminalFence) stateManager.cancelTerminalFence(terminalFence);
+            throw error;
+          }
         } else if (route.action === 'terminal') {
           if (!finalizer.skipBeginTerminalIdle) {
             terminalFence = stateManager.beginTerminalIdle();
           }
-          if (!finalizer.skipErrorManager) {
-            await errorManager.handleError(
-              session.id,
-              error as Error,
-              route.category,
-              this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
-              processingState,
-              {
-                errorMessage,
-                queueSize: messageQueue.size(),
-                providerId: providerId ?? 'anthropic',
-                workspacePath: session.workspacePath ?? undefined,
-                isRootWorkspace: !session.worktree,
-                startupTimeoutMs: STARTUP_TIMEOUT_MS,
-              }
-            );
+          try {
+            if (!finalizer.skipErrorManager) {
+              await errorManager.handleError(
+                session.id,
+                error as Error,
+                route.category,
+                this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
+                processingState,
+                {
+                  errorMessage,
+                  queueSize: messageQueue.size(),
+                  providerId: providerId ?? 'anthropic',
+                  workspacePath: session.workspacePath ?? undefined,
+                  isRootWorkspace: !session.worktree,
+                  startupTimeoutMs: STARTUP_TIMEOUT_MS,
+                }
+              );
+            }
+          } catch (reportError) {
+            if (terminalFence) stateManager.cancelTerminalFence(terminalFence);
+            throw reportError;
           }
         }
 
