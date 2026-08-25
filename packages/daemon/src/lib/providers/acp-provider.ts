@@ -68,11 +68,22 @@ const ACP_CREDENTIAL_ENV_KEYS = [
   'OLLAMA_CLOUD_API_KEY',
 ] as const;
 
+const ACP_ENV_KEYS_VAR = 'HYPERNEO_ACP_ENV_KEYS';
+
 export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
   const baseline: Record<string, string> = {};
   for (const key of ACP_CREDENTIAL_ENV_KEYS) {
     const value = envValue(STARTUP_ENV_BASELINE, key);
     if (value !== undefined) baseline[key] = value;
+  }
+  const configured = envValue(STARTUP_ENV_BASELINE, ACP_ENV_KEYS_VAR);
+  if (configured) {
+    for (const entry of configured.split(',')) {
+      const key = entry.trim();
+      if (!key || key in baseline) continue;
+      const value = envValue(STARTUP_ENV_BASELINE, key);
+      if (value !== undefined) baseline[key] = value;
+    }
   }
   return baseline;
 }

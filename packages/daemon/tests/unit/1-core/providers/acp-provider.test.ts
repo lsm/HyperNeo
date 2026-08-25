@@ -69,6 +69,23 @@ describe('AcpProvider', () => {
       }
     });
 
+    it('carries explicitly configured credential keys for arbitrary ACP commands', () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previous,
+        MY_ACP_TOKEN: 'custom-token',
+        HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN, MISSING_KEY',
+      });
+      try {
+        const baseline = getAcpCredentialEnvBaseline();
+        expect(baseline.MY_ACP_TOKEN).toBe('custom-token');
+        expect(baseline.MISSING_KEY).toBeUndefined();
+        expect(baseline.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
+    });
+
     it.skipIf(process.platform !== 'win32')(
       'resolves credential keys case-insensitively on Windows',
       () => {
