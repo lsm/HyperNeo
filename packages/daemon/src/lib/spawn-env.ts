@@ -100,18 +100,22 @@ const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
-export let STARTUP_ENV_BASELINE: Readonly<Record<string, string>> = Object.freeze(
-  Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  )
-);
-
-export function _setStartupEnvBaselineForTesting(source: EnvSource): void {
-  STARTUP_ENV_BASELINE = Object.freeze(
+function captureBaseline(source: EnvSource): Readonly<Record<string, string>> {
+  return Object.freeze(
     Object.fromEntries(
       Object.entries(source).filter((entry): entry is [string, string] => entry[1] !== undefined)
     )
   );
+}
+
+export let STARTUP_ENV_BASELINE: Readonly<Record<string, string>> = captureBaseline(process.env);
+
+export function refreshStartupEnvBaseline(): void {
+  STARTUP_ENV_BASELINE = captureBaseline(process.env);
+}
+
+export function _setStartupEnvBaselineForTesting(source: EnvSource): void {
+  STARTUP_ENV_BASELINE = captureBaseline(source);
 }
 
 function pickKeys(keys: readonly string[], source: EnvSource): Record<string, string> {

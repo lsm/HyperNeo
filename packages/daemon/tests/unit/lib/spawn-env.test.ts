@@ -8,6 +8,9 @@ import {
   buildSdkRuntimeEnv,
   buildWorkflowConditionEnv,
   isRestrictedEnvName,
+  refreshStartupEnvBaseline,
+  STARTUP_ENV_BASELINE,
+  _setStartupEnvBaselineForTesting,
 } from '../../../src/lib/spawn-env';
 
 const SOURCE: Record<string, string> = {
@@ -167,6 +170,20 @@ describe('startup baseline immutability', () => {
     } finally {
       if (previous === undefined) delete process.env.SPAWN_ENV_PROBE_VAR;
       else process.env.SPAWN_ENV_PROBE_VAR = previous;
+    }
+  });
+
+  test('startup credential discovery refresh picks up post-import login credentials', () => {
+    const previous = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'keychain-discovered-token';
+    try {
+      expect(STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN).not.toBe('keychain-discovered-token');
+      refreshStartupEnvBaseline();
+      expect(STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN).toBe('keychain-discovered-token');
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = previous;
+      _setStartupEnvBaselineForTesting(process.env);
     }
   });
 });

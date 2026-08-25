@@ -11,6 +11,7 @@ import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.ts';
 import { AcpClient } from '../acp/acp-client.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
+import { STARTUP_ENV_BASELINE } from '../spawn-env.ts';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
 const ACP_CONTEXT_WINDOW_ENV_VAR = 'HYPERNEO_ACP_CONTEXT_WINDOW';
@@ -55,21 +56,17 @@ export type AcpCredentialEnvBaseline = Readonly<{
   CLAUDE_CODE_OAUTH_TOKEN?: string;
 }>;
 
-const ACP_CREDENTIAL_ENV_BASELINE: AcpCredentialEnvBaseline = Object.freeze({
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
-  CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-});
-
 export function getAcpCredentialEnvBaseline(): AcpCredentialEnvBaseline {
-  return ACP_CREDENTIAL_ENV_BASELINE;
+  return {
+    ANTHROPIC_API_KEY: STARTUP_ENV_BASELINE.ANTHROPIC_API_KEY,
+    ANTHROPIC_AUTH_TOKEN: STARTUP_ENV_BASELINE.ANTHROPIC_AUTH_TOKEN,
+    CLAUDE_CODE_OAUTH_TOKEN: STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN,
+  };
 }
 
 export class AcpProvider implements Provider {
   readonly id = 'acp';
   readonly displayName = 'ACP Agent';
-
-  readonly credentialEnvBaseline: AcpCredentialEnvBaseline = ACP_CREDENTIAL_ENV_BASELINE;
 
   static readonly DEFAULT_CONTEXT_WINDOW = DEFAULT_ACP_CONTEXT_WINDOW;
   static readonly CONTEXT_WINDOW_ENV_VAR = ACP_CONTEXT_WINDOW_ENV_VAR;

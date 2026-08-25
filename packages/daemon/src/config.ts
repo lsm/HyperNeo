@@ -10,8 +10,10 @@ import {
 import { getDataDir } from './lib/data-dir.ts';
 
 import { discoverCredentials } from './lib/credential-discovery.ts';
+import { refreshStartupEnvBaseline } from './lib/spawn-env.ts';
 
 discoverCredentials();
+refreshStartupEnvBaseline();
 
 export interface Config {
   port: number;
