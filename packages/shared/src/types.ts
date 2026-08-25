@@ -615,6 +615,8 @@ export interface ContextInfo {
   apiUsage?: ContextAPIUsage;
   autoCompactThreshold?: number;
   sdkAutoCompactThreshold?: number;
+  autoCompactPercent?: number;
+  daemonBackstopActive?: boolean;
   isAutoCompactEnabled?: boolean;
   messageBreakdown?: ContextMessageBreakdown;
   lastUpdated?: number;

@@ -1518,10 +1518,11 @@ export class SDKMessageHandler {
         }
         const effectiveWindow =
           contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
+        const effectivePercent = contextInfo.autoCompactPercent ?? modelInfo?.autoCompactPercent;
         const decision = decideContextBudgetCompaction({
           totalUsed: contextInfo.totalUsed,
           configuredWindow: effectiveWindow,
-          autoCompactPercent: modelInfo?.autoCompactPercent,
+          autoCompactPercent: effectivePercent,
           sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
           sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
           cooldownActive: contextTracker.isCoolingDown(),
@@ -1529,7 +1530,7 @@ export class SDKMessageHandler {
         });
         if (decision.action === 'compact') {
           const configuredWindow = effectiveWindow ?? 0;
-          const threshold = contextBudgetThreshold(configuredWindow, modelInfo?.autoCompactPercent);
+          const threshold = contextBudgetThreshold(configuredWindow, effectivePercent);
           contextTracker.markCompactionTriggered();
           this.logger.info(
             `Daemon context-budget compaction for session ${session.id} ` +

@@ -291,6 +291,7 @@ export class ContextFetcher {
       autoCompactThreshold = Math.floor(capacity * 0.9);
     }
     const enforcementProvider = modelMetadata?.provider;
+    let daemonBackstopActive = false;
     if (
       enforcementProvider &&
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
@@ -304,6 +305,7 @@ export class ContextFetcher {
         (typeof autoCompactThreshold !== 'number' || autoCompactThreshold > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;
+        daemonBackstopActive = true;
       }
     }
 
@@ -323,6 +325,8 @@ export class ContextFetcher {
       apiUsage,
       autoCompactThreshold,
       sdkAutoCompactThreshold: rawSdkAutoCompactThreshold,
+      autoCompactPercent: modelMetadata?.autoCompactPercent,
+      daemonBackstopActive,
       isAutoCompactEnabled: response.isAutoCompactEnabled,
       messageBreakdown,
       lastUpdated: Date.now(),

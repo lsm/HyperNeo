@@ -198,6 +198,50 @@ describe('ContextFetcher.toContextInfo', () => {
 
     expect(info.autoCompactThreshold).toBe(180000);
     expect(info.sdkAutoCompactThreshold).toBeUndefined();
+    expect(info.daemonBackstopActive).toBe(true);
+  });
+
+  it('marks the daemon backstop active only when it owns the enforced threshold', () => {
+    const disabledSdk = baseResponse({
+      totalTokens: 150000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 75,
+      model: 'custom-model',
+      isAutoCompactEnabled: false,
+      categories: [{ name: 'Messages', tokens: 150000, color: 'blue' }],
+    });
+
+    const disabledInfo = ContextFetcher.toContextInfo(disabledSdk, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      provider: 'custom:test',
+    });
+
+    expect(disabledInfo.autoCompactThreshold).toBe(180000);
+    expect(disabledInfo.daemonBackstopActive).toBe(true);
+
+    const earlierSdk = baseResponse({
+      totalTokens: 50000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 25,
+      model: 'custom-model',
+      autoCompactThreshold: 100000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 50000, color: 'blue' }],
+    });
+
+    const earlierInfo = ContextFetcher.toContextInfo(earlierSdk, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      provider: 'custom:test',
+    });
+
+    expect(earlierInfo.autoCompactThreshold).toBe(100000);
+    expect(earlierInfo.daemonBackstopActive).toBe(false);
   });
 
   it('derives the threshold from reserved autocompact breakdown tokens without including the buffer as a usage row', () => {
