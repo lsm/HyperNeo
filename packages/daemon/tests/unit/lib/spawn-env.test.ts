@@ -34,6 +34,8 @@ const SOURCE: Record<string, string> = {
   GIT_SSL_VERSION: 'tlsv1.3',
   GIT_SSL_CIPHER_LIST: 'ECDHE-RSA-AES256-GCM-SHA384',
   GIT_SSL_NO_VERIFY: '0',
+  GIT_CEILING_DIRECTORIES: '/allowed/workspace',
+  GIT_DISCOVERY_ACROSS_FILESYSTEM: '1',
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_ATTR_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
@@ -106,16 +108,38 @@ describe('buildGitCommandEnv', () => {
     });
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
+    expect(env.GIT_CEILING_DIRECTORIES).toBe(SOURCE.GIT_CEILING_DIRECTORIES);
+    expect(env.GIT_DISCOVERY_ACROSS_FILESYSTEM).toBe('1');
     expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
     expect(env.GIT_ATTR_NOSYSTEM).toBe('1');
     expect(env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
-    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
-    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
+    expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
+  });
+
+  test('reindexes safe.directory alongside http.extraHeader entries', () => {
+    const env = buildGitCommandEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: '/mnt/trusted-repo',
+      GIT_CONFIG_KEY_1: 'http.extraheader',
+      GIT_CONFIG_VALUE_1: 'Authorization: Bearer repo-secret',
+      GIT_CONFIG_KEY_2: 'core.hooksPath',
+      GIT_CONFIG_VALUE_2: '/tmp/hooks',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('2');
+    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
+    expect(env.GIT_CONFIG_VALUE_0).toBe('/mnt/trusted-repo');
+    expect(env.GIT_CONFIG_KEY_1).toBe('http.extraheader');
+    expect(env.GIT_CONFIG_VALUE_1).toBe('Authorization: Bearer repo-secret');
+    expect(env.GIT_CONFIG_KEY_2).toBeUndefined();
   });
 });
 

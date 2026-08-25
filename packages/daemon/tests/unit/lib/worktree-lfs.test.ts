@@ -92,6 +92,18 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('accepts non-canonical size records accepted by git lfs', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize +1\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234 \n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('rejects non-numeric size records', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize twelve\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('rejects lone-CR line endings in pointer blobs', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\r${POINTER_OID}\rsize 1234`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);

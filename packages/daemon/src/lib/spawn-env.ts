@@ -76,6 +76,8 @@ const DIALOG_ENV_KEYS = [
 const GIT_COMMAND_ENV_KEYS = [
   'GIT_SSL_CAINFO',
   'GIT_SSL_NO_VERIFY',
+  'GIT_CEILING_DIRECTORIES',
+  'GIT_DISCOVERY_ACROSS_FILESYSTEM',
   'GIT_EXEC_PATH',
   'GIT_CONFIG_NOSYSTEM',
   'GIT_ATTR_NOSYSTEM',
@@ -244,15 +246,14 @@ export function buildGitCommandEnv(
   return {
     ...buildOsBaselineEnv(source),
     ...pickKeys(GIT_COMMAND_ENV_KEYS, source),
+    ...collectPermittedGitConfig(source),
   };
 }
 
 export function buildGitSshEnv(source: EnvSource = STARTUP_ENV_BASELINE): Record<string, string> {
-  const configKeys = collectExtraHeaderConfig(source);
   return {
     ...buildGitCommandEnv(source),
     ...pickKeys([...GIT_SSH_ENV_KEYS, ...PROXY_TLS_ENV_KEYS], source),
-    ...configKeys,
   };
 }
 
@@ -288,7 +289,7 @@ export function buildWorkflowConditionEnv(
   return env;
 }
 
-function collectExtraHeaderConfig(source: EnvSource): Record<string, string> {
+function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
   const count = Number(sourceValue(source, 'GIT_CONFIG_COUNT'));
   if (!Number.isInteger(count) || count <= 0) return {};
   const keys: string[] = [];
@@ -297,7 +298,7 @@ function collectExtraHeaderConfig(source: EnvSource): Record<string, string> {
     const key = sourceValue(source, `GIT_CONFIG_KEY_${index}`);
     const value = sourceValue(source, `GIT_CONFIG_VALUE_${index}`);
     if (key === undefined || value === undefined) continue;
-    if (!/^http(?:\..+)?\.extraHeader$/i.test(key)) continue;
+    if (!/^http(?:\..+)?\.extraHeader$/i.test(key) && !/^safe\.directory$/i.test(key)) continue;
     keys.push(key);
     values.push(value);
   }

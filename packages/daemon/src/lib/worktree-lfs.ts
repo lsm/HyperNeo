@@ -17,7 +17,7 @@ function isLfsPointerContent(content: string): boolean {
   let index = 1;
   while (index < lines.length && LFS_EXT_LINE_PATTERN.test(lines[index])) index++;
   if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[index] ?? '')) return false;
-  if (!/^size \d+$/.test(lines[index + 1] ?? '')) return false;
+  if (!/^size [+-]?\d+\s*$/.test(lines[index + 1] ?? '')) return false;
   return lines.slice(index + 2).every((line) => line === '');
 }
 
