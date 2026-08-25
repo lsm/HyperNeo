@@ -118,12 +118,14 @@ export function routeTurnEnd(
   }
   const { isTopLevel, isSuccess, isLimitError, isLimitRecoveryEngaged, confirmsArmedClear } =
     event.result;
+  if (isLimitRecoveryEngaged === null) {
+    return makePlan(flags, { resetThinkingTokens: isTopLevel });
+  }
   const settlesArmedClearError = confirmsArmedClear && !isSuccess;
-  const isRecoveryFinal = isLimitRecoveryEngaged !== null;
   const lastResultWasSuccess = isTopLevel ? isSuccess && !isLimitError : flags.lastResultWasSuccess;
   const nextFlags = { ...flags, lastResultWasSuccess };
   const plan: Partial<Omit<TurnEndPlan, 'nextFlags' | 'afterEffectsFlags'>> = {
-    resetThinkingTokens: isTopLevel && (!isRecoveryFinal || !isLimitError),
+    resetThinkingTokens: isTopLevel && !isLimitError,
     cancelSuppressedTimer: confirmsArmedClear,
   };
   const canBeginIdle =

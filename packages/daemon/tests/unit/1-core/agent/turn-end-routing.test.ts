@@ -268,7 +268,7 @@ describe('routeTurnEnd', () => {
       event: result({ isLimitError: true, isLimitRecoveryEngaged: null }),
       expected: {
         resetThinkingTokens: true,
-        ...same(failure),
+        ...same(resetTurnEndFlags),
       },
     },
     {
