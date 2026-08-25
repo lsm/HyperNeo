@@ -90,4 +90,9 @@ export class ContextTracker {
     this.lastCompactionTriggerAt = Date.now();
     this.lastCompactionBudgetKey = budgetKey;
   }
+
+  clearCompactionCooldown(): void {
+    this.lastCompactionTriggerAt = 0;
+    this.lastCompactionBudgetKey = undefined;
+  }
 }

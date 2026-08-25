@@ -257,6 +257,12 @@ describe('ContextTracker', () => {
       expect(tracker.isCoolingDown(115_200, 60_000)).toBe(true);
       expect(tracker.isCoolingDown(900_000, 60_000)).toBe(true);
     });
+
+    it('clearing the cooldown re-arms the backstop immediately', () => {
+      tracker.markCompactionTriggered(115_200);
+      tracker.clearCompactionCooldown();
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(false);
+    });
   });
 
   describe('reserveBasedThreshold', () => {

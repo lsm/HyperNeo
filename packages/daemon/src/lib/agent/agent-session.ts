@@ -1227,6 +1227,7 @@ export class AgentSession
             errors: result.errors,
           })}`
         );
+        void this.messageHandler.refreshContextUsage('event-tick');
       })
       .catch((error) => {
         this.logger.warn(

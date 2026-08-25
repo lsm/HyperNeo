@@ -1497,9 +1497,19 @@ export class SDKMessageHandler {
     }
   }
 
-  private refreshContextUsage(
-    reason: 'event-tick' | 'turn-end' | 'compact-boundary'
-  ): Promise<void> {
+  private isContextRefreshStale(
+    queryObject: QueryLike,
+    model: string | undefined,
+    provider: string | undefined
+  ): boolean {
+    return (
+      this.ctx.queryObject !== queryObject ||
+      this.ctx.session.config.model !== model ||
+      this.ctx.session.config.provider !== provider
+    );
+  }
+
+  refreshContextUsage(reason: 'event-tick' | 'turn-end' | 'compact-boundary'): Promise<void> {
     this.eventsSinceContextRefresh = 0;
 
     if (this.pendingContextRefresh) {
@@ -1513,16 +1523,18 @@ export class SDKMessageHandler {
 
     const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
     if (!queryObject) return Promise.resolve();
+    const fenceModel = session.config.model;
+    const fenceProvider = session.config.provider;
 
     const promise = (async () => {
       try {
         const modelInfo = await getSessionModelInfo(session);
-        if (this.ctx.queryObject !== queryObject) return;
+        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
           queryObject,
           modelInfo
         );
-        if (this.ctx.queryObject !== queryObject) return;
+        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
         if (!contextInfo) return;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
         try {
@@ -1533,10 +1545,14 @@ export class SDKMessageHandler {
         } catch (error) {
           this.logger.warn(`context.updated publication failed for session ${session.id}:`, error);
         }
-        if (this.ctx.queryObject !== queryObject) return;
+        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
 
         const providerId = session.config.provider;
-        if (!providerId || NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+        if (
+          !providerId ||
+          providerId === 'acp' ||
+          NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
+        ) {
           return;
         }
         const effectiveWindow =
@@ -1561,6 +1577,7 @@ export class SDKMessageHandler {
           );
           void this.ctx.messageQueue.enqueue('/compact', true, { prepend: true }).catch((error) => {
             this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+            contextTracker.clearCompactionCooldown();
           });
         }
       } catch (error) {
