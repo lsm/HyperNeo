@@ -29,9 +29,6 @@ import {
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import {
   type DeferredEventOverflowFoldResult,
-  buildDeferredEventDigestEnvelopeText,
-  buildExternalEventDigestMessage,
-  buildSyntheticExternalEventMessage,
   DEFERRED_EXTERNAL_EVENT_ROW_CAP,
   deferredExternalEventEntryEvents,
   type ExternalEventEssenceEntry,
@@ -42,6 +39,15 @@ import {
   decideExternalEventSteerAdmission,
   type DirectSteerEventClass,
 } from './external-event-steer-admission-pipeline.ts';
+
+import {
+  type DirectSteerBufferEntry,
+  type DirectSteerFlushDeps,
+  type DirectSteerSkipReason,
+  runDirectSteerFlush,
+} from './direct-steer-flush-pipeline.ts';
+import { classifyExternalEventDirectSteer } from '../../../lib/external-events/event-tiers.ts';
+
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -298,17 +304,6 @@ const DIRECT_STEER_HYDRATABLE_FIELDS = [
   'environment',
   'description',
 ] as const;
-
-interface DirectSteerBufferEntry {
-  steerEssences: ExternalEventEssenceEntry[];
-  passengerEssences: ExternalEventEssenceEntry[];
-  classes: DirectSteerEventClass[];
-  eventClass: DirectSteerEventClass;
-  messageId: string;
-  dbId: string;
-  receivedAt: number;
-  droppedEventCount?: number;
-}
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
 
@@ -3759,13 +3754,7 @@ export class TaskAgentManager {
       return;
     }
     if (decision.action !== 'admit') return;
-    const {
-      eventClass,
-      steerEssences,
-      passengerEssences,
-      classes,
-      droppedEventCount: admittedDropped,
-    } = decision;
+    const { eventClass, droppedEventCount: admittedDropped } = decision;
     const settledRow = this.config.db
       .getSDKMessageRepo()
       .getMessageByStatusAndUuid(args.sessionId, 'deferred', args.messageId);
@@ -3775,10 +3764,7 @@ export class TaskAgentManager {
     if (buffer.some((item) => item.messageId === args.messageId)) return;
     const now = Date.now();
     buffer.push({
-      steerEssences,
-      passengerEssences,
-      classes,
-      eventClass,
+      essences: decision.essences,
       messageId: args.messageId,
       dbId: claimDbId,
       receivedAt: now,
@@ -3793,7 +3779,13 @@ export class TaskAgentManager {
     let total = 0;
     for (const [key, entries] of this.directSteerBuffers) {
       if (!key.startsWith(`${sessionId}\u0000`)) continue;
-      total += entries.reduce((sum, item) => sum + item.steerEssences.length, 0);
+      total += entries.reduce(
+        (sum, item) =>
+          sum +
+          item.essences.filter((essence) => classifyExternalEventDirectSteer(essence) !== null)
+            .length,
+        0
+      );
     }
     return total;
   }
@@ -3872,170 +3864,118 @@ export class TaskAgentManager {
     });
   }
 
+  private directSteerSkipLogMessage(sessionId: string, reason: DirectSteerSkipReason): string {
+    const messages: Record<DirectSteerSkipReason, string> = {
+      session_not_tracked: `skipping direct steer — session ${sessionId} no longer tracked; rows stay deferred`,
+      session_not_processing: `skipping direct steer for session ${sessionId} — no longer processing at flush time; rows stay deferred for turn-end delivery`,
+      parent_task_limited: `skipping direct steer for session ${sessionId} — parent task became rate/usage-limited while the burst was pending; rows stay deferred`,
+      no_deferred_rows: `direct steer for session ${sessionId} found no still-deferred rows (turn likely ended first); rows already flushed`,
+      no_direct_events: `direct steer for session ${sessionId} has no direct-class events after filtering; rows stay deferred`,
+    };
+    return `TaskAgentManager: ${messages[reason]}`;
+  }
+
+  private buildDirectSteerFlushDeps(): DirectSteerFlushDeps {
+    return {
+      getSessionTracked: (sessionId) => this.getTrackedSession(sessionId) !== null,
+      getSessionProcessing: (sessionId) =>
+        this.getTrackedSession(sessionId)?.getProcessingState().status === 'processing',
+      isParentTaskLimited: (sessionId) => this.parentTaskLimitedForSession(sessionId),
+      getDeferredUuids: (sessionId) => {
+        const { messages: deferredRows } = this.config.db.getUserMessagesByStatus(
+          sessionId,
+          'deferred'
+        );
+        return new Set(deferredRows.map((row) => String(row.uuid)));
+      },
+      savePassenger: async (sessionId, message) => {
+        const dbId = this.config.db.saveUserMessage(sessionId, message, 'deferred');
+        await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
+        return dbId;
+      },
+      discardPassenger: async (sessionId, dbId) => {
+        if (!dbId) return;
+        this.config.db.updateMessageStatus([dbId], 'consumed');
+        await this.config.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbId],
+            status: 'consumed',
+          })
+          .catch(() => {});
+      },
+      saveSteer: (sessionId, message) =>
+        this.config.db.saveUserMessage(sessionId, message, 'enqueued'),
+      discardSteer: async (sessionId, messageId) => {
+        const failedDbId = this.config.db
+          .getSDKMessageRepo()
+          .markDeliveryFailedByUuid(sessionId, messageId);
+        if (failedDbId) await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+      },
+      enqueueSteer: (sessionId, messageId) => {
+        deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
+          origin: 'space_inject',
+          role: 'steer',
+        });
+      },
+      consumeSources: (_sessionId, dbIds) => {
+        this.config.db.updateMessageStatus(dbIds, 'consumed');
+      },
+      recordHealthMetrics: (steeredClasses) => {
+        this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueued();
+        for (const eventClass of steeredClasses) {
+          this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueuedClass(
+            eventClass
+          );
+        }
+      },
+      publishStatusChanged: (sessionId, dbId, status) =>
+        this.publishMessageStatusChanged(
+          sessionId,
+          dbId,
+          status as 'enqueued' | 'deferred' | 'failed'
+        ),
+      publishStatusesChanged: async (sessionId, dbIds, status) => {
+        await this.config.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: dbIds,
+            status,
+          })
+          .catch(() => {});
+      },
+    };
+  }
+
   private async deliverDirectSteerUnderCoordination(
     sessionId: string,
     entries: DirectSteerBufferEntry[]
   ): Promise<void> {
-    const session = this.getTrackedSession(sessionId);
-    if (!session) {
-      log.debug(
-        `TaskAgentManager: skipping direct steer — session ${sessionId} no longer tracked; ` +
-          `rows stay deferred`
-      );
-      return;
-    }
-    if (session.getProcessingState().status !== 'processing') {
-      log.debug(
-        `TaskAgentManager: skipping direct steer for session ${sessionId} — no longer ` +
-          `processing at flush time; rows stay deferred for turn-end delivery`
-      );
-      return;
-    }
-    if (this.parentTaskLimitedForSession(sessionId)) {
-      log.debug(
-        `TaskAgentManager: skipping direct steer for session ${sessionId} — parent task ` +
-          `became rate/usage-limited while the burst was pending; rows stay deferred`
-      );
-      return;
-    }
-    const { messages: deferredRows } = this.config.db.getUserMessagesByStatus(
+    const outcome = await runDirectSteerFlush(this.buildDirectSteerFlushDeps(), {
       sessionId,
-      'deferred'
-    );
-    const deferredUuids = new Set(deferredRows.map((row) => String(row.uuid)));
-    const steerable = entries.filter((entry) => deferredUuids.has(entry.messageId));
-    if (steerable.length === 0) {
-      log.debug(
-        `TaskAgentManager: direct steer for session ${sessionId} found no still-deferred ` +
-          `rows (turn likely ended first); rows already flushed`
-      );
+      entries,
+      snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
+    });
+    if (outcome.action === 'skip') {
+      log.debug(this.directSteerSkipLogMessage(sessionId, outcome.reason));
       return;
     }
-    const steerEssences = steerable.flatMap((entry) => entry.steerEssences);
-    if (steerEssences.length === 0) {
-      log.debug(
-        `TaskAgentManager: direct steer for session ${sessionId} has no direct-class events ` +
-          `after filtering; rows stay deferred`
-      );
-      return;
-    }
-    const passengerEssences = steerable.flatMap((entry) => entry.passengerEssences);
-    const carriedDropped = steerable.reduce(
-      (sum, entry) => sum + (entry.droppedEventCount ?? 0),
-      0
-    );
-    let passengerDbId: string | null = null;
-    const discardPassengerCopy = (): void => {
-      if (!passengerDbId) return;
-      this.config.db.updateMessageStatus([passengerDbId], 'consumed');
-      void this.config.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId,
-          messageIds: [passengerDbId],
-          status: 'consumed',
-        })
-        .catch(() => {});
-      passengerDbId = null;
-    };
-    if (passengerEssences.length > 0) {
-      const passengerRow = buildSyntheticExternalEventMessage(
-        sessionId,
-        buildDeferredEventDigestEnvelopeText(
-          passengerEssences,
-          carriedDropped > 0 ? { carriedDroppedCount: carriedDropped } : undefined
-        )
-      );
-      try {
-        passengerDbId = this.config.db.saveUserMessage(sessionId, passengerRow, 'deferred');
-        await this.publishMessageStatusChanged(sessionId, passengerDbId, 'deferred');
-        log.debug(
-          `TaskAgentManager: re-deferred ${passengerEssences.length} digest-tier passenger ` +
-            `event(s) alongside a mid-turn steer for session ${sessionId}`
-        );
-      } catch (err) {
-        log.warn(
-          `TaskAgentManager: failed to preserve digest-tier passengers for session ` +
-            `${sessionId}: ${err instanceof Error ? err.message : String(err)}; ` +
-            `aborting the steer so no events are lost`
-        );
-        return;
-      }
-    }
-    const postPassengerSession = this.getTrackedSession(sessionId);
-    if (
-      !postPassengerSession ||
-      postPassengerSession.getProcessingState().status !== 'processing' ||
-      this.parentTaskLimitedForSession(sessionId)
-    ) {
-      log.debug(
-        `TaskAgentManager: direct steer for session ${sessionId} aborted — session left ` +
-          `processing or the parent task became limited while preserving passengers; ` +
+
+    if (outcome.action === 'failed') {
+      log.warn(
+        `TaskAgentManager: direct steer flush failed for session ${sessionId} at stage ` +
+          `${outcome.stage}: ` +
+          `${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}; ` +
           `rows stay deferred`
       );
-      discardPassengerCopy();
       return;
     }
-    const eventCount = steerEssences.length;
-    const steerText = buildExternalEventDigestMessage(steerEssences, {
-      title: 'Direct external events while you were working (injected mid-turn)',
-      snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
-      renderAllReviewBodies: true,
-      ...(passengerDbId || carriedDropped <= 0 ? {} : { droppedEventCount: carriedDropped }),
-    });
-    const message = buildSyntheticExternalEventMessage(sessionId, steerText);
-    const steerMessageId = String(message.uuid);
-    let steerDbId: string;
-    try {
-      steerDbId = this.config.db.saveUserMessage(sessionId, message, 'enqueued');
-    } catch (err) {
-      log.warn(
-        `TaskAgentManager: failed to persist direct steer row for session ${sessionId}: ` +
-          `${err instanceof Error ? err.message : String(err)}; rows stay deferred`
-      );
-      discardPassengerCopy();
-      return;
-    }
-    try {
-      deliverMessage(this.config.db.getJobQueueRepo(), sessionId, steerMessageId, {
-        origin: 'space_inject',
-        role: 'steer',
-      });
-    } catch (err) {
-      log.warn(
-        `TaskAgentManager: failed to enqueue direct steer delivery for session ${sessionId}: ` +
-          `${err instanceof Error ? err.message : String(err)}; discarding the steer row — ` +
-          `source rows stay deferred as the single carrier`
-      );
-      const failedDbId = this.config.db
-        .getSDKMessageRepo()
-        .markDeliveryFailedByUuid(sessionId, steerMessageId);
-      if (failedDbId) await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-      discardPassengerCopy();
-      return;
-    }
-    const sourceDbIds = steerable.map((entry) => entry.dbId);
-    this.config.db.updateMessageStatus(sourceDbIds, 'consumed');
-    const steeredClasses = new Set(steerable.flatMap((entry) => entry.classes));
-    this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueued();
-    for (const eventClass of steeredClasses) {
-      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueuedClass(
-        eventClass
-      );
-    }
+
     log.info(
       `TaskAgentManager: injected direct steer for session ${sessionId} covering ` +
-        `${eventCount} event(s) across ${steerable.length} row(s)`
+        `${outcome.eventCount} event(s) across ${outcome.steerableCount} row(s)`
     );
-    await this.publishMessageStatusChanged(sessionId, steerDbId, 'enqueued');
-    await this.config.internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId,
-        messageIds: sourceDbIds,
-        status: 'consumed',
-      })
-      .catch(() => {});
   }
-
   private parentTaskLimitedForSession(sessionId: string): boolean {
     const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
