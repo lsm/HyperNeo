@@ -515,6 +515,9 @@ export class QueryRunner {
       permit.release();
     };
 
+    let runAbortController: AbortController | null = null;
+    let isAbortError = false;
+
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
@@ -752,13 +755,13 @@ export class QueryRunner {
         return proc;
       };
 
-      const abortController = new AbortController();
-      this.ctx.queryAbortController = abortController;
+      runAbortController = new AbortController();
+      this.ctx.queryAbortController = runAbortController;
       {
         const startupGate = getSdkStartupGate();
         startupPermit = await startupGate.acquire({
           sessionId: session.id,
-          signal: abortController.signal,
+          signal: runAbortController.signal,
         });
         if (startupPermit.queuedBehind > 0) {
           logger.info(
@@ -769,7 +772,7 @@ export class QueryRunner {
         }
       }
       if (
-        abortController.signal.aborted ||
+        runAbortController.signal.aborted ||
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration
       ) {
@@ -832,8 +835,8 @@ export class QueryRunner {
                 .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
           );
 
-          if (!abortController.signal.aborted) {
-            abortController.abort();
+          if (runAbortController && !runAbortController.signal.aborted) {
+            runAbortController.abort();
           }
         }
       }, STARTUP_TIMEOUT_MS);
@@ -849,7 +852,10 @@ export class QueryRunner {
 
       let messageCount = 0;
 
-      for await (const message of this.createAbortableQuery(queryObject, abortController.signal)) {
+      for await (const message of this.createAbortableQuery(
+        queryObject,
+        runAbortController.signal
+      )) {
         if (startupTimeoutReached && messageCount === 0) {
           throw new Error('SDK startup timeout - query aborted');
         }
@@ -912,7 +918,7 @@ export class QueryRunner {
       releaseStartupPermit('query_error');
 
       const errorMessage = String(error);
-      const isAbortError = error instanceof Error && error.name === 'AbortError';
+      isAbortError = error instanceof Error && error.name === 'AbortError';
       const isQueryInterrupted =
         isAbortError ||
         stateManager.getState().status === 'interrupted' ||
@@ -1415,9 +1421,10 @@ export class QueryRunner {
           this.ctx.startupTimeoutTimer = null;
         }
 
-        const abortController = this.ctx.queryAbortController;
-        if (abortController) {
-          abortController.abort();
+        if (runAbortController) {
+          runAbortController.abort();
+        } else if (this.ctx.queryAbortController) {
+          this.ctx.queryAbortController.abort();
           this.ctx.queryAbortController = null;
         }
 
@@ -1443,12 +1450,19 @@ export class QueryRunner {
         }
 
         if (
+          this.ctx.getQueryGeneration() === queryGeneration &&
+          this.ctx.queryAbortController === runAbortController &&
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
           !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
-          stateManager.getState().status !== 'rate_limit_cooldown'
+          stateManager.getState().status !== 'rate_limit_cooldown' &&
+          !(isAbortError && stateManager.getState().status === 'interrupted')
         ) {
           await stateManager.setIdle();
+        }
+
+        if (this.ctx.queryAbortController === runAbortController) {
+          this.ctx.queryAbortController = null;
         }
 
         this._lastConsumedUserMessage = null;
