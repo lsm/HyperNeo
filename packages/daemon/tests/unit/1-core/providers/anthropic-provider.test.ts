@@ -122,8 +122,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.ANTHROPIC_API_KEY);
+        query: (params: { options?: { env?: Record<string, string> } }) => {
+          seenEnv.push(params.options?.env?.ANTHROPIC_API_KEY);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -169,8 +169,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+        query: (params: { options?: { env?: Record<string, string> } }) => {
+          seenEnv.push(params.options?.env?.CLAUDE_CODE_OAUTH_TOKEN);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -257,8 +257,11 @@ describe('AnthropicProvider', () => {
   });
 
   describe('listRemoteModels', () => {
+    let provider: AnthropicProvider;
+
     beforeEach(() => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
+      provider = new AnthropicProvider();
     });
 
     const cachedModels = [
@@ -308,15 +311,18 @@ describe('AnthropicProvider', () => {
     });
 
     it('rejects cached and forced discovery when credentials are no longer available', async () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      const unauthenticated = new AnthropicProvider();
       const loadModels = spyOn(
-        provider as unknown as Record<string, unknown>,
+        unauthenticated as unknown as Record<string, unknown>,
         'loadModelsFromSdk' as never
       );
-      provider.setModelCache(cachedModels);
-      delete process.env.ANTHROPIC_API_KEY;
+      unauthenticated.setModelCache(cachedModels);
 
-      await expect(provider.listRemoteModels()).rejects.toThrow('not authenticated');
-      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow('not authenticated');
+      await expect(unauthenticated.listRemoteModels()).rejects.toThrow('not authenticated');
+      await expect(unauthenticated.listRemoteModels({ force: true })).rejects.toThrow(
+        'not authenticated'
+      );
       expect(loadModels).not.toHaveBeenCalled();
     });
 

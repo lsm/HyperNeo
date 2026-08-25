@@ -2,7 +2,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { SpawnFn } from '../../runtime-spawn/index.ts';
-import { STARTUP_ENV_BASELINE, type EnvSource } from '../../spawn-env.ts';
+import { envValue, STARTUP_ENV_BASELINE, type EnvSource } from '../../spawn-env.ts';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils.ts';
 import {
   computeRateLimitRetryMs,
@@ -52,7 +52,7 @@ export function buildGitHubLookupEnv(
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of [...BASIC_ENV_KEYS, ...GITHUB_LOOKUP_ENV_KEYS]) {
-    const value = source[key];
+    const value = envValue(source, key);
     if (value !== undefined) env[key] = value;
   }
   return env;
@@ -61,10 +61,10 @@ export function buildGitHubLookupEnv(
 export function resolveGithubConfigDir(
   source: EnvSource = STARTUP_ENV_BASELINE
 ): string | undefined {
-  const explicit = source.GH_CONFIG_DIR;
+  const explicit = envValue(source, 'GH_CONFIG_DIR');
   if (explicit && existsSync(explicit)) return explicit;
 
-  const xdgConfigHome = source.XDG_CONFIG_HOME;
+  const xdgConfigHome = envValue(source, 'XDG_CONFIG_HOME');
   if (xdgConfigHome) {
     const xdgGhConfig = join(xdgConfigHome, 'gh');
     if (existsSync(xdgGhConfig)) return xdgGhConfig;

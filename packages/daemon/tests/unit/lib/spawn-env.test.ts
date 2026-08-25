@@ -162,6 +162,18 @@ describe('buildWorkflowConditionEnv', () => {
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.KUBECONFIG).toBeUndefined();
   });
+
+  test('rejects case-variant restricted and forbidden names', () => {
+    const env = buildWorkflowConditionEnv(
+      ['ssh_auth_sock', 'anthropic_api_key', 'kubeconfig'],
+      SOURCE
+    );
+    expect(env.ssh_auth_sock).toBeUndefined();
+    expect(env.anthropic_api_key).toBeUndefined();
+    expect(env.kubeconfig).toBeUndefined();
+    expect(isRestrictedEnvName('gh_token')).toBe(true);
+    expect(isRestrictedEnvName('MY_TOOL_FLAG')).toBe(false);
+  });
 });
 
 describe('isRestrictedEnvName', () => {

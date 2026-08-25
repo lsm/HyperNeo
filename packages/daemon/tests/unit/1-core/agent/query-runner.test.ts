@@ -6220,10 +6220,10 @@ describe('QueryRunner environment variable handling', () => {
       ENABLE_TOOL_SEARCH: 'false',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
       KEEP_SESSION: 'session',
-      KEEP_PROCESS: 'process',
     });
     expect(env).not.toHaveProperty('PORT');
     expect(env).not.toHaveProperty('HYPERNEO_PORT');
+    expect(env).not.toHaveProperty('KEEP_PROCESS');
   });
 
   it('should preserve configured auto-compact env when provider does not refresh it', () => {

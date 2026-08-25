@@ -13,7 +13,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
-import { STARTUP_ENV_BASELINE } from '../../spawn-env.ts';
+import { startupEnvValue } from '../../spawn-env.ts';
 import { validateWorkflowHookResult } from '../workflow-hook-validation.ts';
 import type { Connector } from './connectors/connector.ts';
 import {
@@ -169,7 +169,7 @@ function buildHookRestrictedEnv(
   ]);
   for (const key of baselineEnvKeys) {
     if (connectorManagedEnvKeys.has(key) && !permittedConnectorEnvKeys.has(key)) continue;
-    const value = STARTUP_ENV_BASELINE[key];
+    const value = startupEnvValue(key);
     if (value !== undefined) env[key] = value;
   }
 

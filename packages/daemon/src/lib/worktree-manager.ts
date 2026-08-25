@@ -758,12 +758,12 @@ export class WorktreeManager {
       });
       await worktreeAddGit.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
 
+      const networkGit = simpleGit(worktreePath).env(buildGitSshEnv());
       try {
-        const submoduleGit = simpleGit(worktreePath).env(buildGitSshEnv());
-        await submoduleGit.raw(['submodule', 'update', '--init', '--recursive']);
-        await hydrateLfsObjects(submoduleGit);
+        await networkGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */
       } catch {}
+      await hydrateLfsObjects(networkGit);
 
       return {
         isWorktree: true,

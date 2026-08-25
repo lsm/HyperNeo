@@ -157,10 +157,19 @@ function pickKeys(keys: readonly string[], source: EnvSource): Record<string, st
 }
 
 export function isRestrictedEnvName(key: string): boolean {
+  const normalized = key.toUpperCase();
   return (
-    RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
-    RESTRICTED_ENV_KEY_PATTERN.test(key)
+    RESTRICTED_ENV_PREFIXES.some((prefix) => normalized.startsWith(prefix)) ||
+    RESTRICTED_ENV_KEY_PATTERN.test(normalized)
   );
+}
+
+export function envValue(source: EnvSource, key: string): string | undefined {
+  return sourceValue(source, key);
+}
+
+export function startupEnvValue(key: string): string | undefined {
+  return sourceValue(STARTUP_ENV_BASELINE, key);
 }
 
 export function buildOsBaselineEnv(
@@ -217,7 +226,7 @@ export function buildWorkflowConditionEnv(
   const env = buildCommandEnv(source);
   if (!allowedEnv) return env;
   for (const key of allowedEnv) {
-    if (isRestrictedEnvName(key) || CONDITION_FORBIDDEN_ENV_KEYS.has(key)) continue;
+    if (isRestrictedEnvName(key) || CONDITION_FORBIDDEN_ENV_KEYS.has(key.toUpperCase())) continue;
     const value = sourceValue(source, key);
     if (value !== undefined) env[key] = value;
   }
