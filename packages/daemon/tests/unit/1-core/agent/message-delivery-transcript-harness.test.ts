@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { MessageContent, MessageHub, Provider, Session } from '@hyperneo/shared';
+import { MessageHub } from '@hyperneo/shared';
+import type { MessageContent, Provider, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
@@ -7,6 +8,8 @@ import {
   MESSAGE_DELIVERY,
   MESSAGE_DELIVERY_MAX_RETRIES,
   MESSAGE_DELIVERY_PARK_MS,
+  type DeliveryLoadResult,
+  type MessageDeliveryAttemptObserver,
   type MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -37,6 +40,7 @@ type DeliveryTranscriptEvent =
   | { op: 'queue:requeueYielded'; messageId: string; found: boolean }
   | { op: 'queue:clear' }
   | { op: 'db:markConsumed'; sessionId: string; uuid: string; dbId: string | null }
+  | { op: 'db:updateMessageTimestamp'; sessionId: string; uuid: string; dbId: string; at: number }
   | { op: 'db:markConsumedBatch'; sessionId: string; uuids: string[]; dbIds: string[] }
   | { op: 'db:markSubmittedBatch'; sessionId: string; uuids: string[]; dbIds: string[] }
   | { op: 'db:markRetryable'; sessionId: string; uuid: string; dbId: string | null }
@@ -171,6 +175,49 @@ function instrumentDeliveryTranscript(
     transcript.push({ op: 'db:clearTurnEnd', sessionId, uuid: messageUuid });
   };
 
+  const dbOriginals = {
+    updateMessageStatus: db.updateMessageStatus.bind(db),
+    updateMessageTimestamp: db.updateMessageTimestamp.bind(db),
+  };
+
+  const messageRowLookup = db
+    .getDatabase()
+    .prepare('SELECT session_id, sdk_uuid FROM sdk_messages WHERE id = ?');
+
+  db.updateMessageStatus = (...args: Parameters<Database['updateMessageStatus']>) => {
+    dbOriginals.updateMessageStatus(...args);
+    const [messageIds, newStatus] = args;
+    if (newStatus !== 'consumed') return;
+    for (const dbId of [...new Set(messageIds)]) {
+      const row = messageRowLookup.get(dbId) as
+        | { session_id: string; sdk_uuid: string | null }
+        | undefined;
+      if (!row) continue;
+      transcript.push({
+        op: 'db:markConsumed',
+        sessionId: row.session_id,
+        uuid: row.sdk_uuid ?? '',
+        dbId,
+      });
+    }
+  };
+
+  db.updateMessageTimestamp = (...args: Parameters<Database['updateMessageTimestamp']>) => {
+    dbOriginals.updateMessageTimestamp(...args);
+    const [dbId, timestampMs] = args;
+    const row = messageRowLookup.get(dbId) as
+      | { session_id: string; sdk_uuid: string | null }
+      | undefined;
+    if (!row) return;
+    transcript.push({
+      op: 'db:updateMessageTimestamp',
+      sessionId: row.session_id,
+      uuid: row.sdk_uuid ?? '',
+      dbId,
+      at: timestampMs ?? Date.now(),
+    });
+  };
+
   const jobOriginals = {
     requeue: jobRepo.requeue.bind(jobRepo),
     requeueParked: jobRepo.requeueParked.bind(jobRepo),
@@ -292,6 +339,8 @@ function instrumentDeliveryTranscript(
       sdkRepo.markDeliveryFailedByUuid = sdkOriginals.markDeliveryFailedByUuid;
       sdkRepo.recordDeliveryTurnEnd = sdkOriginals.recordDeliveryTurnEnd;
       sdkRepo.clearDeliveryTurnEnd = sdkOriginals.clearDeliveryTurnEnd;
+      db.updateMessageStatus = dbOriginals.updateMessageStatus;
+      db.updateMessageTimestamp = dbOriginals.updateMessageTimestamp;
       jobRepo.requeue = jobOriginals.requeue;
       jobRepo.requeueParked = jobOriginals.requeueParked;
       jobRepo.requeueAs = jobOriginals.requeueAs;
@@ -325,10 +374,11 @@ async function makeTestSession(
   }
   db.createSession(session);
   const bus = await createTestInternalEventBus();
+  const messageHub = new MessageHub();
   const agentSession = new AgentSession(
     db.getSession(sessionId) ?? session,
     db,
-    {} as MessageHub,
+    messageHub,
     bus,
     mock(async () => 'test-api-key'),
     undefined,
@@ -512,11 +562,6 @@ describe('delivery transcript parity harness (A1a)', () => {
         agentSession.queryPromise = new Promise<void>((resolve) => {
           resolveQuery = resolve;
         });
-        agentSession.messageQueue.onMessageYielded = (messageId: string) => {
-          if (messageId === steerUuid) {
-            repo.markDeliveryConsumedByUuid(sessionId, steerUuid);
-          }
-        };
         agentSession.messageQueue.start();
         const gen = agentSession.messageQueue.messageGenerator(sessionId);
         harness.reset();
@@ -549,6 +594,13 @@ describe('delivery transcript parity harness (A1a)', () => {
             durable: true,
           },
           { op: 'db:markConsumed', sessionId, uuid: steerUuid, dbId: expect.any(String) },
+          {
+            op: 'db:updateMessageTimestamp',
+            sessionId,
+            uuid: steerUuid,
+            dbId: expect.any(String),
+            at: expect.any(Number),
+          },
           { op: 'queue:requeueYielded', messageId: steerUuid, found: true },
           { op: 'db:markRetryable', sessionId, uuid: steerUuid, dbId: expect.any(String) },
         ]);
@@ -690,11 +742,6 @@ describe('delivery transcript parity harness (A1a)', () => {
         agentSession.queryPromise = new Promise<void>((resolve) => {
           resolveQuery = resolve;
         });
-        agentSession.messageQueue.onMessageYielded = (messageId: string) => {
-          if (messageId === turnUuid) {
-            repo.markDeliveryConsumedByUuid(sessionId, turnUuid);
-          }
-        };
         agentSession.messageQueue.start();
         const gen = agentSession.messageQueue.messageGenerator(sessionId);
         harness.reset();
@@ -736,6 +783,13 @@ describe('delivery transcript parity harness (A1a)', () => {
             durable: true,
           },
           { op: 'db:markConsumed', sessionId, uuid: turnUuid, dbId: expect.any(String) },
+          {
+            op: 'db:updateMessageTimestamp',
+            sessionId,
+            uuid: turnUuid,
+            dbId: expect.any(String),
+            at: expect.any(Number),
+          },
           { op: 'queue:admitResolve', messageId: turnUuid },
           {
             op: 'db:markConsumedBatch',
@@ -784,11 +838,6 @@ describe('delivery transcript parity harness (A1a)', () => {
         agentSession.queryPromise = new Promise<void>((resolve) => {
           resolveQuery = resolve;
         });
-        agentSession.messageQueue.onMessageYielded = (messageId: string) => {
-          if (messageId === kickoffUuid) {
-            repo.markDeliveryConsumedByUuid(sessionId, kickoffUuid);
-          }
-        };
         agentSession.messageQueue.start();
         const gen = agentSession.messageQueue.messageGenerator(sessionId);
         harness.reset();
@@ -846,6 +895,13 @@ describe('delivery transcript parity harness (A1a)', () => {
             durable: true,
           },
           { op: 'db:markConsumed', sessionId, uuid: kickoffUuid, dbId: expect.any(String) },
+          {
+            op: 'db:updateMessageTimestamp',
+            sessionId,
+            uuid: kickoffUuid,
+            dbId: expect.any(String),
+            at: expect.any(Number),
+          },
           { op: 'queue:admitResolve', messageId: kickoffUuid },
           {
             op: 'db:markConsumedBatch',
@@ -1063,6 +1119,142 @@ describe('delivery transcript parity harness (A1a)', () => {
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'state:clearQueuedIfOwnedBy', uuid: handlerUuid },
+        ]);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('forwards a batched turn payload and drives the full batch transcript', async () => {
+      const sessionId = 'sess-handler-batch';
+      const kickoffUuid = 'msg-kickoff';
+      const memberUuid = 'msg-member';
+      const droppedUuid = 'msg-dropped';
+      const kickoffContent = 'kickoff content';
+      const memberContent = 'member content';
+      const { db, agentSession, harness } = await makeTestSession(sessionId);
+      try {
+        const repo = db.getSDKMessageRepo();
+        const jobRepo = db.getJobQueueRepo();
+        saveUserMessage(repo, sessionId, kickoffUuid, 'enqueued', kickoffContent);
+        saveUserMessage(repo, sessionId, memberUuid, 'enqueued', memberContent);
+        saveUserMessage(repo, sessionId, droppedUuid, 'enqueued', []);
+        jobRepo.enqueue({
+          queue: MESSAGE_DELIVERY,
+          payload: {
+            sessionId,
+            messageUuid: kickoffUuid,
+            role: 'turn',
+            origin: 'chat',
+            parentToolUseId: null,
+            batchUuids: [kickoffUuid, memberUuid, droppedUuid],
+          },
+          maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
+        });
+        const [job] = jobRepo.dequeue(MESSAGE_DELIVERY, 1) as [Job | undefined];
+        if (!job) throw new Error('job not claimed');
+
+        stubLifecycleManager(agentSession, 'started');
+        let resolveQuery = () => {};
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        agentSession.messageQueue.start();
+        const gen = agentSession.messageQueue.messageGenerator(sessionId);
+        harness.reset();
+
+        let driveArgs: unknown[] = [];
+        const sessionMock: MessageDeliverySession = {
+          driveDeliveryTurn: mock(async (...args: unknown[]) => {
+            driveArgs = args;
+            return await agentSession.driveDeliveryTurn(
+              args[0] as string,
+              args[1] as string | MessageContent[],
+              args[2] as string | null | undefined,
+              args[3] as boolean | undefined,
+              () => true,
+              args[5] as string[] | undefined,
+              args[6] as AbortSignal | undefined,
+              args[7] as MessageDeliveryAttemptObserver | undefined
+            );
+          }),
+          feedDeliverySteer: mock(async () => ({ outcome: 'consumed' })),
+          settleSkippedDelivery: mock(agentSession.settleSkippedDelivery.bind(agentSession)),
+        };
+
+        const handler = createMessageDeliveryHandler({
+          jobQueue: jobRepo,
+          getSession: () => sessionMock,
+          getMessageContent: (s: string, uuid: string): DeliveryLoadResult | null => {
+            const loaded = repo.getDeliveryContent(s, uuid);
+            return (loaded as DeliveryLoadResult | null) ?? null;
+          },
+        });
+
+        const handlerPromise = handler(job);
+        const yielded = await gen.next();
+        if (!yielded.value) throw new Error('message not yielded');
+        yielded.value.onSent();
+
+        await waitForTranscript(
+          harness,
+          (e) => e.op === 'db:markConsumedBatch' && e.uuids.includes(kickoffUuid)
+        );
+        repo.saveSDKMessage(sessionId, {
+          type: 'result',
+          uuid: `${kickoffUuid}-result`,
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          subtype: 'success',
+          is_error: false,
+        } as unknown as SDKMessage);
+        await agentSession.stateManager.setIdle({ suppressIdleCallback: true });
+        resolveQuery();
+
+        const result = await handlerPromise;
+        expect(result).toEqual({ outcome: 'completed' });
+        expect(driveArgs[5]).toEqual([kickoffUuid, memberUuid, droppedUuid]);
+        expect(harness.transcript).toEqual([
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
+          {
+            op: 'job:narrowBatch',
+            sessionId,
+            kickoffUuid,
+            admitted: [kickoffUuid, memberUuid],
+            dropped: [droppedUuid],
+            settleableDropped: [droppedUuid],
+            result: true,
+          },
+          {
+            op: 'db:markSubmittedBatch',
+            sessionId,
+            uuids: [memberUuid],
+            dbIds: [expect.any(String)],
+          },
+          {
+            op: 'queue:admit',
+            messageId: kickoffUuid,
+            content: buildBatchedDeliveryContent([kickoffContent, memberContent]),
+            internal: false,
+            durable: true,
+          },
+          { op: 'db:markConsumed', sessionId, uuid: kickoffUuid, dbId: expect.any(String) },
+          {
+            op: 'db:updateMessageTimestamp',
+            sessionId,
+            uuid: kickoffUuid,
+            dbId: expect.any(String),
+            at: expect.any(Number),
+          },
+          { op: 'queue:admitResolve', messageId: kickoffUuid },
+          {
+            op: 'db:markConsumedBatch',
+            sessionId,
+            uuids: [kickoffUuid, memberUuid],
+            dbIds: [expect.any(String)],
+          },
+          { op: 'db:recordTurnEnd', sessionId, uuid: kickoffUuid },
         ]);
       } finally {
         db.close();
