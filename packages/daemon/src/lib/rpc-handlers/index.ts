@@ -699,9 +699,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           ? (db
               .prepare(
                 `SELECT MAX(timestamp) AS ts FROM sdk_messages
-                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
+                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+                   AND timestamp < (
+                     SELECT MAX(timestamp) FROM sdk_messages
+                     WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'
+                       AND message_type = 'user'
+                   )`
               )
-              .get(sessionId) as { ts?: string | number | null } | null)
+              .get(sessionId, sessionId) as { ts?: string | number | null } | null)
           : null;
       const activityBaseline = toEpochMs(anchorRow?.ts) ?? undefined;
       const invokedAt = Date.now();

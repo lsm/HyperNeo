@@ -734,10 +734,19 @@ export class SpaceRuntimeService {
           : {}),
       });
     } else {
+      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
       await session.ensureQueryStarted();
       const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
       await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-      await session.messageQueue.enqueueWithId(id, message);
+      try {
+        await session.messageQueue.enqueueWithId(id, message);
+      } catch (err) {
+        const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+        if (failedDbId) {
+          await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+        }
+        throw err;
+      }
     }
     return id;
   }
