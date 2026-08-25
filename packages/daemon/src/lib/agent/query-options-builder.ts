@@ -1,4 +1,5 @@
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { scaledAutoCompactWindow } from './context-budget-decision.ts';
 import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
@@ -197,14 +198,11 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
 
 export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
 
-export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
-  return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
-}
-
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
-  modelId?: string | null
+  modelId?: string | null,
+  autoCompactPercent?: number | null
 ): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
@@ -217,11 +215,7 @@ export function buildProviderSettings(
     };
   }
 
-  if (shouldUseHyperNeoCompactFallback(providerId)) {
-    return { autoCompactEnabled: false };
-  }
-
-  const autoCompactWindow = contextWindow;
+  const autoCompactWindow = scaledAutoCompactWindow(contextWindow, autoCompactPercent ?? undefined);
   if (!autoCompactWindow) {
     return undefined;
   }
@@ -440,7 +434,12 @@ export class QueryOptionsBuilder {
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention(
-        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
+        buildProviderSettings(
+          providerId,
+          modelInfo?.contextWindow,
+          this.ctx.session.config.model,
+          modelInfo?.autoCompactPercent
+        )
       ),
 
       includePartialMessages: config.includePartialMessages ?? isMessageDeliveryV2Enabled(),

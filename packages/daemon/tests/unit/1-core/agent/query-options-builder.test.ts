@@ -965,14 +965,37 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
     });
 
-    it('should enable SDK auto-compaction for non-native providers with context windows', () => {
+    it('should scale autoCompactWindow by the default 90% for non-native providers', () => {
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 1_000_000,
+        autoCompactWindow: 900_000,
       });
       expect(buildProviderSettings('ollama', 32_000)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 32_000,
+        autoCompactWindow: 28_800,
+      });
+    });
+
+    it('should honor an explicit per-model percent and clamp out-of-range values', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 70)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 140_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 100)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 200_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 30)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 100_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 250)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 200_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, null)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 180_000,
       });
     });
 
@@ -984,7 +1007,7 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('kimi')).toBeUndefined();
       expect(buildProviderSettings('kimi', 262_144)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 262_144,
+        autoCompactWindow: 235_929,
       });
     });
 
@@ -1041,7 +1064,7 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('should enable SDK auto-compaction for OpenRouter models with their context window', async () => {
+    it('should enable SDK auto-compaction for OpenRouter models with their scaled context window', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -1055,6 +1078,14 @@ describe('QueryOptionsBuilder', () => {
                 contextWindow: 1_000_000,
                 available: true,
               },
+              {
+                id: 'pct-model',
+                name: 'Percent Model',
+                provider: 'openrouter',
+                contextWindow: 1_000_000,
+                autoCompactPercent: 80,
+                available: true,
+              },
             ],
           ],
         ])
@@ -1064,7 +1095,14 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.settings).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 1_000_000,
+        autoCompactWindow: 900_000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
+      mockSession.config.model = 'pct-model';
+      const pctOptions = await builder.build();
+      expect(pctOptions.settings).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 800_000,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
