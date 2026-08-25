@@ -788,3 +788,97 @@ describe('SpaceAgentEditor', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 });
+
+describe('SpaceAgentEditor model pool', () => {
+  it('sends modelPool in create params when entries are configured', async () => {
+    mockCreateAgent.mockResolvedValue({ id: 'new-agent', name: 'Fresh Agent' });
+
+    const { getByPlaceholderText, getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} />
+    );
+
+    fillName(getByPlaceholderText, 'Fresh Agent');
+    fireEvent.click(getByTestId('pool-add-model-button'));
+
+    const modelSelect = getByTestId('pool-entry-model-select') as HTMLSelectElement;
+    fireEvent.change(modelSelect, { target: { value: 'claude-sonnet-4-6' } });
+    fireEvent.input(getByTestId('pool-entry-max-input'), { target: { value: '8' } });
+    fireEvent.input(getByTestId('pool-entry-weight-input'), { target: { value: '50' } });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockCreateAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelPool: [{ model: 'claude-sonnet-4-6', maxConcurrent: 8, weight: 50 }],
+        })
+      );
+    });
+  });
+
+  it('seeds pool state from the agent and persists edits', async () => {
+    const agent = makeAgent({
+      modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
+    });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.input(getByTestId('pool-entry-weight-input'), { target: { value: '80' } });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({
+          modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 80 }],
+        })
+      );
+    });
+  });
+
+  it('clears the pool with null in edit mode when all entries are removed', async () => {
+    const agent = makeAgent({
+      modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
+    });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.click(getByTestId('pool-entry-remove-button'));
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ modelPool: null })
+      );
+    });
+  });
+
+  it('omits modelPool on create when no entries are added', async () => {
+    mockCreateAgent.mockResolvedValue({ id: 'new-agent', name: 'Fresh Agent' });
+
+    const { getByPlaceholderText, getByRole } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+
+    fillName(getByPlaceholderText, 'Fresh Agent');
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockCreateAgent).toHaveBeenCalled();
+    });
+    const call = mockCreateAgent.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.modelPool).toBeUndefined();
+  });
+});

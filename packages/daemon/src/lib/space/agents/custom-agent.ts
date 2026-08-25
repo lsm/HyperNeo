@@ -27,7 +27,7 @@ import { SUB_SESSION_FEATURES } from './seed-agents.ts';
 import { deriveWorkerDisallowedTools } from './tool-policy.ts';
 import { createHash } from 'node:crypto';
 
-const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
+export const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
 
 export const NON_DELEGATING_GENERAL_AGENT: AgentDefinition = {
   description:

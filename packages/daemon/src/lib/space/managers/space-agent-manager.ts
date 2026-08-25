@@ -61,6 +61,11 @@ export class SpaceAgentManager {
       if (modelError) return { ok: false, error: modelError };
     }
 
+    if (params.modelPool) {
+      const poolError = await this.validateModelPool(params.modelPool);
+      if (poolError) return { ok: false, error: poolError };
+    }
+
     const agent = this.repo.create(params);
     return { ok: true, value: agent };
   }
@@ -96,6 +101,11 @@ export class SpaceAgentManager {
         params.provider !== undefined ? (params.provider ?? undefined) : existing.provider;
       const modelError = await this.validateModel(params.model, provider);
       if (modelError) return { ok: false, error: modelError };
+    }
+
+    if (params.modelPool) {
+      const poolError = await this.validateModelPool(params.modelPool);
+      if (poolError) return { ok: false, error: poolError };
     }
 
     const updated = this.repo.update(id, params);
@@ -366,6 +376,28 @@ export class SpaceAgentManager {
 
     const info = await getModelInfoUnfiltered(model, 'global');
     return info ? null : `Unrecognized model: "${model}"`;
+  }
+
+  private async validateModelPool(
+    pool: NonNullable<CreateSpaceWorkerAgentParams['modelPool']>
+  ): Promise<string | null> {
+    const seen = new Set<string>();
+    for (const entry of pool) {
+      if (!entry.model) return 'Model pool entries must specify a model';
+      if (seen.has(entry.model)) {
+        return `Model pool contains duplicate entries for "${entry.model}"`;
+      }
+      seen.add(entry.model);
+      if (!Number.isFinite(entry.maxConcurrent) || entry.maxConcurrent < 1) {
+        return `Model pool entry for "${entry.model}" must have maxConcurrent >= 1`;
+      }
+      if (!Number.isFinite(entry.weight) || entry.weight < 0) {
+        return `Model pool entry for "${entry.model}" must have weight >= 0`;
+      }
+      const modelError = await this.validateModel(entry.model);
+      if (modelError) return modelError;
+    }
+    return null;
   }
 }
 

@@ -1,11 +1,12 @@
 import type {
-  SpaceWorkerAgent,
   SpaceTaskStatus,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgent,
   WorkflowRunStatus,
+  WorkerAgentModelPoolEntry,
 } from './space.ts';
 
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
@@ -23,6 +24,48 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
     `WorkflowNode "${node.name}" (id: ${node.id}) has no agents defined. ` +
       'At least one agent must be provided.'
   );
+}
+
+export function modelPoolEntryKey(entry: Pick<WorkerAgentModelPoolEntry, 'model'>): string {
+  return entry.model;
+}
+
+export interface ModelPoolPickInput {
+  entry: WorkerAgentModelPoolEntry;
+  running: number;
+  cap: number;
+  left: number;
+  score: number;
+}
+
+export function scoreModelPoolEntries(
+  entries: WorkerAgentModelPoolEntry[],
+  runningCounts: Readonly<Record<string, number>>
+): ModelPoolPickInput[] {
+  return entries.map((entry) => {
+    const cap = Math.max(1, Math.floor(Number(entry.maxConcurrent) || 1));
+    const running = Math.max(0, Math.floor(runningCounts[modelPoolEntryKey(entry)] ?? 0));
+    const left = Math.max(0, cap - running);
+    const weight = Number.isFinite(entry.weight) && entry.weight > 0 ? entry.weight : 0;
+    return { entry, running, cap, left, score: left * weight };
+  });
+}
+
+export function pickModelPoolEntry(
+  entries: WorkerAgentModelPoolEntry[],
+  runningCounts: Readonly<Record<string, number>>,
+  random: () => number = Math.random
+): WorkerAgentModelPoolEntry | null {
+  if (entries.length === 0) return null;
+  const scored = scoreModelPoolEntries(entries, runningCounts);
+  const total = scored.reduce((sum, item) => sum + item.score, 0);
+  if (total <= 0) return null;
+  let cursor = random() * total;
+  for (const item of scored) {
+    cursor -= item.score;
+    if (cursor <= 0) return item.entry;
+  }
+  return scored[scored.length - 1].entry;
 }
 
 const WORKFLOW_RUN_EXECUTION_STATUS_LABELS: Record<WorkflowRunStatus | 'failed', string> = {

@@ -1,16 +1,16 @@
-import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
-  SpaceWorkflow,
   CreateSpaceWorkflowParams,
-  UpdateSpaceWorkflowParams,
-  WorkflowNodeAgent,
-  WorkflowChannel,
   SpaceAutonomyLevel,
+  SpaceWorkflow,
+  UpdateSpaceWorkflowParams,
+  WorkflowChannel,
   WorkflowHook,
+  WorkflowNodeAgent,
 } from '@hyperneo/shared';
+import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
-import type { Point, WorkflowCondition } from './types';
 import { autoLayout } from './layout';
+import type { Point, WorkflowCondition } from './types';
 
 export interface VisualNode {
   step: NodeDraft;

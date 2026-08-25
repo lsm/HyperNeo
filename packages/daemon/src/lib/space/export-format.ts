@@ -233,6 +233,15 @@ const exportedAgentBaseSchema = z.object({
   instructions: z.string().optional(),
   tools: z.array(z.string()).optional(),
   settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
+  modelPool: z
+    .array(
+      z.object({
+        model: z.string().min(1),
+        maxConcurrent: z.number().int().min(1),
+        weight: z.number().min(0),
+      })
+    )
+    .optional(),
 });
 
 const exportedWorkflowBaseSchema = z.object({
@@ -291,6 +300,8 @@ export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
     exported.systemPrompt = agent.customPrompt;
   if (agent.tools !== undefined) exported.tools = agent.tools;
   if (agent.settingSources !== undefined) exported.settingSources = agent.settingSources;
+  if (agent.modelPool !== undefined && agent.modelPool.length > 0)
+    exported.modelPool = agent.modelPool;
   return exported;
 }
 

@@ -1,4 +1,3 @@
-import { resolveNodeAgents } from '@hyperneo/shared';
 import type {
   McpServerConfig,
   SpaceTask,
@@ -6,6 +5,7 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
 import type { AgentSessionInit } from '../../agent/agent-session.ts';
 import type { SlotOverrides } from '../agents/custom-agent.ts';
 

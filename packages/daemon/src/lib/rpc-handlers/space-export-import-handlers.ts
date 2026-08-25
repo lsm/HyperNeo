@@ -151,6 +151,8 @@ function applyExportedAgentFields(
   if (parts.length > 0) params.customPrompt = parts.join('\n\n');
   if (exported.tools !== undefined) params.tools = exported.tools;
   if (exported.settingSources !== undefined) params.settingSources = exported.settingSources;
+  if (exported.modelPool !== undefined && exported.modelPool.length > 0)
+    params.modelPool = exported.modelPool;
 }
 
 export function buildWorkflowCreateParams(
@@ -594,6 +596,10 @@ export function setupSpaceExportImportHandlers(
               customPrompt: replaceParts.length > 0 ? replaceParts.join('\n\n') : null,
               tools: exportedAgent.tools ?? null,
               settingSources: exportedAgent.settingSources ?? null,
+              modelPool:
+                exportedAgent.modelPool && exportedAgent.modelPool.length > 0
+                  ? exportedAgent.modelPool
+                  : null,
             };
             const preservedHandle = preservedReplaceHandleByName.get(exportedAgent.name);
             updateParams.handle =

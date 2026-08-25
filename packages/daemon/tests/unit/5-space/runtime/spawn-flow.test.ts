@@ -12,6 +12,7 @@ import {
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
 } from '../../../../src/lib/space/runtime/spawn-flow';
+import { resolveWorkflowNodeSlot } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 
 const TASK_ID = 'task-1240';
 const RUN_ID = 'run-1240';
@@ -115,8 +116,8 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     status: 'in_progress' as const,
     agentSessionId: SPAWNED_SESSION_ID,
   };
-  let liveIndexedSessionId: string | null = null;
-  let workspaceGate: Promise<string> | null = null;
+  const liveIndexedSessionId: string | null = null;
+  const workspaceGate: Promise<string> | null = null;
   const heldTaskReservations = new Set<string>();
 
   const deps: SpawnExecutionFlowDeps = {
@@ -124,6 +125,8 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     getNodeExecution: () => boundExecution,
     isSpawningExecution: (executionId) => spawningExecutionIds.has(executionId),
     inspectIndexedSession: (agentSessionId) => ({ sessionId: agentSessionId, alive: false }),
+    resolveSlot: (_space, workflow, execution, _task) =>
+      resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName),
     reserveExecution: (executionId) => {
       calls.push('reserve');
       reservations.push(executionId);

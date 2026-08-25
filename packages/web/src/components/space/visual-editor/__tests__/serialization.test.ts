@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { VisualEditorState } from '../serialization.ts';
 import {
-  workflowToVisualState,
   visualStateToCreateParams,
   visualStateToUpdateParams,
+  workflowToVisualState,
 } from '../serialization.ts';
-import type { VisualEditorState } from '../serialization.ts';
-import type { SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 
 let uuidCounter = 0;
 beforeEach(() => {
