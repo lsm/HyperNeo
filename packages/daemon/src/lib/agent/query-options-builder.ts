@@ -36,14 +36,11 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import { Logger } from '../logger.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import {
-  ensureScopedProviderCatalogModels,
-  getCuratedModelIds,
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
-  isCuratedOutModelAllowingExactId,
-  isModelExcludedByCuration,
 } from '../model-service.ts';
 import {
   getProviderContextManager,
@@ -336,36 +333,34 @@ export class QueryOptionsBuilder {
           config.providerConfig?.baseUrl ||
           config.providerConfig?.region
       );
-      let fallbackExcluded: boolean;
-      if (sessionScopedProvider && getCuratedModelIds(providerId) !== undefined) {
-        await ensureScopedProviderCatalogModels(
-          this.ctx.session.id,
-          providerId,
-          config.providerConfig ?? {}
-        );
-        fallbackExcluded = isCuratedOutModelAllowingExactId(
-          config.fallbackModel,
-          providerId,
-          this.ctx.session.id
-        );
-      } else if (sessionScopedProvider) {
-        fallbackExcluded = false;
-      } else {
-        fallbackExcluded = await isModelExcludedByCuration(config.fallbackModel, providerId);
-      }
-      if (fallbackExcluded) {
+      const outcome = await decideFallbackModelCuration({
+        providerId,
+        fallbackModel: config.fallbackModel,
+        cacheKey: this.ctx.session.id,
+        providerConfig: config.providerConfig ?? {},
+        sessionScopedProvider,
+        signalAborted: false,
+        guardsIntact: () => true,
+      });
+      if (outcome === 'excluded') {
         this.logger.warn(
           `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
         );
-      } else {
+      } else if (outcome === 'allowed') {
         const contextManager = getProviderContextManager();
         const fallbackSession = {
           ...this.ctx.session,
           config: { ...this.ctx.session.config, model: config.fallbackModel },
         };
-        await contextManager.ensureContextReady(fallbackSession);
-        const fallbackContext = contextManager.createContext(fallbackSession);
-        sdkFallbackModel = fallbackContext.getSdkModelId();
+        try {
+          await contextManager.ensureContextReady(fallbackSession);
+          const fallbackContext = contextManager.createContext(fallbackSession);
+          sdkFallbackModel = fallbackContext.getSdkModelId();
+        } catch {
+          this.logger.warn(
+            `Ignoring fallback model '${config.fallbackModel}' rejected by provider '${providerId}'`
+          );
+        }
       }
     }
 
@@ -457,12 +452,14 @@ export class QueryOptionsBuilder {
       canUseTool: this.canUseTool,
       onUserDialog: async (request, { signal }) => {
         if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
-        if (!configuredFallbackModel || signal.aborted) {
+        if (!configuredFallbackModel) {
           return { behavior: 'cancelled' };
         }
-        const matchesBuildSnapshot = () => {
+        const guardsIntact = () => {
           const configNow = this.ctx.session.config;
           return (
+            !signal.aborted &&
+            getProviderCatalogEpoch(providerId) === providerEpoch &&
             (configNow.provider ?? 'anthropic') === providerId &&
             configNow.fallbackModel === configuredFallbackModel &&
             configNow.model === configuredPrimaryModel &&
@@ -471,34 +468,20 @@ export class QueryOptionsBuilder {
             configNow.providerConfig?.region === configuredScopedRegion
           );
         };
-        const guardsIntact = () =>
-          matchesBuildSnapshot() && getProviderCatalogEpoch(providerId) === providerEpoch;
-        if (!guardsIntact()) {
-          return { behavior: 'cancelled' };
-        }
-        const sessionScopedProvider = Boolean(
-          this.ctx.session.config.providerConfig?.apiKey ||
-            this.ctx.session.config.providerConfig?.baseUrl ||
-            this.ctx.session.config.providerConfig?.region
-        );
-        let fallbackExcluded: boolean;
-        if (sessionScopedProvider && getCuratedModelIds(providerId) !== undefined) {
-          await ensureScopedProviderCatalogModels(
-            this.ctx.session.id,
-            providerId,
-            this.ctx.session.config.providerConfig ?? {}
-          );
-          fallbackExcluded = isCuratedOutModelAllowingExactId(
-            configuredFallbackModel,
-            providerId,
-            this.ctx.session.id
-          );
-        } else if (sessionScopedProvider) {
-          fallbackExcluded = false;
-        } else {
-          fallbackExcluded = await isModelExcludedByCuration(configuredFallbackModel, providerId);
-        }
-        if (fallbackExcluded || !guardsIntact() || signal.aborted) {
+        const outcome = await decideFallbackModelCuration({
+          providerId,
+          fallbackModel: configuredFallbackModel,
+          cacheKey: this.ctx.session.id,
+          providerConfig: this.ctx.session.config.providerConfig ?? {},
+          sessionScopedProvider: Boolean(
+            this.ctx.session.config.providerConfig?.apiKey ||
+              this.ctx.session.config.providerConfig?.baseUrl ||
+              this.ctx.session.config.providerConfig?.region
+          ),
+          signalAborted: signal.aborted,
+          guardsIntact,
+        });
+        if (outcome !== 'allowed') {
           return { behavior: 'cancelled' };
         }
         return { behavior: 'completed', result: { continue: true } };

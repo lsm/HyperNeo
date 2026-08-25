@@ -37,14 +37,8 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import {
-  ensureScopedProviderCatalogModels,
-  getCuratedModelIds,
-  getProviderCatalogEpoch,
-  getSessionModelInfo,
-  isCuratedOutModelAllowingExactId,
-  isModelExcludedByCuration,
-} from '../model-service.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
@@ -1344,42 +1338,39 @@ export class SDKMessageHandler {
     ) {
       return;
     }
-    const configuredFallbackModel = session.config.fallbackModel;
-    const primaryModelBeforeGuard = session.config.model;
-    const scopedApiKeyBefore = session.config.providerConfig?.apiKey;
-    const scopedBaseUrlBefore = session.config.providerConfig?.baseUrl;
-    const scopedRegionBefore = session.config.providerConfig?.region;
-    const sessionScopedProvider = Boolean(
-      scopedApiKeyBefore || scopedBaseUrlBefore || scopedRegionBefore
-    );
-    let fallbackExcluded: boolean;
-    if (sessionScopedProvider && getCuratedModelIds(providerId) !== undefined) {
-      await ensureScopedProviderCatalogModels(
-        session.id,
-        providerId,
-        session.config.providerConfig ?? {}
+    const guardsIntact = () => {
+      const liveConfig = this.ctx.session.config;
+      return (
+        (liveConfig.provider ?? 'anthropic') === providerId &&
+        liveConfig.fallbackModel === fallbackModel &&
+        liveConfig.model === builtIdentity.primaryModel &&
+        liveConfig.providerConfig?.apiKey === builtIdentity.scopedApiKey &&
+        liveConfig.providerConfig?.baseUrl === builtIdentity.scopedBaseUrl &&
+        liveConfig.providerConfig?.region ===
+          (typeof builtIdentity.scopedRegion === 'string'
+            ? builtIdentity.scopedRegion
+            : undefined) &&
+        (builtIdentity.providerEpoch === undefined ||
+          builtIdentity.providerEpoch === getProviderCatalogEpoch(providerId))
       );
-      fallbackExcluded = isCuratedOutModelAllowingExactId(fallbackModel, providerId, session.id);
-    } else if (sessionScopedProvider) {
-      fallbackExcluded = false;
-    } else {
-      fallbackExcluded = await isModelExcludedByCuration(fallbackModel, providerId);
-    }
-    if (fallbackExcluded) return;
-    const liveConfig = this.ctx.session.config;
-    if (
-      (liveConfig.provider ?? 'anthropic') !== providerId ||
-      liveConfig.fallbackModel !== configuredFallbackModel ||
-      liveConfig.model !== primaryModelBeforeGuard ||
-      liveConfig.providerConfig?.apiKey !== scopedApiKeyBefore ||
-      liveConfig.providerConfig?.baseUrl !== scopedBaseUrlBefore ||
-      liveConfig.providerConfig?.region !== scopedRegionBefore ||
-      (builtIdentity.providerEpoch !== undefined &&
-        builtIdentity.providerEpoch !== getProviderCatalogEpoch(providerId))
-    ) {
-      this.logger.warn(
-        `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`
-      );
+    };
+    const outcome = await decideFallbackModelCuration({
+      providerId,
+      fallbackModel,
+      cacheKey: session.id,
+      providerConfig: session.config.providerConfig ?? {},
+      sessionScopedProvider: Boolean(
+        builtIdentity.scopedApiKey || builtIdentity.scopedBaseUrl || builtIdentity.scopedRegion
+      ),
+      signalAborted: false,
+      guardsIntact,
+    });
+    if (outcome !== 'allowed') {
+      if (outcome === 'cancelled') {
+        this.logger.warn(
+          `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`
+        );
+      }
       return;
     }
 

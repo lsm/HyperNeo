@@ -504,6 +504,49 @@ describe('QueryOptionsBuilder', () => {
         }
       });
 
+      it('drops a fallback rejected by provider-native model validation at build time', async () => {
+        getProviderRegistry().register({
+          id: 'allowlist-test',
+          displayName: 'Allowlist Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: (modelId: string) => {
+            if (modelId === 'blocked-fallback') {
+              throw new Error("model 'blocked-fallback' is not in the configured allowlist");
+            }
+            return { envVars: {}, isAnthropicCompatible: false };
+          },
+        } as unknown as Provider);
+        try {
+          mockSession.config.provider = 'allowlist-test';
+          mockSession.config.model = 'allowed-model';
+          mockSession.config.fallbackModel = 'blocked-fallback';
+
+          const options = await builder.build();
+
+          expect(options.fallbackModel).toBeUndefined();
+          expect(options.supportedDialogKinds).toBeUndefined();
+
+          mockSession.config.fallbackModel = 'allowed-model';
+          const keptOptions = await builder.build();
+          expect(keptOptions.fallbackModel).toBe('allowed-model');
+        } finally {
+          getProviderRegistry().unregister('allowlist-test');
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.model = 'default';
+          mockSession.config.fallbackModel = undefined;
+        }
+      });
+
       it('skips scoped catalog discovery when no curation is configured', async () => {
         let scopedFetchCount = 0;
         getProviderRegistry().register({

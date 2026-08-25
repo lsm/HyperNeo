@@ -394,6 +394,8 @@ export function peekProviderCatalogModels(
 
 const scopedCatalogStamps = new Map<string, string>();
 
+const scopedDiscoveryInFlight = new Map<string, number>();
+
 function peekSessionCatalogModels(cacheKey: string): ModelInfo[] | null {
   const cached = modelsCache.get(cacheKey);
   const at = cacheTimestamps.get(cacheKey);
@@ -433,6 +435,10 @@ export async function ensureScopedProviderCatalogModels(
     dropScopedCatalog();
     return;
   }
+  scopedDiscoveryInFlight.set(
+    sessionCacheKey,
+    (scopedDiscoveryInFlight.get(sessionCacheKey) ?? 0) + 1
+  );
   if (!cacheGeneration.has(sessionCacheKey)) {
     cacheGeneration.set(sessionCacheKey, 0);
   }
@@ -448,6 +454,14 @@ export async function ensureScopedProviderCatalogModels(
     scopedCatalogStamps.set(sessionCacheKey, stamp);
   } catch {
     dropScopedCatalog();
+  } finally {
+    const remaining = (scopedDiscoveryInFlight.get(sessionCacheKey) ?? 1) - 1;
+    if (remaining <= 0) {
+      scopedDiscoveryInFlight.delete(sessionCacheKey);
+      cacheGeneration.delete(sessionCacheKey);
+    } else {
+      scopedDiscoveryInFlight.set(sessionCacheKey, remaining);
+    }
   }
 }
 
@@ -1018,6 +1032,9 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     pendingProviderSlices.clear();
     scopedCatalogStamps.clear();
     for (const key of inFlightKeys) {
+      cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
+    }
+    for (const key of scopedDiscoveryInFlight.keys()) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
     cancelAllProviderRetries();
