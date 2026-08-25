@@ -235,19 +235,23 @@ compensated. No site in this plan performs effects, so none uses it.
   `applyRunGate`. Order matters: today `agent-session.ts` checks V2 → jobQueue
   → status; `message-delivery.ts` checks V2 → (lock) → selection. The lock is
   an effect and stays in the shell.
-- **shell/effect wiring.** Both call sites snapshot the three booleans/status
-  *before* taking the session lock (status may change under the lock —
-  today's code has the same race; preserve it, do not "fix" silently), call
-  the pipeline, and only on `run` enter `withSessionResetCoordination` /
-  `withSessionLock` and run `selectStrandedDeliveries` + re-enqueue loop.
+- **shell/effect wiring.** Review correction — only the
+  `agent-session.ts:2852-2859` call site is rewired to this pipeline.
+  `message-delivery.ts:reconcileStrandedDeliveries` keeps its own preamble:
+  it has NO processing-status gate (its arguments expose no session status to
+  snapshot), checks the V2 flag, takes the lock, and filters persisted rows
+  against active/in-flight UUIDs via `selectStrandedDeliveries`. Treating the
+  two preambles as duplicates would either invent a status default or start
+  skipping reconciliation for busy sessions — a contract change. The
+  standalone path's admission semantics stay as-is; at most its V2-flag check
+  reuses the `applyDeliveryV2Gate` predicate.
 - **step-by-step migration.** 1) Add gates + pipeline; 2) rewire
-  `agent-session.ts:2852-2859`; 3) rewire
-  `message-delivery.ts:reconcileStrandedDeliveries`; 4) keep the exported
+  `agent-session.ts:2852-2859` only; 3) keep the exported
   narrow function as a delegate or delete it (only tests import it directly).
 - **tests.** Existing `decideReconcileAdmission` rows keep passing via the
   delegate; add admission rows for `v2_disabled`/`no_job_queue` (currently
   untestable — they live inline) and one row pinning that a `busy` status
-  skips even when V2 and jobQueue are present.
+  skips even when V2 and jobQueue are present (agent-session path only).
 - **risks/caveats.** `message-delivery.ts:reconcileStrandedDeliveries` is
   also invoked from the idle callback (B5e territory in the pilot proposal);
   coordinate the apply PR so it does not collide with Chain B's fencing work

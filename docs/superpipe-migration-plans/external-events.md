@@ -122,11 +122,23 @@ interface WebhookBase {
 Per-kind transform context (generic template):
 
 ```ts
+type NormalizedOutcome =
+  | { status: 'running' }
+  | { status: 'rejected' }
+  | { status: 'done'; value: NormalizedGitHubEvent };
+
 interface NormalizeGitHubEventCtx<TInput> {
   input: TInput;
-  result: NormalizedGitHubEvent | null;
+  outcome: NormalizedOutcome;
 }
 ```
+
+A plain `result: T | null` with `isDone = result !== null` cannot express
+rejection: seeding with `null` and "rejecting" by assigning `null` leaves the
+predicate unchanged, so `!isDone` would run extraction and assembly on an
+already-rejected payload (e.g. a `check_run` webhook whose action is not
+`completed`). The boxed `outcome` terminal makes rejection a first-class halt:
+guards that reject set `outcome = { status: 'rejected' }` and `!isDone` halts.
 
 `toExternalEvent` context:
 
@@ -137,6 +149,9 @@ interface ToExternalEventCtx {
   result: ExternalEvent | null;
 }
 ```
+
+`toExternalEvent` never rejects — it always produces an event — so a plain
+`result` with `isDone = result !== null` is sound there.
 
 #### Pure core design
 
@@ -163,34 +178,42 @@ interface ToExternalEventCtx {
    and returns. The dispatcher also runs an initial `snapshotBase` stage that
    extracts `WebhookBase` so per-kind normalizers do not re-parse repo/sender.
 
-3. **Per-kind raw superpipe template**:
+3. **Per-kind transform stages live inside the operation pipeline, not as
+   separately-run pipelines** (review correction — regroup by business path per
+   CLAUDE.md/AGENTS.md: one directly named pipeline per business operation,
+   mixing decision/transform stages). The stage sequence below is the per-kind
+   template applied within `normalize-github-webhook` after the dispatch stage:
 
    ```ts
-   const normalize = superpipe<{ isDone: (ctx: Ctx) => boolean }>({ isDone })(
-     'normalize-github-<kind>'
-   )
-     .input(['ctx'])
-     .pipe(guardRequiredShape, 'ctx', 'ctx')
-     .pipe('!isDone', 'ctx')
-     .pipe(extractPrimaryFields, 'ctx', 'ctx')
-     .pipe('!isDone', 'ctx')
-     .pipe(extractPayload, 'ctx', 'ctx')
-     .pipe(assembleNormalizedEvent, 'ctx', 'ctx')
-     .end('ctx');
+   .pipe(guardRequiredShape, 'ctx', 'ctx')   // reject -> outcome = { status: 'rejected' }
+   .pipe('!isDone', 'ctx')
+   .pipe(extractPrimaryFields, 'ctx', 'ctx')
+   .pipe('!isDone', 'ctx')
+   .pipe(extractPayload, 'ctx', 'ctx')
+   .pipe(assembleNormalizedEvent, 'ctx', 'ctx') // outcome = { status: 'done', value }
    ```
 
-   `isDone` returns `ctx.result !== null`. Each guard that rejects the payload
-   sets `ctx.result = null` and the `!isDone` stage halts.
+   `isDone` returns `ctx.outcome.status !== 'running'`. A guard that rejects
+   sets `ctx.outcome = { status: 'rejected' }`, which flips the predicate and
+   makes `!isDone` halt before extraction/assembly. The pipeline ends with
+   `.end('ctx')` and the shell unwraps `outcome.status === 'done' ? value : null`.
 
-4. **`normalizeGitHubPollingRow` dispatcher** — same pattern, dispatching on
-   `endpointKey` (`issue_comments`, `review_comments`, `pulls`, etc.) to
-   endpoint-specific raw transforms.
+4. **`normalizeGitHubPollingRow`** — same single-pipeline shape, with the
+   dispatch stage keyed on `endpointKey` (`issue_comments`, `review_comments`,
+   `pulls`, etc.) followed by the endpoint-specific transform stages inline.
 
-5. **`toExternalEvent`** — raw superpipe:
+5. **`toExternalEvent` stages append to the same operation pipeline** — the
+   extension's only production caller (`github-event-extension.ts:publishEvent`)
+   always projects and publishes immediately after normalizing, so the complete
+   business path is one pipeline (`ingest-github-webhook` /
+   `ingest-github-polling-row`) whose tail stages are:
    - `canonicalizeRepo`
    - `selectTopicParts` (uses `mapEventType`)
    - `buildPayload` (spreads `event.payload` into the record)
    - `assembleExternalEvent` (generates `crypto.randomUUID()` in the final stage)
+
+   The standalone `toExternalEvent` export remains as a thin wrapper over the
+   projection stages for tests and any future callers.
 
 #### Shell/effect wiring
 
@@ -200,15 +223,14 @@ export function normalizeGitHubWebhook(
   deliveryId: string,
   payload: unknown
 ): NormalizedGitHubEvent | null {
-  const dispatch = decideGitHubWebhookDispatch({
+  const { outcome } = runIngestGitHubWebhook({
     eventType,
     deliveryId,
     payload,
     base: null,
-    decision: null,
+    outcome: { status: 'running' },
   });
-  if (!dispatch.decision || dispatch.decision.action === 'ignore') return null;
-  return runNormalizeGitHubEvent(dispatch.decision.kind, dispatch.decision.input);
+  return outcome.status === 'done' ? outcome.value : null;
 }
 
 export function toExternalEvent(
@@ -219,24 +241,33 @@ export function toExternalEvent(
 }
 ```
 
-The `id` generation (`crypto.randomUUID()`) is the only non-determinism. It
-stays in the final assembly stage. The normalizer family has no DB/network
-writes.
+The dispatch `decisionRun` and per-kind transforms are stages of the single
+`ingest-github-webhook` pipeline (dispatch stage selects the kind; the shared
+per-kind stage template follows; projection stages append when the caller is
+the extension's publish path). The `id` generation (`crypto.randomUUID()`) is
+the only non-determinism. It stays in the final assembly stage. The normalizer
+family has no DB/network writes.
 
 #### Step-by-step migration
 
 1. Add parity/characterization tests for the existing normalizers if coverage
    gaps exist (especially `deployment_status`, `branch_protection_rule`,
-   `merge_group`, `reaction`, `merge_conflict`).
+   `merge_group`, `reaction`, `merge_conflict`). Include explicit rejection
+   rows (e.g. `check_run` with `action !== 'completed'` must return `null`)
+   so the boxed-outcome halt is pinned.
 2. Extract `WebhookBase`/`PollingBase` snapshot helpers and unit-test them.
-3. Convert `normalizeGitHubWebhook` to a dispatcher `decisionRun`.
-4. Convert one per-kind normalizer at a time to the raw superpipe template,
-   keeping the old function as a thin wrapper that calls the pipeline.
-5. Convert `normalizeGitHubPollingRow` and its endpoint-specific transforms.
-6. Convert `toExternalEvent`.
-7. After all wrappers pass the existing test suites, delete the old
+3. Convert `normalizeGitHubWebhook` to the single `ingest-github-webhook`
+   pipeline: dispatch decision stage first, then convert one per-kind
+   transform block at a time into inline stages, keeping the old export as a
+   thin wrapper over the pipeline.
+4. Convert `normalizeGitHubPollingRow` to the single
+   `ingest-github-polling-row` pipeline the same way.
+5. Fold the `toExternalEvent` projection stages into the ingest pipelines'
+   tails for the extension's publish path, keeping the standalone export as a
+   wrapper over the same stages.
+6. After all wrappers pass the existing test suites, delete the old
    implementations and rename the pipeline runners to the original export names.
-8. Update `github/index.ts` if any internal exports change; public export
+7. Update `github/index.ts` if any internal exports change; public export
    surface must remain the same.
 
 #### Tests

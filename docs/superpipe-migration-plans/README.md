@@ -18,3 +18,15 @@ superpipe transform — no new combinators), per-site input/output and pure-core
 designs, shell/effect wiring, tests, risks, migration order, and open
 questions. Sites deliberately excluded from migration (state machines, folds,
 hot per-row paths) are listed in the inventory artifact, not here.
+
+## Composition rule (from review)
+
+Pipelines are composed per **complete business path**, not per helper
+function: one directly named pipeline per business operation, mixing
+decision/transform/effect stages (CLAUDE.md / AGENTS.md). Where a plan section
+describes one function of a multi-function operation (e.g. the classifier and
+finalizer halves of query-retry routing, or the per-kind transforms of GitHub
+normalization), those sections are stage groups within the single operation
+pipeline (`route-query-retry`, `ingest-github-webhook`,
+`ingest-github-polling-row`), not separately-run pipelines. The per-site
+headings exist for planning granularity only.

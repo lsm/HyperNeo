@@ -93,11 +93,11 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/query-retry-routing.ts:classifyQueryRetryRoute`
 
 - **Current summary:** A 37-branch cascade that classifies a query failure into one of the `QueryRetryRoute` arms (`startup_timeout_retry`, `message_not_found_retry`, `transient_retry`, `provider_backoff`, `rate_limit_handoff`, `api_validation`, `aborted_noop`, `cleanup_noop`, `superseded_noop`, `terminal`). It is the classifier gate of the query-retry pipeline and is called by `query-runner.ts` on the error hot path.
-- **Proposed combinator:** `decisionRun` named `query-retry-classify`. The context carries `QueryRetryRouteInput` plus `decision: QueryRetryRoute | null`.
+- **Proposed combinator:** Review correction — `classifyQueryRetryRoute` and `resolveDecision` compose as ONE directly named `decisionRun` (`route-query-retry`) for the business operation, not two separately-run pipelines. The classifier cascade and the finalizer switch become stage groups inside that single pipeline. The context carries `QueryRetryRouteInput` plus `route: QueryRetryRoute | null` and `decision: QueryRetryDecision | null`.
 - **Input/output snapshot design:**
   - Input: `QueryRetryRouteInput` (`errorSignal`, `env`).
-  - Output: `QueryRetryRoute`.
-- **Pure core design:** Each arm of the current cascade becomes a gate. The `decisionRun` stops (`!hasDecided`) once one gate fires.
+  - Output: `QueryRetryDecision` (route + finalizer).
+- **Pure core design:** The single pipeline runs two stage groups. First the classifier gates (each sets `route` and the pipeline halts the group once one fires):
   - `applySupersededClassifyGate`
   - `applyCleanupClassifyGate`
   - `applyStartupTimeoutClassifyGate`
@@ -108,13 +108,15 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyApiValidationClassifyGate`
   - `applyRateLimitHandoffClassifyGate` (`isRateLimit && env.hasRateLimitHandoff && rateLimitHint !== null`)
   - `applyTerminalClassifyGate` (default, calls `decideProviderTerminalCategory` and `resolveTerminalMessageHint`)
-- **Shell/effect wiring:** The exported `classifyQueryRetryRoute(input)` becomes a wrapper that runs `queryRetryClassifyRun` and returns `ctx.decision`. It is used by `decideQueryRetry` and by `resolveDecision` (for the `rate_limit_handoff` `declined` recompute). `query-runner.ts` does not call it directly; it calls `decideQueryRetry`.
+
+  Then the finalizer gates run against the now-set `route` (each matches at most one `route.action`).
+- **Shell/effect wiring:** The exported `classifyQueryRetryRoute(input)` becomes a wrapper that runs `routeQueryRetryRun` and returns `ctx.route`; `decideQueryRetry` returns `ctx.decision` from the same single run. `query-runner.ts` does not call it directly; it calls `decideQueryRetry`.
 - **Step-by-step migration:**
-  1. Define `QueryRetryClassifyCtx` and `queryRetryClassifyRun`.
-  2. Move each `if` branch into a gate that returns `decided(ctx, route)` when matched.
+  1. Define `QueryRetryRoutingCtx` and `routeQueryRetryRun` (one pipeline).
+  2. Move each classifier `if` branch into a gate that sets `route`; the finalizer gates read `route` and set `decision`.
   3. Keep `isQueryInterrupted` as a private helper.
-  4. Update `decideQueryRetry` and `resolveDecision` to call the wrapper.
-- **Tests:** `query-retry-routing.test.ts` already covers `classifyQueryRetryRoute` directly; keep as parity. Add `query-retry-classify-gates.test.ts` with a matrix that asserts each gate fires exactly for its matching conditions and that precedence order is respected (e.g., `superseded` beats `cleanup`, `cleanup` beats `startup_timeout`).
+  4. Update `decideQueryRetry` to call the single-pipeline wrapper.
+- **Tests:** `query-retry-routing.test.ts` already covers `classifyQueryRetryRoute` directly; keep as parity. Add `query-retry-gates.test.ts` with a matrix that asserts each classifier gate fires exactly for its matching conditions and that precedence order is respected (e.g., `superseded` beats `cleanup`, `cleanup` beats `startup_timeout`).
 - **Risks/caveats:** This is the hottest error path in the daemon. The gate order must preserve the exact precedence of the current cascade. The `transient` and `provider_backoff` gates share `isRetryableProviderError` and `attempt < maxProviderRetries` checks; make sure the boundary between them remains the same. The `rate_limit_handoff` gate must keep the `env.hasRateLimitHandoff && rateLimitHint !== null` condition. The `terminal` gate relies on `decideProviderTerminalCategory` and `resolveTerminalMessageHint`; do not change them as part of this migration.
 
 ---
@@ -122,11 +124,11 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/query-retry-routing.ts:resolveDecision`
 
 - **Current summary:** A large `switch (route.action)` that converts a `QueryRetryRoute` into a `QueryRetryDecision` (route + `QueryRetryFinalizer`). It handles `rate_limit_handoff` accepted/declined/thrown/undefined, and for `declined` it recursively reclassifies with `hasRateLimitHandoff: false` and re-resolves.
-- **Proposed combinator:** `decisionRun` named `query-retry-finalize`. The context carries `route`, `env`, optional `errorSignal`, and `decision: QueryRetryDecision | null`.
+- **Proposed combinator:** Part of the single `route-query-retry` `decisionRun` described above (review correction: no separately-run finalizer pipeline — classifier and finalizer compose as one business-path pipeline). This section describes its finalizer stage group only. The context carries `route`, `env`, optional `errorSignal`, and `decision: QueryRetryDecision | null`.
 - **Input/output snapshot design:**
   - Input: `{ route: QueryRetryRoute; env: QueryRetryEnvironment; errorSignal?: QueryRetryErrorSignal; }`.
   - Output: `QueryRetryDecision`.
-- **Pure core design:** Each `case` in the switch becomes a gate. Because only one case matches a given `route.action`, the `decisionRun` will run through unmatched gates (they return `ctx`) and halt on the first match. `applyRateLimitHandoffFinalizeGate` is the only non-trivial gate: it branches on `env.rateLimitHandoffResult` and, for `declined`, calls `classifyQueryRetryRoute` and `resolveDecision` recursively with a `hasRateLimitHandoff: false` environment to compute the final decision.
+- **Pure core design:** Each `case` in the switch becomes a gate. Because only one case matches a given `route.action`, the finalizer gates run through unmatched gates (they return `ctx`) and halt once one sets `decision`. `applyRateLimitHandoffFinalizeGate` is the only non-trivial gate: it branches on `env.rateLimitHandoffResult` and, for `declined`, re-runs the same single `route-query-retry` pipeline with a `hasRateLimitHandoff: false` environment and takes that run's `decision`. That re-entrant call is a fresh pipeline invocation, not recursion through an intermediate wrapper, and it terminates because `hasRateLimitHandoff: false` means the classifier cannot select `rate_limit_handoff` again.
   - `applySupersededNoopFinalizer`
   - `applyCleanupNoopFinalizer`
   - `applyStartupTimeoutRetryFinalizer`
@@ -137,7 +139,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyApiValidationFinalizer`
   - `applyRateLimitHandoffFinalizer`
   - `applyTerminalFinalizer`
-- **Shell/effect wiring:** `resolveDecision` becomes a private wrapper that runs `queryRetryFinalizeRun` and returns `ctx.decision`. It is called by `decideQueryRetry` and recursively by the `rate_limit_handoff` `declined` branch. The `QueryRetryFinalizer` produced is a pure data object (with closures for `skipFinalizerIdle`) consumed by `query-runner.ts` to decide which teardown steps to skip.
+- **Shell/effect wiring:** `resolveDecision` stays a private wrapper for parity tests: it seeds `route` and runs `routeQueryRetryRun`, returning `ctx.decision`. Production callers use the single-run `decideQueryRetry`. The `QueryRetryFinalizer` produced is a pure data object (with closures for `skipFinalizerIdle`) consumed by `query-runner.ts` to decide which teardown steps to skip.
 - **Step-by-step migration:**
   1. Define `QueryRetryFinalizeCtx` and `queryRetryFinalizeRun`.
   2. Replace each `case` with a gate that checks `ctx.route.action === '<action>'` and sets `ctx.decision`.
@@ -145,7 +147,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
   4. Keep `makeFinalizer`, `skipIdleDueToRecovery`, `skipFinalizerIdleDueToLifecycle`, and `skipFinalizerIdleAlways` as helpers used by the gates.
   5. Update `decideQueryRetry` to call `classifyQueryRetryRoute` then `resolveDecision`.
 - **Tests:** `query-retry-routing.test.ts` is the parity suite. Add `query-retry-finalize-gates.test.ts` that tests each finalizer gate per `route.action`, including the `rate_limit_handoff` `accepted`/`declined`/`thrown`/`undefined` branches and the recursive recompute. Add a contract test that the recursive `declined` path returns the same decision as the current hand-rolled function.
-- **Risks/caveats:** The `rate_limit_handoff` `declined` branch is recursive. In the new design it will call `classifyQueryRetryRoute` and `resolveDecision` from inside a gate. Ensure the recursion terminates: after reclassification `hasRateLimitHandoff` is `false`, so the classify run cannot return `rate_limit_handoff` again. `makeFinalizer` uses `skipFinalizerIdle` as a closure over `env` (e.g., `skipIdleDueToRecovery` and `skipFinalizerIdleDueToLifecycle`). The final test in `query-retry-routing.test.ts` calls `skipFinalizerIdle` with a resnapped env and expects a different result, so the closure must capture the right values; keep the helper definitions exactly as closures, not pre-resolved booleans. `resolveDecision` is currently not exported, so the migration can keep it private.
+- **Risks/caveats:** `makeFinalizer` uses `skipFinalizerIdle` as a closure over `env` (e.g., `skipIdleDueToRecovery` and `skipFinalizerIdleDueToLifecycle`). The final test in `query-retry-routing.test.ts` calls `skipFinalizerIdle` with a resnapped env and expects a different result, so the closure must capture the right values; keep the helper definitions exactly as closures, not pre-resolved booleans. `resolveDecision` is currently not exported, so the migration can keep it private.
 
 ---
 
@@ -356,8 +358,8 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ## Open questions
 
 1. **Should `routeTurnEnd` be folded into `turn-end-pipeline.ts`?** ADR 0004 says one pipeline per business path. The business path is "SDK turn-end outcome," and `turn-end-pipeline.ts` already owns it. This plan keeps `routeTurnEnd` as a separate `decisionRun` inside `turn-end-routing.ts` to match the scope, but an alternative is to replace `applyTurnEndRoutingGate` and `applyFinalGate` with a single set of `decide` stages directly in `turn-end-pipeline.ts`.
-2. **Should `classifyQueryRetryRoute` and `resolveDecision` remain two separate `decisionRun`s or be one combined pipeline?** Splitting them makes each one easier to test in isolation but requires `resolveDecision` to recursively call back into `classifyQueryRetryRoute`. A single combined `decisionRun` (`applyClassifierGate` sets `route`, subsequent per-route finalizer gates set `decision`) would avoid the recursive wrapper but makes the rate-limit `declined` recompute harder to express.
-3. **How should the `rate_limit_handoff` `declined` recompute be modeled without a recursive call?** The current design and this plan keep a recursive call to `classifyQueryRetryRoute`/`resolveDecision`. If recursion is undesirable, the finalizer gate could inline the reclassification logic, but this duplicates the classifier gates.
+2. ~~**Should `classifyQueryRetryRoute` and `resolveDecision` remain two separate `decisionRun`s or be one combined pipeline?**~~ Resolved by review: they compose as ONE `route-query-retry` pipeline per business path; the `rate_limit_handoff` `declined` branch re-invokes that pipeline with `hasRateLimitHandoff: false` (a fresh run, terminating by construction).
+3. ~~**How should the `rate_limit_handoff` `declined` recompute be modeled without a recursive call?**~~ Resolved with the combined pipeline above: the finalizer gate re-runs `routeQueryRetryRun` once with the amended environment; no wrapper recursion and no duplicated classifier gates.
 4. **Is `resolveDeliveryRole` too hot for `decisionRun` overhead?** It runs on every message enqueue. The `decisionRun` overhead is ~2 µs per call, but if deliveries become a bottleneck, this function may be a candidate to keep as a plain function or a raw `superpipe` transform with no gates. A microbenchmark should confirm.
 5. **Should the exported function names be kept as wrappers or replaced with `decideXxx` runners?** This plan preserves `routeTurnEnd`, `classifyQueryRetryRoute`, `resolveDecision` (private), `resolveSteerAdmission`, `planDeliveryRoleArbitration`, `routeDriveTurnOutcome`, `routeFeedSteerOutcome`, `planInjectContextReset`, `planTurnEndFlushContextReset`, and `resolveDeliveryRole` as the public API to avoid churning every caller. The internal `decideXxx` runners are private.
 6. **Are `message-ownership-gates.ts:planFlushDelivery` and `decideDeferAdmission` in scope?** They are not in the requested symbol list, but they are also pure admission functions used by `message-delivery-pipeline.ts`. They are natural follow-up migration targets after `resolveDeliveryRole`.

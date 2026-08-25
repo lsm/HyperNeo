@@ -198,7 +198,11 @@ anywhere in this plan.
   `gateSessionRoute` → `gateSpaceTaskRoute` (decides when `spaceTaskId &&
   spaceId`, normalizing `spaceTaskViewTab !== 'thread'`) → `gateSpaceAgentsView`
   (`spaceId && spaceViewMode === 'agents'`, `spaceAgentHandle ?? undefined`) →
-  `gateSpaceSession` → `gateSpaceGoals` → `gateSpaceMemories` →
+  `gateSpaceSession` → `gateSpaceSessions` (`spaceId && spaceViewMode ===
+  'sessions'` without a specific `spaceSessionId`, decides
+  `createSpaceSessionsPath(spaceId)`; review correction — omitting it drops
+  the sessions-list URL to `/space/<id>` and the URL-sync effect navigates
+  away from the view) → `gateSpaceGoals` → `gateSpaceMemories` →
   `gateSpaceForge` → `gateSpaceTasks` (tab `!== 'active'` normalization) →
   `gateSpaceConfigure` (tab `!== 'agents'` normalization) → `gateSpaceRoot` →
   `gateChatsNav` (`navSection === 'chats'`) → `gateSettingsNav` →
@@ -349,8 +353,10 @@ anywhere in this plan.
 - **Step-by-step migration.**
   1. Extend `src/hooks/__tests__/useModelSwitcher.test.ts` (exists) with
      provider-inference and family tables — every rule, plus order-sensitive
-     pairs (`qwen2.5:32b` → ollama-cloud vs `qwen2.5:latest` → ollama;
-     `gpt-oss:120b` vs `gpt-oss:mini-cloud`).
+     pairs (`qwen2.5:120b` → ollama-cloud vs `qwen2.5:32b` → ollama — review
+     correction: the cloud regex is `[1-9]\d{2,}b`, i.e. 100B+ only, so 2-digit
+     sizes like `32b` fall through to plain `ollama`; also
+     `qwen2.5:latest` → ollama; `gpt-oss:120b` vs `gpt-oss:mini-cloud`).
   2. Migrate `inferProviderFromModelId` to gates + `decisionRun`
      ('infer-model-provider'), wrapper maps sentinel → undefined.
   3. Extract `classifyModelFamily` (currently inline) as its own decisionRun;
@@ -711,10 +717,16 @@ anywhere in this plan.
 - **Input/output snapshot design.** Step 1 ctx: `{ content, images?,
   deliveryMode, sessionStatus, isSending, allowQueueWhileProcessing,
   isConnected, decision }` with decision union `'rejectEmpty' |
-  'rejectArchived' | 'queueOffline' | 'queueRace' | 'send'`. The hook
+  'rejectArchived' | 'queueOffline' | 'send'`. The hook
   snapshots `session?.status`, `isSending`, and
   `connectionState.value === 'connected'` at the call boundary — no signal
-  reads inside gates. Step 2 extends ctx with ports: `{ request:
+  reads inside gates. Review correction: the live `getHubIfConnected()` read
+  is deliberately NOT part of this snapshot — the current code performs it
+  after `onSendStart()` and timeout arming, and hoisting it earlier changes
+  behavior during connect/disconnect transitions (an early read can choose
+  `send` with a hub that has since dropped, or queue when a hub is about to
+  appear). The hub race stays a dynamic stage after the startup effects (see
+  pure core design). Step 2 extends ctx with ports: `{ request:
   (payload) => Promise<{ messageId?: string }>, enqueue: (label, payload,
   immediate) => void, onSendStart, onSendComplete, onError, onMessageAccepted,
   armTimeout, clearTimeout, toastError, toastInfo }` and `outcome:
@@ -722,13 +734,18 @@ anywhere in this plan.
   closures (functions pass through gate spreads by reference).
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
   `rejectEmpty` on blank/`isSending && !allowQueueWhileProcessing`) →
-  `gateSessionArchived` → `gateOffline` → `gateHubRace` (decides `queueRace`
-  when `isConnected && !hub`) → `gateSend` (terminal). Payload assembly is a
+  `gateSessionArchived` → `gateOffline` → `gateSend` (terminal — when the
+  connection-state snapshot says `connected`). The hub race is NOT an
+  admission gate (review correction): `stageSendRequest` re-reads the hub
+  dynamically via a `getHub` port immediately after the startup effects, and
+  diverts to the queue arm when it comes back empty, preserving the current
+  ordering (`onSendStart` → arm timeout → hub read). Payload assembly is a
   pure `stageBuildPayload` before effect stages. Step 2 stage order:
-  admission gates → interpret-decision stage(s): the three queue/reject arms
+  admission gates → interpret-decision stage(s): the queue/reject arms
   run their effects and stamp `outcome`, then a `!outcomeStamped`-style halt
   guard; the `send` arm continues through `stageSendRequest` (async effect:
-  `onSendStart`, arm timeout, await request, `onMessageAccepted`, clear
+  `onSendStart`, arm timeout, live `getHub()` read with queue divert, await
+  request, `onMessageAccepted`, clear
   timeout, stamp outcome). Timeout resource stays in the hook (ref owned by
   the hook per ADR Decision 5 — pipeline receives `armTimeout`/`clearTimeout`
   values). Errors: `stageSendRequest` throws propagate out of `.endAsync`;

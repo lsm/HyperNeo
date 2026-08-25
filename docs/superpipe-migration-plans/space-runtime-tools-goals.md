@@ -189,12 +189,22 @@ The repo already has several proven pipelines. Use these as the model for each s
   4. Branch `noRoutes` → `effect` `terminalize-no-route` updates task to `done`, calls `goalService.handleTaskTerminal` if present, captures evidence. `compensate` is not practical here; wrap the branch in a repo transaction or use a `claimTaskStatus` CAS.
   5. Branch `alreadyRouted` → `halt`.
   6. Branch `missingWorkflow`/`emptyInstructions` → `effect` `clear-pending-state`, `halt`.
-  7. Branch `proceed` → `effect` `spawn-post-approval-sub-session`.
-  8. `resnapshot` task after spawn (to detect concurrent status changes).
-  9. `effect` `record-dispatched-session` updates the task with `postApprovalSessionId`/`postApprovalStartedAt`.
+  7. Branch `proceed` → `effect` `reserve-dispatch` FIRST: an atomic
+     `claimPostApprovalDispatch` CAS on the task (conditional update where
+     `postApprovalSessionId IS NULL AND status = 'approved'`) that stamps a
+     reservation (dispatch claim) BEFORE any session is spawned (review
+     correction — resnapshot-after-spawn cannot prevent concurrent dispatch:
+     two callers can both pass admission, spawn separate sessions, and only
+     then discover one task update lost). Its `compensate` releases the
+     reservation when superseded.
+  8. `effect` `spawn-post-approval-sub-session`.
+  9. `effect` `record-dispatched-session` converts the reservation into the
+     final `postApprovalSessionId`/`postApprovalStartedAt` (the loser of the
+     reservation race halts at step 7 without ever spawning, so no orphaned
+     session is created).
   10. `halt` returns `spawn` result.
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch and the spawn compensation path.
-- **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task. The staged `record-dispatched-session` effect should use a `casStatus` or conditional `updateTask` that reads `postApprovalSessionId` as a precondition. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), and the spawn compensation path.
+- **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task — hence the reservation-before-spawn step above; without it, a conditional `record-dispatched-session` alone protects the row but leaves the losing spawned session orphaned and active. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
 
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:send_message_to_task`
 
@@ -255,14 +265,14 @@ The repo already has several proven pipelines. Use these as the model for each s
   1. Extract the function into `packages/daemon/src/lib/space/runtime/approve-pending-completion-pipeline.ts`.
   2. `snapshot` loads task.
   3. `decide` admission.
-  4. Guarded `effect` `set-approved` (when `approve`) calls `taskManager.setTaskStatus(task.id, 'approved')`.
+  4. Guarded `effect` `set-approved` (when `approve`) calls `taskManager.setTaskStatus(task.id, 'approved')` — review correction: do NOT call this before `dispatchPostApproval` and then rely on dispatch to observe it; `dispatchPostApproval` skips its own status transition when it sees `approved`, and that transition is where `approvalSource`/`approvalReason` are stamped. Either keep `runtime.dispatchPostApproval` as the approval primitive (preferred — the pipeline records intent and dispatch performs the stamping) or include `approvalSource`/`approvalReason` in this initial write; the shared pipeline state must carry the source either way.
   5. `effect` `dispatch-post-approval` calls `runtime.dispatchPostApproval`. On throw, resnapshot task.
   6. `resnapshot` task.
   7. `effect` `record-blocked-reason` (when dispatch threw) updates `postApprovalBlockedReason`.
   8. Guarded `effect` `set-rejected` (when `reject`) calls `taskManager.setTaskStatus` then `updateTask` with reason.
   9. `halt` returns final `SpaceTask`.
-- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add a shared test module for the pipeline that runs the same inputs through both shells.
-- **Risks/caveats**: Unification is the main goal: do not leave the tool and RPC with slightly different error messages or preconditions. The dispatch-failure path must still leave the task `approved`; the pipeline must not roll that back.
+- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add a shared test module for the pipeline that runs the same inputs through both shells, including a row asserting `approvalSource`/`approvalReason` survive both shells.
+- **Risks/caveats**: Unification is the main goal: do not leave the tool and RPC with slightly different error messages or preconditions. The dispatch-failure path must still leave the task `approved`; the pipeline must not roll that back. Audit metadata (`approvalSource`, `approvalReason`) must not be silently dropped by the approval-order change above.
 
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:review_goal_outcome`
 
@@ -469,14 +479,15 @@ The repo already has several proven pipelines. Use these as the model for each s
     existing: Schedule | null;
   }
   ```
-- **Pure core design**: `decideSelfNagScheduleSync` with branches: `pauseOrphans`, `pauseAllNoGoal`, `pauseNoCron`, `update`, `create`, `noOp`.
+- **Pure core design**: `decideSelfNagScheduleSync` with branches: `pauseAllNoGoal`, `pauseNoCron`, `update`, `create`, `noOp`. Review correction: `pauseOrphans` is NOT a decision branch — it is not mutually exclusive with `update`/`create` (the current code first pauses stale schedules from a previous goal, then continues syncing the active goal's schedule; a scope can have both). It runs as a preliminary unconditional `effect` before `decide`, so a scope with both a stale schedule and a valid current policy still reaches `update`/`create`.
 - **Shell/effect wiring**: Effects call `scheduleService.pauseSchedule`, `updateSchedule`, `resumeSchedule`, `createGoalSchedule`. The shell should pass `db` and wrap the `stagedRun` in `db.transaction` when available.
 - **Step-by-step migration**:
   1. Define `stagedRun<SelfNagScheduleSyncState>('self-nag-schedule-sync', ...)`.
   2. `snapshot` lists schedules, reads goal and policy.
-  3. `decide` selects branch.
-  4. Guarded `effect`s execute the schedule mutation.
-  5. `halt` returns `void` or `{ scheduleId }`.
+  3. `effect` `pause-orphan-schedules` pauses stale schedules unconditionally (preliminary, nonterminal).
+  4. `decide` selects the current-schedule branch.
+  5. Guarded `effect`s execute the schedule mutation.
+  6. `halt` returns `void` or `{ scheduleId }`.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts` and any goal-automation schedule tests.
 - **Risks/caveats**: `scheduleService` operations are not currently CAS. The optional `db` transaction is the only atomicity mechanism. If `db` is absent, the flow is best-effort. The `stagedRun` effect stages must run inside the transaction and throw on failure; the transaction rolls back.
 
@@ -504,7 +515,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   5. `effect` `update-notification-status` calls `outcomeNotificationRepo.updateStatus`.
   6. `halt` returns `ClaimOutcomeNotificationResult`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`.
-- **Risks/caveats**: `runAtomic` is currently synchronous and `stagedRun` is asynchronous. Either convert `runAtomic` to `async` for this path, or use a sync `superpipe` with `.end` and make the effect functions synchronous. The `params.apply` callback may be synchronous in current usage but is typed as a plain function; ensure it is not awaited if sync.
+- **Risks/caveats**: Review correction — `stagedRun` always executes through `endAsync` and returns a Promise, while `runAtomic` invokes the synchronous `db.transaction(fn)()` wrapper. Passing an async pipeline to that wrapper commits as soon as the Promise is returned, so the apply/status-flip effects would run outside the transaction. Use a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic` (effect functions stay synchronous); merely converting `runAtomic` to an async variant cannot preserve atomicity without an async-capable database transaction primitive. The `params.apply` callback may be synchronous in current usage but is typed as a plain function; ensure it is not awaited if sync.
 
 ### `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal`
 
@@ -543,7 +554,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   14. `effect` `record-outcome-notification`.
   15. `halt` returns `{ goal, nextTask, terminalGeneration, notification }`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts` and `packages/daemon/tests/unit/5-space/runtime/goal-outcome-wake-flip.test.ts`.
-- **Risks/caveats**: This is the most complex goal effect chain. Because it runs inside `runAtomic`, the transaction provides atomicity. The `stagedRun` effect stages should use the transaction-bound repo methods. If `runAtomic` cannot host an async pipeline, convert it to `runAtomicAsync` or use a sync `superpipe` with `.end`. Do not introduce in-flow retries.
+- **Risks/caveats**: This is the most complex goal effect chain. Because it runs inside `runAtomic`, the transaction provides atomicity. Review correction — `stagedRun` is async-only (`endAsync`), so it cannot run inside the synchronous `db.transaction(fn)()` wrapper without committing early (the transaction commits when the Promise is returned, and the task/goal/notification effects then land outside it, breaking `terminalGeneration` deduplication). Compose this path as a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic`, using the transaction-bound repo methods; an async `runAtomic` variant cannot preserve atomicity without an async-capable DB transaction primitive. Do not introduce in-flow retries.
 
 ### `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` and `validateSubscriptionTargetTask`
 
@@ -574,9 +585,9 @@ The repo already has several proven pipelines. Use these as the model for each s
   5. `effect` `remove-existing-trie-entry` removes old entry.
   6. `effect` `insert-trie-entry` inserts the new one.
   7. `effect` `persist-subscription` (when `dynamic`) calls `workflowEventSubscriptionRepo.upsert`; `compensate` removes the trie entry and re-inserts `displaced`.
-  8. `effect` `redispatch` (when `dynamic`) calls `redispatchRetainedExternalEvents`.
+  8. Review correction — `redispatch` is NOT a compensable `effect` stage: because it runs after `persist-subscription`, any throw would unwind the persist compensation after the DB upsert already succeeded, leaving the subscription persisted but absent from the live trie until restart. Move `redispatchRetainedExternalEvents` to a post-success best-effort step in the shell AFTER the `stagedRun` resolves (swallow-and-log its errors; it is a delivery nudge, not a consistency write). The pipeline's last stage is the `persist-subscription` effect.
   9. `halt` returns `{ success: true }` or an error.
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-runtime-workflow-subscription-persistence.test.ts`.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-runtime-workflow-subscription-persistence.test.ts`. Add a row where `redispatchRetainedExternalEvents` throws: the subscription must remain both persisted and present in the trie.
 - **Risks/caveats**: `topicTrie` is in-memory shared state. The current manual rollback on repo error is exactly the in-memory compensation pattern. `workflowEventSubscriptionRepo.upsert` should be CAS-guarded or the `stagedRun` `compensate` must be able to undo the trie change. The limit check must be re-gathered between any write and the next read (the `existingInterests` snapshot already does this).
 
 ### `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting`
