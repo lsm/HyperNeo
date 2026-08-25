@@ -828,7 +828,7 @@ function extractSenderLabel(
   if (isSynthetic && previousAgentLabel) {
     return { label: previousAgentLabel, isSynthetic: true };
   }
-  if (isSynthetic) return { label: 'Agent', isSynthetic: true };
+  if (isSynthetic) return { label: '', isSynthetic: true };
   return { label: 'User', isSynthetic: false };
 }
 
