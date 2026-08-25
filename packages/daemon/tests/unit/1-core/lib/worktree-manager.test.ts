@@ -493,6 +493,38 @@ describe('WorktreeManager', () => {
       expect(result?.branch).toBe('session/session-123');
     });
 
+    it('should fail worktree creation when the LFS attribute file cannot be read', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      fsPromisesMocks.readFile.mockRejectedValue(new Error('EACCES: permission denied'));
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '.gitattributes';
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
     it('should not delete a pre-existing fallback branch when worktree add fails', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);

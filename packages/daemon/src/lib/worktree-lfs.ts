@@ -15,14 +15,12 @@ export async function worktreeDeclaresLfsAttributes(
     (entry) => entry === '.gitattributes' || entry.endsWith('/.gitattributes')
   );
   for (const rel of attrFiles) {
-    try {
-      const content = await readFile(join(worktreePath, rel), 'utf-8');
-      const activeAttributes = content
-        .split('\n')
-        .filter((line) => !line.trim().startsWith('#'))
-        .join('\n');
-      if (LFS_ATTRIBUTE_PATTERN.test(activeAttributes)) return true;
-    } catch {}
+    const content = await readFile(join(worktreePath, rel), 'utf-8');
+    const activeAttributes = content
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n');
+    if (LFS_ATTRIBUTE_PATTERN.test(activeAttributes)) return true;
   }
   return false;
 }
