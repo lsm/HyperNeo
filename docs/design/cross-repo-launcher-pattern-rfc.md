@@ -16,8 +16,13 @@ task and goal to exactly one of them. Two invariants follow (#2537):
 - **A repo belongs to exactly one Space.** Path registration is unique across spaces —
   an epic invariant (#2537) enforced through #2522's cross-space path lookup.
 
-So no single task can ever coordinate two repos, and no cross-Space mechanism is needed
-to coordinate two repos — both goals necessarily live in the **same** Space. What is
+So no single task can ever coordinate two repos. Path uniqueness also does **not**
+imply that two repos share a Space — repo A in Space X and repo B in Space Y satisfies
+the invariant — but every goal/task tool an orchestrator has is scoped to its own Space,
+and the message resolver hard-rejects cross-Space targets. This RFC therefore takes a
+**prerequisite** rather than inferring one: the pattern covers objectives whose repos
+are all registered in the **same** Space (the scenario in §2 registers both). Objectives
+spanning two Spaces are explicitly unsupported for v1 (§7). Within one Space, what is
 missing is the layer *above* tasks: an agent that owns two repo-bound goals and moves
 them toward one objective, deciding when progress on one goal releases, withholds, or
 rewrites work on the other. This RFC names that pattern, binds it to the primitives the
@@ -122,17 +127,25 @@ workspaces plus a doctrine for sequencing them. No new runtime concept is introd
   repo directly; every repo mutation flows through a goal-linked task bound to that repo.
   This respects one-task-one-repo and one-session-one-repo, keeps each repo's PR frozen
   per run, and keeps the orchestrator's deliverable — goal state and gated sequencing —
-  out of the
-  repos it coordinates.
+  out of the repos it coordinates.
 - One launcher owns the whole objective. Workers stay single-goal and single-repo; they
   report outcomes in their tasks and do not see the other goal (per the existing
   owner-review contract division).
 
 **Prompt surface (the only artifact this decision produces).**
 
-A long-horizon template family file (e.g. `cross-repo-launcher.md`, alongside
-`release-manager.md` and peers) plus a `CROSS_REPO_LAUNCHER_CONTRACT` append block that
-extends the owner-review contract with:
+The doctrine is prompt content, deliverable two ways:
+
+- **Zero-code (usable today):** any LH agent can carry the doctrine in its
+  `instructions` (`create_agent` / `update_agent`) — `buildLongHorizonAgentSessionConfig`
+  already appends agent instructions to every LH session prompt.
+- **Packaged:** a long-horizon template family file (e.g. `cross-repo-launcher.md`,
+  alongside `release-manager.md` and peers), registered in the daemon's
+  `LONG_HORIZON_AGENT_TEMPLATES` array, plus a `CROSS_REPO_LAUNCHER_CONTRACT` append in
+  `buildLongHorizonAgentSessionConfig`. This is mechanical registration/wiring of
+  existing prompt machinery, not new runtime behavior (§7).
+
+The `CROSS_REPO_LAUNCHER_CONTRACT` block extends the owner-review contract with:
 
 - **Declare the contract between goals** in each goal's `nextSteps`: what each goal is
   waiting on, in terms the other goal's task outcomes can satisfy ("B 2.4.0 waits on A
@@ -143,8 +156,12 @@ extends the owner-review contract with:
 - **Keep one leading goal.** At least one goal always has an active or triggerable task;
   if every goal is waiting on another, pause the dependent goals and escalate (§6).
 - **Correct on drift.** When a gating goal's later outcome invalidates dependent work,
-  interrupt/reassign the dependent goal's active task and re-trigger against the fresh
-  contract, recording the supersession in `nextSteps`.
+  terminalize the dependent goal's active task first — `cancel_task` runs the goal
+  terminal seam (clears the goal's `activeTaskId`, cascades to dependents, and yields a
+  claimable outcome notification the launcher acknowledges with the supersession reason)
+  — then `trigger_goal_task` against the fresh contract. (`interrupt_session` alone only
+  stops the current turn; the task stays active and a subsequent `trigger_goal_task`
+  would throw or merely queue.) Record the supersession in `nextSteps`.
 - **No tight loops.** Cross-goal re-evaluation rides goal check-ins and reminders — the
   scheduling guardrail's durable-vs-transient rule already forbids in-turn polling for
   durable concerns.
@@ -152,8 +169,8 @@ extends the owner-review contract with:
 **Tool surface.** Unchanged: the existing 86 `space-agent-tools`. The loop concretely
 uses `create_goal`, `trigger_goal_task`, `review_goal_outcome`, `update_goal`,
 `pause_goal`/`resume_goal`, `list_goal_tasks`/`get_task_detail`,
-`create_standalone_task` (`depends_on`), `retry_task`, `reassign_task`,
-`interrupt_session`, `send_message_to_task`, `create_agent_reminder`,
+`create_standalone_task` (`depends_on`), `update_task` (attach `depends_on`, §5),
+`retry_task`, `cancel_task`, `send_message_to_task`, `create_agent_reminder`,
 `subscribe_agent_event` — with `workspacePath` parameters on task/goal creation tools
 arriving with #2531/#2535.
 
@@ -183,10 +200,28 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 
 | Coupling | Mechanism | Enforced by |
 | --- | --- | --- |
-| Hard artifact gate (B's task cannot start without A's artifact) | `depends_on` between the Space tasks | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents, a failed one blocks them with `dependency_failed` |
+| Hard artifact gate (B's task cannot start without A's artifact) | `depends_on` between the Space tasks — see the two viable shapes below | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents, a failed one blocks them with `dependency_failed` |
 | Judgment gate (partial completion quality must be reviewed) | Launcher withholds `trigger_goal_task` on B until it reviews the gating outcome; condition recorded in B's `nextSteps` | Prompt doctrine + serial per-goal execution |
 | Durable wait (A slipped/blocked indefinitely) | `pause_goal` on B with the wait recorded; `resume_goal` when released | Prompt doctrine; visible in goal state/UI |
 | Milestone release (partial completion of A releases B) | Milestones listed in A's `nextSteps`/`metrics`; B's gate names the milestone; launcher reviews A's terminal outcome against it | Prompt doctrine |
+
+The hard gate has **no atomic creation path today**: `trigger_goal_task` accepts only
+`goal_id`, while `create_standalone_task` accepts `depends_on` but creates a task with
+no goal link — and unlinked tasks do not report outcomes through the goal notification
+loop (`handleTaskTerminal` ignores them). Two viable shapes, both using shipped
+behavior:
+
+- **Goal-linked + fail-safe attach:** `trigger_goal_task` on B, then immediately
+  `update_task(depends_on=[A's task])`. If dispatch already started the task, the
+  runtime blocks it with `dependency_added` — the race fails safe into the blocked
+  state rather than wrong execution. Outcome reporting stays on the goal plane.
+- **Standalone gated task:** `create_standalone_task(depends_on=[A's task])` for the
+  specific artifact-bound step. Runtime-enforced from creation, but outside the goal's
+  outcome loop — the launcher tracks it with `get_task_detail`/`list_tasks` instead of
+  receiving a wake.
+
+The missing atomic path (accepting `depends_on` on goal-linked creation) is recorded as
+a deferred primitive in §7.
 
 **Partial-completion semantics.** Observable sync events are **task-terminal outcomes** —
 per-goal execution is serial and outcome notifications fire at reportable terminal
@@ -200,10 +235,11 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 
 | Failure | Existing mechanism | Launcher doctrine |
 | --- | --- | --- |
-| Launcher ignores a wake | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | None needed beyond responding; nag escalates on continued idleness |
+| Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | None needed beyond responding on the next wake or check-in |
+| Launcher wakes but never reviews | Nag re-prompts the **same** agent; there is no auto-escalation on repeated ignored wakes | Accepted v1 failure mode, stated honestly: a wedged owner leaves notifications pending indefinitely — visible to humans as pending notifications and stalled goal state in the UI. Bounded escalation is a deferred primitive (§7) |
 | Daemon restart mid-loop | Notifications persisted in the terminal transaction; startup recovery; inbox replay | None needed |
-| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher | `retry_task` at most twice with a recorded reason; then `reassign_task`; then `pause_goal` on both goals, record in `nextSteps`, escalate (below) |
-| Contract drift after B started | A's follow-up outcome wakes launcher; goal-revision CAS protects B's state | Interrupt or let-finish-then-supersede B's active task; re-trigger B against the fresh contract; record supersession |
+| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher | `retry_task` at most twice with a recorded reason, then `pause_goal` on both goals, record in `nextSteps`, escalate (below). (`reassign_task` is currently inert — it ignores its assignment arguments and returns the task unchanged — so it is not a recovery step.) |
+| Contract drift after B started | A's follow-up outcome wakes launcher; goal-revision CAS protects B's state | Cancel B's active task through the goal terminal seam (`cancel_task`), acknowledge the resulting outcome notification with the supersession reason, re-trigger against the fresh contract (§4) |
 | Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: pause dependent goals, escalate to the human; never spin. Goal check-ins act as the safety-net re-evaluation timer |
 | Human decision needed | `send_session_message` to the Space chat / coordinator session; `create_agent_reminder`; durable high-priority task | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight" |
 
@@ -214,34 +250,45 @@ overlap storms; the launcher adds no polling.
 
 ## 7. Decision
 
-**Prompt-only.** Build no new runtime primitive. The follow-up spawned from this RFC is a
-prompts-package change (launcher template + contract block) plus a section in #2537's
-usage doc; it must not touch daemon logic, so the epic's superpipe guidance (ADR 0004)
-does not even engage.
+**Prompt-only.** Build no new runtime primitive or behavior. The follow-up spawned from
+this RFC is prompt content — a launcher template registered in the daemon's existing
+`LONG_HORIZON_AGENT_TEMPLATES` array plus a `CROSS_REPO_LAUNCHER_CONTRACT` append in
+`buildLongHorizonAgentSessionConfig` (mechanical wiring of existing prompt machinery,
+§4), and a section in #2537's usage doc. Until that lands, the doctrine is usable
+zero-code via any LH agent's `instructions`. No new pipeline logic is introduced, so the
+epic's superpipe guidance (ADR 0004) does not engage; if a deferred primitive below is
+ever built, its admission/binding logic composes as a direct superpipe pipeline.
 
 **Why.** Every load-bearing mechanism is verified shipped or in-flight (§3): per-repo
 goal/task binding, serial per-goal execution, durable owner wakes with CAS disposal,
-`depends_on`, pause/resume, reminders/check-ins, and a backstop nag. The pattern itself
-is unproven — prompt doctrine must be exercised on a real deployment before primitives
-are justified, the same sequencing discipline ADR 0004 applies to new combinators.
+`depends_on` (with the two fail-safe shapes in §5), pause/resume, reminders/check-ins,
+and a nag backstop. The pattern itself is unproven — prompt doctrine must be exercised
+on a real deployment before primitives are justified, the same sequencing discipline
+ADR 0004 applies to new combinators.
 
 **Deferred primitive candidates, with explicit revisit triggers.**
 
-1. **Cross-goal dependency** (goal-level `depends_on` or gate events, UI-visible) —
+1. **`depends_on` on goal-linked task creation** (atomic hard-gate creation; removes the
+   §5 attach race and the standalone-task visibility gap) — the most likely first
+   primitive; revisit when a real launcher deployment uses hard gates at all.
+2. **Cross-goal dependency** (goal-level `depends_on` or gate events, UI-visible) —
    revisit after ≥2 real launcher deployments show repeated premature triggers of the
-   dependent goal, or humans routinely needing to see the gate in the UI. If built, the
-   admission/binding logic composes as a direct superpipe pipeline per epic guidance.
-2. **Mid-task milestone events** — revisit when a scenario genuinely needs sub-task
+   dependent goal, or humans routinely needing to see the gate in the UI.
+3. **Mid-task milestone events** — revisit when a scenario genuinely needs sub-task
    granularity and task-splitting proves too coarse.
-3. **LH-agent `send_message`** — revisit only with a steering need `send_message_to_task`
+4. **LH-agent `send_message`** — revisit only with a steering need `send_message_to_task`
    cannot reach.
+5. **Bounded escalation for ignored outcome wakes** (coordinator/human notification
+   after N ignored nags, §6) — revisit once a real deployment shows the accepted
+   failure mode actually occurring.
 
 **Rejected alternatives.**
 
 - *Build a new primitive now*: fails the evidence bar; risks encoding an orchestration
   model before one has run.
-- *Cross-Space orchestration*: moot — path uniqueness means a repo lives in one Space, so
-  multi-repo objectives are single-Space by construction.
+- *Cross-Space orchestration*: out of scope — goal/task tools and message delivery are
+  per-Space, so objectives whose repos live in different Spaces need cross-Space
+  primitives that nothing here justifies yet (§1 prerequisite).
 - *Orchestrator session spanning both repos*: violates one-session-one-repo and puts the
   coordinator inside the repos it is supposed to arbitrate.
 - *Do nothing (no prompt artifact)*: the pattern works only if the doctrine is written
@@ -250,6 +297,7 @@ are justified, the same sequencing discipline ADR 0004 applies to new combinator
 
 ## 8. Follow-ups (out of scope here)
 
-Implementation issues spawned from this decision: the launcher prompt template slice, the
-usage-doc section (with #2537), and — only on hitting a §7 revisit trigger — a primitive
-proposal. Nothing in this RFC requires daemon changes.
+Implementation issues spawned from this decision: the launcher prompt template slice
+(template registration + contract append, mechanical per §7), the usage-doc section
+(with #2537), and — only on hitting a §7 revisit trigger — a primitive proposal. Nothing
+in this RFC requires new daemon behavior.
