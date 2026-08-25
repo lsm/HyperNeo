@@ -94,7 +94,7 @@ export class ProviderService {
   private readonly logger = new Logger('provider-service');
   private readonly catalogCache = new WeakMap<
     RegisteredProvider,
-    { models: ModelInfo[]; at: number; curatedRef: ReadonlyArray<unknown> | undefined }
+    { models: ModelInfo[]; at: number; curatedStamp: string | undefined }
   >();
 
   private async ensureProviderBridges(
@@ -262,10 +262,12 @@ export class ProviderService {
     provider: RegisteredProvider
   ): Promise<ModelInfo[]> {
     const curatedNow = this.getRegistry().getCuratedModels(providerId);
+    const curatedStamp =
+      curatedNow === undefined ? undefined : curatedNow.map((m) => m.id).join(',');
     const cached = this.catalogCache.get(provider);
     if (
       cached &&
-      cached.curatedRef === curatedNow &&
+      cached.curatedStamp === curatedStamp &&
       Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
     ) {
       return cached.models;
@@ -285,7 +287,7 @@ export class ProviderService {
       models = fallbackModelsFor(provider);
     }
     if (models.length > 0) {
-      this.catalogCache.set(provider, { models, at: Date.now(), curatedRef: curatedNow });
+      this.catalogCache.set(provider, { models, at: Date.now(), curatedStamp });
     }
     return models;
   }
