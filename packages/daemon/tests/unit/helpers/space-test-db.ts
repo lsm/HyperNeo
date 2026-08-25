@@ -392,6 +392,24 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
 
   db.exec(`
+			CREATE TABLE IF NOT EXISTS space_workspaces (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				path TEXT NOT NULL,
+				label TEXT NOT NULL DEFAULT '',
+				is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE(space_id, path),
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workspaces_space_id ON space_workspaces(space_id)`);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workspaces_primary ON space_workspaces(space_id) WHERE is_primary = 1`
+  );
+
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
 			id INTEGER PRIMARY KEY,
 			key TEXT NOT NULL,
