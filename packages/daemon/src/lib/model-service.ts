@@ -850,6 +850,7 @@ export function clearModelsCache(cacheKey?: string): void {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
     }
     cancelAllProviderRetries();
+    bumpProviderCatalogEpoch();
   }
 }
 

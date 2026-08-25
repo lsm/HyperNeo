@@ -2864,6 +2864,45 @@ describe('Model Service', () => {
       await getProviderCatalogModels('ollama', provider);
       expect(fetchCount).toBe(2);
     });
+
+    it('re-fetches after clearModelsCache invalidates the catalog cache', async () => {
+      const registry = getProviderRegistry();
+      let fetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [
+            {
+              id: 'ollama-qwen',
+              name: 'Qwen',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Qwen',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+      setModelsCache(new Map());
+      const provider = registry.get('ollama')!;
+
+      await getProviderCatalogModels('ollama', provider);
+      expect(fetchCount).toBe(1);
+
+      clearModelsCache();
+      await getProviderCatalogModels('ollama', provider);
+      expect(fetchCount).toBe(2);
+    });
   });
 
   describe('getAvailableModels', () => {
