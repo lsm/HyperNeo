@@ -5320,6 +5320,30 @@ describe('AgentSession', () => {
       });
       unsubscribe();
     });
+
+    it('idle admission leaves submitted deliveries active in the job queue unsettled', async () => {
+      const activeUuid = 'msg-submitted-active';
+      const staleUuid = 'msg-submitted-stale';
+      const repo = db.getSDKMessageRepo();
+      for (const uuid of [activeUuid, staleUuid]) {
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid,
+            message: { role: 'user', content: 'submitted' },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        repo.markDeliverySubmittedByUuids(sessionId, [uuid]);
+      }
+      deliverMessage(db.getJobQueueRepo(), sessionId, activeUuid, { origin: 'chat' });
+
+      expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
+
+      expect(repo.getDeliveryContent(sessionId, activeUuid)?.sendStatus).toBe('submitted');
+      expect(repo.getDeliveryContent(sessionId, staleUuid)?.sendStatus).toBe('failed');
+    });
   });
 
   describe('startup pending-message replay (scheduleInitialPendingMessageReplay)', () => {
