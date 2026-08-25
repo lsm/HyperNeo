@@ -13,7 +13,7 @@
     "server:dev": "bun --watch src/index.ts",
     "build:old": "bun run build.ts",
     "start": "NODE_ENV=production bun src/server-prod.ts",
-    "typecheck": "tsc --build",
+    "typecheck": "bunx --package typescript@7.0.2 tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --reporter dot --coverage"

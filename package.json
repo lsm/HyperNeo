@@ -14,7 +14,7 @@
     "lint:fix": "oxlint --fix .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "typecheck": "tsc --build --noEmit",
+    "typecheck": "bunx --package typescript@7.0.2 tsc --build --noEmit",
     "knip": "knip --include files,dependencies,exports --no-config-hints",
     "knip:all": "knip",
     "check:session-guards": "./scripts/check-session-deletion-callers.sh",
