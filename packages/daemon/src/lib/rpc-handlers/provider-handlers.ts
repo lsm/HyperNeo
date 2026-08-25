@@ -782,7 +782,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           if (
             updates.configJson !== undefined &&
             existing.configJson !== updates.configJson &&
-            isCurationOnlyConfigUpdate(existing.configJson, updates.configJson)
+            isCurationOnlyConfigUpdate(existing.configJson, updates.configJson) &&
+            data.credentials === undefined
           ) {
             const restoredConfig = restoreServerDiscoveredModels(
               updates.configJson,
