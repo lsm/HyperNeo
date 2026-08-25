@@ -66,7 +66,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 - **Input/output snapshot design:**
   - Input: `{ flags: TurnEndFlags; event: TurnEndEvent; queryMode: 'immediate' | 'manual; }` (the wrapper injects `decision: null`).
   - Output: `TurnEndPlan`.
-- **Pure core design:** Decompose the cascade into named gates, each returning either `ctx` or `{ ...ctx, decision: <plan> }`, appended to `turn-end-pipeline.ts`'s existing gate list in the current routing position (its own `!hasDecided` semantics apply unchanged, since the plan decision is the pipeline's terminal decision).
+- **Pure core design:** Decompose the cascade into named gates, each populating `ctx.plan` WITHOUT deciding (review correction: `ctx.decision` in `turn-end-pipeline.ts` is the final `TurnEndPipelineDecision`; a routing gate that sets it would halt before `applyFinalGate` assembles the usage and acknowledgement results). Only the pipeline's existing `applyFinalGate` sets `decision` from `ctx.plan`.
   - `applySessionStateNonIdleGate` — `event.kind === 'sessionState' && event.state !== 'idle'`.
   - `applySessionStateClearAwaitingGate` — `event.kind === 'sessionState' && event.state === 'idle' && flags.clearAwaitingTrailingIdle`.
   - `applySessionStateSuppressedIdleGate` — `event.kind === 'sessionState' && event.state === 'idle' && flags.suppressIdleOnNextResult`.

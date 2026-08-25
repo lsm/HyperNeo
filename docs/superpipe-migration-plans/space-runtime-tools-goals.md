@@ -123,7 +123,12 @@ The repo already has several proven pipelines. Use these as the model for each s
       correction: these counters feed external-event queue health reporting
       and are asserted by the existing direct-steer suite; omitting them
       makes migrated deliveries disappear from telemetry).
-  11. `halt` returns `{ enqueued: true, eventCount }`.
+  11. `effect` `publish-status-transitions` publishes the steer row's
+      `enqueued` status and the `messages.statusChanged` event marking all
+      source rows `consumed` (review correction: without these publications
+      LiveQuery/runtime subscribers keep showing the source rows as
+      `deferred` and miss the enqueued steer until a later refresh).
+  12. `halt` returns `{ enqueued: true, eventCount }`.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts` covers the existing behavior. Add a parity harness and per-stage unit tests (`task-agent-manager-direct-steer-pipeline.test.ts`) that mock `saveUserMessage`, `deliverMessage`, and `updateMessageStatus`.
 - **Risks/caveats**: This is the `#1398 continuation` site. The existing code intentionally stops if the session leaves `processing` while preserving passengers. A `stagedRun` must replicate that exact resnapshot timing. Do not add retries; the ADR forbids in-flow retry. Compensation is in-memory only; if the process dies between passenger save and consume, the passenger row is left `deferred` and will be reconciled by the normal flush path, which is acceptable.
 
@@ -221,7 +226,16 @@ The repo already has several proven pipelines. Use these as the model for each s
      reservation ONLY while no session has been spawned — the compensate is
      guarded on the state's `spawnedSessionId` being unset, so a later-stage
      failure can never unwind the claim after spawning.
-  8. `effect` `spawn-post-approval-sub-session`, whose `compensate`
+  8. `effect` `spawn-post-approval-sub-session` catches and classifies the
+     EXPECTED failures in-stage (review correction round 8:
+     `isSpawnSupersededError` and `isTransientSpawnError` are caught by the
+     current router, which clears pending-completion fields, records the
+     specific `postApprovalBlockedReason`, releases the unconsumed
+     reservation, and returns `{ mode: 'skipped' }` — a generic effect
+     failure would unwind and escape, losing that durable blocked state).
+     The in-stage catch diverts to the existing clear/block/skip branch;
+     compensation-based failure propagation applies only to UNEXPECTED
+     errors. Its `compensate` for unexpected failures
      terminates/ends the spawned sub-session (review correction round 3: the
      only previously specified compensation released the reservation, so a
      `record-dispatched-session` throw or CAS loss would make the task
@@ -595,12 +609,14 @@ The repo already has several proven pipelines. Use these as the model for each s
     notification: SpaceGoalOutcomeNotification | null;
   }
   ```
-- **Pure core design**: Reuse `decideReportableTerminal` from `reportable-terminal-gates.ts` as one `decide` stage.
+- **Pure core design**: Review correction — admission uses a PLAIN terminal-status gate (the current `handleTaskTerminal` admits every terminal status, including administrative transitions like cancelling an unstarted goal task or archiving an already-terminal task); `decideReportableTerminal` from `reportable-terminal-gates.ts` returns `none` for exactly those cases, so using it as admission would halt before `clearActiveTaskIfMatches` and the remaining bookkeeping. Invoke the reportability decision only at the notification stage.
 - **Shell/effect wiring**: Effects: `taskRepo.updateTask`, `goalRepo.clearActiveTaskIfMatches`, `recordGoalEvent`, `evolutionScopeService.captureCompletedTaskEvidence`, `goalAutomationService.onTaskCompleted`, `createImmediateTaskInternal`, `recordOutcomeNotification`. The `runAtomic` shell wraps the sync pipeline (a `stagedRun` here would return a Promise and commit the transaction before the effects finish).
 - **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
   1. Define the direct sync pipeline `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effect functions).
   2. Gather stage loads task and goal, computes `nextStatus`.
-  3. Decide stage `is-terminal` returns `{ terminal: true/false }`. If `false`, halt (`.end` returns early).
+  3. Decide stage `is-terminal` is the plain terminal-status check (NOT
+     `decideReportableTerminal`); if `false`, halt (`.end` returns early).
+     The reportability decision runs later, at the notification stage.
   4. `effect` `update-task` applies `transition.updates`.
   5. `resnapshot` task.
   6. `decide` `already-notified` checks existing notifications for this `terminalGeneration`.
@@ -644,13 +660,20 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: Effects: `topicTrie.remove`, `topicTrie.insert`, `workflowEventSubscriptionRepo.upsert`, `redispatchRetainedExternalEvents`. The `compensate` on `persist-subscription` should remove the trie entry and re-insert `displaced`.
 - **Step-by-step migration**:
   1. Extract `validateSubscriptionTargetTask` into `packages/daemon/src/lib/space/runtime/subscription-target-gates.ts` as `decideSubscriptionTarget`.
-  2. Define `stagedRun<RegisterSubscriptionState>('register-subscription', ...)`.
+  2. Define the direct SYNCHRONOUS pipeline `registerSubscriptionRun`
+     (`superpipe` + `.end`; review correction — NOT `stagedRun`, which would
+     change the currently synchronous API to a Promise and add await gaps
+     between the interest-limit snapshot and trie mutations).
   3. `snapshot` gathers run, task, displaced, existing interest count MINUS the displaced entry (review correction: the current implementation removes the exact existing entry BEFORE counting, so a replacement at capacity stays allowed; counting the displaced entry would trip `limitReached` on every re-register at the limit). Retain rollback of the displaced entry as before.
   4. `decide` runs target/topic/limit gates.
-  5. `effect` `remove-existing-trie-entry` removes old entry.
-  6. `effect` `insert-trie-entry` inserts the new one.
-  7. `effect` `persist-subscription` (when `dynamic`) calls `workflowEventSubscriptionRepo.upsert`; `compensate` removes the trie entry and re-inserts `displaced`.
-  8. Review correction — `redispatch` is NOT a compensable `effect` stage: because it runs after `persist-subscription`, any throw would unwind the persist compensation after the DB upsert already succeeded, leaving the subscription persisted but absent from the live trie until restart. Move `redispatchRetainedExternalEvents` to a post-success best-effort step in the shell AFTER the `stagedRun` resolves (swallow-and-log its errors; it is a delivery nudge, not a consistency write). The pipeline's last stage is the `persist-subscription` effect.
+  5. Stage `remove-existing-trie-entry` removes old entry (on a later
+     stage's throw, the shell's explicit in-memory rollback re-inserts it).
+  6. Stage `insert-trie-entry` inserts the new one.
+  7. Stage `persist-subscription` (when `dynamic`) calls
+     `workflowEventSubscriptionRepo.upsert`; on throw, the shell's rollback
+     removes the trie entry and re-inserts `displaced` (explicit shell
+     rollback replaces `compensate` in the sync pipeline).
+  8. Review correction — `redispatch` is NOT a compensable `effect` stage: because it runs after `persist-subscription`, any throw would unwind the persist compensation after the DB upsert already succeeded, leaving the subscription persisted but absent from the live trie until restart. Move `redispatchRetainedExternalEvents` to a post-success best-effort step in the shell AFTER the pipeline completes (swallow-and-log its errors; it is a delivery nudge, not a consistency write). The pipeline's last stage is the `persist-subscription` effect.
   9. `halt` returns `{ success: true }` or an error.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-runtime-workflow-subscription-persistence.test.ts`. Add a row where `redispatchRetainedExternalEvents` throws: the subscription must remain both persisted and present in the trie.
 - **Risks/caveats**: `topicTrie` is in-memory shared state. The current manual rollback on repo error is exactly the in-memory compensation pattern. `workflowEventSubscriptionRepo.upsert` should be CAS-guarded or the `stagedRun` `compensate` must be able to undo the trie change. The limit check must be re-gathered between any write and the next read (the `existingInterests` snapshot already does this).
@@ -749,7 +772,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     decision: LastMessageClassification | null;
   }
   ```
-- **Pure core design**: `decideLastMessageForIdleAgent` with gates: `missingMessage`, `resultMessage`, `nonAssistantMessage`, `assistantError`, `contentBlockClassification`, `endTurn`, `defaultNotTerminal`. The content-block gate can be a single helper that scans the blocks and returns the appropriate `LastMessageClassification`.
+- **Pure core design**: `decideLastMessageForIdleAgent` with gates: `missingMessage`, `hollowResultMessage` (review correction: `isHollowTaskNotificationResult` is checked BEFORE the terminal result classification — zero-token, empty task-notification wakeups return NONTERMINAL so the follow-up turn can arrive; a generic result arm would mark an idle agent finished prematurely; keep the existing error/text/usage exceptions), `resultMessage`, `nonAssistantMessage`, `assistantError`, `contentBlockClassification`, `endTurn`, `defaultNotTerminal`. The content-block gate can be a single helper that scans the blocks and returns the appropriate `LastMessageClassification`.
 - **Shell/effect wiring**: The caller (`SpaceRuntime` idle detection) consumes `LastMessageClassification` and acts on `terminal`.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/last-message-classifier-pipeline.ts`.

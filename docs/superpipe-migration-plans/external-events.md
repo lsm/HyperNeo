@@ -84,14 +84,17 @@ Callers:
 
 #### Proposed combinator
 
-- `normalizeGitHubWebhook` and `normalizeGitHubPollingRow` become `decisionRun`
-  **dispatchers** that decide which per-kind normalizer to run.
-- Each per-kind normalizer becomes a **raw superpipe transform** of shape
-  `(params) => NormalizedGitHubEvent \| null`.
-- `toExternalEvent` becomes a **raw superpipe transform**.
-- `mapEventType` can either stay as a lookup-table helper inside
-  `toExternalEvent`, or be extracted as a small raw superpipe of its own if it
-  is tested independently.
+- Review correction: `normalizeGitHubWebhook` and `normalizeGitHubPollingRow`
+  each become ONE raw superpipe ingest pipeline (`ingest-github-webhook` /
+  `ingest-github-polling-row`); dispatch and per-kind processing are STAGES of
+  that pipeline (dispatch stage selects the kind; the per-kind stage template
+  follows), NOT separately-run `decisionRun` dispatchers plus per-kind
+  pipelines.
+- The per-kind stage template is the boxed-outcome transform described below
+  (`(params) => NormalizedGitHubEvent | null` at the export boundary).
+- `toExternalEvent` becomes its own **raw superpipe transform**
+  (`project-external-event`), called per space at the publish boundary.
+- `mapEventType` stays a lookup-table helper inside `toExternalEvent`.
 
 #### Input/output snapshot design
 
