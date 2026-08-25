@@ -74,7 +74,6 @@ function decideProviderTerminalCategory(
   env: QueryRetryEnvironment
 ): ErrorCategory {
   const raw = signal.rawText.toLowerCase();
-  if (signal.isStartupTimeout) return ErrorCategory.TIMEOUT;
   if (env.providerFamily === 'provider') {
     if (
       /\b(?:401|403|unauthorized|token expired|token_expired|not authenticated|invalid_api_key)\b/.test(
@@ -88,13 +87,18 @@ function decideProviderTerminalCategory(
   if (/\b(?:401|unauthorized|invalid_api_key)\b/.test(raw)) return ErrorCategory.AUTHENTICATION;
   if (/\b(?:econnrefused|enotfound|ehostunreach)\b/.test(raw) || signal.isTransientConnectionError)
     return ErrorCategory.CONNECTION;
-  if (signal.isRateLimit) return ErrorCategory.RATE_LIMIT;
-  if (/\b(?:429|rate limit|402|no quota|quota exceeded|insufficient_quota)\b/.test(raw))
+  if (
+    signal.isRateLimit ||
+    /\b(?:429|rate limit|402|no quota|quota exceeded|insufficient_quota)\b/.test(raw)
+  )
     return ErrorCategory.RATE_LIMIT;
-  if (/\btimeout\b/.test(raw)) return ErrorCategory.TIMEOUT;
+  if (signal.isStartupTimeout || /\btimeout\b/.test(raw)) return ErrorCategory.TIMEOUT;
   if (/\bmodel_not_found\b/.test(raw)) return ErrorCategory.MODEL;
   if (
-    /\b(?:cannot be run as root|dangerously-skip-permissions|permissions?|exit code: 1)\b/.test(raw)
+    raw.includes('cannot be run as root') ||
+    raw.includes('dangerously-skip-permissions') ||
+    raw.includes('permission') ||
+    raw.includes('exit code: 1')
   )
     return ErrorCategory.PERMISSION;
   return ErrorCategory.SYSTEM;

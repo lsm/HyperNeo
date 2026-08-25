@@ -184,6 +184,16 @@ describe('query-retry-routing', () => {
       signal: { rawText: 'usage limit reached', isRateLimit: true },
       expected: { action: 'terminal', category: ErrorCategory.RATE_LIMIT },
     },
+    {
+      name: 'permission stem matches underscore-delimited tags',
+      signal: { rawText: 'permission_error' },
+      expected: { action: 'terminal', category: ErrorCategory.PERMISSION },
+    },
+    {
+      name: 'permission stem matches plural phrase',
+      signal: { rawText: 'insufficient permissions' },
+      expected: { action: 'terminal', category: ErrorCategory.PERMISSION },
+    },
   ];
 
   for (const { name, signal: sig, env: e, expected } of cases) {
