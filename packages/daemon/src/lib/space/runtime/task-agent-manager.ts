@@ -3701,7 +3701,7 @@ export class TaskAgentManager {
     if (buffer.some((item) => item.messageId === args.messageId)) return;
     const now = Date.now();
     buffer.push({
-      essences,
+      essences: decision.essences,
       messageId: args.messageId,
       dbId: claimDbId,
       receivedAt: now,
