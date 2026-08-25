@@ -160,6 +160,8 @@ export async function removeProviderFromRegistry(
   const provider = registry.get(providerId);
   if (!provider) return;
 
+  bumpProviderCatalogEpoch(providerId);
+
   if (provider.logout && !options.preserveCredentials) {
     try {
       await provider.logout();

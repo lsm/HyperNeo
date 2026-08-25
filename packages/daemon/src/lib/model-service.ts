@@ -397,7 +397,7 @@ const scopedCatalogStamps = new Map<string, string>();
 function peekSessionCatalogModels(cacheKey: string): ModelInfo[] | null {
   const cached = modelsCache.get(cacheKey);
   const at = cacheTimestamps.get(cacheKey);
-  if (!cached || at === undefined || Date.now() - at >= CACHE_TTL) {
+  if (!cached || at === undefined || Date.now() - at >= PROVIDER_CATALOG_CACHE_TTL_MS) {
     return null;
   }
   return cached;

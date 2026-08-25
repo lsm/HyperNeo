@@ -3525,6 +3525,71 @@ describe('Model Service', () => {
       expect(scopedFetchCount).toBe(2);
       expect(getAvailableModels('session-scoped-9')).toEqual([]);
     });
+
+    it('refreshes the scoped catalog on the short catalog TTL rather than the general cache TTL', async () => {
+      const registry = getProviderRegistry();
+      let scopedFetchCount = 0;
+      registry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getModelsForSessionConfig: async () => {
+          scopedFetchCount += 1;
+          return [
+            {
+              id: `scoped-gen-${scopedFetchCount}`,
+              name: 'Scoped Model',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'ollama',
+              contextWindow: 128000,
+              description: 'Scoped Model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof registry.register>[0]);
+      setModelsCache(new Map());
+
+      await ensureScopedProviderCatalogModels('session-scoped-10', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(scopedFetchCount).toBe(1);
+
+      setModelsCache(
+        new Map<string, ModelInfo[]>([
+          [
+            'session-scoped-10',
+            [
+              {
+                id: 'scoped-stale',
+                name: 'Scoped Stale',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'ollama',
+                contextWindow: 128000,
+                description: 'Scoped Stale',
+                releaseDate: '',
+                available: true,
+              },
+            ],
+          ],
+        ]),
+        Date.now() - 20_000
+      );
+      await ensureScopedProviderCatalogModels('session-scoped-10', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+      });
+      expect(scopedFetchCount).toBe(2);
+      expect(getAvailableModels('session-scoped-10').map((model) => model.id)).toEqual([
+        'scoped-gen-2',
+      ]);
+    });
   });
 
   describe('resolveVisibleCanonicalModelId', () => {

@@ -7,7 +7,10 @@ import {
   syncProviderToRegistry,
 } from '../../../../src/lib/providers/provider-sync';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
-import { getProviderCatalogModels } from '../../../../src/lib/model-service';
+import {
+  getProviderCatalogEpoch,
+  getProviderCatalogModels,
+} from '../../../../src/lib/model-service';
 import type { ModelInfo, ProviderRecord } from '@hyperneo/shared';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 
@@ -272,6 +275,24 @@ describe('removeProviderFromRegistry', () => {
     await removeProviderFromRegistry('test-provider');
 
     expect(callOrder).toEqual(['logout', 'shutdown']);
+    expect(registry.has('test-provider')).toBe(false);
+  });
+
+  it('advances the provider catalog revision before removal awaits begin', async () => {
+    const registry = getProviderRegistry();
+    let epochDuringLogout: number | undefined;
+    const provider = createMockProvider({
+      id: 'test-provider',
+      logout: mock(async () => {
+        epochDuringLogout = getProviderCatalogEpoch('test-provider');
+      }),
+    });
+    registry.register(provider);
+    const before = getProviderCatalogEpoch('test-provider');
+
+    await removeProviderFromRegistry('test-provider');
+
+    expect(epochDuringLogout).toBeGreaterThan(before);
     expect(registry.has('test-provider')).toBe(false);
   });
 

@@ -142,6 +142,7 @@ export async function syncCustomEndpointProviders(
   configs: CustomEndpointConfig[] | undefined
 ): Promise<void> {
   const registry = initializeProviders();
+  const { bumpProviderCatalogEpoch } = await import('../model-service.js');
   const wanted = new Map<string, CustomEndpointConfig>();
   for (const config of configs ?? []) {
     if (!config?.id || !config.baseUrl || !config.models?.length) continue;
@@ -154,6 +155,7 @@ export async function syncCustomEndpointProviders(
     if (!wanted.has(provider.id)) toRemove.push(provider.id);
   }
   for (const id of toRemove) {
+    bumpProviderCatalogEpoch(id);
     const provider = registry.get(id);
     if (provider?.shutdown) {
       try {
@@ -173,6 +175,7 @@ export async function syncCustomEndpointProviders(
       continue;
     }
     if (existing) {
+      bumpProviderCatalogEpoch(providerId);
       if (existing.shutdown) {
         try {
           await existing.shutdown();
