@@ -164,6 +164,18 @@ describe('spaceGoal owner handlers', () => {
     expect(repo.assignGoal).not.toHaveBeenCalled();
   });
 
+  it('denies owner mutation from a caller with an empty session id', async () => {
+    const repo = makeRepoMock({ action: 'no_recipient' });
+    const { handlers } = makeHarness(repo);
+    await expect(
+      handlers.get('spaceGoal.assignOwner')!(
+        { spaceId: SPACE_ID, goalId: GOAL_ID, agentId: 'agent-1' },
+        makeContext('')
+      )
+    ).rejects.toThrow(/coordinator or explicit human authorization/);
+    expect(repo.assignGoal).not.toHaveBeenCalled();
+  });
+
   it('unassigns the current owner and clears ownership', async () => {
     const repo = makeRepoMock({
       action: 'resolved',
