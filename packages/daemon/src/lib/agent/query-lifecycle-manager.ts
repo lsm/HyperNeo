@@ -281,6 +281,8 @@ export class QueryLifecycleManager {
     if (this.ctx.queryObject === queryObject) {
       this.ctx.queryObject = null;
     }
+
+    this.ctx.messageHandler.retirePendingTerminalFence();
   }
 
   async restart(options?: { idleOwner?: IdleOwnerScope }): Promise<void> {
