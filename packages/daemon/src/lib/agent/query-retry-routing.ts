@@ -88,12 +88,13 @@ function decideProviderTerminalCategory(
   if (/\b(?:401|unauthorized|invalid_api_key)\b/.test(raw)) return ErrorCategory.AUTHENTICATION;
   if (/\b(?:econnrefused|enotfound|ehostunreach)\b/.test(raw) || signal.isTransientConnectionError)
     return ErrorCategory.CONNECTION;
+  if (signal.isRateLimit) return ErrorCategory.RATE_LIMIT;
   if (/\b(?:429|rate limit|402|no quota|quota exceeded|insufficient_quota)\b/.test(raw))
     return ErrorCategory.RATE_LIMIT;
   if (/\btimeout\b/.test(raw)) return ErrorCategory.TIMEOUT;
   if (/\bmodel_not_found\b/.test(raw)) return ErrorCategory.MODEL;
   if (
-    /\b(?:cannot be run as root|dangerously-skip-permissions|permission|exit code: 1)\b/.test(raw)
+    /\b(?:cannot be run as root|dangerously-skip-permissions|permissions?|exit code: 1)\b/.test(raw)
   )
     return ErrorCategory.PERMISSION;
   return ErrorCategory.SYSTEM;
@@ -139,10 +140,7 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
   )
     return { action: 'provider_backoff', nextAttempt: env.attempt + 1 };
   if (errorSignal.errorName === 'AbortError') return { action: 'aborted_noop' };
-  if (
-    errorSignal.apiValidationText !== null &&
-    decideProviderTerminalCategory(errorSignal, env) === ErrorCategory.SYSTEM
-  )
+  if (errorSignal.apiValidationText !== null)
     return { action: 'api_validation', text: errorSignal.apiValidationText };
   if (errorSignal.isRateLimit && env.hasRateLimitHandoff && errorSignal.rateLimitHint !== null)
     return { action: 'rate_limit_handoff', hint: errorSignal.rateLimitHint };

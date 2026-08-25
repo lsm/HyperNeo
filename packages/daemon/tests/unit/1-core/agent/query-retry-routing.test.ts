@@ -171,6 +171,19 @@ describe('query-retry-routing', () => {
       },
       expected: { action: 'api_validation', text: '**API Error (400)**: prompt is too long' },
     },
+    {
+      name: 'parseable 401 routes to api_validation before auth category',
+      signal: {
+        rawText: '401 Unauthorized',
+        apiValidationText: '**API Error (401)**: Unauthorized',
+      },
+      expected: { action: 'api_validation', text: '**API Error (401)**: Unauthorized' },
+    },
+    {
+      name: 'structured rate-limit signal drives terminal category',
+      signal: { rawText: 'usage limit reached', isRateLimit: true },
+      expected: { action: 'terminal', category: ErrorCategory.RATE_LIMIT },
+    },
   ];
 
   for (const { name, signal: sig, env: e, expected } of cases) {
