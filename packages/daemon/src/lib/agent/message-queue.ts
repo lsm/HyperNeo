@@ -48,6 +48,8 @@ export class MessageQueue {
 
   private generation: number = 0;
 
+  private clearEpoch: number = 0;
+
   onMessageYielded?: (messageId: string, sentAt: number) => void;
 
   onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
@@ -148,6 +150,7 @@ export class MessageQueue {
   }
 
   clear(): void {
+    this.clearEpoch += 1;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -169,6 +172,10 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
+  }
+
+  getClearEpoch(): number {
+    return this.clearEpoch;
   }
 
   remove(messageId: string): boolean {

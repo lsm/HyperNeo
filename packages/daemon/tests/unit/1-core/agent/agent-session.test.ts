@@ -6573,6 +6573,36 @@ describe('AgentSession', () => {
       }
     });
 
+    it('a bare reset clear without a status change aborts the steer instead of consuming', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-bare-clear');
+      try {
+        const queue = agentSession.messageQueue;
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const steerPromise = agentSession.feedDeliverySteer(
+          hardUuid,
+          hardContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-steer-bare-clear', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        expect(agentSession.stateManager.getState().status).toBe('processing');
+        queue.clear();
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-bare-clear', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+      } finally {
+        db.close();
+      }
+    });
+
     it('a kickoff already consumed by the SDK yield still signals consumption after the ack', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-consumed');
       try {
@@ -6690,6 +6720,52 @@ describe('AgentSession', () => {
         await expect(drive).rejects.toThrow('Turn ended without a response');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-terminal-idle', hardUuid)
+            ?.sendStatus
+        ).toBe('enqueued');
+        expect(
+          (
+            agentSession as unknown as {
+              zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null;
+            }
+          ).zeroProgressDeliveryFailures
+        ).toBeNull();
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a bare reset clear without a status change never marks the kickoff consumed', async () => {
+      const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-bare-clear');
+      try {
+        agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+        let resolveQuery!: () => void;
+        agentSession.queryPromise = new Promise<void>((resolve) => {
+          resolveQuery = resolve;
+        });
+        const drive = agentSession.driveDeliveryTurn(
+          hardUuid,
+          hardContent,
+          null,
+          false,
+          () => true
+        );
+        const queue = agentSession.messageQueue;
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator('sess-a3a-turn-bare-clear', {
+          suppressPreYieldCallback: true,
+        });
+        await generator.next();
+        expect(agentSession.stateManager.getState().status).toBe('processing');
+        queue.clear();
+        for (let i = 0; i < 100; i++) {
+          await Promise.resolve();
+        }
+        await agentSession.stateManager.setIdle();
+        resolveQuery();
+        await expect(drive).rejects.toThrow('Turn ended without a response');
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-bare-clear', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
         expect(

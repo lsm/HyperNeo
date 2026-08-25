@@ -2171,6 +2171,7 @@ export class AgentSession
           freshFeed,
           admittedBatchUuids,
           generation,
+          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
           responseObserver: armedObserver,
         };
       },
@@ -2258,6 +2259,7 @@ export class AgentSession
           !kickoffDiedBeforeConsumption &&
           (kickoffStatus === 'processing' || kickoffStatus === 'idle') &&
           !this.stateManager.isTerminalIdlePending() &&
+          (this.messageQueue.getClearEpoch?.() ?? 0) === started.clearEpoch &&
           (!claimGuard || claimGuard()) &&
           this.acknowledgedDeliveryStillOwned(messageUuid);
         if (kickoffWinner === 'acknowledged' && !kickoffAcknowledgementValid) {
@@ -2571,7 +2573,12 @@ export class AgentSession
         const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
-        return { kind: 'feed' as const, acknowledgment, generation };
+        return {
+          kind: 'feed' as const,
+          acknowledgment,
+          generation,
+          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
+        };
       },
       signal
     );
@@ -2617,7 +2624,8 @@ export class AgentSession
     if (
       (claimGuard && !claimGuard()) ||
       this.stateManager.getState().status !== 'processing' ||
-      this.stateManager.isTerminalIdlePending()
+      this.stateManager.isTerminalIdlePending() ||
+      (this.messageQueue.getClearEpoch?.() ?? 0) !== action.clearEpoch
     ) {
       return { outcome: 'aborted' };
     }
