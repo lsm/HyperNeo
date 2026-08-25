@@ -113,6 +113,7 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
     COPILOT_GITHUB_TOKEN: '',
     MINIMAX_API_KEY: '',
     HYPERNEO_SDK_STARTUP_TIMEOUT_MS: '60000',
+    HYPERNEO_USE_DEV_PROXY: '0',
   };
 
   const daemonProcess = spawn('deno', ['run', '-A', daemonMainPath], {
@@ -254,20 +255,32 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
       getCapturedOutput: () => stdoutOutput,
       kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
       waitForExit: async () => {
-        await cleanup();
-        if (!hasExited) {
-          await new Promise<void>((resolve) => daemonProcess.once('exit', () => resolve()));
+        try {
+          await cleanup();
+          if (!hasExited) {
+            try {
+              daemonProcess.kill('SIGTERM');
+            } catch {}
+            try {
+              await waitForProcessExit(daemonProcess, hasExited, 10000);
+            } catch {
+              try {
+                daemonProcess.kill('SIGKILL');
+              } catch {}
+            }
+          }
+        } finally {
+          try {
+            await transport?.close();
+          } catch {}
+          try {
+            await mockServer.stop();
+          } catch {}
+          try {
+            rmSync(workDir, { recursive: true, force: true });
+          } catch {}
+          mockServer.restoreEnv();
         }
-        try {
-          await transport?.close();
-        } catch {}
-        try {
-          await mockServer.stop();
-        } catch {}
-        try {
-          rmSync(workDir, { recursive: true, force: true });
-        } catch {}
-        mockServer.restoreEnv();
       },
       trackSession: (sessionId: string) => {
         trackedSessions.push(sessionId);

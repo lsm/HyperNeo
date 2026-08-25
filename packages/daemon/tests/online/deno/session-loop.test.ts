@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -53,33 +53,51 @@ const hasDeno = isDeno2Point9();
 
 (hasDeno ? describe : describe.skip)('Deno daemon session loop', () => {
   let daemon: DaemonServerContext;
+  let testWorkspacePath = '';
 
   beforeEach(async () => {
     daemon = await createDenoDaemonServer();
   }, 180_000);
 
   afterEach(async () => {
-    if (!daemon) return;
     try {
-      daemon.kill('SIGTERM');
-    } catch {}
-    await daemon.waitForExit();
+      if (daemon) {
+        try {
+          daemon.kill('SIGTERM');
+        } catch {}
+        await daemon.waitForExit();
+      }
+    } finally {
+      if (testWorkspacePath) {
+        rmSync(testWorkspacePath, { recursive: true, force: true });
+        testWorkspacePath = '';
+      }
+    }
   }, 60_000);
 
   test('spawns under Deno, creates a worktree session, and delivers an assistant message', async () => {
-    const workspacePath = mkdtempSync(join(tmpdir(), 'hyperneo-deno-session-'));
-    createGitRepo(workspacePath);
+    testWorkspacePath = mkdtempSync(join(tmpdir(), 'hyperneo-deno-session-'));
+    createGitRepo(testWorkspacePath);
 
     const { sessionId } = (await daemon.messageHub.request('session.create', {
-      workspacePath,
+      workspacePath: testWorkspacePath,
       title: 'Deno session loop test',
       worktreeMode: 'worktree',
+      config: {
+        model: 'sonnet',
+        provider: 'anthropic',
+        permissionMode: 'acceptEdits',
+      },
     })) as { sessionId: string };
     daemon.trackSession(sessionId);
 
     const session = await getSession(daemon, sessionId);
-    expect(session.worktree).toBeDefined();
-    expect(session.workspacePath).not.toBe(workspacePath);
+    const worktree = session.worktree as Record<string, unknown> | undefined;
+    expect(worktree).toBeDefined();
+    expect(worktree?.isWorktree).toBe(true);
+    expect(typeof worktree?.worktreePath).toBe('string');
+    expect(worktree?.worktreePath).not.toBe(testWorkspacePath);
+    expect(session.workspacePath).toBe(worktree?.worktreePath);
 
     await sendMessage(daemon, sessionId, 'Hello from Deno');
     await waitForIdle(daemon, sessionId);
@@ -91,10 +109,24 @@ const hasDeno = isDeno2Point9();
     expect(result.sdkMessages).toBeDefined();
     expect(Array.isArray(result.sdkMessages)).toBe(true);
     expect(result.sdkMessages.length).toBeGreaterThanOrEqual(2);
-    expect(
-      result.sdkMessages.some(
-        (message) => (message as Record<string, unknown>).type === 'assistant'
-      )
-    ).toBe(true);
+
+    const assistant = result.sdkMessages.find(
+      (message) => (message as Record<string, unknown>).type === 'assistant'
+    ) as Record<string, unknown> | undefined;
+    expect(assistant).toBeDefined();
+
+    const messageBody = assistant?.message as Record<string, unknown> | undefined;
+    const content = messageBody?.content;
+    let text = '';
+    if (typeof content === 'string') {
+      text = content;
+    } else if (Array.isArray(content)) {
+      const textBlock = content.find(
+        (block) => (block as Record<string, unknown>).type === 'text'
+      ) as Record<string, unknown> | undefined;
+      text = (textBlock?.text as string) ?? '';
+    }
+    expect(typeof text).toBe('string');
+    expect(text.length).toBeGreaterThan(0);
   }, 180_000);
 });
