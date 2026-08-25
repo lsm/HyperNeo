@@ -47,7 +47,7 @@ import { reserveBasedThreshold } from './context-tracker.js';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
-import type { ProcessingStateManager } from './processing-state-manager.ts';
+import type { IdleOwnerScope, ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import {
@@ -106,6 +106,7 @@ export class SDKMessageHandler {
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
   private suppressIdleOnNextResult: boolean = false;
+  private pendingTerminalFence: IdleOwnerScope | null = null;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
   private lastSdkErrorTag: string | null = null;
   private clearAwaitingTrailingIdle: boolean = false;
@@ -883,9 +884,11 @@ export class SDKMessageHandler {
       this.lastSdkErrorTag = null;
     }
 
-    let terminalFence: ReturnType<typeof stateManager.beginTerminalIdle> | undefined;
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      terminalFence = stateManager.beginTerminalIdle();
+      if (this.pendingTerminalFence) {
+        stateManager.cancelTerminalFence(this.pendingTerminalFence);
+      }
+      this.pendingTerminalFence = stateManager.beginTerminalIdle();
     }
 
     messageHub.event(
@@ -937,7 +940,12 @@ export class SDKMessageHandler {
 
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-        await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
+        const terminalFence = this.consumePendingTerminalFence();
+        if (terminalFence) {
+          await stateManager.setIdle({ fence: terminalFence });
+        } else {
+          await stateManager.setIdle();
+        }
       }
     }
 
@@ -1227,6 +1235,12 @@ export class SDKMessageHandler {
     };
   }
 
+  private consumePendingTerminalFence(): IdleOwnerScope | null {
+    const fence = this.pendingTerminalFence;
+    this.pendingTerminalFence = null;
+    return fence;
+  }
+
   private async finishTurn(allowQueueReplay = true): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
@@ -1240,7 +1254,12 @@ export class SDKMessageHandler {
       return;
     }
 
-    await stateManager.setIdle();
+    const terminalFence = this.consumePendingTerminalFence();
+    if (terminalFence) {
+      await stateManager.setIdle({ fence: terminalFence });
+    } else {
+      await stateManager.setIdle();
+    }
 
     if (allowQueueReplay && session.config.queryMode !== 'manual') {
       try {
@@ -1259,11 +1278,21 @@ export class SDKMessageHandler {
       this.resetThinkingTokenTracking();
       const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
       if (clearTurnPending) {
-        await this.ctx.stateManager.setIdle({
-          suppressDeliveryWaiters: true,
-          suppressIdlePublish: true,
-          suppressIdleCallback: true,
-        });
+        const terminalFence = this.consumePendingTerminalFence();
+        if (terminalFence) {
+          await this.ctx.stateManager.setIdle({
+            suppressDeliveryWaiters: true,
+            suppressIdlePublish: true,
+            suppressIdleCallback: true,
+            fence: terminalFence,
+          });
+        } else {
+          await this.ctx.stateManager.setIdle({
+            suppressDeliveryWaiters: true,
+            suppressIdlePublish: true,
+            suppressIdleCallback: true,
+          });
+        }
       } else {
         const allowQueueReplay = this.lastResultWasSuccess !== false;
         await this.finishTurn(allowQueueReplay);

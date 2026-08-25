@@ -33,7 +33,6 @@ export class ProcessingStateManager {
   private nextIdleWaiterId = 0;
   private idleCallbackInFlight = false;
   private terminalIdleTransitions = 0;
-  private pendingTerminalIdleTransitions = 0;
   private pendingFenceOwners: IdleOwnerScope[] = [];
   private suppressedFenceCarryTokens: number[] = [];
   private queryOwnerGeneration = 0;
@@ -140,13 +139,19 @@ export class ProcessingStateManager {
 
   beginTerminalIdle(owner?: IdleOwnerScope): IdleOwnerScope {
     this.terminalIdleTransitions += 1;
-    this.pendingTerminalIdleTransitions += 1;
     const fenceOwner = owner ?? this.getCurrentIdleOwner();
     this.pendingFenceOwners.push(fenceOwner);
     for (const waiter of this.idleWaiters.values()) {
       if (this.waiterOwnedByTransition(waiter, owner, fenceOwner.turnToken)) waiter.fireEnd();
     }
     return fenceOwner;
+  }
+
+  cancelTerminalFence(fence: IdleOwnerScope): void {
+    const fenceIndex = this.pendingFenceOwners.indexOf(fence);
+    if (fenceIndex >= 0) {
+      this.pendingFenceOwners.splice(fenceIndex, 1);
+    }
   }
 
   restoreFromDatabase(): void {
@@ -201,7 +206,7 @@ export class ProcessingStateManager {
   }
 
   isTerminalIdlePending(): boolean {
-    return this.pendingTerminalIdleTransitions > 0;
+    return this.pendingFenceOwners.length > 0;
   }
 
   async setIdle(opts?: {
@@ -212,23 +217,18 @@ export class ProcessingStateManager {
     fence?: IdleOwnerScope;
   }): Promise<void> {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
-    const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
-    const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
     let fenceOwner: IdleOwnerScope | undefined;
-    if (consumesTerminalFence) {
-      if (opts?.fence) {
-        const fenceIndex = this.pendingFenceOwners.indexOf(opts.fence);
-        if (fenceIndex >= 0) {
-          fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
-        }
-      } else {
-        fenceOwner = this.pendingFenceOwners.shift();
+    if (opts?.fence) {
+      const fenceIndex = this.pendingFenceOwners.indexOf(opts.fence);
+      if (fenceIndex >= 0) {
+        fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
       }
     }
+    const consumesTerminalFence = fenceOwner !== undefined;
+    const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
     const transitionOwner = opts?.owner ?? fenceOwner ?? this.getCurrentIdleOwner();
     const fenceStartToken = fenceOwner ? fenceOwner.turnToken : this.turnOwnerToken;
     if (consumesTerminalFence) {
-      this.pendingTerminalIdleTransitions -= 1;
       if (suppressDrain) {
         this.suppressedFenceCarryTokens.push(fenceStartToken);
       }

@@ -205,12 +205,12 @@ describe('ProcessingStateManager', () => {
       const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
       void waiter.promise.then(() => events.push('waiter-resolved'));
 
-      manager.beginTerminalIdle();
+      const fence = manager.beginTerminalIdle();
       await Promise.resolve();
       expect(events).toEqual(['onEnd']);
       expect(manager.isTerminalIdleInFlight()).toBe(true);
 
-      await manager.setIdle();
+      await manager.setIdle({ fence });
       await waiter.promise;
       expect(events).toEqual(['onEnd', 'waiter-resolved']);
       expect(manager.isTerminalIdleInFlight()).toBe(false);
@@ -387,8 +387,8 @@ describe('ProcessingStateManager', () => {
           })
       );
 
-      manager.beginTerminalIdle();
-      const settlePromise = manager.setIdle();
+      const fence = manager.beginTerminalIdle();
+      const settlePromise = manager.setIdle({ fence });
       await Promise.resolve();
       const ownerB = manager.admitDeliveryTurn();
       const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
@@ -492,8 +492,8 @@ describe('ProcessingStateManager', () => {
         resolvedB = true;
       });
 
-      manager.beginTerminalIdle(ownerA);
-      await manager.setIdle();
+      const fence = manager.beginTerminalIdle(ownerA);
+      await manager.setIdle({ fence });
 
       expect(resolvedB).toBe(false);
       expect(onIdleCallback).not.toHaveBeenCalled();
@@ -504,12 +504,12 @@ describe('ProcessingStateManager', () => {
     test('a stale fenced idle does not overwrite a successor processing state', async () => {
       const ownerA = manager.admitDeliveryTurn();
       const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
-      manager.beginTerminalIdle();
+      const fence = manager.beginTerminalIdle();
       const ownerB = manager.admitDeliveryTurn();
       manager.waitForIdleTransition(undefined, undefined, ownerB);
       await manager.setProcessing('successor-message');
 
-      await manager.setIdle();
+      await manager.setIdle({ fence });
 
       expect(manager.getState().status).toBe('processing');
       await waiterA.promise;
@@ -588,6 +588,20 @@ describe('ProcessingStateManager', () => {
       expect(manager.isTerminalIdlePending()).toBe(false);
     });
 
+    test('an unpaired idle never consumes a handle-bound fence', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      const fence = manager.beginTerminalIdle();
+
+      await manager.setIdle();
+
+      expect(manager.isTerminalIdlePending()).toBe(true);
+
+      await manager.setIdle({ fence });
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      await waiterA.promise;
+    });
+
     test('a stalled predecessor settling first consumes only its own fence', async () => {
       const ownerA = manager.admitDeliveryTurn();
       const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
@@ -624,8 +638,8 @@ describe('ProcessingStateManager', () => {
           })
       );
 
-      manager.beginTerminalIdle();
-      const settleA = manager.setIdle();
+      const fenceA = manager.beginTerminalIdle();
+      const settleA = manager.setIdle({ fence: fenceA });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(typeof releaseCallback).toBe('function');
 
@@ -635,8 +649,8 @@ describe('ProcessingStateManager', () => {
       void waiterB.promise.then(() => {
         resolvedB = true;
       });
-      manager.beginTerminalIdle();
-      void manager.setIdle();
+      const fenceB = manager.beginTerminalIdle();
+      void manager.setIdle({ fence: fenceB });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(resolvedB).toBe(false);
 
@@ -670,8 +684,8 @@ describe('ProcessingStateManager', () => {
     test('a reentrant terminal idle consumes its fence without draining early', async () => {
       let terminalInFlightAfterReentrantIdle = false;
       manager.setOnIdleCallback(async () => {
-        manager.beginTerminalIdle();
-        await manager.setIdle();
+        const fence = manager.beginTerminalIdle();
+        await manager.setIdle({ fence });
         terminalInFlightAfterReentrantIdle = manager.isTerminalIdleInFlight();
       });
 
