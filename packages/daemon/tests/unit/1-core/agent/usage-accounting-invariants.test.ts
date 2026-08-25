@@ -420,6 +420,7 @@ function createHandler(): {
     beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
     setCompacting: mock(async () => {}),
+    getIsCompacting: mock(() => false),
     getState: mock(() => ({ phase: 'idle' })),
   } as unknown as ProcessingStateManager;
 

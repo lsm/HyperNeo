@@ -192,6 +192,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
       setCompacting: mock(async () => {}),
+      getIsCompacting: mock(() => false),
       getState: mock(() => ({ phase: 'idle' })),
     } as unknown as ProcessingStateManager;
 
