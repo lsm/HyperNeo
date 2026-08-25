@@ -98,7 +98,7 @@ const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
   },
 ];
 
-function getCuratedModelIds(providerId: string): Set<string> | undefined {
+export function getCuratedModelIds(providerId: string): Set<string> | undefined {
   const curatedModels = getProviderRegistry().getCuratedModels(providerId);
   if (curatedModels === undefined) return undefined;
   const curatedIds = new Set<string>();
@@ -1201,7 +1201,11 @@ export async function isModelExcludedByCuration(
   if (curatedAfter === undefined) {
     return false;
   }
-  return !curatedAfter.some((model) => model.id === canonicalId);
+  const expandedCuratedIds = getCuratedModelIds(providerId);
+  if (expandedCuratedIds === undefined) {
+    return false;
+  }
+  return !expandedCuratedIds.has(canonicalId);
 }
 
 export async function resolveModelAlias(

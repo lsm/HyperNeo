@@ -3,6 +3,7 @@ import type { CuratedModel, ProviderCredentials } from '@hyperneo/shared/provide
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { AcpProvider } from './acp-provider.js';
+import { bumpProviderCatalogEpoch } from '../provider-service.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -47,6 +48,7 @@ export async function syncProviderToRegistry(
   isStartupSync = false
 ): Promise<void> {
   const registry = getProviderRegistry();
+  bumpProviderCatalogEpoch();
 
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);

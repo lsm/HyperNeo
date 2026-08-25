@@ -248,6 +248,9 @@ export interface BuiltFallbackIdentity {
   providerId: string;
   primaryModel: string | undefined;
   fallbackModel: string | undefined;
+  scopedApiKey?: string;
+  scopedBaseUrl?: string;
+  scopedRegion?: string;
 }
 
 const builtFallbackBySession = new WeakMap<object, BuiltFallbackIdentity>();
@@ -357,6 +360,12 @@ export class QueryOptionsBuilder {
       providerId,
       primaryModel: config.model,
       fallbackModel: configuredFallbackModel,
+      scopedApiKey: configuredScopedApiKey,
+      scopedBaseUrl: configuredScopedBaseUrl,
+      scopedRegion:
+        typeof config.providerConfig?.region === 'string'
+          ? config.providerConfig.region
+          : undefined,
     });
 
     const systemPromptConfig = this.buildSystemPrompt();

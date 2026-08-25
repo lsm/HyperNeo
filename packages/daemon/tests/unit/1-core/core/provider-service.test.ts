@@ -1122,6 +1122,36 @@ describe('ProviderService', () => {
       expect(config?.modelId).toBe('custom-model');
     });
 
+    it('falls back to the first catalog model when no curation and no candidates exist', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'custom-1',
+            name: 'Custom Model 1',
+            alias: 'custom1',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model 1',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-1');
+    });
+
     it('re-reads curation after catalog discovery', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

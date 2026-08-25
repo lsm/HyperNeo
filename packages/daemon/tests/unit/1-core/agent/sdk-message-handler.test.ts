@@ -2792,6 +2792,35 @@ describe('SDKMessageHandler', () => {
       expect(updateSessionSpy).not.toHaveBeenCalled();
     });
 
+    it('does not persist a retry event after session-scoped settings changed since build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerConfig: { apiKey: 'sk-new-endpoint' },
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
     it('does not persist an SDK fallback when no fallback is configured', async () => {
       getProviderRegistry().register(new TranslatingMockProvider());
       mockSession.config = {

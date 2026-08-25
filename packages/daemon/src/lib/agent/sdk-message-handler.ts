@@ -1321,7 +1321,13 @@ export class SDKMessageHandler {
       !builtIdentity ||
       builtIdentity.providerId !== providerId ||
       builtIdentity.primaryModel !== session.config.model ||
-      builtIdentity.fallbackModel !== fallbackModel
+      builtIdentity.fallbackModel !== fallbackModel ||
+      builtIdentity.scopedApiKey !== session.config.providerConfig?.apiKey ||
+      builtIdentity.scopedBaseUrl !== session.config.providerConfig?.baseUrl ||
+      builtIdentity.scopedRegion !==
+        (typeof session.config.providerConfig?.region === 'string'
+          ? session.config.providerConfig.region
+          : undefined)
     ) {
       return;
     }

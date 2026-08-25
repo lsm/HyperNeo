@@ -6,9 +6,19 @@ import type {
   Provider as RegisteredProvider,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
-import { fallbackModelsFor, resolveVisibleCanonicalModelId } from './model-service.js';
+import {
+  fallbackModelsFor,
+  getCuratedModelIds,
+  resolveVisibleCanonicalModelId,
+} from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { providerSessionConfigForSession } from './providers/session-config.js';
+
+let providerCatalogEpoch = 0;
+
+export function bumpProviderCatalogEpoch(): void {
+  providerCatalogEpoch += 1;
+}
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
   return {
@@ -94,7 +104,12 @@ export class ProviderService {
   private readonly logger = new Logger('provider-service');
   private readonly catalogCache = new WeakMap<
     RegisteredProvider,
-    { models: ModelInfo[]; at: number; curatedStamp: string | undefined }
+    {
+      models: ModelInfo[];
+      at: number;
+      curatedStamp: string | undefined;
+      epoch: number;
+    }
   >();
 
   private async ensureProviderBridges(
@@ -268,6 +283,7 @@ export class ProviderService {
     if (
       cached &&
       cached.curatedStamp === curatedStamp &&
+      cached.epoch === providerCatalogEpoch &&
       Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
     ) {
       return cached.models;
@@ -287,7 +303,12 @@ export class ProviderService {
       models = fallbackModelsFor(provider);
     }
     if (models.length > 0) {
-      this.catalogCache.set(provider, { models, at: Date.now(), curatedStamp });
+      this.catalogCache.set(provider, {
+        models,
+        at: Date.now(),
+        curatedStamp,
+        epoch: providerCatalogEpoch,
+      });
     }
     return models;
   }
@@ -299,7 +320,12 @@ export class ProviderService {
   ): Promise<string | undefined> {
     const registry = this.getRegistry();
     if (registry.getCuratedModels(providerId) === undefined) {
-      return candidates.find((candidate) => candidate !== undefined);
+      const preferred = candidates.find((candidate) => candidate !== undefined);
+      if (preferred !== undefined) {
+        return preferred;
+      }
+      const catalogModels = await this.getProviderCatalogModels(providerId, provider);
+      return catalogModels[0]?.id;
     }
     const catalogModels = await this.getProviderCatalogModels(providerId, provider);
     const catalogIds = new Set(catalogModels.map((model) => model.id));
@@ -308,11 +334,11 @@ export class ProviderService {
       const canonicalId =
         (await resolveVisibleCanonicalModelId(candidate, providerId, 'global', catalogModels)) ??
         candidate;
-      const curatedAfter = registry.getCuratedModels(providerId);
-      if (curatedAfter === undefined) {
+      const expandedCuratedIds = getCuratedModelIds(providerId);
+      if (expandedCuratedIds === undefined) {
         return candidate;
       }
-      if (!curatedAfter.some((model) => model.id === canonicalId)) continue;
+      if (!expandedCuratedIds.has(canonicalId)) continue;
       if (!catalogIds.has(canonicalId)) continue;
       return candidate;
     }
@@ -320,7 +346,15 @@ export class ProviderService {
     if (curatedAfter === undefined) {
       return catalogModels[0]?.id;
     }
-    return curatedAfter.find((entry) => catalogIds.has(entry.id))?.id;
+    for (const entry of curatedAfter) {
+      const canonical =
+        (await resolveVisibleCanonicalModelId(entry.id, providerId, 'global', catalogModels)) ??
+        entry.id;
+      if (catalogIds.has(canonical)) {
+        return canonical;
+      }
+    }
+    return undefined;
   }
 
   async getTitleGenerationModels(
