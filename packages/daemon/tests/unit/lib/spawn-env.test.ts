@@ -140,12 +140,14 @@ describe('buildWorkflowConditionEnv', () => {
 
   test('injects only non-restricted allowedEnv names from the immutable source', () => {
     const env = buildWorkflowConditionEnv(
-      ['MY_TOOL_FLAG', 'GH_TOKEN', 'ANTHROPIC_API_KEY'],
+      ['MY_TOOL_FLAG', 'GH_TOKEN', 'ANTHROPIC_API_KEY', 'SSH_AUTH_SOCK', 'KUBECONFIG'],
       SOURCE
     );
     expect(env.MY_TOOL_FLAG).toBe('1');
     expect(env.GH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.KUBECONFIG).toBeUndefined();
   });
 });
 
@@ -162,16 +164,24 @@ describe('isRestrictedEnvName', () => {
 
 describe('startup baseline immutability', () => {
   test('builders read the captured startup baseline, not live process.env mutations', () => {
-    const previous = process.env.SPAWN_ENV_PROBE_VAR;
-    process.env.SPAWN_ENV_PROBE_VAR = 'live-value';
+    const previous = process.env.HTTPS_PROXY;
+    process.env.HTTPS_PROXY = 'http://live-proxy.example:8080';
     try {
-      expect(buildCommandEnv().SPAWN_ENV_PROBE_VAR).toBeUndefined();
-      expect(buildCommandEnv(process.env).SPAWN_ENV_PROBE_VAR).toBe('live-value');
+      expect(buildCommandEnv().HTTPS_PROXY).not.toBe('http://live-proxy.example:8080');
+      expect(buildCommandEnv(process.env).HTTPS_PROXY).toBe('http://live-proxy.example:8080');
     } finally {
-      if (previous === undefined) delete process.env.SPAWN_ENV_PROBE_VAR;
-      else process.env.SPAWN_ENV_PROBE_VAR = previous;
+      if (previous === undefined) delete process.env.HTTPS_PROXY;
+      else process.env.HTTPS_PROXY = previous;
     }
   });
+
+  test.skipIf(process.platform !== 'win32')(
+    'resolves allowlisted keys case-insensitively on Windows',
+    () => {
+      const env = buildOsBaselineEnv({ APPDATA: 'C:\\Users\\agent\\AppData\\Roaming' });
+      expect(env.AppData).toBe('C:\\Users\\agent\\AppData\\Roaming');
+    }
+  );
 
   test('startup credential discovery refresh picks up post-import login credentials', () => {
     const previous = process.env.CLAUDE_CODE_OAUTH_TOKEN;

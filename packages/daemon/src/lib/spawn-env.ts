@@ -98,6 +98,24 @@ const RESTRICTED_ENV_PREFIXES = [
 
 const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 
+const CONDITION_FORBIDDEN_ENV_KEYS = new Set([
+  'SSH_AUTH_SOCK',
+  'SSH_AGENT_PID',
+  'SSH_AGENT_LAUNCHER',
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  'GIT_SSH_VARIANT',
+  'GIT_ASKPASS',
+  'SSH_ASKPASS',
+  'KUBECONFIG',
+  'DOCKER_CONFIG',
+  'NPM_CONFIG_USERCONFIG',
+  'AWS_CONFIG_FILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'AZURE_CONFIG_DIR',
+]);
+
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
 function captureBaseline(source: EnvSource): Readonly<Record<string, string>> {
@@ -118,10 +136,21 @@ export function _setStartupEnvBaselineForTesting(source: EnvSource): void {
   STARTUP_ENV_BASELINE = captureBaseline(source);
 }
 
+function sourceValue(source: EnvSource, key: string): string | undefined {
+  const exact = source[key];
+  if (exact !== undefined) return exact;
+  if (process.platform !== 'win32') return undefined;
+  const lower = key.toLowerCase();
+  for (const [name, value] of Object.entries(source)) {
+    if (name.toLowerCase() === lower) return value;
+  }
+  return undefined;
+}
+
 function pickKeys(keys: readonly string[], source: EnvSource): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of keys) {
-    const value = source[key];
+    const value = sourceValue(source, key);
     if (value !== undefined) env[key] = value;
   }
   return env;
@@ -188,21 +217,21 @@ export function buildWorkflowConditionEnv(
   const env = buildCommandEnv(source);
   if (!allowedEnv) return env;
   for (const key of allowedEnv) {
-    if (isRestrictedEnvName(key)) continue;
-    const value = source[key];
+    if (isRestrictedEnvName(key) || CONDITION_FORBIDDEN_ENV_KEYS.has(key)) continue;
+    const value = sourceValue(source, key);
     if (value !== undefined) env[key] = value;
   }
   return env;
 }
 
 function collectExtraHeaderConfig(source: EnvSource): Record<string, string> {
-  const count = Number(source.GIT_CONFIG_COUNT);
+  const count = Number(sourceValue(source, 'GIT_CONFIG_COUNT'));
   if (!Number.isInteger(count) || count <= 0) return {};
   const keys: string[] = [];
   const values: string[] = [];
   for (let index = 0; index < count; index++) {
-    const key = source[`GIT_CONFIG_KEY_${index}`];
-    const value = source[`GIT_CONFIG_VALUE_${index}`];
+    const key = sourceValue(source, `GIT_CONFIG_KEY_${index}`);
+    const value = sourceValue(source, `GIT_CONFIG_VALUE_${index}`);
     if (key === undefined || value === undefined) continue;
     if (!/^http\.extraHeader$/i.test(key)) continue;
     keys.push(key);
