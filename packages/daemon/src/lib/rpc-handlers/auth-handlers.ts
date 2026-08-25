@@ -144,6 +144,8 @@ export function setupAuthHandlers(
       try {
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
+          const { bumpProviderCatalogEpoch } = await import('../model-service.js');
+          bumpProviderCatalogEpoch(providerId);
           if (credentials.type === 'oauth') {
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           }

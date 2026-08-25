@@ -3417,7 +3417,7 @@ describe('Model Service', () => {
       ]);
     });
 
-    it('clears the stale scoped catalog when discovery returns an empty catalog', async () => {
+    it('preserves an auth-rejected scoped catalog as an explicit empty result', async () => {
       const registry = getProviderRegistry();
       let scopedFetchCount = 0;
       let authRejected = false;
@@ -3447,6 +3447,7 @@ describe('Model Service', () => {
         getModelForTier: () => undefined,
         buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
       } as unknown as Parameters<typeof registry.register>[0]);
+      registry.setCuratedModels('ollama', [{ id: 'scoped-http://127.0.0.1:11434' }]);
       setModelsCache(new Map());
 
       await ensureScopedProviderCatalogModels('session-scoped-8', 'ollama', {
@@ -3463,6 +3464,19 @@ describe('Model Service', () => {
       });
       expect(scopedFetchCount).toBe(2);
       expect(getAvailableModels('session-scoped-8')).toEqual([]);
+
+      await ensureScopedProviderCatalogModels('session-scoped-8', 'ollama', {
+        baseUrl: 'http://127.0.0.1:11434',
+        apiKey: 'rejected-key',
+      });
+      expect(scopedFetchCount).toBe(2);
+      expect(
+        isCuratedOutModelAllowingExactId(
+          'scoped-http://127.0.0.1:11434',
+          'ollama',
+          'session-scoped-8'
+        )
+      ).toBe(true);
     });
 
     it('clears the stale scoped catalog when discovery throws', async () => {

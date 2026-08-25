@@ -397,7 +397,7 @@ const scopedCatalogStamps = new Map<string, string>();
 function peekSessionCatalogModels(cacheKey: string): ModelInfo[] | null {
   const cached = modelsCache.get(cacheKey);
   const at = cacheTimestamps.get(cacheKey);
-  if (!cached || cached.length === 0 || at === undefined || Date.now() - at >= CACHE_TTL) {
+  if (!cached || at === undefined || Date.now() - at >= CACHE_TTL) {
     return null;
   }
   return cached;
@@ -432,13 +432,9 @@ export async function ensureScopedProviderCatalogModels(
   };
   try {
     const models = await provider.getModelsForSessionConfig(sessionConfig);
-    if (models.length > 0) {
-      modelsCache.set(sessionCacheKey, models);
-      cacheTimestamps.set(sessionCacheKey, Date.now());
-      scopedCatalogStamps.set(sessionCacheKey, stamp);
-    } else {
-      dropScopedCatalog();
-    }
+    modelsCache.set(sessionCacheKey, models);
+    cacheTimestamps.set(sessionCacheKey, Date.now());
+    scopedCatalogStamps.set(sessionCacheKey, stamp);
   } catch {
     dropScopedCatalog();
   }
