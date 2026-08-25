@@ -103,8 +103,11 @@ the gating change.
 ## Proposed unification PRs — NOT applied, owner decides
 
 Ordered by value/risk ratio. U1+U5 pair naturally; U3 subsumes the mechanical
-parts of all others and is the gateway to the `reduceRun` combinator (ADR 0004
-rule-of-three; see the ADR 0004 pilot note added by this PR).
+parts of all others and is the gateway to the `reduceRun` combinator (see the
+ADR 0004 pilot note added by this PR; NOTE 2026-08-25 — the ADR's promotion
+rule now counts DIRECT superpipe compositions, and no web source imports
+superpipe yet, so the four plain facades below do NOT satisfy it; a `reduceRun`
+proposal waits until ≈3 direct uses exist).
 
 ### U1. Enable the snapshot watchdog everywhere (kill rows 2/3 drift)
 
@@ -161,7 +164,9 @@ structurally identical) into one executor; per-hook config becomes declarative
   STM/PRJ/MIL keep one); the drift table shrinks to rows 5–8 (policy) + 12–13
   (surface); the executor is exactly the body a future
   `reduceRun` combinator would own, so this is the promotion path ADR 0004
-  already sanctions at ≥3 uses (4 exist).
+  sanctions — but under the 2026-08-25 revision the count that matters is
+  direct superpipe compositions, and these four plain-function facades are not
+  those; the proposal waits for ≈3 direct uses.
 - **Risk:** medium mechanical risk concentrated in emission mapping — STM
   surfaces `error` and runs the active-turn side channel, GRP feeds a pagination
   reducer. Request timeout/invocation also differs: STM/PRJ/MIL call

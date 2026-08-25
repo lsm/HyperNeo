@@ -1,9 +1,13 @@
 # Provider-Concurrency Admission Gate — Design (ADR 0004 Phase 2, chain C5)
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path"). In particular, the "`decisionRun` admission gate" / "new `decisionRun` core" plan language (Purpose, the decision-points list, and the P1 gate table) is superseded: implement `decideMessageSendAdmission` and the other decision points as direct superpipe pipelines; the gate inventory, ordering, and decision content stand unchanged.
+
 Status: Proposed (design pass — doc only, no production code in this change)
 Date: 2026-08-23
 Task: #1313. Sources: `docs/reports/providers-area-survey.md` chain C5 (PR #2722) and
-ADR 0004 Roadmap Phase 2 (`docs/adr/0004-superpipe-decision-pipelines.md`).
+ADR 0004 Roadmap Phase 2 (archived: `docs/adr/history/0004-pilots.md`, Roadmap
+section — the Phase 2 row carries the sequencing and pre-persistence queueing
+language; the current ADR lists the gate as an open roadmap item).
 Consumes: the limit-error classifier from #2661 (merged 2026-08-22, `667d53a1`) and
 the LLM classification tier from #2664 (merged 2026-08-23, `ae179427`); both are in
 `dev` at this branch's base, so the chain's sequencing precondition is satisfied.
@@ -2335,6 +2339,12 @@ by pre-existing suites):
 
 ## ADR classification
 
+*SUPERSEDED 2026-08-25 (ADR 0004 revision — one direct pipeline per business
+path): the "composed with the blessed `decisionRun` combinator" framing below
+predates the revision. Implement P1–P4 decision points as direct superpipe
+compositions; the resource-ownership point (registry as class-owned state with
+injected clock/jitter; pipelines receive snapshots) stands unchanged.*
+
 - P1/P2 are **P3 guard/validation gates + P7 functional sandwich** composed with
    the blessed `decisionRun` combinator — the ADR's named landing spot for Phase 2.
   P3/P4 are point decisions over the same pure core (sanctioned; no pipeline
@@ -2351,9 +2361,10 @@ by pre-existing suites):
 
 ## References
 
-- ADR 0004 Roadmap Phase 2 and pilot conventions:
-  `docs/adr/0004-superpipe-decision-pipelines.md` (Phase 2 entry; Decision items
-  1–7; pilots 4/7/9 for the gate/point-decision/caveat patterns).
+- ADR 0004 Roadmap Phase 2 and pilot conventions: the Phase 2 roadmap entry
+  and pilot records 4/7/9 (gate/point-decision/caveat patterns) are archived in
+  `docs/adr/history/0004-pilots.md`; the normative decision rules are Decision
+  items 1–8 of `docs/adr/0004-superpipe-pipelines.md`.
 - Survey: `docs/reports/providers-area-survey.md` — C5 (ranked chains), area map
   row "Concurrency limits", GLM 429 causes.
 - Classifier + ladder: `packages/daemon/src/lib/agent/limit-error-classifier.ts`,
