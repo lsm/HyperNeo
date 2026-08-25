@@ -17,6 +17,7 @@ const SOURCE: Record<string, string> = {
   PATH: '/usr/local/bin:/usr/bin:/bin',
   HOME: '/Users/agent',
   USER: 'agent',
+  USERNAME: 'agent',
   SHELL: '/bin/zsh',
   TMPDIR: '/var/folders/ab/',
   LANG: 'en_US.UTF-8',
@@ -39,6 +40,7 @@ const SOURCE: Record<string, string> = {
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_ATTR_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
+  GIT_EDITOR: 'true',
   EMAIL: 'agent@example.com',
   GIT_ALLOW_PROTOCOL: 'file:https',
   GIT_PROXY_COMMAND: '/tmp/git-proxy.sh',
@@ -72,6 +74,7 @@ describe('buildOsBaselineEnv', () => {
     expect(env.HOME).toBe(SOURCE.HOME);
     expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
     expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
+    expect(env.USERNAME).toBe(SOURCE.USERNAME);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
@@ -121,7 +124,7 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/gitconfig-global');
   });
 
   test('reindexes safe.directory alongside http.extraHeader entries', () => {
@@ -253,6 +256,7 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_SSL_NO_VERIFY).toBe(SOURCE.GIT_SSL_NO_VERIFY);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
+    expect(env.GIT_EDITOR).toBe(SOURCE.GIT_EDITOR);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
