@@ -1791,6 +1791,27 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(delivery.failureReason).toBe('run_interests_rebuilt');
   });
 
+  test('rebuildRunInterests preserves queued deliveries and redispatches retained events', async () => {
+    const { workflow, run, task } = await startRunWithSubscription();
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    runtime.rebuildRunInterests(run.id);
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-stale',
+    });
+
+    expect(injected).toHaveLength(1);
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).not.toBe('failed');
+  });
+
   test('does not ignore unmatched events before runtime rehydrate completes', async () => {
     const event = makeEvent();
     await eventService.publish(event);

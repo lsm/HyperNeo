@@ -882,7 +882,8 @@ export class SpaceRuntime {
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return;
     try {
-      this.registerRunInterestsFromWorkflow(run, workflow, { clearQueuedDeliveries: true });
+      this.registerRunInterestsFromWorkflow(run, workflow, { clearQueuedDeliveries: false });
+      this.redispatchRetainedExternalEvents();
     } catch (err) {
       log.warn(
         `SpaceRuntime: failed to rebuild static interests for run ${runId}: ${formatCommandError(err)}`
@@ -5315,7 +5316,7 @@ export class SpaceRuntime {
         }
       }
       if (activatedOnChannel) {
-        this.recordRestartRecoveryCycleTraversal(run.id, workflow, channel, channelIndex);
+        this.recordRestartRecoveryCycleTraversal(run.id, workflow, channelIndex);
       }
     }
 
@@ -5415,7 +5416,6 @@ export class SpaceRuntime {
   private recordRestartRecoveryCycleTraversal(
     runId: string,
     workflow: SpaceWorkflow,
-    channel: WorkflowChannel,
     channelIndex: number
   ): void {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
