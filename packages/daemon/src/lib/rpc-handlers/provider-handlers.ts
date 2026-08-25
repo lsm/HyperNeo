@@ -566,7 +566,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
     const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
 
-    const discoveryPromise = provider.listRemoteModels({ force: true });
+    const discoveryPromise = provider.listRemoteModels({
+      force: true,
+      ...(record.baseUrl ? { baseUrl: record.baseUrl } : {}),
+    });
     let discovered: ModelInfo[];
     try {
       discovered = await raceWithTimeout(discoveryPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
@@ -904,9 +907,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       if (record.kind === 'built_in') {
-        const strippedConfig = stripPersistedDiscovery(record.configJson);
+        const currentRow = providerRepo.getProvider(data.id) ?? record;
+        const strippedConfig = stripPersistedDiscovery(currentRow.configJson);
         const updates: UpdateProviderParams = { isEnabled: false };
-        if (strippedConfig !== record.configJson) {
+        if (strippedConfig !== currentRow.configJson) {
           updates.configJson = strippedConfig;
         }
         providerRepo.updateProvider(data.id, updates);
