@@ -581,9 +581,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         if (callback) {
           try {
             await callback(record.runId);
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
 
         return jsonResult({
