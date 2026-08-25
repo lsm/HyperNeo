@@ -38,16 +38,9 @@ async function clearCacheAndNotifyProvidersChanged(
   if (providerId && providerRepo && stripPersisted) {
     const record = providerRepo.getProviderByProviderId(providerId);
     if (record) {
-      try {
-        const stripped = stripPersistedDiscovery(record.configJson);
-        if (stripped !== record.configJson) {
-          providerRepo.updateProvider(record.id, { configJson: stripped });
-        }
-      } catch (error) {
-        log.warn(
-          `Failed to strip persisted discovery for ${providerId}; in-memory clear will still run:`,
-          error
-        );
+      const stripped = stripPersistedDiscovery(record.configJson);
+      if (stripped !== record.configJson) {
+        providerRepo.updateProvider(record.id, { configJson: stripped });
       }
     }
   }
