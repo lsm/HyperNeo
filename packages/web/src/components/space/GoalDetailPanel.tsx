@@ -62,15 +62,23 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const agents = spaceStore.spaceId.value === spaceId ? spaceStore.longHorizonAgents.value : [];
 
   useEffect(() => {
+    let cancelled = false;
     setOwnerLoadFailed(false);
     setAssignOpen(false);
     spaceStore
       .fetchGoalOwner(goalId)
-      .then(() => setOwnerLoadFailed(false))
-      .catch(() => setOwnerLoadFailed(true));
+      .then(() => {
+        if (!cancelled) setOwnerLoadFailed(false);
+      })
+      .catch(() => {
+        if (!cancelled) setOwnerLoadFailed(true);
+      });
     if (spaceStore.longHorizonAgents.value.length === 0) {
       spaceStore.refreshLongHorizonAgents().catch(() => {});
     }
+    return () => {
+      cancelled = true;
+    };
   }, [spaceId, goalId]);
 
   if (!goal) {

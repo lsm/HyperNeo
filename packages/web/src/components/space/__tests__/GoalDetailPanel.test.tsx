@@ -472,4 +472,29 @@ describe('GoalDetailPanel', () => {
 
     await waitFor(() => expect(screen.getByText('agent-gone (not found)')).toBeTruthy());
   });
+
+  it('ignores a stale owner-fetch rejection after switching goals', async () => {
+    let rejectFirst: (err: Error) => void = () => {};
+    mockFetchGoalOwner.mockImplementation((goalId: string) => {
+      if (goalId === 'goal-1') {
+        return new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        });
+      }
+      const owner = resolvedOwner();
+      mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
+      return Promise.resolve(owner);
+    });
+    mockGoals.value = [makeGoal(), makeGoal({ id: 'goal-2', title: 'Second goal' })];
+    const { rerender } = render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    rerender(<GoalDetailPanel spaceId="space-1" goalId="goal-2" />);
+    await waitFor(() => expect(screen.getByText('Scout (@scout)')).toBeTruthy());
+
+    rejectFirst(new Error('stale request failed'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText('Owner unavailable — refresh to retry.')).toBeNull();
+    expect(screen.getByText('Scout (@scout)')).toBeTruthy();
+  });
 });
