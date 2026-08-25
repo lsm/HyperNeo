@@ -284,7 +284,7 @@ export class QueryOptionsBuilder {
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 
-  async build(): Promise<Options> {
+  async build(overrides?: { askUserQuestionHook?: HookCallback }): Promise<Options> {
     const config = this.ctx.session.config;
 
     await this.ctx.settingsManager.prepareSDKOptions();
@@ -314,7 +314,7 @@ export class QueryOptionsBuilder {
     const disallowedTools = this.getDisallowedTools();
     const allowedTools = this.getAllowedTools();
     const additionalDirectories = this.getAdditionalDirectories();
-    const hooks = this.buildHooks();
+    const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
       ...this.buildPluginsFromSkills(),
@@ -861,15 +861,15 @@ CRITICAL RULES:
     return 'bypassPermissions';
   }
 
-  private buildHooks(): Options['hooks'] {
+  private buildHooks(askUserQuestionHook?: HookCallback): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
     const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
 
-    if (this.askUserQuestionHook) {
+    if (askUserQuestionHook) {
       preToolUse.push({
         matcher: 'AskUserQuestion',
         timeout: 86400,
-        hooks: [this.askUserQuestionHook],
+        hooks: [askUserQuestionHook],
       });
     }
 

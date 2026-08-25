@@ -1,5 +1,10 @@
 import { spawn as nodeSpawn } from 'node:child_process';
-import type { Options, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  HookCallback,
+  Options,
+  SpawnedProcess,
+  SpawnOptions,
+} from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -24,6 +29,7 @@ import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
+import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -334,6 +340,7 @@ export interface QueryRunnerContext {
   incrementQueryGeneration(): number;
   getQueryGeneration(): number;
   isCleaningUp(): boolean;
+  attemptTokens: QueryAttemptRegistry;
 
   onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
@@ -525,12 +532,43 @@ export class QueryRunner {
     }
   }
 
+  invalidateAttemptTokens(): void {
+    this.ctx.attemptTokens.invalidateCurrent();
+  }
+
+  private createAttemptBoundPreToolUseHook(attemptToken: QueryAttemptToken): HookCallback {
+    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook();
+    return async (input, toolUseID, options) => {
+      if (attemptToken.isLive()) return hook(input, toolUseID, options);
+      const { session, logger } = this.ctx;
+      logger.warn(
+        `PreToolUse hook: denying callback from superseded query attempt ` +
+          `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+      );
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason:
+            'The query attempt that issued this tool call was superseded by an automatic retry ' +
+            'or a replacement query.',
+        },
+      };
+    };
+  }
+
   private async runQuery(
     queryGeneration: number,
     retryAttempt = 0,
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+
+    const attemptToken =
+      this.ctx.getQueryGeneration() === queryGeneration
+        ? this.ctx.attemptTokens.allocate()
+        : QueryAttemptRegistry.detached();
+    const attemptHook = this.createAttemptBoundPreToolUseHook(attemptToken);
 
     let startupPermit: SdkStartupPermit | null = null;
     const releaseStartupPermit = (reason: string): void => {
@@ -615,8 +653,7 @@ export class QueryRunner {
       }
 
       optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      optionsBuilder.setAskUserQuestionHook(this.ctx.askUserQuestionHandler.createPreToolUseHook());
-      let queryOptions = await optionsBuilder.build();
+      let queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
 
       if (provider?.setSessionThinkingConfig) {
         const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
@@ -650,7 +687,7 @@ export class QueryRunner {
           ` ${JSON.stringify(snapshotPayload)}`
       );
 
-      queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions);
+      queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions, attemptHook);
       if (isWorkflowSubSession) {
         const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
         const missingServers = missingMcpServers(
@@ -718,7 +755,7 @@ export class QueryRunner {
             );
           }
 
-          queryOptions = await optionsBuilder.build();
+          queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
           queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
           const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
           logger.info(
@@ -736,7 +773,7 @@ export class QueryRunner {
         }
       }
 
-      queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions);
+      queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions, attemptHook);
 
       const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
       const refreshAutoCompactWindow = true;
@@ -1041,7 +1078,7 @@ export class QueryRunner {
 
       if (routeDecision.route.action === 'startup_timeout_retry') {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
           idleFirst: true,
@@ -1064,7 +1101,7 @@ export class QueryRunner {
       if (routeDecision.route.action === 'message_not_found_retry') {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
           resetStartupState: true,
@@ -1089,7 +1126,7 @@ export class QueryRunner {
         stateManager.getState().status !== 'interrupted'
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
           resetStartupState: true,
@@ -1111,7 +1148,7 @@ export class QueryRunner {
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
             `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
         );
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: retryAttempt + 1,
           recoveryState,
           resetStartupState: true,
@@ -1185,6 +1222,8 @@ export class QueryRunner {
         }
       }
     } finally {
+      this.ctx.attemptTokens.invalidate(attemptToken);
+
       releaseStartupPermit('attempt_finished');
 
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
@@ -1259,7 +1298,10 @@ export class QueryRunner {
       .sort();
   }
 
-  private async ensureSpaceChatMcpInvariant(queryOptions: Options): Promise<Options> {
+  private async ensureSpaceChatMcpInvariant(
+    queryOptions: Options,
+    askUserQuestionHook: HookCallback
+  ): Promise<Options> {
     const { session, logger } = this.ctx;
     if (session.type !== 'space_chat') return queryOptions;
 
@@ -1290,7 +1332,7 @@ export class QueryRunner {
 
     if (this.ctx.onMissingSpaceChatMcpServers) {
       await this.ctx.onMissingSpaceChatMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build();
+      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
       const stillMissing = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
@@ -1313,7 +1355,10 @@ export class QueryRunner {
     );
   }
 
-  private async ensureMemberSpaceMcpInvariant(queryOptions: Options): Promise<Options> {
+  private async ensureMemberSpaceMcpInvariant(
+    queryOptions: Options,
+    askUserQuestionHook: HookCallback
+  ): Promise<Options> {
     const { session, logger } = this.ctx;
     const policy = resolveSpaceMcpSessionPolicy(session, {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
@@ -1350,7 +1395,7 @@ export class QueryRunner {
 
     if (this.ctx.onMissingMemberSpaceMcpServers) {
       await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build();
+      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const stillMissing = missingMcpServers(
         repairedOptions.mcpServers as Record<string, unknown> | undefined,
@@ -1374,9 +1419,12 @@ export class QueryRunner {
 
   private async runRetryTeardown(
     queryGeneration: number,
+    attemptToken: QueryAttemptToken,
     options: RetryTeardownOptions
   ): Promise<void> {
     const { messageQueue, stateManager, logger } = this.ctx;
+
+    this.ctx.attemptTokens.invalidate(attemptToken);
 
     const abandon = (point: string): boolean => {
       const routeGuard = options.routeGuard;

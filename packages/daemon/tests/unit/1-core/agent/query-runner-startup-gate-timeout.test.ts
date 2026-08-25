@@ -49,6 +49,7 @@ import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 
 function sdkMessage(): SDKMessage {
   return { type: 'system', subtype: 'init', session_id: 'sdk-session' } as unknown as SDKMessage;
@@ -199,6 +200,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
+      attemptTokens: new QueryAttemptRegistry(),
 
       onSDKMessage: async () => {},
       onSlashCommandsFetched: async () => {},
