@@ -5290,6 +5290,101 @@ describe('QueryRunner', () => {
         expect(controller.signal.aborted).toBe(false);
       });
     });
+
+    describe('B3c finalizer post-await guards', () => {
+      const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
+      let previousProviderService: unknown;
+      let onRestore: (() => void) | null = null;
+
+      beforeEach(() => {
+        previousProviderService = (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY];
+        onRestore = null;
+        (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = {
+          restoreEnvVars: mock((_original: Record<string, unknown>) => {
+            onRestore?.();
+          }),
+        };
+      });
+
+      afterEach(() => {
+        (globalThis as Record<symbol, unknown>)[PROVIDER_SERVICE_KEY] = previousProviderService;
+      });
+
+      it('aborted_noop route suppresses setIdle when status becomes interrupted', async () => {
+        const error = new Error(ABORT_MSG);
+        error.name = 'AbortError';
+        buildSpy.mockRejectedValueOnce(error);
+        getStateSpy.mockReturnValue({ status: 'idle' });
+        onRestore = () => {
+          getStateSpy.mockReturnValue({ status: 'interrupted' });
+        };
+
+        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeAllZero({ clear: 1, stop: 1 }));
+      });
+
+      it('aborted_noop route suppresses setIdle when the abort controller is replaced', async () => {
+        const error = new Error(ABORT_MSG);
+        error.name = 'AbortError';
+        buildSpy.mockRejectedValueOnce(error);
+
+        let replacementController: AbortController | null = null;
+        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        onRestore = () => {
+          ctx.queryAbortController = new AbortController();
+          replacementController = ctx.queryAbortController;
+        };
+
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeAllZero({ clear: 1, stop: 1 }));
+        expect(ctx.queryAbortController).toBe(replacementController);
+      });
+
+      it('aborted_noop route suppresses setIdle when the query generation is bumped', async () => {
+        const error = new Error(ABORT_MSG);
+        error.name = 'AbortError';
+        buildSpy.mockRejectedValueOnce(error);
+
+        let generation = 1;
+        const ctx = createContext({
+          originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' },
+          getQueryGeneration: () => generation,
+          incrementQueryGeneration: () => ++generation,
+        });
+        onRestore = () => {
+          ctx.incrementQueryGeneration();
+        };
+
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeAllZero({ clear: 1, stop: 1 }));
+        expect(generation).toBe(3);
+      });
+
+      it('terminal route still idles when status becomes interrupted', async () => {
+        buildSpy.mockRejectedValueOnce(new Error(TERMINAL_AUTH_MSG));
+        getStateSpy.mockReturnValue({ status: 'idle' });
+        onRestore = () => {
+          getStateSpy.mockReturnValue({ status: 'interrupted' });
+        };
+
+        const ctx = createContext({ originalEnvVars: { ANTHROPIC_API_KEY: 'b3c-test' } });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expectRoute(routeTerminal(ErrorCategory.AUTHENTICATION));
+      });
+    });
   });
 });
 
