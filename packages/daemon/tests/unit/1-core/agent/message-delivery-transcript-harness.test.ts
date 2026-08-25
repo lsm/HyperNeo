@@ -96,136 +96,127 @@ function instrumentDeliveryTranscript(
   const sdkRepo = db.getSDKMessageRepo();
   const jobRepo = db.getJobQueueRepo();
 
-  const wrapRepo = (repo: SDKMessageRepository) => {
-    const originals = {
-      markDeliveryConsumedByUuid: repo.markDeliveryConsumedByUuid.bind(repo),
-      markDeliveryConsumedByUuids: repo.markDeliveryConsumedByUuids.bind(repo),
-      markDeliverySubmittedByUuids: repo.markDeliverySubmittedByUuids.bind(repo),
-      markDeliveryRetryableByUuid: repo.markDeliveryRetryableByUuid.bind(repo),
-      markDeliveryFailedByUuid: repo.markDeliveryFailedByUuid.bind(repo),
-      recordDeliveryTurnEnd: repo.recordDeliveryTurnEnd.bind(repo),
-      clearDeliveryTurnEnd: repo.clearDeliveryTurnEnd.bind(repo),
-    };
-
-    repo.markDeliveryConsumedByUuid = (sessionId: string, uuid: string): string | null => {
-      const dbId = originals.markDeliveryConsumedByUuid(sessionId, uuid);
-      transcript.push({ op: 'db:markConsumed', uuid, dbId });
-      return dbId;
-    };
-    repo.markDeliveryConsumedByUuids = (sessionId: string, uuids: string[]): string[] => {
-      const dbIds = originals.markDeliveryConsumedByUuids(sessionId, uuids);
-      transcript.push({ op: 'db:markConsumedBatch', uuids, dbIds });
-      return dbIds;
-    };
-    repo.markDeliverySubmittedByUuids = (sessionId: string, uuids: string[]): string[] => {
-      const dbIds = originals.markDeliverySubmittedByUuids(sessionId, uuids);
-      transcript.push({ op: 'db:markSubmittedBatch', uuids, dbIds });
-      return dbIds;
-    };
-    repo.markDeliveryRetryableByUuid = (sessionId: string, uuid: string): string | null => {
-      const dbId = originals.markDeliveryRetryableByUuid(sessionId, uuid);
-      transcript.push({ op: 'db:markRetryable', uuid, dbId });
-      return dbId;
-    };
-    repo.markDeliveryFailedByUuid = (sessionId: string, uuid: string): string | null => {
-      const dbId = originals.markDeliveryFailedByUuid(sessionId, uuid);
-      transcript.push({ op: 'db:markFailed', uuid, dbId });
-      return dbId;
-    };
-    repo.recordDeliveryTurnEnd = (
-      sessionId: string,
-      messageUuid: string,
-      endedAt: string
-    ): void => {
-      originals.recordDeliveryTurnEnd(sessionId, messageUuid, endedAt);
-      transcript.push({ op: 'db:recordTurnEnd', uuid: messageUuid });
-    };
-    repo.clearDeliveryTurnEnd = (sessionId: string, messageUuid: string): void => {
-      originals.clearDeliveryTurnEnd(sessionId, messageUuid);
-      transcript.push({ op: 'db:clearTurnEnd', uuid: messageUuid });
-    };
+  const sdkOriginals = {
+    markDeliveryConsumedByUuid: sdkRepo.markDeliveryConsumedByUuid.bind(sdkRepo),
+    markDeliveryConsumedByUuids: sdkRepo.markDeliveryConsumedByUuids.bind(sdkRepo),
+    markDeliverySubmittedByUuids: sdkRepo.markDeliverySubmittedByUuids.bind(sdkRepo),
+    markDeliveryRetryableByUuid: sdkRepo.markDeliveryRetryableByUuid.bind(sdkRepo),
+    markDeliveryFailedByUuid: sdkRepo.markDeliveryFailedByUuid.bind(sdkRepo),
+    recordDeliveryTurnEnd: sdkRepo.recordDeliveryTurnEnd.bind(sdkRepo),
+    clearDeliveryTurnEnd: sdkRepo.clearDeliveryTurnEnd.bind(sdkRepo),
   };
 
-  const wrapJobRepo = (repo: JobQueueRepository) => {
-    const originals = {
-      requeue: repo.requeue.bind(repo),
-      requeueParked: repo.requeueParked.bind(repo),
-      requeueAs: repo.requeueAs.bind(repo),
-      isClaimCurrent: repo.isClaimCurrent.bind(repo),
-      getParkCount: repo.getParkCount.bind(repo),
-    };
-
-    repo.requeue = (
-      jobId: string,
-      runAt: number,
-      claimToken?: string | null
-    ): ReturnType<JobQueueRepository['requeue']> => {
-      transcript.push({ op: 'job:requeue', jobId, runAt });
-      return originals.requeue(jobId, runAt, claimToken);
-    };
-    repo.requeueParked = (
-      jobId: string,
-      runAt: number,
-      claimToken?: string | null
-    ): ReturnType<JobQueueRepository['requeueParked']> => {
-      transcript.push({ op: 'job:requeueParked', jobId, runAt });
-      return originals.requeueParked(jobId, runAt, claimToken);
-    };
-    repo.requeueAs = (
-      jobId: string,
-      role: string,
-      runAt: number,
-      claimToken?: string | null
-    ): ReturnType<JobQueueRepository['requeueAs']> => {
-      transcript.push({ op: 'job:requeueAs', jobId, role, runAt });
-      return originals.requeueAs(jobId, role, runAt, claimToken);
-    };
-    repo.isClaimCurrent = (jobId: string, claimToken: string | null): boolean => {
-      const result = originals.isClaimCurrent(jobId, claimToken);
-      transcript.push({ op: 'job:isClaimCurrent', jobId, result });
-      return result;
-    };
-    repo.getParkCount = (jobId: string): number => {
-      const result = originals.getParkCount(jobId);
-      transcript.push({ op: 'job:getParkCount', jobId, result });
-      return result;
-    };
+  sdkRepo.markDeliveryConsumedByUuid = (sessionId: string, uuid: string): string | null => {
+    const dbId = sdkOriginals.markDeliveryConsumedByUuid(sessionId, uuid);
+    transcript.push({ op: 'db:markConsumed', uuid, dbId });
+    return dbId;
+  };
+  sdkRepo.markDeliveryConsumedByUuids = (sessionId: string, uuids: string[]): string[] => {
+    const dbIds = sdkOriginals.markDeliveryConsumedByUuids(sessionId, uuids);
+    transcript.push({ op: 'db:markConsumedBatch', uuids, dbIds });
+    return dbIds;
+  };
+  sdkRepo.markDeliverySubmittedByUuids = (sessionId: string, uuids: string[]): string[] => {
+    const dbIds = sdkOriginals.markDeliverySubmittedByUuids(sessionId, uuids);
+    transcript.push({ op: 'db:markSubmittedBatch', uuids, dbIds });
+    return dbIds;
+  };
+  sdkRepo.markDeliveryRetryableByUuid = (sessionId: string, uuid: string): string | null => {
+    const dbId = sdkOriginals.markDeliveryRetryableByUuid(sessionId, uuid);
+    transcript.push({ op: 'db:markRetryable', uuid, dbId });
+    return dbId;
+  };
+  sdkRepo.markDeliveryFailedByUuid = (sessionId: string, uuid: string): string | null => {
+    const dbId = sdkOriginals.markDeliveryFailedByUuid(sessionId, uuid);
+    transcript.push({ op: 'db:markFailed', uuid, dbId });
+    return dbId;
+  };
+  sdkRepo.recordDeliveryTurnEnd = (
+    sessionId: string,
+    messageUuid: string,
+    endedAt: string
+  ): void => {
+    sdkOriginals.recordDeliveryTurnEnd(sessionId, messageUuid, endedAt);
+    transcript.push({ op: 'db:recordTurnEnd', uuid: messageUuid });
+  };
+  sdkRepo.clearDeliveryTurnEnd = (sessionId: string, messageUuid: string): void => {
+    sdkOriginals.clearDeliveryTurnEnd(sessionId, messageUuid);
+    transcript.push({ op: 'db:clearTurnEnd', uuid: messageUuid });
   };
 
-  const wrapState = () => {
-    const stateManager = (
-      agentSession as unknown as {
-        stateManager: {
-          setQueuedIfIdle: (uuid: string) => Promise<boolean>;
-          setQueued: (uuid: string) => Promise<void>;
-          clearQueuedIfOwnedBy: (uuid: string) => Promise<boolean>;
-        };
-      }
-    ).stateManager;
-    const originals = {
-      setQueuedIfIdle: stateManager.setQueuedIfIdle.bind(stateManager),
-      setQueued: stateManager.setQueued.bind(stateManager),
-      clearQueuedIfOwnedBy: stateManager.clearQueuedIfOwnedBy.bind(stateManager),
-    };
-    stateManager.setQueuedIfIdle = async (uuid: string): Promise<boolean> => {
-      const result = await originals.setQueuedIfIdle(uuid);
-      transcript.push({ op: 'state:setQueuedIfIdle', uuid, result });
-      return result;
-    };
-    stateManager.setQueued = async (uuid: string): Promise<void> => {
-      await originals.setQueued(uuid);
-      transcript.push({ op: 'state:setQueued', uuid });
-    };
-    stateManager.clearQueuedIfOwnedBy = async (uuid: string): Promise<boolean> => {
-      const result = await originals.clearQueuedIfOwnedBy(uuid);
-      transcript.push({ op: 'state:clearQueuedIfOwnedBy', uuid });
-      return result;
-    };
+  const jobOriginals = {
+    requeue: jobRepo.requeue.bind(jobRepo),
+    requeueParked: jobRepo.requeueParked.bind(jobRepo),
+    requeueAs: jobRepo.requeueAs.bind(jobRepo),
+    isClaimCurrent: jobRepo.isClaimCurrent.bind(jobRepo),
+    getParkCount: jobRepo.getParkCount.bind(jobRepo),
   };
 
-  wrapRepo(sdkRepo);
-  wrapJobRepo(jobRepo);
-  wrapState();
+  jobRepo.requeue = (
+    jobId: string,
+    runAt: number,
+    claimToken?: string | null
+  ): ReturnType<JobQueueRepository['requeue']> => {
+    transcript.push({ op: 'job:requeue', jobId, runAt });
+    return jobOriginals.requeue(jobId, runAt, claimToken);
+  };
+  jobRepo.requeueParked = (
+    jobId: string,
+    runAt: number,
+    claimToken?: string | null
+  ): ReturnType<JobQueueRepository['requeueParked']> => {
+    transcript.push({ op: 'job:requeueParked', jobId, runAt });
+    return jobOriginals.requeueParked(jobId, runAt, claimToken);
+  };
+  jobRepo.requeueAs = (
+    jobId: string,
+    role: string,
+    runAt: number,
+    claimToken?: string | null
+  ): ReturnType<JobQueueRepository['requeueAs']> => {
+    transcript.push({ op: 'job:requeueAs', jobId, role, runAt });
+    return jobOriginals.requeueAs(jobId, role, runAt, claimToken);
+  };
+  jobRepo.isClaimCurrent = (jobId: string, claimToken: string | null): boolean => {
+    const result = jobOriginals.isClaimCurrent(jobId, claimToken);
+    transcript.push({ op: 'job:isClaimCurrent', jobId, result });
+    return result;
+  };
+  jobRepo.getParkCount = (jobId: string): number => {
+    const result = jobOriginals.getParkCount(jobId);
+    transcript.push({ op: 'job:getParkCount', jobId, result });
+    return result;
+  };
+
+  const stateManager = (
+    agentSession as unknown as {
+      stateManager: {
+        setQueuedIfIdle: (uuid: string) => Promise<boolean>;
+        setQueued: (uuid: string) => Promise<void>;
+        clearQueuedIfOwnedBy: (uuid: string) => Promise<boolean>;
+      };
+    }
+  ).stateManager;
+  const stateOriginals = {
+    setQueuedIfIdle: stateManager.setQueuedIfIdle.bind(stateManager),
+    setQueued: stateManager.setQueued.bind(stateManager),
+    clearQueuedIfOwnedBy: stateManager.clearQueuedIfOwnedBy.bind(stateManager),
+  };
+
+  stateManager.setQueuedIfIdle = async (uuid: string): Promise<boolean> => {
+    const result = await stateOriginals.setQueuedIfIdle(uuid);
+    transcript.push({ op: 'state:setQueuedIfIdle', uuid, result });
+    return result;
+  };
+  stateManager.setQueued = async (uuid: string): Promise<void> => {
+    await stateOriginals.setQueued(uuid);
+    transcript.push({ op: 'state:setQueued', uuid });
+  };
+  stateManager.clearQueuedIfOwnedBy = async (uuid: string): Promise<boolean> => {
+    const result = await stateOriginals.clearQueuedIfOwnedBy(uuid);
+    transcript.push({ op: 'state:clearQueuedIfOwnedBy', uuid });
+    return result;
+  };
 
   return {
     transcript,
@@ -237,6 +228,21 @@ function instrumentDeliveryTranscript(
       queue.remove = originalRemove;
       queue.requeueYielded = originalRequeueYielded;
       queue.clear = originalClear;
+      sdkRepo.markDeliveryConsumedByUuid = sdkOriginals.markDeliveryConsumedByUuid;
+      sdkRepo.markDeliveryConsumedByUuids = sdkOriginals.markDeliveryConsumedByUuids;
+      sdkRepo.markDeliverySubmittedByUuids = sdkOriginals.markDeliverySubmittedByUuids;
+      sdkRepo.markDeliveryRetryableByUuid = sdkOriginals.markDeliveryRetryableByUuid;
+      sdkRepo.markDeliveryFailedByUuid = sdkOriginals.markDeliveryFailedByUuid;
+      sdkRepo.recordDeliveryTurnEnd = sdkOriginals.recordDeliveryTurnEnd;
+      sdkRepo.clearDeliveryTurnEnd = sdkOriginals.clearDeliveryTurnEnd;
+      jobRepo.requeue = jobOriginals.requeue;
+      jobRepo.requeueParked = jobOriginals.requeueParked;
+      jobRepo.requeueAs = jobOriginals.requeueAs;
+      jobRepo.isClaimCurrent = jobOriginals.isClaimCurrent;
+      jobRepo.getParkCount = jobOriginals.getParkCount;
+      stateManager.setQueuedIfIdle = stateOriginals.setQueuedIfIdle;
+      stateManager.setQueued = stateOriginals.setQueued;
+      stateManager.clearQueuedIfOwnedBy = stateOriginals.clearQueuedIfOwnedBy;
     },
   };
 }
