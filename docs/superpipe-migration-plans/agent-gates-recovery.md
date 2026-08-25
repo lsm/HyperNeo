@@ -59,7 +59,7 @@ Two structural rules applied throughout:
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | `decisionRun` composing both (new `loop-detector-pipeline.ts`) | `tool-call-loop-admission` |
 | `circuit-breaker-transitions.ts:extractErrorPattern` | `decisionRun` | `circuit-breaker-error-pattern` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | `decisionRun` | `circuit-breaker-trip-message` |
-| `fallback-recovery.ts:extractResetTimestamp` | `decisionRun` | `fallback-reset-parse` |
+| `fallback-recovery.ts:extractResetTimestamp` | Parsing stages of the `fallback-cooldown` pipeline (review correction: not a separately-run pipeline — nesting `fallback-reset-parse` inside `fallback-cooldown` splits the complete cooldown path across nested pipeline runs) |
 | `fallback-recovery.ts:computeCooldown` | `decisionRun` | `fallback-cooldown` |
 | `fallback-recovery.ts:resolveFallbackChain`, `classifyLimitKind` | none (leaves) | — |
 | `rate-limit-watchdog-gates.ts:decideRateLimitTrip` | `decisionRun` | `rate-limit-trip` |
@@ -298,7 +298,10 @@ compensated. No site in this plan performs effects, so none uses it.
 - **pure core design.** Linear stages:
   1. `parseStructuredResetStage` — `rateLimitInfo` →
      `structuredReset`/`structuredRejected`.
-  2. `parseTextResetStage` — `extractResetTimestamp(rawText, now)` → `parsed`.
+  2. `parseTextResetStage` — runs the reset-parsing stages INLINE
+     (`extractResetTimestamp` stays exported as an ordinary pure helper over
+     those stages; review correction: calling its wrapper here would execute
+     a separate nested pipeline run and split the complete cooldown path).
   3. `resolveBillingStage` — OR of `httpStatus===402`,
      `sdkErrorTag === 'billing_error'` (review correction: the SDK tag
      contributes only on that exact equality — treating raw `sdkErrorTag`
@@ -900,8 +903,14 @@ compensated. No site in this plan performs effects, so none uses it.
   pilot proposal's sequencing** (after the B5 series; coordination on open
   PRs touching `sdk-message-handler.ts`). When it lands:
   `handleMessageYielded` replaces its probe chain with row snapshots →
-  `decideYieldedAckRow` → per-arm interpretation (consume+publish, deferred
-  consume with sdk-message delta publish, none → return); the persisted
+  `decideYieldedAckRow` → per-arm interpretation. EVERY consumed arm —
+  enqueued, submitted, AND deferred (review correction) — publishes ALL
+  THREE events the current handler publishes after changing status:
+  `state.sdkMessages.delta`, `sdk.message`, and the tool-result-consumed
+  event; restricting SDK-delta publication to the deferred arm makes
+  normally yielded messages and tool results disappear from downstream
+  SDK-message consumers. Parity tests cover enqueued, submitted, and
+  deferred rows; the persisted
   paths at `:400-460` similarly route through `decidePersistedAckRow`, with
   per-row ownership revalidation immediately before every acknowledgement
   (the loop is snapshot-then-await-consume — C3b's Phase 0 guarded

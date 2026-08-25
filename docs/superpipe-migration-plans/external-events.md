@@ -10,7 +10,7 @@ The target is **planning only**: no source code is changed by this document.
 
 | Site | Proposed combinator | Rationale |
 | --- | --- | --- |
-| `github/github-normalizer.ts` normalizer family | Raw superpipe transforms for per-kind normalizers; `decisionRun` for webhook/poll dispatch | Each normalizer is a pure payload-to-`NormalizedGitHubEvent \| null` transform. `normalizeGitHubWebhook` and `normalizeGitHubPollingRow` are dispatchers over known event/endpoint kinds. |
+| `github/github-normalizer.ts` normalizer family | One raw superpipe ingest pipeline per business path (`ingest-github-webhook`, `ingest-github-polling-row`) with inline self-guarding dispatch stages | Dispatch and per-kind processing are stages of the single pipeline; projection (`project-external-event`) stays a separate per-space transform at the publish boundary. |
 | `event-essence.ts:formatExternalEventEssence` | Raw superpipe transform | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
 | `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. |
 | `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called as a stage of the digest pipeline — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper (or direct stages) inside `build-external-event-digest-message`. |
@@ -442,9 +442,10 @@ Callers:
 
 #### Proposed combinator
 
-Raw superpipe transform. The `switch (group.kind)` inside `renderDigestGroup`
-will be split into a separate `decisionRun` that `buildExternalEventDigestMessage`
-calls as a stage.
+Raw superpipe transform. The kind switch stays an ordinary pure helper
+(`renderDigestGroup`) called from the `renderGroups` stage — review
+correction: NOT a separate `decisionRun`; that would recreate a second
+composition boundary inside this business path.
 
 #### Input/output snapshot design
 

@@ -223,7 +223,13 @@ The repo already has several proven pipelines. Use these as the model for each s
   6. Branch `missingWorkflow`/`emptyInstructions` → `effect` `clear-pending-state`, `halt`.
   7. Branch `proceed` → `effect` `reserve-dispatch` FIRST: an atomic
      `claimPostApprovalDispatch` CAS on the task (conditional update where
-     `postApprovalSessionId IS NULL AND status = 'approved'`) that stamps a
+     `status = 'approved'` AND `postApprovalSessionId` is either NULL or the
+     EXACT DEAD session ID observed by this snapshot's liveness probe —
+     review correction: when a previous dispatch's session is present but
+     dead, the current router deliberately falls through and spawns a
+     replacement overwriting the stale ID; requiring `IS NULL` alone would
+     make every such retry lose the CAS forever, so the claim atomically
+     clear-and-claims the stale ID. Add a dead-session replacement test) that stamps a
      reservation (dispatch claim) BEFORE any session is spawned (review
      correction — resnapshot-after-spawn cannot prevent concurrent dispatch:
      two callers can both pass admission, spawn separate sessions, and only
@@ -282,10 +288,21 @@ The repo already has several proven pipelines. Use these as the model for each s
     address: ParsedAddress | null;
   }
   ```
-- **Pure core design**: Compose two `decisionRun`s:
-  - `decideTaskMessageTarget`: resolves `task_id`/`task_number`, space, archived, target presence, workflow run.
-  - `decideDeliveryMode`: given `resolved` and `address`, decides `injectLive`, `activateAndInject`, `queue`, `deliverLongTerm`.
-- **Shell/effect wiring**: Effects: `taskRepo.getTask`, `taskRepo.getTaskByNumber`, `nodeExecutionRepo.listByWorkflowRun`, `workflowRunRepo.getRun`, `resolveHandleForTaskRouting`, `translateTaskMessageTarget`, `activateNode`, `taskAgentManager.injectSubSessionMessage`, `pendingMessageQueue.enqueue`. `auditing` and `jsonResult` mapping stay in the tool shell.
+- **Pure core design**: ONE direct pipeline `deliver-task-message`
+  (review correction: a `stagedRun` containing two separately executed
+  `decisionRun`s splits this delivery business path across three composition
+  boundaries). Its gate groups run inline: the target-admission gates
+  (`task_id`/`task_number`, space, archived, target presence, workflow run)
+  followed by the delivery-mode gates (`injectLive`, `activateAndInject`,
+  `queue`, `deliverLongTerm`), self-guarding so first match wins.
+- **Shell/effect wiring** (review correction): BEFORE all worker delivery
+  branches (`injectLive`, `activateAndInject`, `deliverLongTerm`), an effect
+  records `replyRoutingRegistry.set(task.id, mySessionId,
+  resolved.agentName)` — the node-agent router later reads that exact
+  task/agent entry to send the worker's reply back to the originating
+  session; omitting it routes replies to the default Space destination. Pin
+  it with a reply-routing parity test. Other effects:
+  `taskRepo.getTask`, `taskRepo.getTaskByNumber`, `nodeExecutionRepo.listByWorkflowRun`, `workflowRunRepo.getRun`, `resolveHandleForTaskRouting`, `translateTaskMessageTarget`, `activateNode`, `taskAgentManager.injectSubSessionMessage`, `pendingMessageQueue.enqueue`. `auditing` and `jsonResult` mapping stay in the tool shell.
 - **Step-by-step migration**:
   1. Move the target-resolution/admission block into a `decideTaskMessageTarget` `decisionRun`.
   2. Move the target parse and execution resolution into a `snapshot` stage.
@@ -456,7 +473,15 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**:
-  - `decideTaskUpdate` should be the single source of truth for both the tool and the RPC. It already lives in `task-transition-routing.ts` as `routeTaskUpdate`. Wrap it in a `decisionRun` in `packages/daemon/src/lib/space/tools/task-update-routing-pipeline.ts`.
+  - Review correction: `routeTaskUpdate` is the single source of truth for
+    the TOOL admission only; the RPC keeps its HUMAN-APPROVAL branch before
+    the shared admission — when `spaceTask.update` receives
+    `status: 'done'` for a task in `review`, the current RPC deliberately
+    calls `setTaskStatus` and stamps `approvalSource: 'human'`, which
+    `routeTaskUpdate` rejects as `review_to_done` because it was designed
+    for the agent tool. Either keep that RPC branch ahead of the shared
+    decision or parameterize it per caller; do not make the tool route an
+    unqualified source of truth for both. It already lives in `task-transition-routing.ts` as `routeTaskUpdate`. Wrap it in a `decisionRun` in `packages/daemon/src/lib/space/tools/task-update-routing-pipeline.ts`.
   - The tool's `space-tool-pipeline.ts` should call this core after its autonomy gate, rather than calling `routeTaskUpdate` directly, so the gate order is shared.
 - **Shell/effect wiring**: The RPC handler's shell executes the selected branch:
   - `reject` → throw.
