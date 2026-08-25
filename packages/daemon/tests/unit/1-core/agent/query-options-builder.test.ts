@@ -874,6 +874,9 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should filter provider env overrides so provider cleanup owns the SDK env', async () => {
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      delete previousBaseline.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      _setStartupEnvBaselineForTesting(previousBaseline);
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: {
           CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
@@ -901,6 +904,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
       expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('session-subagent');
       expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
+      _setStartupEnvBaselineForTesting(process.env);
     });
 
     it('should preserve env-only Anthropic auth tokens for native provider', async () => {

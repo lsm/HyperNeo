@@ -368,7 +368,7 @@ describe('AnthropicProvider', () => {
     it('reports plain credential presence when no failure is recorded', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
 
-      const status = await provider.getAuthStatus();
+      const status = await new AnthropicProvider().getAuthStatus();
 
       expect(status).toEqual({
         isAuthenticated: true,
@@ -392,7 +392,7 @@ describe('AnthropicProvider', () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
       recordProviderFailure('anthropic', new Error('SDK model load timeout'));
 
-      const status = await provider.getAuthStatus();
+      const status = await new AnthropicProvider().getAuthStatus();
 
       expect(status.isAuthenticated).toBe(true);
       expect(status.errorKind).toBe('transient');

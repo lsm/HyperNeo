@@ -19,7 +19,8 @@ mock.module('node:child_process', () => ({
     if (!execFileImpl) {
       throw new Error('execFileImpl not set for test');
     }
-    return execFileImpl(...args);
+    const cb = args[args.length - 1];
+    return execFileImpl(args[0], args[1], cb);
   },
   spawn: (...args: unknown[]) => {
     if (!spawnImpl) {

@@ -45,7 +45,7 @@ import {
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { AcpClient, type AcpClientOptions } from './acp-client.ts';
 import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command.ts';
-import { STARTUP_ENV_BASELINE } from '../spawn-env.ts';
+import { buildCommandEnv } from '../spawn-env.ts';
 import { getAcpProcessTreeOwner } from './acp-process-tree.ts';
 import { AcpQueryAdapter } from './acp-query-adapter.ts';
 import {
@@ -61,20 +61,6 @@ const RETRY_EXIT_TIMEOUT_MS = 5000;
 const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
 const MAX_POST_ABORT_DRAIN_MESSAGES = 256;
 const POST_ABORT_DRAIN_TIMEOUT_MS = 1000;
-
-const ACP_QUERY_PROXY_TLS_ENV_KEYS = [
-  'HTTPS_PROXY',
-  'https_proxy',
-  'HTTP_PROXY',
-  'http_proxy',
-  'ALL_PROXY',
-  'all_proxy',
-  'NO_PROXY',
-  'no_proxy',
-  'SSL_CERT_FILE',
-  'SSL_CERT_DIR',
-  'NODE_EXTRA_CA_CERTS',
-] as const;
 
 function getStartupTimeoutMs(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
@@ -597,11 +583,8 @@ export class AcpQueryRunner {
       for (const [key, value] of Object.entries(getAcpCredentialEnvBaseline())) {
         if (value !== undefined && acpEnv[key] === undefined) acpEnv[key] = value;
       }
-      for (const key of ACP_QUERY_PROXY_TLS_ENV_KEYS) {
-        if (acpEnv[key] === undefined) {
-          const value = STARTUP_ENV_BASELINE[key];
-          if (value !== undefined) acpEnv[key] = value;
-        }
+      for (const [key, value] of Object.entries(buildCommandEnv())) {
+        if (acpEnv[key] === undefined) acpEnv[key] = value;
       }
       if (preCleanupAuth.ANTHROPIC_AUTH_TOKEN?.startsWith('sk-ant-oat')) {
         acpEnv.ANTHROPIC_AUTH_TOKEN = preCleanupAuth.ANTHROPIC_AUTH_TOKEN;
