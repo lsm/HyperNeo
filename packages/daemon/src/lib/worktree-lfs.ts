@@ -14,7 +14,9 @@ export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 function isLfsPointerContent(content: string): boolean {
   const lines = content.split('\n');
   if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
-  return /^oid sha256:[0-9a-f]{64}$/.test(lines[1] ?? '') && /^size \d+$/.test(lines[2] ?? '');
+  if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[1] ?? '')) return false;
+  if (!/^size \d+$/.test(lines[2] ?? '')) return false;
+  return lines.length <= 4 && (lines[3] === undefined || lines[3] === '');
 }
 
 export async function indexContainsLfsPointer(
@@ -25,7 +27,7 @@ export async function indexContainsLfsPointer(
   try {
     const result = await execFileAsync(
       'git',
-      ['grep', '-l', '--cached', '-F', LFS_POINTER_SIGNATURE],
+      ['grep', '-lz', '--cached', '-F', LFS_POINTER_SIGNATURE],
       {
         cwd,
         encoding: 'utf8',
@@ -41,7 +43,7 @@ export async function indexContainsLfsPointer(
     throw err;
   }
   for (const rel of candidates
-    .split('\n')
+    .split('\0')
     .map((entry) => entry.trim())
     .filter(Boolean)) {
     const { stdout } = await execFileAsync('git', ['show', `:${rel}`], {

@@ -593,6 +593,47 @@ describe('WorktreeManager', () => {
       expect(result?.branch).toBe('session/session-123');
     });
 
+    it('should skip LFS hydration when a pointer-like blob has trailing text', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(
+            null,
+            args[0] === 'grep'
+              ? { stdout: 'fixture.bin', stderr: '' }
+              : {
+                  stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234\nThis file documents the pointer format.`,
+                  stderr: '',
+                }
+          )
+      );
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return 'fixture.bin';
+        return '';
+      });
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.branch).toBe('session/session-123');
+    });
+
     it('should fail worktree creation when the LFS attribute file cannot be read', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
