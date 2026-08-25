@@ -4873,7 +4873,7 @@ export class TaskAgentManager {
     }
     const assignedModel =
       slot.model ?? poolAgent?.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
-    const reservationKey = { id: `post-approval:${taskId}:${slot.name}` };
+    const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
     const assignment = { spaceId, taskId, model: assignedModel };
     reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
 

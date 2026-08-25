@@ -221,4 +221,31 @@ describe('reservation lifecycle', () => {
     const capped = [{ model: 'sonnet', maxConcurrent: 1, weight: 100 }];
     expect(apply({ assignments, agent: makeAgent(capped) })).toEqual({ deferred: true });
   });
+
+  test('distinct attempt keys keep concurrent reservations independent', () => {
+    const assignments = new Map<string, ModelPoolAssignment>();
+    const first = { id: 'post-approval:task-1:coder:a' } as NodeExecution;
+    const second = { id: 'post-approval:task-1:coder:b' } as NodeExecution;
+    reserveModelPoolSlot(assignments, first, {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'sonnet',
+    });
+    reserveModelPoolSlot(assignments, second, {
+      spaceId: 'space-1',
+      taskId: 'task-1',
+      model: 'sonnet',
+    });
+    const counts = countRunningModels({
+      assignments,
+      spaceId: 'space-1',
+      getSessionStatus: () => undefined,
+      now: NOW,
+    });
+    expect(counts).toEqual({ sonnet: 2 });
+
+    releaseModelPoolReservation(assignments, first);
+    expect(assignments.has(modelPoolReservationKey(second.id))).toBe(true);
+    expect(assignments.has(modelPoolReservationKey(first.id))).toBe(false);
+  });
 });
