@@ -2741,8 +2741,10 @@ describe('Model Service', () => {
 
       expect(fetchCount).toBe(1);
     });
+  });
 
-    it('matches scoped curated aliases case-insensitively', async () => {
+  describe('isCuratedOutModelAllowingExactId', () => {
+    it('matches scoped curated aliases case-insensitively', () => {
       const registry = getProviderRegistry();
       registry.register({
         id: 'ollama',
