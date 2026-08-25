@@ -691,7 +691,15 @@ question's stored state extended with the submitted tool-result payload,
 keyed by `toolUseId`), then registers `{kind:'restart'}` in the
 chat lane against it — and a denial skips `ensureQueryStarted` and
 returns; the wake (or restart reconstruction, which scans the answer
-records) re-runs the submission against the persisted answer.
+records) re-runs the submission against the persisted answer. **The
+record retires on delivery**: once the restarted submission's tool
+result is durably accepted by the live query, the answer record is
+atomically marked consumed (or deleted) in the same transition —
+preserved on a provider park or a failed enqueue — because
+reconstruction scans these records, and the enqueue identifier embeds
+`Date.now()` (ask-user-question-handler.ts:562), so a surviving record
+after a later restart would re-inject the already-delivered answer with
+no dedupe to stop it.
 A boundary denial for a delivery-identified caller has no job to park: the
 delivery settles its row back to
 `'deferred'` with the `queue_reason` marker and registers it (V2 surfaces this as
@@ -880,14 +888,20 @@ two credential-backed custom endpoints of the same resolved type routinely
 share a literal placeholder or locally managed key while their `baseUrl`
 values point at unrelated upstreams — for custom endpoints the key is
 `digest(family + ':' + canonicalBaseUrl + ':' + credential + ':' +
-digest(identityHeaders))` — the SAME identity-header digest the
-credentialless rule uses, because the bridges spread `config.headers`
+digest(identityHeaders))` — an **effective** identity-header digest — the identity
+component is computed from the FINAL provider-specific authentication
+identity after custom headers are applied, because the bridges spread
+`config.headers`
 AFTER the generated API-key authentication
 (openai-chat-bridge/server.ts:749-752,
 anthropic-messages-bridge/server.ts:188-194): two records with one base
 URL and a placeholder `apiKey` but different overriding `Authorization`
-or tenant headers send as different identities and must not share a key
-(absent identity headers digest to a constant and change nothing) — the
+or tenant headers send as different identities and must not share a key,
+while two records whose `Authorization` override makes their differing
+placeholder `apiKey` values irrelevant send as the SAME identity and
+must share one (generated credentials that a custom header replaces are
+excluded from the digest; absent identity headers digest to a constant
+and the raw credential stands in) — the
 `baseUrl` component canonicalized through the SAME provider-specific
 base-authority normalization the request builders apply (whitespace and
 trailing-slash trimming, terminal request paths such as
@@ -995,7 +1009,7 @@ equal, so the common case shares one key.
 | `inFlight` | count per provider **turn** — start when the query consumes the delivery's prompt, end at that turn's terminal result (the SDK query outlives turns: `messageGenerator` keeps it alive for later prompts, so query spawn/teardown is the wrong seam and a successful turn would otherwise stay unresolved until interrupt) | `reportQueryStart` / `reportQueryEnd` at the turn boundary (SDK `QueryRunner` + ACP runner **+ every direct SDK interpreter — title, the Space background jobs, the GitHub agents, the LLM classifier, the closure-health probe — the same complete lifecycle roster the feed-site contract below wires; a direct caller that skips the report leaves its consumed grant unresolved and strands the queue**) | admission facts (cap follow-up), probe evidence |
 | `queuedMessages` | **two provider-wide insertion-ordered lanes — chat and background** — of typed composite identities (`{kind:'message', sessionId, messageUuid}` / `{kind:'job', jobKind, jobId}` / `{kind:'inbox', eventId}` / **transient arms** `{kind:'restart', sessionId, toolUseId}` (chat lane — the AskUserQuestion answer park) and `{kind:'ephemeral', callerKind, callId}` (a grant-holder record ONLY — see the wake contract), so every claimable/registrable identity is representable; chat-first priority: background admits only when the chat lane is empty), with per-session `Set` indices as secondary lookup structures only (wake routing, deregistration; idempotent adds — a parked job re-consulting every probe tick must not accumulate duplicates) | queue arms (P1/P2/P4), delivery-start park (P3), background/job/inbox parks, the answer-restart park | probing release (chat lane first), registration cleanup (indices), provider-change re-admission (indices) |
 | `probeGrant` | `{ identity: GrantIdentity \| null (typed union — see queuedMessages; null ONLY in the post-empty-clear pending window), leaseUntilMs } \| null` per provider (message uuids are session-scoped and explicit injected ids can collide across sessions; jobs and inbox entries bind by their durable ids) | minted **and bound to the selected FIFO identity at clear time when the backlog is non-empty** (never by the first admitting consult); a clear that drained to nothing mints **pending (identity null)** — the first admission consult of any kind binds it via the registry's atomic `claimPendingGrant` CAS; consumed at prompt yield; **the lease bounds only the unconsumed grant** (mint → yield, or pending → claim) — a consumed grant resolves solely on its own turn's termination; unconsumed-grant expiry re-mints (bound again, or pending again for a still-empty backlog) and re-binds — **except an unconsumed `{kind:'ephemeral'}` holder, which is discarded at expiry**: it has no durable row and no dispatcher, so the lane-tail move is impossible and queueing it would let a later grant bind to an identity nothing can wake, stalling the drain repeatedly; expiry drops it and mints for the next durable waiter (or pending when empty), and a still-live caller learns it lost the grant at its own authoritative start check | downstream consults (same delivery passes), probe resolution |
-| `closureProbeGrant` | `{ holder, leaseUntilMs, configRef } \| null` per provider — `configRef` is the resolvable configuration snapshot (provider id + effective providerConfig/credential reference captured when closure armed, kept current by the rotation hooks), without which the scheduled timer could not construct its probe request from a digest alone — the atomic reservation behind `holdsClosureProbeGrant`, independent of `probeGrant` (closure probing never mints or consumes post-clear probes) | **CAS-acquired** by manual Retry / the health-probe timer (the loser queues on its own trigger) | `holdsClosureProbeGrant` (the core's closed arm); **released** by the holder's outcome (success → closure clears **through a probing transition, never a bulk drain**: clearing `closed` with registrations parked would let the core admit every waiter at once and recreate the provider wave the moment the account renews — success therefore enters `probing` and mints exactly ONE successor grant bound to the FIFO head (pending if the backlog is empty); where the holder is the manual Retry turn, that successful turn IS the first probe and its completion mints the successor; the daily health probe's clean completion mints the first successor the same way; fresh billing-terminal → re-arm `closed`; classified non-billing limit → timed saturation; other error → closure stays armed) or by lease expiry — **which bounds only the unstarted grant** (acquire → probe start), exactly as `probeGrant`'s lease does: once the probe's request has started, only its termination releases, so a long-running Retry turn or health query cannot have its lane re-granted mid-flight |
+| `closureProbeGrant` | `{ holder, leaseUntilMs, configRef } \| null` per provider — `configRef` is the resolvable configuration snapshot (provider id + effective providerConfig/credential reference captured when closure armed, kept current by the rotation hooks AND refreshed on same-key routing changes: a built-in provider's `baseUrl`/region change deliberately keeps the account key so the fingerprint hook does not fire, yet GLM-class providers route through `sessionConfig.baseUrl` (glm-provider.ts:203-218) and a stale reference would keep probing a removed or failing endpoint — the reference is re-captured whenever a same-key routing change lands, and the probe resolves a CURRENT configuration owner at request time rather than trusting the capture alone), without which the scheduled timer could not construct its probe request from a digest alone — the atomic reservation behind `holdsClosureProbeGrant`, independent of `probeGrant` (closure probing never mints or consumes post-clear probes) | **CAS-acquired** by manual Retry / the health-probe timer (the loser queues on its own trigger) | `holdsClosureProbeGrant` (the core's closed arm); **released** by the holder's outcome (success → closure clears **through a probing transition, never a bulk drain**: clearing `closed` with registrations parked would let the core admit every waiter at once and recreate the provider wave the moment the account renews — success therefore enters `probing` and mints exactly ONE successor grant bound to the FIFO head (pending if the backlog is empty); where the holder is the manual Retry turn, that successful turn IS the first probe and its completion mints the successor; the daily health probe's clean completion mints the first successor the same way; fresh billing-terminal → re-arm `closed`; classified non-billing limit → timed saturation; other error → closure stays armed) or by lease expiry — **which bounds only the unstarted grant** (acquire → probe start), exactly as `probeGrant`'s lease does: once the probe's request has started, only its termination releases, so a long-running Retry turn or health query cannot have its lane re-granted mid-flight |
 | `lastCleanCompletionAtMs` + `chargeResetArmed` | per provider | `reportQueryEnd(success)`, clears | probe rule (floor evidence), charge reset |
 | wake/floor timers | one unref'd `setTimeout` per armed provider | arming/clearing/refinement | — |
 
@@ -1422,8 +1436,12 @@ post-reset herd the gate exists to prevent. Mirrors the watchdog's
   overloading it would discard the row's human/system semantics anyway —
   the admission-arm shadow therefore gets its OWN nullable
   `admission_arm` column in the same migration (written whenever the
-  provider gate queues a row, cleared with the marker at yield, and read
-  by P4's settle to recreate the correct marker), not an overload of
+  provider gate queues a row, and **retained past prompt yield — cleared
+  only on terminal status flips or user removal**, because P4 runs AFTER
+  the yielded provider call reports its limit and must still read the
+  arm to restore `provider_saturated_p1` vs `_p2`; clearing it with the
+  marker at yield would null it exactly when the retry needs it), not an
+  overload of
   `queue_reason` or `origin`.
 - **Waking, routed per session:** the internal event bus routes by
   `data.sessionId ?? data.namespaceId ?? __global__`
@@ -2252,8 +2270,17 @@ by pre-existing suites):
    **next** turn's prompt — it starts a provider call, so the bypass must not
    cover it. The authoritative admission check at the prompt-yield boundary
    (the grant-consumption site) therefore applies to **every non-internal
-   prompt**: a queued steer with no valid grant is not yielded; it returns to
-   the queue. A steer with no live turn (session idle) is an ordinary
+   prompt**, and a denial is a **typed result, not a silent requeue**:
+   `feedDeliverySteer`'s caller awaits a queue acknowledgment, and a
+   steer claimed by the feed but denied at yield cannot simply "return
+   to the queue" — the delivery handler has claimed a job and holds a
+   row, so the denial propagates a typed `provider_denied` result back
+   through the feed acknowledgment, and the handler parks exactly as any
+   claimed delivery would: the row settles to `'deferred'` with the
+   `queue_reason` marker (and its admission arm), the claimed job takes
+   the P3 park shape, and the composite identity registers — leaving the
+   steer claimed-but-unlinked would strand it with no provider wake to
+   revive it. A steer with no live turn (session idle) is an ordinary
    turn-role delivery and consults normally. Recorded to preempt a "why
    doesn't steer check" review round.
 8. **P3's consult does not touch `rate_limit_cooldown` session state** — a
