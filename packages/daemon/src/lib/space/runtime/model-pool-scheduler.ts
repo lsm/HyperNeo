@@ -105,14 +105,19 @@ export function reserveModelPoolSlot(
   });
 }
 
-export function commitModelPoolAssignment(
+export function activateModelPoolReservation(
   assignments: ModelPoolAssignmentMap,
   execution: Pick<NodeExecution, 'id'>,
-  sessionId: string,
-  assignment: Omit<ModelPoolAssignment, 'pending' | 'assignedAt'>
-): void {
-  assignments.delete(modelPoolReservationKey(execution.id));
-  assignments.set(sessionId, { ...assignment, assignedAt: Date.now() });
+  sessionId: string
+): boolean {
+  const key = modelPoolReservationKey(execution.id);
+  const pending = assignments.get(key);
+  if (!pending) return false;
+  const activated = { ...pending, assignedAt: Date.now() };
+  delete activated.pending;
+  assignments.delete(key);
+  assignments.set(sessionId, activated);
+  return true;
 }
 
 export function releaseModelPoolReservation(

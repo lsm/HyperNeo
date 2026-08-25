@@ -199,6 +199,9 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
       calls.push(`inject:${sessionId}`);
       injected.push({ sessionId, message });
     },
+    activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
+      calls.push(`activate-pool:${executionId}:${sessionId}`);
+    },
   };
 
   return {
@@ -249,7 +252,7 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
 }
 
 describe('spawn flow — proceed_fresh path', () => {
-  test('runs admission, task reservation, reserve, spawn, bind, early reservation release, attach, register, kickoff, and halts with the session id', async () => {
+  test('runs admission, task reservation, reserve, spawn, bind, early reservation release, attach, register, kickoff, pool activation, and halts with the session id', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run();
     expect(outcome).toEqual({ status: 'completed', result: SPAWNED_SESSION_ID });
@@ -265,6 +268,7 @@ describe('spawn flow — proceed_fresh path', () => {
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
       'kickoff-message',
       `inject:${SPAWNED_SESSION_ID}`,
+      `activate-pool:${EXECUTION_ID}:${SPAWNED_SESSION_ID}`,
       `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
     expect(h.cancels).toEqual([]);
@@ -288,6 +292,7 @@ describe('spawn flow — proceed_fresh path', () => {
       `release-task:${TASK_ID}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
+      `activate-pool:${EXECUTION_ID}:${SPAWNED_SESSION_ID}`,
       `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
   });

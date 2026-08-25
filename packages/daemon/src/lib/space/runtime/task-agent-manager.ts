@@ -64,8 +64,8 @@ import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
 import {
+  activateModelPoolReservation,
   applyModelPoolToSlot,
-  commitModelPoolAssignment,
   type ModelPoolAssignmentMap,
   raiseModelPoolDeferred,
   releaseModelPoolReservation,
@@ -694,12 +694,14 @@ export class TaskAgentManager {
       kickoff: options.kickoff ?? true,
     });
     if (outcome.status === 'error') {
+      releaseModelPoolReservation(this.modelPoolAssignments, execution);
       if (spawnState.reservedExecution) {
         this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       }
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
+      releaseModelPoolReservation(this.modelPoolAssignments, execution);
       if (spawnState.reservedExecution) {
         this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       }
@@ -989,12 +991,6 @@ export class TaskAgentManager {
           if (!spawned) {
             throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
           }
-          commitModelPoolAssignment(
-            this.modelPoolAssignments,
-            request.execution,
-            actualSessionId,
-            assignment
-          );
           return actualSessionId;
         } catch (err) {
           releaseModelPoolReservation(this.modelPoolAssignments, request.execution);
@@ -1111,6 +1107,9 @@ export class TaskAgentManager {
         await this.withSessionInjectLock(spawned.session.id, () =>
           this.injectMessageIntoSession(spawned, message)
         );
+      },
+      activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
+        activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
       },
     };
   }
@@ -4962,12 +4961,7 @@ export class TaskAgentManager {
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
       );
-      commitModelPoolAssignment(
-        this.modelPoolAssignments,
-        reservationKey,
-        actualSessionId,
-        assignment
-      );
+      activateModelPoolReservation(this.modelPoolAssignments, reservationKey, actualSessionId);
       return { sessionId: actualSessionId };
     } catch (err) {
       releaseModelPoolReservation(this.modelPoolAssignments, reservationKey);

@@ -6,8 +6,8 @@ import type {
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
 import {
+  activateModelPoolReservation,
   applyModelPoolToSlot,
-  commitModelPoolAssignment,
   countRunningModels,
   isPoolSessionActive,
   type ModelPoolAssignment,
@@ -158,7 +158,7 @@ test('pool at capacity defers instead of throwing', () => {
 describe('reservation lifecycle', () => {
   const execution = { id: 'exec-1' } as NodeExecution;
 
-  test('reserve commits and releases atomically', () => {
+  test('reserve activates and releases atomically', () => {
     const assignments = new Map<string, ModelPoolAssignment>();
     reserveModelPoolSlot(assignments, execution, {
       spaceId: 'space-1',
@@ -168,17 +168,40 @@ describe('reservation lifecycle', () => {
     const key = modelPoolReservationKey(execution.id);
     expect(assignments.get(key)).toMatchObject({ pending: true, model: 'sonnet' });
 
-    commitModelPoolAssignment(assignments, execution, 'session-9', {
+    expect(activateModelPoolReservation(assignments, execution, 'session-9')).toBe(true);
+    expect(assignments.has(key)).toBe(false);
+    expect(assignments.get('session-9')).toMatchObject({
+      model: 'sonnet',
+      spaceId: 'space-1',
+      taskId: 'task-1',
+    });
+    expect(assignments.get('session-9')?.pending).toBeUndefined();
+    expect(assignments.get('session-9')?.assignedAt).toBeGreaterThan(NOW);
+
+    releaseModelPoolReservation(assignments, execution);
+    expect(assignments.size).toBe(1);
+  });
+
+  test('activating without a reservation is a no-op', () => {
+    const assignments = new Map<string, ModelPoolAssignment>();
+    expect(activateModelPoolReservation(assignments, execution, 'session-9')).toBe(false);
+    expect(assignments.size).toBe(0);
+  });
+
+  test('reservation holds capacity through the pre-kickoff window', () => {
+    const assignments = new Map<string, ModelPoolAssignment>();
+    reserveModelPoolSlot(assignments, execution, {
       spaceId: 'space-1',
       taskId: 'task-1',
       model: 'sonnet',
     });
-    expect(assignments.has(key)).toBe(false);
-    expect(assignments.get('session-9')).toMatchObject({ model: 'sonnet' });
-    expect(assignments.get('session-9')?.pending).toBeUndefined();
-
-    releaseModelPoolReservation(assignments, execution);
-    expect(assignments.size).toBe(1);
+    const counts = countRunningModels({
+      assignments,
+      spaceId: 'space-1',
+      getSessionStatus: () => undefined,
+      now: NOW + 60_000,
+    });
+    expect(counts).toEqual({ sonnet: 1 });
   });
 
   test('pending reservations hold capacity against concurrent spawns', () => {
