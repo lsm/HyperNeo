@@ -2541,6 +2541,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ...recentPullRequestNumbers.slice(0, REACTION_POLL_PR_LIMIT),
       ...activePrNumbers,
     ]);
+    const validPullRequestNumbers: number[] = [];
 
     if (!partialScan && !pullsHasBacklog) {
       const checkRunEndpointKey = 'check_runs';
@@ -2802,7 +2803,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       const mergeRateLimit = parseRateLimitHeaders(mergeResponse);
       latestRateLimit = mergeRateLimitInfo(latestRateLimit, mergeRateLimit);
-      if (mergeResponse.status === 304) continue;
+      if (mergeResponse.status === 304) {
+        validPullRequestNumbers.push(prNumber);
+        continue;
+      }
       if (mergeRateLimit.limited) {
         if (
           mergeResponse.status === 429 &&
@@ -2839,6 +2843,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           partialScan = true;
           break;
         }
+        if (mergeResponse.status === 404) {
+          continue;
+        }
         if (!pollErrorMessage) {
           pollErrorMessage =
             errorText.trim().slice(0, 160) || `pull request detail HTTP ${mergeResponse.status}`;
@@ -2849,6 +2856,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const mergeEtag = mergeResponse.headers.get('ETag');
       if (mergeEtag) mergeConflictEtags[prNumber] = mergeEtag;
       const pullDetail = asPollingObject(await mergeResponse.json());
+      validPullRequestNumbers.push(prNumber);
       if (pullDetail.state !== 'open') {
         delete mergeConflictStates[prNumber];
         continue;
@@ -2887,7 +2895,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of trackedPullRequestNumbers) {
+    for (const prNumber of validPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         partialScan = true;
@@ -3026,7 +3034,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of trackedPullRequestNumbers) {
+    for (const prNumber of validPullRequestNumbers) {
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
         reactionsFullyPolled = false;
