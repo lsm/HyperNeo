@@ -2514,6 +2514,32 @@ describe('SDKMessageHandler', () => {
       expect(updateSessionSpy).toHaveBeenCalled();
     });
 
+    it('treats fallback resolution failure as a stale retry instead of throwing', async () => {
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'missing-provider',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'missing-provider',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
     it('should skip fallback persistence when the provider epoch changed after build', async () => {
       getProviderRegistry().register(new TranslatingMockProvider());
       mockSession.config = {

@@ -1310,16 +1310,13 @@ export class SDKMessageHandler {
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
-    const fallbackModelBeforeResolve = this.ctx.session.config.fallbackModel;
-    const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
-    if (!fallbackModel || session.config.model === fallbackModel) return;
     const providerId = session.config.provider ?? 'anthropic';
     const builtIdentity = getBuiltFallbackIdentity(session);
     if (
       !builtIdentity ||
       builtIdentity.providerId !== providerId ||
       builtIdentity.primaryModel !== session.config.model ||
-      builtIdentity.fallbackModel !== fallbackModel ||
+      builtIdentity.fallbackModel !== session.config.fallbackModel ||
       builtIdentity.scopedApiKey !== session.config.providerConfig?.apiKey ||
       builtIdentity.scopedBaseUrl !== session.config.providerConfig?.baseUrl ||
       builtIdentity.scopedRegion !==
@@ -1331,6 +1328,17 @@ export class SDKMessageHandler {
     ) {
       return;
     }
+    const fallbackModelBeforeResolve = this.ctx.session.config.fallbackModel;
+    let fallbackModel: string | undefined;
+    try {
+      fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
+    } catch {
+      this.logger.warn(
+        '[SDKMessageHandler] Fallback resolution failed for a stale or removed provider, ignoring retry'
+      );
+      return;
+    }
+    if (!fallbackModel || session.config.model === fallbackModel) return;
     if (
       fallbackModelBeforeResolve !== fallbackModel ||
       fallbackModelBeforeResolve !== builtIdentity.fallbackModel ||

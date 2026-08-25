@@ -82,7 +82,7 @@ const fallbackModelCurationPipeline = (
   .pipe(gateExitConditions, 'ctx', 'ctx')
   .pipe('!settled', 'ctx')
   .pipe(finalizeAllowed, 'ctx', 'ctx')
-  .endAsync();
+  .endAsync('ctx');
 
 const run = fallbackModelCurationPipeline as (
   input: FallbackModelCurationCtx

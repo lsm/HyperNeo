@@ -809,6 +809,53 @@ describe('ProviderService', () => {
       expect(config).toBeNull();
     });
 
+    it('heals a provider-rejected title override to an allowed catalog model', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class AllowlistTitleMockProvider extends MockProvider {
+        constructor() {
+          super('allowlist-title', 'Allowlist Title Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'blocked-title';
+        }
+
+        async getModels(): Promise<ModelInfo[]> {
+          return [
+            {
+              id: 'allowed-model',
+              name: 'Allowed Model',
+              alias: 'allowed-model',
+              family: 'mock',
+              provider: 'allowlist-title',
+              contextWindow: 100000,
+              description: 'Allowed',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          if (modelId !== 'allowed-model') {
+            throw new Error(`model '${modelId}' is not in the configured allowlist`);
+          }
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new AllowlistTitleMockProvider());
+
+      const config = await realService.getTitleGenerationConfig(
+        'allowlist-title' as unknown as ProviderId
+      );
+
+      expect(config?.modelId).toBe('allowed-model');
+    });
+
     it('uses the provider cached catalog when model discovery fails', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

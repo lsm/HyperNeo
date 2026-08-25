@@ -345,7 +345,24 @@ export class ProviderService {
     try {
       const sdkConfig = provider?.buildSdkConfig(providerModelId);
       sdkModelId = sdkConfig?.envVars.ANTHROPIC_MODEL ?? sdkModelId;
-    } catch {}
+    } catch {
+      if (provider) {
+        const catalogModels = await this.getProviderCatalogModels(providerId, provider).catch(
+          () => []
+        );
+        for (const model of catalogModels) {
+          try {
+            const sdkConfig = provider.buildSdkConfig(model.id);
+            providerModelId = model.id;
+            sdkModelId =
+              sdkConfig?.envVars.ANTHROPIC_MODEL ??
+              provider.translateModelIdForSdk?.(model.id) ??
+              model.id;
+            break;
+          } catch {}
+        }
+      }
+    }
     return {
       providerModelId,
       sdkModelId,
@@ -411,10 +428,26 @@ export class ProviderService {
       baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
       apiVersion = sdkConfig.apiVersion || apiVersion;
     } catch (err) {
-      this.logger.warn(
-        `[ProviderService] getTitleGenerationConfig: buildSdkConfig failed for provider` +
-          ` '${providerId}' — falling back to Anthropic defaults. Cause: ${err}`
+      const catalogModels = await this.getProviderCatalogModels(providerId, provider).catch(
+        () => []
       );
+      let healed = false;
+      for (const candidate of catalogModels) {
+        try {
+          const sdkConfig = provider.buildSdkConfig(candidate.id);
+          modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? candidate.id;
+          baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
+          apiVersion = sdkConfig.apiVersion || apiVersion;
+          healed = true;
+          break;
+        } catch {}
+      }
+      if (!healed) {
+        this.logger.warn(
+          `[ProviderService] getTitleGenerationConfig: buildSdkConfig failed for provider` +
+            ` '${providerId}' — falling back to Anthropic defaults. Cause: ${err}`
+        );
+      }
     }
 
     return { modelId, baseUrl, apiVersion };
