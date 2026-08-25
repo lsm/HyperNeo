@@ -15,8 +15,8 @@ import {
   GIT_PROBE_MAX_BUFFER_BYTES,
   LFS_ATTR_PATHSPEC,
   indexContainsLfsPointer,
-  worktreeDeclaresLfsAttributes,
 } from '../../worktree-lfs.ts';
+import { runWorktreeLfsHydration } from '../../worktree-lfs-hydration.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -229,54 +229,45 @@ export class SpaceWorktreeManager {
   }
 
   private async hydrateWorktreeLfs(worktreePath: string): Promise<void> {
-    let tracked: string;
-    try {
-      const { stdout } = await execFileAsync('git', ['lfs', 'ls-files'], {
-        cwd: worktreePath,
-        encoding: 'utf8',
-        timeout: 60_000,
-        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-        env: buildGitSshEnv(),
-      });
-      tracked = stdout;
-    } catch (err) {
-      const declaresLfs = await worktreeDeclaresLfsAttributes(
-        async () => {
-          const { stdout } = await execFileAsync(
-            'git',
-            ['ls-files', '-z', '--', LFS_ATTR_PATHSPEC],
-            {
-              cwd: worktreePath,
-              encoding: 'utf8',
-              timeout: 60_000,
-              maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-              env: buildGitCommandEnv(),
-            }
-          );
-          return stdout;
-        },
-        () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv())
-      );
-      if (declaresLfs) {
-        throw new Error(
-          `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      }
-      this.logger.warn(
-        `Git LFS hydration skipped for ${worktreePath}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return;
+    const outcome = await runWorktreeLfsHydration({
+      listLfsTrackedFiles: async () =>
+        (
+          await execFileAsync('git', ['lfs', 'ls-files'], {
+            cwd: worktreePath,
+            encoding: 'utf8',
+            timeout: 60_000,
+            maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+            env: buildGitSshEnv(),
+          })
+        ).stdout,
+      listAttrLfsPaths: async () =>
+        (
+          await execFileAsync('git', ['ls-files', '-z', '--', LFS_ATTR_PATHSPEC], {
+            cwd: worktreePath,
+            encoding: 'utf8',
+            timeout: 60_000,
+            maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+            env: buildGitCommandEnv(),
+          })
+        ).stdout,
+      indexHasLfsPointer: () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv()),
+      pullLfsObjects: async () => {
+        await execFileAsync('git', ['lfs', 'pull'], {
+          cwd: worktreePath,
+          encoding: 'utf8',
+          timeout: 300_000,
+          maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+          env: buildGitSshEnv(),
+        });
+      },
+    });
+    if (outcome.action === 'skipped') {
+      this.logger.warn(`Git LFS hydration skipped for ${worktreePath}: ${outcome.cause}`);
     }
-    if (tracked.trim().length > 0) {
-      await execFileAsync('git', ['lfs', 'pull'], {
-        cwd: worktreePath,
-        encoding: 'utf8',
-        timeout: 300_000,
-        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-        env: buildGitSshEnv(),
-      });
+    if (outcome.action === 'failed') {
+      throw new Error(
+        `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${outcome.cause}`
+      );
     }
   }
 

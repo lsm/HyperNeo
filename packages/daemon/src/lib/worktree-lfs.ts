@@ -20,7 +20,10 @@ function lfsExtensionPriority(line: string): number | undefined {
 }
 
 function isLfsPointerContent(content: string): boolean {
-  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const lines = content
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .filter((line) => line.trim() !== '');
   if (lines[0] !== LFS_POINTER_SIGNATURE) return false;
   const seenPriorities = new Set<number>();
   let index = 1;
@@ -33,7 +36,7 @@ function isLfsPointerContent(content: string): boolean {
   }
   if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[index] ?? '')) return false;
   if (!/^size \+?\d+\s*$/.test(lines[index + 1] ?? '')) return false;
-  return lines.slice(index + 2).every((line) => line === '');
+  return index + 2 === lines.length;
 }
 
 export async function indexContainsLfsPointer(

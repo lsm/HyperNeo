@@ -87,6 +87,11 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('ignores blank records around valid pointer lines', async () => {
+    stubGrepCandidate(`\n${LFS_SIGNATURE}\n\n${POINTER_OID}\n\nsize 1234\n\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
   test('accepts CRLF-delimited pointer blobs containing extension records', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\r\n${EXT_RECORD}\r\n${POINTER_OID}\r\nsize 1234\r\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);

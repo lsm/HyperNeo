@@ -2,11 +2,8 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import {
-  LFS_ATTR_PATHSPEC,
-  indexContainsLfsPointer,
-  worktreeDeclaresLfsAttributes,
-} from './worktree-lfs.ts';
+import { LFS_ATTR_PATHSPEC, indexContainsLfsPointer } from './worktree-lfs.ts';
+import { runWorktreeLfsHydration } from './worktree-lfs-hydration.ts';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -51,26 +48,18 @@ function literalPathspec(path: string): string {
 }
 
 async function hydrateLfsObjects(git: SimpleGit, worktreePath: string): Promise<void> {
-  let tracked: string;
-  try {
-    tracked = await git.raw(['lfs', 'ls-files']);
-  } catch (err) {
-    if (
-      await worktreeDeclaresLfsAttributes(
-        () => git.raw(['ls-files', '-z', '--', LFS_ATTR_PATHSPEC]),
-        () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv())
-      )
-    ) {
-      throw new Error(
-        `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    }
-    return;
-  }
-  if (tracked.trim().length > 0) {
-    await git.raw(['lfs', 'pull']);
+  const outcome = await runWorktreeLfsHydration({
+    listLfsTrackedFiles: () => git.raw(['lfs', 'ls-files']),
+    listAttrLfsPaths: () => git.raw(['ls-files', '-z', '--', LFS_ATTR_PATHSPEC]),
+    indexHasLfsPointer: () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv()),
+    pullLfsObjects: async () => {
+      await git.raw(['lfs', 'pull']);
+    },
+  });
+  if (outcome.action === 'failed') {
+    throw new Error(
+      `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${outcome.cause}`
+    );
   }
 }
 
