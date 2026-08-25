@@ -665,6 +665,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         }
       }
       const recoveredFailure = markProviderRefreshSucceeded(record.providerId);
+      providerRepo.updateProvider(request.id, {
+        healthStatus: 'healthy',
+        lastHealthCheckAt: Date.now(),
+      });
       if (!recoveredFailure) notifyProvidersChanged(internalEventBus);
 
       return {

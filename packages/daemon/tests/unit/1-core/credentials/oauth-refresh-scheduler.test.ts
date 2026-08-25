@@ -474,7 +474,9 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     });
+    let storeAttempts = 0;
     manager.storeOAuthTokens = async () => {
+      storeAttempts += 1;
       throw new Error('credential store failed');
     };
     let invalidated = false;
@@ -489,7 +491,8 @@ describe('OAuthRefreshScheduler', () => {
 
     await expect(scheduler.tick()).resolves.toBeUndefined();
 
-    expect(invalidated).toBe(true);
+    expect(storeAttempts).toBeGreaterThanOrEqual(1);
+    expect(invalidated).toBe(false);
     await expect(scheduler.stop()).resolves.toBeUndefined();
   });
 

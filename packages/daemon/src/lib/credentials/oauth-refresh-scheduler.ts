@@ -114,13 +114,25 @@ export class OAuthRefreshScheduler {
     }
 
     if (refreshed) {
-      this.retryCounts.delete(retryKey);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
+      let persistenceFailed = false;
       try {
         if (nextCredentials) {
           await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
         }
-      } catch {}
+      } catch {
+        persistenceFailed = true;
+      }
+      if (persistenceFailed) {
+        const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
+        this.retryCounts.set(retryKey, retries);
+        if (retries >= this.maxRetries) {
+          this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
+          await this.onProviderChanged?.(provider.id, 'exhausted');
+        }
+        return;
+      }
+      this.retryCounts.delete(retryKey);
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       const onPreRecovery = this.onPreRecoveryInvalidate;
       if (onPreRecovery) {
