@@ -1,5 +1,7 @@
 # External-event ingestion: user-configurable filters/mappings + self-event suppression — survey & chain proposal
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Task #1259 survey. Analysis only — maps the external-event ingestion path on current
 `dev` (e87cadcd7) and proposes chains that close the two owner-reported product gaps:
 (1) ingestion-level filtering + field mapping ("for GitHub events, I only need this one

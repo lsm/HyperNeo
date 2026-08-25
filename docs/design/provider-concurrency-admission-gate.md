@@ -1,5 +1,7 @@
 # Provider-Concurrency Admission Gate — Design (ADR 0004 Phase 2, chain C5)
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Status: Proposed (design pass — doc only, no production code in this change)
 Date: 2026-08-23
 Task: #1313. Sources: `docs/reports/providers-area-survey.md` chain C5 (PR #2722) and

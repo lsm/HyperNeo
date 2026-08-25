@@ -96,6 +96,15 @@ effect stages permitted inside pipelines under atomicity-delegation conditions.
 Answers the RFC's five open questions; see "Staged run pipelines". The prior
 boundary is retained in substance: a pipeline still never owns atomicity.
 
+Revised 2026-08-25 after owner review: the combinator-centric organization is
+retired as a gate. Direct superpipe composition — one cohesive, business-named
+pipeline per business path, mixing decision, transform, and effect stages — is
+the default form for new work in daemon and web. `decisionRun` and `stagedRun`
+remain for their existing call sites and may be used where they fit, but no
+flow must be pre-classified into a category, and no combinator is designed
+ahead of the direct uses that would justify it. See "One pipeline per business
+path" and Decision item 3.
+
 ## Context
 
 HyperNeo's Space runtime classes accumulate cascades that interleave three concerns:
@@ -115,19 +124,27 @@ flow-control halts, and a choice of sync (`.end`) or async (`.endAsync`) executo
 It was hardened for this pilot upstream (tsconfig build fix, raw-boolean-dep
 support, catchable `OutputKeyError`).
 
-### Library surface vs. blessed idioms
+### One pipeline per business path (revised 2026-08-25)
 
-Superpipe's full surface is larger than anything blessed in this ADR: async
-pipelines, dependency-injected named inputs/outputs, per-stage error handlers,
-`!dep`/`?dep` control-flow prefixes, output picking/merging, and `withSignal`
-cancellation. The combinators below (`decisionRun`, `stagedRun`) are **blessed
-idioms** — recurring shapes with the wiring ceremony deduplicated and one
-discipline made structural — not a statement about what the library can do. A
-flow that fits no blessed idiom may use superpipe directly; when a raw shape
-recurs (≈3 uses), promote it into a named combinator so the codebase converges
-on vocabulary instead of calcifying. A combinator must earn its layer by making
-a discipline structural — dedup alone is convenience, not a layer. Phases bound
-adoption; nothing here bounds the library.
+Superpipe's surface is the composition engine itself: dependency-injected named
+stages, ctx threading, `!dep`/`?dep` control-flow prefixes, per-stage error
+handlers, output picking/merging, sync (`.end`) and async (`.endAsync`)
+executors, and `withSignal` cancellation. The default way to use it is DIRECT:
+one cohesive pipeline per business path, named for the business operation
+(`deliverMessage`, `spawnWorkflowNodeAgent`), whose stages freely mix pure
+decisions, transforms, and effects. Nothing requires classifying a flow — or a
+stage — into a category before composing it.
+
+The earlier framing — `decisionRun`/`stagedRun` as "blessed idioms" through
+which flows were expected to route — is retired (2026-08-25, owner directive).
+Pre-categorization made code more complex, not simpler: Chain P's spawn path
+was one business flow split into two pipelines, one per category, and the
+`stagedRun` contract taxonomy (five stage kinds, declared read/write sets) put
+a type system in front of plain composition. Those combinators remain
+available — they carry real disciplines their existing call sites rely on —
+but they are tools, not gates. New combinators are extracted only after direct
+use (≈3 real instances) reveals a recurring shape that earns a name; a
+combinator is never designed ahead of its uses.
 
 ## Decision
 
@@ -148,15 +165,20 @@ shell (class): flat interpreter, one branch per decision action
 2. **Precedence is stage order, enforced structurally.** Every gate is followed by
    a `!hasDecided` halt guard, so the first deciding gate wins. There is no
    separate precedence document; the gate list is it.
-3. **All wiring ceremony lives in `decisionRun(name, gates)`**
-   (`packages/daemon/src/lib/space/runtime/decision-pipeline.ts`): factory + cast,
-   `.input(['ctx'])`, the per-gate halt guards, and `decision: null` injection.
-   A new decision pipeline is a name plus a gate array (~6 lines). Do not
-   hand-write the gate ritual when `decisionRun` fits. Superpipe imports outside
-   `decision-pipeline.ts` and `staged-run.ts` are permitted for flows that fit no
-   blessed idiom (revised 2026-08-21 — this was earlier a monopoly, and it bred
-   false ceilings about the library); when a raw shape recurs ≈3 times, promote
-   it into a named combinator.
+3. **One pipeline per business path; composition is direct (revised
+   2026-08-25).** A business logic path — spawn, delivery, stop, recovery —
+   composes as ONE superpipe pipeline named for the operation, mixing decision,
+   transform, and effect stages; `!dep`/`?dep` handle early exits and
+   `.end`/`.endAsync` follow need. Superpipe may be imported anywhere a pipeline
+   fits; there is no import boundary (the 2026-08-21 wording kept a two-module
+   boundary and treated direct use as the exception — that inversion bred the
+   category tax this revision removes). `decisionRun`
+   (`packages/daemon/src/lib/space/runtime/decision-pipeline.ts`) and
+   `stagedRun` (`staged-run.ts`) remain usable where their shape fits —
+   including the gate-ritual dedup `decisionRun` provides — but a flow is never
+   required to choose a category or route through a combinator. Extract a NEW
+   combinator only after ≈3 direct uses reveal a recurring shape; never design
+   one ahead of use.
 4. **Pipelines are the composition primitive for sequential logic, not just
    decisions.** Two additional sanctioned forms beyond decide-once cores:
    - **Transform pipelines.** A pipeline may compose an evolving value across
@@ -170,10 +192,10 @@ shell (class): flat interpreter, one branch per decision action
      run may end in an effect, and the shell may re-enter a pipeline on the
      result. The pilot already ships this shape: `deliverViaActivation` runs
      the async activation, then feeds the outcome through the post-activation
-     decision pipeline. What is *not* sanctioned is free-form effectful stages
-     mid-pipeline: each effect boundary must be idempotent or compensable, and
-     atomic multi-step writes belong to a transaction shell (P7), never to the
-     pipeline. A pipeline owns no atomicity.
+     decision pipeline. Effect stages mid-pipeline are ordinary (revised
+     2026-08-25); the discipline they carry: idempotent or compensable, with
+     atomic multi-step writes belonging to a transaction shell (P7) or a
+     repository primitive. A pipeline owns no atomicity.
 5. **Decision cores stay synchronous** (`.end`, never `.endAsync`). Pilot evidence:
    the async executor's promise settlement added microtask boundaries that changed
    interleaving with background tick timers and broke a timing-sensitive test
@@ -194,6 +216,13 @@ shell (class): flat interpreter, one branch per decision action
    cancellation requirement appears, not to exercise the feature.
 
 ### Staged run pipelines (`stagedRun`) — added 2026-08-21 (#2670)
+
+**Revision 2026-08-25:** this section records the `stagedRun` design as built
+and remains in force for its existing consumers (verified-stop, spawn flow).
+It is no longer a mandatory classification. New flows compose one direct
+pipeline per business path (see "One pipeline per business path"); the five
+stage contracts and declared read/write sets below are guidance for race-prone
+effect stages, not a required taxonomy.
 
 `decisionRun` answers "what happens next" in one synchronous step. The run tick's
 remaining body is a different shape: long flows interleaving snapshots, decisions,
@@ -335,11 +364,12 @@ grows that requirement — the caveats narrow, never expand.
 - **As a state machine or unbounded fold.** State lives in the runtime/DB; a
   pipeline decides one step. Stream reduction may use a pipeline as the per-event
   reducer body (Phase 3), never as the loop.
-- **As a free-form effect executor.** Effects happen at pipeline boundaries, or
-  as declared `effect` stages inside `stagedRun` under the five conditions in
-  "Staged run pipelines" (revised 2026-08-21). DB writes, network, publishes,
-  session injects never appear as ad-hoc mid-pipeline steps; a pipeline still
-  never owns atomicity — effect stages delegate it to repository primitives.
+- **As a free-form effect executor (revised 2026-08-25).** Effects as pipeline
+  stages are normal — a business path mixes them with decisions and
+  transforms. The boundary that remains: every effect stage delegates atomicity
+  to repository primitives (CAS, transition table, spawn reservation) and is
+  idempotent or compensable; blind read-modify-write inside a stage is banned.
+  A pipeline still never owns atomicity.
 - **As a resource owner.** `AbortController`s, timers, subscriptions, query
   objects stay in classes; pipelines receive values.
 - **On hot paths.** Per-stage container allocation is not free. A six-gate,
@@ -2048,25 +2078,26 @@ UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
   | Phase | Scope | Notes |
   | --- | --- | --- |
   | 0 | Task CAS (`casStatus`), transition-table enforcement in `updateTaskAndEmit`, spawn reservation, run/execution CAS, durable intent/outbox + compensation-record repositories | Product behavior change, not refactor; needs characterization pins. The `update_task` tool layer delegates to the repo-layer table — one source of truth (aligns with Pilot 5). Consumption so far: transition-table enforcement (#2682); `casStatus` (#2684 recovery blocked-write; Pilot 7 added the trailing promotion); `casExecutionStatus` across the spawn seam and the spawn reservation (Pilot 7 — its consumers carry the before/after pins). Implemented but unconsumed: the run CAS (`casRunStatus`). Not yet implemented at all: the durable intent/outbox and compensation-record repositories for Space flows (only the unrelated message-delivery outbox exists), so those rows name future primitives, not dormant code. |
-  | 1 | `repairQueuedWorkflowNodeHandoffs` as a staged sub-pipeline | Proves the pattern on one opaque effect. |
+  | 1 | `repairQueuedWorkflowNodeHandoffs` as one direct pipeline (revised 2026-08-25 — no longer "a staged sub-pipeline") | First flow built under the one-pipeline-per-path revision; proves the pattern on one opaque effect. |
   | 2 | `handleAliveStuckExecutions` + crash reset | First recovery handler; the `withSignal` candidate lands here only if a test demonstrates the race. |
   | 3 | `handleWaitingRebindExecutions` | |
   | 4 | `handleNonTerminalIdleExecutions` | |
   | 5 | `handleTerminalErrorIdleExecutions` | |
-  | 6 | Compose `processRunTick` as one top-level `stagedRun` | Sequenced strictly after the pilot-3 apply PR merges — same lines. |
+  | 6 | Compose `processRunTick` as one top-level direct pipeline (revised 2026-08-25 — no longer "one top-level `stagedRun`") | Sequenced strictly after the pilot-3 apply PR merges — same lines. |
   | 7 | Same pattern beyond the tick: runtime nags, checkpoint/restore, message dispatch, startup handoff repair | |
 
-- **Candidate idioms (rule of three — extract on the ≈3rd real use, not before):**
-  `transformRun` (P1 pure transforms with data-dependent early exit:
-  github-normalizer, store delta application, message-shape normalization);
-  `requestRun` (web: generation-guarded request/apply — a stale response
-  structurally cannot apply — SpaceForge/ScopeDetail fetches, GitHubHealthPanel
-  refresh, every version-guarded panel fetch); `transactionalRun` (P7/Phase 4 —
-  effects run only after commit); `reduceRun` (P6/Phase 3 — per-event reducer
-  bodies; the web subscription-lifecycle machine plus its four facades, extracted
-  by pilot 12, decompose into this shape, and the executor half already recurs
-  4× — promotion rides the store adoptions). See "Library surface vs. blessed
-  idioms" for the promotion rule.
+- **Candidate idiom names (observed, not designed — revised 2026-08-25):** these
+  are labels for shapes that direct use may or may not eventually consolidate,
+  not a build queue. `transformRun` (P1 pure transforms with data-dependent
+  early exit: github-normalizer, store delta application, message-shape
+  normalization); `requestRun` (web: generation-guarded request/apply — a stale
+  response structurally cannot apply — SpaceForge/ScopeDetail fetches,
+  GitHubHealthPanel refresh, every version-guarded panel fetch);
+  `transactionalRun` (P7/Phase 4 — effects run only after commit); `reduceRun`
+  (P6/Phase 3 — per-event reducer bodies; pilot 12's subscription-lifecycle
+  machine is the first instance and its executor half already recurs 4×). A
+  combinator is proposed only when ≈3 direct uses share the shape; until then,
+  compose directly. See "One pipeline per business path."
 - **Carried research:** async/`withSignal` validation if Phase 1 wants an async core.
 
 ## References

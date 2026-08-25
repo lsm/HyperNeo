@@ -1,5 +1,7 @@
 # Providers Area Survey + Bug Hunt — Chain Proposals (task #1258)
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Date: 2026-08-22. Base: `origin/dev` @ `e87cadcd7`. Analysis only — no production
 code changed. Paths abbreviated: **D** = `packages/daemon/src`, **W** =
 `packages/web/src`. All line numbers verified against the base commit. Taxonomy

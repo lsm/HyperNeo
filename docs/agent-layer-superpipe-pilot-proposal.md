@@ -1,5 +1,7 @@
 # Agent layer (`lib/agent/`) survey → superpipe pilot-chain proposal
 
+> **ADR 0004 revision 2026-08-25:** direct superpipe composition is now the default — one cohesive, business-named pipeline per business path mixing decision/transform/effect stages; no flow is pre-classified as decisionRun/stagedRun, and combinators are extracted only after direct use reveals a recurring shape. Where this document prescribes combinator categories or staged contracts, read them through that revision (ADR 0004, "One pipeline per business path").
+
 Task #1217. Survey basis: `origin/dev` @ `b7f20b4f3` (2026-08-21) — line
 citations re-verified against current dev after #2696 (SDK interrupt receipt +
 refusal rewind), #2698, #2699, and #2700 landed; those commits shifted
