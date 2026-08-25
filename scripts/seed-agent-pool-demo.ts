@@ -74,13 +74,16 @@ if (health?.status !== 'ok') {
 
 const modelsResult = await rpcCall(ws, 'models.list', { useCache: true });
 const models: Array<{ id: string; provider?: string }> = modelsResult?.models ?? [];
-const distinctModels: string[] = [];
+const distinctModels: Array<{ id: string; provider?: string }> = [];
+const seenModelIds = new Set<string>();
 const seenProviders = new Set<string>();
 for (const model of models) {
   if (!model?.id) continue;
   if (model.provider && seenProviders.has(model.provider)) continue;
+  if (seenModelIds.has(model.id)) continue;
   if (model.provider) seenProviders.add(model.provider);
-  distinctModels.push(model.id);
+  seenModelIds.add(model.id);
+  distinctModels.push({ id: model.id, provider: model.provider });
   if (distinctModels.length >= 3) break;
 }
 
@@ -113,17 +116,20 @@ if (!coder || !reviewer) {
   throw new Error(`Preset agents missing (have: ${agents.map((a) => a.name).join(', ')})`);
 }
 
-const model = (index: number): string | undefined => distinctModels[index];
+const model = (index: number): { model: string; provider?: string } | undefined => {
+  const found = distinctModels[index];
+  return found ? { model: found.id, provider: found.provider } : undefined;
+};
 
 const coderPool = [
-  { model: model(0) ?? 'sonnet', maxConcurrent: 8, weight: 50 },
-  { model: model(1) ?? 'glm-5', maxConcurrent: 4, weight: 52 },
-  { model: model(2) ?? 'kimi-k3[1m]', maxConcurrent: 2, weight: 80 },
+  { ...(model(0) ?? { model: 'sonnet' }), maxConcurrent: 8, weight: 50 },
+  { ...(model(1) ?? { model: 'glm-5' }), maxConcurrent: 4, weight: 52 },
+  { ...(model(2) ?? { model: 'kimi-k3[1m]' }), maxConcurrent: 2, weight: 80 },
 ].filter((entry) => !!entry.model);
 
 const reviewerPool = [
-  { model: model(0) ?? 'sonnet', maxConcurrent: 3, weight: 60 },
-  { model: model(1) ?? 'glm-5', maxConcurrent: 2, weight: 40 },
+  { ...(model(0) ?? { model: 'sonnet' }), maxConcurrent: 3, weight: 60 },
+  { ...(model(1) ?? { model: 'glm-5' }), maxConcurrent: 2, weight: 40 },
 ].filter((entry) => !!entry.model);
 
 await rpcCall(ws, 'spaceAgent.update', {

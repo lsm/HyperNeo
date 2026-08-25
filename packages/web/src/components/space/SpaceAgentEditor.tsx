@@ -504,6 +504,7 @@ export function SpaceAgentEditor({
                 >
                   <WorkflowModelSelect
                     value={entry.model || undefined}
+                    provider={entry.provider || undefined}
                     onChange={(value, selection?: WorkflowModelSelection) =>
                       setModelPool((prev) =>
                         prev.map((candidate, i) =>
