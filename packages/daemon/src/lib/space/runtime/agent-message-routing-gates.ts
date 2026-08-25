@@ -164,6 +164,16 @@ export function foldAgentMessageResult(input: FoldAgentMessageResultInput): Agen
   };
 }
 
+export function promoteQueuedSpaceAgentResult(result: AgentMessageResult): AgentMessageResult {
+  if (
+    result.success === false &&
+    result.queued?.some((entry) => entry.agentName === 'space-agent')
+  ) {
+    return { ...result, success: 'partial' };
+  }
+  return result;
+}
+
 export interface DeclaredOrActivatedInput {
   activatedTargets: ReadonlySet<string>;
   declaredAgentNames: ReadonlySet<string> | string[];

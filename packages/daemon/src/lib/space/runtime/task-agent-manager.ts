@@ -1500,8 +1500,10 @@ export class TaskAgentManager {
         .getSDKMessageRepo?.()
         ?.getDeliveryContent(spaceChatSessionId, row.id)?.sendStatus;
       if (settledStatus === 'consumed') {
-        repo.markDelivered(row.id, spaceChatSessionId);
-        this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        if (repo.getById(row.id)?.status !== 'delivered') {
+          repo.markDelivered(row.id, spaceChatSessionId);
+          this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        }
         continue;
       }
       const message = formatPendingRowForSpaceAgent(row);
@@ -1510,15 +1512,16 @@ export class TaskAgentManager {
         const replyTo =
           extractReplyToSessionId(message) ??
           (registry && row.taskId ? registry.get(row.taskId) : null);
-        const outcome = await inject(spaceId, message, replyTo, row.id, {
-          onConsumed: () => {
-            repo.markDelivered(row.id, spaceChatSessionId);
-            this.emitPendingDelivered(row.id, spaceChatSessionId, row);
-          },
-        });
-        if (outcome.state === 'delivered') {
+        const settleDelivered = (): void => {
+          if (repo.getById(row.id)?.status === 'delivered') return;
           repo.markDelivered(row.id, spaceChatSessionId);
           this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        };
+        const outcome = await inject(spaceId, message, replyTo, row.id, {
+          onConsumed: settleDelivered,
+        });
+        if (outcome.state === 'delivered') {
+          settleDelivered();
         } else if (outcome.state === 'failed') {
           log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}`);
           repo.markAttemptFailed(row.id, outcome.error);

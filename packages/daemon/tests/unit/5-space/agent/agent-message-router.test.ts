@@ -1969,6 +1969,28 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(result.reason).toContain("Channel topology does not permit 'coder' to send to");
   });
 
+  test('classifies queued coordinator plus unknown worker as partial instead of failure', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      spaceAgentInjector: async () => ({ state: 'queued', messageId: 'msg-queued-coordinator' }),
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: ['@coordinator', '@worker:ghost/ghost'],
+      message: 'queued coordinator plus unknown worker',
+    });
+
+    expect(result.success).toBe('partial');
+    expect(result.queued).toEqual([
+      { agentName: 'space-agent', messageId: 'msg-queued-coordinator' },
+    ]);
+    expect(JSON.stringify(result)).toContain('ghost');
+  });
+
   test('keeps earlier delivered results when a later generic target is invalid', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);

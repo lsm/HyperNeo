@@ -54,6 +54,7 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
       listCalls.push([targetName, workflowNodeId ?? null]);
       return repo.listPendingForTarget(runId, targetName, workflowNodeId);
     },
+    getById: (id: string) => repo.getById(id),
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);
       repo.markDelivered(id, sessionId);

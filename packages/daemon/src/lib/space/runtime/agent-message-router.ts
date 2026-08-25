@@ -17,6 +17,7 @@ import {
   decideGenericAddressRouting,
   decideNodeTargetDelivery,
   foldAgentMessageResult,
+  promoteQueuedSpaceAgentResult,
   resolveNodeAgentTargets,
 } from './agent-message-routing-gates.ts';
 import { decideAgentMessageRouting } from './agent-message-routing-pipeline.ts';
@@ -515,7 +516,9 @@ export class AgentMessageRouter {
       notFound.push(agentName);
     }
 
-    return foldAgentMessageResult({ delivered, queued, failed, notFound });
+    return promoteQueuedSpaceAgentResult(
+      foldAgentMessageResult({ delivered, queued, failed, notFound })
+    );
   }
 
   async deliverMessage(params: AgentMessageParams): Promise<AgentMessageResult> {
@@ -772,6 +775,8 @@ export class AgentMessageRouter {
       notFound.push(agentName);
     }
 
-    return foldAgentMessageResult({ delivered, queued, failed, notFound });
+    return promoteQueuedSpaceAgentResult(
+      foldAgentMessageResult({ delivered, queued, failed, notFound })
+    );
   }
 }

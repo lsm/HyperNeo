@@ -9,6 +9,9 @@ import {
   type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import { Logger } from '../../logger.ts';
+
+const log = new Logger('space-agent-delivery');
 
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 
@@ -140,7 +143,14 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
   const expiry = setTimeout(() => late.cancel(), LATE_SETTLE_HORIZON_MS);
   void late.promise.then(() => {
     clearTimeout(expiry);
-    onConsumed();
+    try {
+      onConsumed();
+    } catch (error) {
+      log.warn(
+        `delayed consumption settlement failed for ${sessionId}/${messageId}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   });
   return { ...ctx, outcome: { state: 'queued', messageId } };
 }
