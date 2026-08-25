@@ -136,7 +136,7 @@ function mapActorMessageProjectionRow(row: Record<string, unknown>): Record<stri
 
 function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sessionId = typeof row.sessionId === 'string' ? row.sessionId : null;
-  const role = String(row.role ?? 'system');
+  const role = row.role == null ? '' : String(row.role);
   const label = row.label == null ? '' : String(row.label);
   const kind =
     row.kind === 'github' ? 'github' : row.kind === 'task_agent' ? 'task_agent' : 'node_agent';
@@ -602,8 +602,8 @@ sdk_rows AS (
     NULL AS eventRef,
     json_object(
       'kind', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE 'worker' END,
-      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name) END,
-      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name) END,
+      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, '') END,
+      'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name, '') END,
       'sessionId', sm.session_id,
       'nodeExecutionId', ne.id,
       'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
@@ -612,8 +612,8 @@ sdk_rows AS (
     CASE
       WHEN sm.message_type = 'user' THEN json_object(
         'kind', 'worker',
-        'label', COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name),
-        'role', COALESCE(ne.agent_name, sm.provenance_agent_name),
+        'label', COALESCE(sa.name, ne.agent_name, sm.provenance_agent_name, ''),
+        'role', COALESCE(ne.agent_name, sm.provenance_agent_name, ''),
         'sessionId', sm.session_id,
         'nodeExecutionId', ne.id,
         'nodeId', COALESCE(ne.workflow_node_id, sm.provenance_node_id),
@@ -2219,7 +2219,8 @@ sdk_rows AS (
     ON sne.task_id = tt.id
    AND sne.session_id = sm.session_id
    AND sne.rn = 1
-  LEFT JOIN space_agents sa ON sa.id = sne.agent_id
+  LEFT JOIN space_agents sa
+    ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
   WHERE (
     sm.conversation_turn_index >= rt.minTurn
     OR (

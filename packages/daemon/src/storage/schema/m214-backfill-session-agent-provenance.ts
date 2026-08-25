@@ -36,6 +36,7 @@ export function runMigration214(db: BunDatabase): void {
                SELECT ne.agent_name
                FROM node_executions ne
                WHERE ne.agent_session_id = sessions.id
+                 AND ne.agent_name IS NOT NULL
                ORDER BY ne.updated_at DESC, ne.id DESC
                LIMIT 1
              )
