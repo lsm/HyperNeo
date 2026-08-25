@@ -617,8 +617,12 @@ compensated. No site in this plan performs effects, so none uses it.
 - **risks/caveats.** Reset parsing drives real cooldown durations; strategy
   order and the horizon bounds must not drift (a wrongly-ordered gate can
   turn a 7-day-horizon rejection into an epoch-seconds false positive).
-  `jitterFn` defaults to `Math.random` — keep it a ctx field, never a gate
-  global, so tests stay deterministic. The regexes use `g` flags with
+  `jitterFn` defaults to the SIGNED adapter `() => Math.random() * 2 - 1`
+  (review correction: jitter spans `[-1, 1)` — passing raw `Math.random`
+  would make every unparsed rate-limit cooldown land at or above the ladder
+  base instead of varying on both sides, materially lengthening retry
+  waits). Keep it a ctx field, never a gate global, so tests stay
+  deterministic. The regexes use `g` flags with
   `matchAll` — leave them module-level exactly as-is (stateful `lastIndex`
   hazards if copied into closures carelessly).
 

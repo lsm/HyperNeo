@@ -196,15 +196,25 @@ The repo already has several proven pipelines. Use these as the model for each s
      correction — resnapshot-after-spawn cannot prevent concurrent dispatch:
      two callers can both pass admission, spawn separate sessions, and only
      then discover one task update lost). Its `compensate` releases the
-     reservation when superseded.
-  8. `effect` `spawn-post-approval-sub-session`.
+     reservation ONLY while no session has been spawned — the compensate is
+     guarded on the state's `spawnedSessionId` being unset, so a later-stage
+     failure can never unwind the claim after spawning.
+  8. `effect` `spawn-post-approval-sub-session`, whose `compensate`
+     terminates/ends the spawned sub-session (review correction round 3: the
+     only previously specified compensation released the reservation, so a
+     `record-dispatched-session` throw or CAS loss would make the task
+     dispatchable again while the spawned session stayed live — a retry then
+     creates a second orphan. After a successful spawn the claim is
+     NON-releasable; failure cleanup owns the session, not the claim).
   9. `effect` `record-dispatched-session` converts the reservation into the
-     final `postApprovalSessionId`/`postApprovalStartedAt` (the loser of the
-     reservation race halts at step 7 without ever spawning, so no orphaned
-     session is created).
+     final `postApprovalSessionId`/`postApprovalStartedAt` via the same
+     conditional CAS (the loser of the reservation race halts at step 7
+     without ever spawning; if this CAS loses despite the reservation, the
+     unwind runs step 8's compensate and terminates THIS caller's spawned
+     session — the winner's claim is never touched).
   10. `halt` returns `spawn` result.
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), and the spawn compensation path.
-- **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task — hence the reservation-before-spawn step above; without it, a conditional `record-dispatched-session` alone protects the row but leaves the losing spawned session orphaned and active. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), the spawn compensation path, AND the round-3 row: `record-dispatched-session` throwing leaves the claim in place and terminates the spawned session (task must NOT become dispatchable again).
+- **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task — hence the reservation-before-spawn step above; without it, a conditional `record-dispatched-session` alone protects the row but leaves the losing spawned session orphaned and active. The compensations are asymmetric by design: claim-release only pre-spawn, session-termination only post-spawn. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
 
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:send_message_to_task`
 
@@ -382,6 +392,14 @@ The repo already has several proven pipelines. Use these as the model for each s
   - `stop_for_status` → `spaceRuntimeService.stopWorkflowBackedTaskForStatus`.
   - `set_status` → `taskManager.setTaskStatus`.
   - `fields_only` → `taskManager.updateTask`.
+  - Review correction: the current handler calls
+    `ensureWorkflowOverridesStillUnlocked` immediately before EACH subsequent
+    field update; the pipeline must re-check the lock (fresh task resnapshot
+    + lock gate) before EVERY effect that can persist `workflowModelOverrides`
+    fields. Validating overrides only before routing is not enough: another
+    request can start the task (`startedAt`/`workflowRunId` set) while this
+    pipeline awaits a recover/park/stop operation, after which the stale
+    admission would write locked overrides.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/tools/task-update-routing-pipeline.ts` exporting `decideTaskUpdate` as a `decisionRun`.
   2. Update `space-tool-pipeline.ts` to import and call `decideTaskUpdate` from there.
@@ -727,8 +745,8 @@ The repo already has several proven pipelines. Use these as the model for each s
 
 ## Open questions
 
-1. **Async `stagedRun` inside synchronous `runAtomic`**: `goal-service.ts` `runAtomic` is synchronous. Do we convert `runAtomic` to `async`/`runAtomicAsync` for the `handleTaskTerminal` and `claimOutcomeNotification` pipelines, or do we keep those as sync `superpipe` pipelines with `.end`?
-2. **Goal-service transaction boundaries**: If `handleTaskTerminal` becomes a `stagedRun` outside the transaction, how do we ensure the sequence of repo writes is atomic? Should the `stagedRun` effect stages receive a transaction context and all use transaction-aware repo methods?
+1. ~~**Async `stagedRun` inside synchronous `runAtomic`**~~ Resolved by review: keep both as sync `superpipe` pipelines with `.end` inside the existing `runAtomic`. Converting `runAtomic` to an async variant is OFF the table — `stagedRun` returns a Promise, the SQLite transaction wrapper is synchronous, and either option commits before the task/goal/notification writes finish, breaking terminal-generation deduplication.
+2. ~~**Goal-service transaction boundaries**~~ Resolved by review: `handleTaskTerminal` never becomes a `stagedRun` outside the transaction. The sync pipeline's effect stages run inside `runAtomic` and use the transaction-bound repo methods; atomicity comes from the transaction, not from the pipeline.
 3. **Post-approval router atomicity and CAS**: The current post-approval path uses blind `taskRepo.updateTask`. Should we introduce a `claimPostApprovalDispatch` reservation/CAS in `SpaceTaskRepository` before migrating to `stagedRun`?
 4. **Deferred digest atomic primitive**: Should `foldDeferredExternalEventsAtFlush` and `foldDeferredExternalEventOverflow` be backed by a single `foldDeferredRows` repository primitive that supersedes and inserts under one transaction, rather than a multi-effect `stagedRun`?
 5. **Unification of tool and RPC shells**: Several task flows (`publish`, `approve`, `archive`, `update`) are duplicated between `space-agent-tools.ts`, `node-agent-tools.ts`, `space-task-handlers.ts`, and `task-agent-manager.ts`. Do we create a `space-task-operations.ts` module with shared shells, or keep the pipeline in one place and call it from each handler?

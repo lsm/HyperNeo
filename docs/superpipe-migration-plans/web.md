@@ -683,12 +683,19 @@ anywhere in this plan.
   1. `src/hooks/__tests__/useTargetSessionContext.test.ts` exists — audit for
      the override rule (disagreeing `nodeExecutionSessionId` wins when target
      has no `nodeExecutionId`), the exact-name requirement for post-approval
-     members, cancelled/pending exclusion. Add rows first.
+     members, cancelled/pending exclusion, and the no-session candidate row
+     (matching member with `sessionId === null` must NOT trigger the
+     override). Add rows first.
   2. Extract stages; compose `'resolve-target-session'`; wrapper unchanged.
 - **Tests.** Suite above; keep hook-level tests green.
 - **Risks/caveats.** The `?? candidates[0]` head-selection and the override's
-  three-condition guard (`!target.nodeExecutionId && execSessionId &&
-  resolved !== execSessionId`) are the subtle bits — copy them atomically.
+  guard (`!target.nodeExecutionId && execSessionId && resolved &&
+  resolved !== execSessionId` — review correction: keep the `resolved`
+  truthiness operand; a matching activity member with no `sessionId` yields
+  `resolved === null`, and without that operand the override would replace
+  the null with the target's stale `nodeExecutionSessionId`, making the hook
+  treat the target as started and route preconfiguration/context requests to
+  a dead session) are the subtle bits — copy them atomically.
   Moderate call cadence (memo + effect loop) is fine. The hook's latch logic
   (refs, render-phase writes) is explicitly OUT of scope — resource/state
   ownership stays in the hook per ADR Decision 5.
