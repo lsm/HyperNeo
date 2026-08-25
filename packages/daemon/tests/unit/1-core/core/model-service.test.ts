@@ -12,7 +12,6 @@ import {
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
   resolveVisibleCanonicalModelId,
-  refreshModels,
   clearModelsCache,
   getModelsCache,
   setModelsCache,
@@ -3033,6 +3032,7 @@ describe('Model Service', () => {
       await getProviderCatalogModels('ollama', provider);
       expect(fetchCount).toBe(1);
 
+      const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
       await getProviderCatalogModels('ollama', provider);
       expect(fetchCount).toBe(3);
