@@ -77,9 +77,16 @@ describe('indexContainsLfsPointer', () => {
   });
 
   test('accepts multiple extension records between version and oid', async () => {
-    const second = `ext-1-telemetry sha256:${'c'.repeat(64)}`;
+    const second = `ext-9-telemetry sha256:${'c'.repeat(64)}`;
     stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${second}\n${POINTER_OID}\nsize 1234\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('rejects multi-digit extension priorities', async () => {
+    stubGrepCandidate(
+      `${LFS_SIGNATURE}\next-10-counter sha256:${'b'.repeat(64)}\n${POINTER_OID}\nsize 1234\n`
+    );
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
   test('accepts CRLF-delimited pointer blobs', async () => {

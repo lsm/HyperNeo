@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
-const LFS_EXT_LINE_PATTERN = /^ext-(\d+)-\S+ sha256:[0-9a-f]{64}$/;
+const LFS_EXT_LINE_PATTERN = /^ext-(\d)-\S+ sha256:[0-9a-f]{64}$/;
 const LFS_PROBE_TIMEOUT_MS = 60_000;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
@@ -14,9 +14,7 @@ export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 function lfsExtensionPriority(line: string): number | undefined {
   const match = LFS_EXT_LINE_PATTERN.exec(line);
   if (!match) return undefined;
-  const digits = match[1];
-  if (digits.length > 1 && digits.startsWith('0')) return undefined;
-  return Number(digits);
+  return Number(match[1]);
 }
 
 function isLfsPointerContent(content: string): boolean {

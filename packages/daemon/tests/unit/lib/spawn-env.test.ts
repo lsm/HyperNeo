@@ -22,6 +22,8 @@ const SOURCE: Record<string, string> = {
   TMPDIR: '/var/folders/ab/',
   LANG: 'en_US.UTF-8',
   LC_CTYPE: 'en_US.UTF-8',
+  CI: 'true',
+  WINDIR: 'C:\\Windows',
   DISPLAY: ':0',
   WAYLAND_DISPLAY: 'wayland-0',
   XDG_RUNTIME_DIR: '/run/user/1000',
@@ -75,6 +77,8 @@ describe('buildOsBaselineEnv', () => {
     expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
     expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
     expect(env.USERNAME).toBe(SOURCE.USERNAME);
+    expect(env.CI).toBe('true');
+    expect(env.WINDIR).toBe(SOURCE.WINDIR);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
