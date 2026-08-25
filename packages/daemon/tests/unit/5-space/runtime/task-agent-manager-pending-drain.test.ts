@@ -701,6 +701,10 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.injector).not.toHaveBeenCalled();
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+    const deliveredAt = h.spyRepo.calls.indexOf(`delivered:${row.id}`);
+    const expiredAt = h.spyRepo.calls.indexOf('expireStale');
+    expect(deliveredAt).toBeGreaterThanOrEqual(0);
+    expect(expiredAt).toBeGreaterThan(deliveredAt);
   });
 
   it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {

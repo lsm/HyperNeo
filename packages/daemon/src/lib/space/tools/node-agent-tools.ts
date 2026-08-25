@@ -397,13 +397,35 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       if (result.success === 'partial') {
+        const summaryParts: string[] = [];
+        if (result.delivered.length > 0) {
+          summaryParts.push(
+            `delivered to ${result.delivered.length} peer(s): ` +
+              result.delivered.map((t) => t.agentName).join(', ')
+          );
+        }
+        if (result.queued && result.queued.length > 0) {
+          summaryParts.push(
+            `queued for ${result.queued.length} peer(s): ` +
+              result.queued.map((t) => t.agentName).join(', ')
+          );
+        }
+        if (result.failed.length > 0) {
+          summaryParts.push(`failed for ${result.failed.length} peer(s)`);
+        }
+        if (result.notFoundAgentNames && result.notFoundAgentNames.length > 0) {
+          summaryParts.push(`not found: ${result.notFoundAgentNames.join(', ')}`);
+        }
         return jsonResult({
           success: 'partial',
           delivered: result.delivered,
           failed: result.failed,
           queued: result.queued,
           notFoundAgentNames: result.notFoundAgentNames,
-          message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
+          ...(result.reason ? { reason: result.reason } : {}),
+          message:
+            `Message ${summaryParts.join('; ')}.` +
+            (result.reason ? ` Reason: ${result.reason}` : ''),
         });
       }
 

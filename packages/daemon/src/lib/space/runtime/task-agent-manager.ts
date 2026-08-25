@@ -1476,6 +1476,21 @@ export class TaskAgentManager {
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
 
+    const listedRows = repo.listPendingForTarget(workflowRunId, 'space-agent');
+
+    const spaceChatSessionId = `space:chat:${spaceId}`;
+    for (const row of listedRows) {
+      const settledStatus = this.config.db
+        .getSDKMessageRepo?.()
+        ?.getDeliveryContent(spaceChatSessionId, row.id)?.sendStatus;
+      if (settledStatus === 'consumed') {
+        if (repo.getById(row.id)?.status === 'pending') {
+          repo.markDelivered(row.id, spaceChatSessionId);
+          this.emitPendingDelivered(row.id, spaceChatSessionId, row);
+        }
+      }
+    }
+
     repo.enforceRetention({ runId: workflowRunId });
     repo.expireStale(workflowRunId);
 
@@ -1490,22 +1505,11 @@ export class TaskAgentManager {
     });
     if (drain.action === 'skip') return;
 
-    const spaceChatSessionId = `space:chat:${spaceId}`;
     log.info(
       `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
     );
 
     for (const row of drain.rows) {
-      const settledStatus = this.config.db
-        .getSDKMessageRepo?.()
-        ?.getDeliveryContent(spaceChatSessionId, row.id)?.sendStatus;
-      if (settledStatus === 'consumed') {
-        if (repo.getById(row.id)?.status !== 'delivered') {
-          repo.markDelivered(row.id, spaceChatSessionId);
-          this.emitPendingDelivered(row.id, spaceChatSessionId, row);
-        }
-        continue;
-      }
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const registry = this.config.replyRoutingRegistry;
@@ -1513,7 +1517,7 @@ export class TaskAgentManager {
           extractReplyToSessionId(message) ??
           (registry && row.taskId ? registry.get(row.taskId) : null);
         const settleDelivered = (): void => {
-          if (repo.getById(row.id)?.status === 'delivered') return;
+          if (repo.getById(row.id)?.status !== 'pending') return;
           repo.markDelivered(row.id, spaceChatSessionId);
           this.emitPendingDelivered(row.id, spaceChatSessionId, row);
         };
