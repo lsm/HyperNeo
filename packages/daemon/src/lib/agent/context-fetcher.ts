@@ -9,6 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
+import { scaledAutoCompactWindow } from './context-budget-decision.ts';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
@@ -17,7 +18,13 @@ import {
 type ContextMetadata =
   | Pick<
       ModelInfo,
-      'id' | 'alias' | 'sdkModelIds' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'
+      | 'id'
+      | 'alias'
+      | 'sdkModelIds'
+      | 'contextWindow'
+      | 'preferContextWindowMetadata'
+      | 'autoCompactPercent'
+      | 'provider'
     >
   | null
   | undefined;
@@ -282,6 +289,23 @@ export class ContextFetcher {
     ) {
       autoCompactThreshold = Math.floor(capacity * 0.9);
     }
+    const enforcementProvider = modelMetadata?.provider;
+    let rawSdkAutoCompactThreshold = autoCompactThreshold;
+    if (
+      enforcementProvider &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
+      !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
+    ) {
+      const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
+      if (
+        budgetThreshold !== undefined &&
+        budgetThreshold > 0 &&
+        budgetThreshold < capacity &&
+        (typeof autoCompactThreshold !== 'number' || autoCompactThreshold > budgetThreshold)
+      ) {
+        autoCompactThreshold = budgetThreshold;
+      }
+    }
 
     const resolvedModel = resolveDisplayModel(
       responseModel,
@@ -298,6 +322,8 @@ export class ContextFetcher {
       breakdown,
       apiUsage,
       autoCompactThreshold,
+      sdkAutoCompactThreshold:
+        typeof rawSdkAutoCompactThreshold === 'number' ? rawSdkAutoCompactThreshold : undefined,
       isAutoCompactEnabled: response.isAutoCompactEnabled,
       messageBreakdown,
       lastUpdated: Date.now(),

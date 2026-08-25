@@ -614,6 +614,7 @@ export interface ContextInfo {
   breakdown: Record<string, ContextCategoryBreakdown>;
   apiUsage?: ContextAPIUsage;
   autoCompactThreshold?: number;
+  sdkAutoCompactThreshold?: number;
   isAutoCompactEnabled?: boolean;
   messageBreakdown?: ContextMessageBreakdown;
   lastUpdated?: number;
