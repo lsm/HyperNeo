@@ -297,6 +297,30 @@ function isUnchangedSavedConfig(
   );
 }
 
+function isCurationOnlyConfigUpdate(
+  previousConfigJson: string | undefined,
+  nextConfigJson: string | undefined
+): boolean {
+  if (previousConfigJson === nextConfigJson) return true;
+  if (!previousConfigJson || !nextConfigJson) return false;
+  let prev: Record<string, unknown>;
+  let next: Record<string, unknown>;
+  try {
+    prev = JSON.parse(previousConfigJson) as Record<string, unknown>;
+    next = JSON.parse(nextConfigJson) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  if (!prev || typeof prev !== 'object' || Array.isArray(prev)) return false;
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return false;
+  const keys = new Set<string>([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (key === 'models') continue;
+    if (JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null)) return false;
+  }
+  return true;
+}
+
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
@@ -728,11 +752,20 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.configJson !== undefined ||
             updates.isEnabled !== undefined;
 
+          const discoveryInvalidating =
+            data.credentials !== undefined ||
+            updates.baseUrl !== undefined ||
+            updates.customEndpointConfigJson !== undefined ||
+            (updates.configJson !== undefined &&
+              !isCurationOnlyConfigUpdate(existing.configJson, record.configJson));
+
           if (shouldResync) {
-            const strippedConfig = stripPersistedDiscovery(record.configJson);
-            if (strippedConfig !== record.configJson) {
-              record =
-                providerRepo.updateProvider(data.id, { configJson: strippedConfig }) ?? record;
+            if (discoveryInvalidating) {
+              const strippedConfig = stripPersistedDiscovery(record.configJson);
+              if (strippedConfig !== record.configJson) {
+                record =
+                  providerRepo.updateProvider(data.id, { configJson: strippedConfig }) ?? record;
+              }
             }
             if (record.isEnabled === false) {
               if (record.kind === 'built_in') {
