@@ -175,7 +175,6 @@ export function setupAuthHandlers(
           }
           unsubscribe?.();
           await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
-<<<<<<< HEAD
           if (storeError !== undefined) {
             throw storeError;
           }
