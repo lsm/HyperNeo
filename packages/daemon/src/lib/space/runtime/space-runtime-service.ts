@@ -403,7 +403,21 @@ export class SpaceRuntimeService {
       if (row !== null && row !== undefined && row.sendStatus === 'failed') {
         return 'terminal_failure_after_consumption';
       }
-      return isMessageDeliveryV2Enabled() ? 'consumed' : 'accepted';
+      if (isMessageDeliveryV2Enabled()) return 'consumed';
+      for (let i = 0; i < 10; i++) {
+        const legacyRow = this.config.reactiveDb?.db
+          .getSDKMessageRepo()
+          .getDeliveryContent(sessionId, args.idempotencyKey);
+        if (legacyRow === null || legacyRow === undefined) break;
+        if (legacyRow.sendStatus === 'failed') {
+          return 'terminal_failure_after_consumption';
+        }
+        if (legacyRow.sendStatus === 'consumed') {
+          return 'consumed';
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return 'accepted';
     } catch {
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()

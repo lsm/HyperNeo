@@ -696,17 +696,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       const db = deps.db.getDatabase();
       const anchorRow =
         sessionId !== null && sessionId !== undefined
-          ? (db.prepare(`SELECT last_active_at FROM sessions WHERE id = ?`).get(sessionId) as {
-              last_active_at?: string | null;
-            } | null)
+          ? (db
+              .prepare(
+                `SELECT MAX(timestamp) AS ts FROM sdk_messages
+                 WHERE session_id = ? AND COALESCE(send_status, 'consumed') = 'consumed'`
+              )
+              .get(sessionId) as { ts?: string | number | null } | null)
           : null;
-      const activityBaseline = toEpochMs(anchorRow?.last_active_at) ?? undefined;
+      const activityBaseline = toEpochMs(anchorRow?.ts) ?? undefined;
       const invokedAt = Date.now();
       let task: Promise<void>;
       const run = async () => {
         try {
-          const deadline = Date.now() + 120_000;
-          while (!inactivityRunNowCancelled && Date.now() < deadline) {
+          while (!inactivityRunNowCancelled) {
             if (sessionId !== null && sessionId !== undefined) {
               const row = db
                 .prepare(`SELECT processing_state FROM sessions WHERE id = ?`)
