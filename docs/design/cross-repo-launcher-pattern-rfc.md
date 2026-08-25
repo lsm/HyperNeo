@@ -207,20 +207,32 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 
 | Coupling | Mechanism | Enforced by |
 | --- | --- | --- |
-| Hard artifact gate (B's task cannot start without A's artifact) | Standalone gated task with `depends_on` (the one safe shape — see below) | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents, a failed one blocks them with `dependency_failed` |
+| Hard artifact gate (B's task cannot start without A's artifact) | Gated task with `depends_on` (standalone, or atomic via a Forge proposal — shapes below) | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents, a failed one blocks them with `dependency_failed` |
 | Judgment gate (partial completion quality must be reviewed) | Launcher withholds `trigger_goal_task` on B until it reviews the gating outcome; condition recorded in B's `nextSteps` | Prompt doctrine + serial per-goal execution |
 | Durable wait (A slipped/blocked indefinitely) | `pause_goal` on B with the wait recorded; `resume_goal` when released | Prompt doctrine; visible in goal state/UI |
 | Milestone release (partial completion of A releases B) | Milestones listed in A's `nextSteps`/`metrics`; B's gate names the milestone; launcher reviews A's terminal outcome against it | Prompt doctrine |
 
-The hard gate has **no atomic creation path today**: `trigger_goal_task` accepts only
+The plain goal tools have **no atomic creation path**: `trigger_goal_task` accepts only
 `goal_id`, while `create_standalone_task` accepts `depends_on` but creates a task with
 no goal link — and unlinked tasks do not report outcomes through the goal notification
-loop (`handleTaskTerminal` ignores them). The one viable shipped shape:
+loop (`handleTaskTerminal` ignores them). Two shipped shapes:
 
 - **Standalone gated task:** `create_standalone_task(depends_on=[A's task])` for the
   specific artifact-bound step. Runtime-enforced from creation, but outside the goal's
   outcome loop — the launcher tracks it with `get_task_detail`/`list_tasks` instead of
   receiving a wake.
+- **Forge-proposal gated task** (atomic, goal-linked): when the dependent goal has a
+  linked Forge scope (`create_forge_scope_from_goal`), `create_forge_task_proposal` →
+  `create_task_from_forge_proposal(depends_on=[A's task])` persists `goalId` and
+  `dependsOn` in one transaction, so the gated task reports outcomes through the goal
+  loop. It does **not** claim the goal's single active-task pointer — acceptable for a
+  hard-gated side step, which should not occupy the goal's serial slot anyway.
+- **Rebinding on retry:** dependencies bind to a specific task ID. When A's gated
+  prerequisite task terminally fails and the doctrine re-triggers a fresh A task, the
+  gated B task stays bound to the dead ID — a pre-start gated task is not even visibly
+  blocked (it remains `open` but unschedulable, since only running dependents get
+  `dependency_failed`). Each fresh A trigger must rebind B (`update_task(depends_on=…)`
+  with the new ID — safe here, B has not started) or cancel and recreate the gated task.
 
 The tempting alternative — `trigger_goal_task` on B, then attaching `depends_on` with
 `update_task` — is **rejected as unsafe**: if dispatch already started the task, adding
@@ -228,8 +240,8 @@ an unmet dependency transitions it to terminal `blocked` (`dependency_added`), w
 fires the goal terminal seam, clears the goal's `activeTaskId`, and records a **false
 terminal outcome**; the later dependency unblock reopens the task without reclaiming
 the goal pointer, so a second goal task can run concurrently with the supposedly gated
-one, and the task's workflow run is never stopped. The atomic path (accepting
-`depends_on` on goal-linked creation) is recorded as the top deferred primitive in §7.
+one, and the task's workflow run is never stopped. An atomic `depends_on` on the plain
+goal-linked creation tools is recorded as the top deferred primitive in §7.
 
 **Partial-completion semantics.** Observable sync events are **task-terminal outcomes** —
 per-goal execution is serial and outcome notifications fire at reportable terminal
@@ -246,7 +258,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 | Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | None needed beyond responding on the next wake or check-in |
 | Launcher wakes but never reviews | Nag re-prompts the **same** agent; there is no auto-escalation on repeated ignored wakes | Accepted v1 failure mode, stated honestly: a wedged owner leaves notifications pending indefinitely. Pending notifications have **no human-facing surface today** (no web/RPC query exposes them) — humans can only infer trouble from stalled goal state. Notification visibility plus bounded escalation are folded into the deferred primitive (§7) |
 | Daemon restart mid-loop | Notifications persisted in the terminal transaction; startup recovery; inbox replay | None needed |
-| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer | Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Then `pause_goal` on both goals, record in `nextSteps`, escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
+| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer | Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). If retries are exhausted: cancel B's active task (`cancel_task`, `cancel_workflow_run: true` for workflow-backed ones) — pausing goals alone does not stop active work, and B must not publish against a failed prerequisite — then `pause_goal` on both goals, record in `nextSteps`, escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
 | Contract drift after B started | A's follow-up outcome wakes launcher; the goal-revision CAS protects **A's** rolling state during review | Cancel B's active task with `cancel_task(cancel_workflow_run: true)` (§4), acknowledge the resulting outcome notification with the supersession reason, re-trigger against the fresh contract. Known limitation: the CAS does not extend to B — updating B goes through `update_goal`, which has no observed-revision parameter, so a concurrent human edit to B can be overwritten (last-writer-wins; §7) |
 | Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then pause dependent goals and escalate to the human; never spin |
 | Human decision needed | `send_session_message` to the Space chat / coordinator session; `create_agent_reminder`; durable high-priority task | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight" |
@@ -276,10 +288,10 @@ ADR 0004 applies to new combinators.
 
 **Deferred primitive candidates, with explicit revisit triggers.**
 
-1. **`depends_on` on goal-linked task creation** (atomic hard-gate creation; removes the
-   §5 visibility gap — and its unsafe attach alternative — by making the gated task a
-   normal goal-linked task) — the most likely first primitive; revisit when a real
-   launcher deployment uses hard gates at all.
+1. **`depends_on` on the plain goal-linked creation tools** (atomic hard-gate creation
+   without the Forge-scope prerequisite or the active-task-claim caveat; removes the
+   §5 visibility gap and its unsafe attach alternative) — the most likely first
+   primitive; revisit when a real launcher deployment uses hard gates at all.
 2. **Cross-goal dependency** (goal-level `depends_on` or gate events, UI-visible) —
    revisit after ≥2 real launcher deployments show repeated premature triggers of the
    dependent goal, or humans routinely needing to see the gate in the UI.
