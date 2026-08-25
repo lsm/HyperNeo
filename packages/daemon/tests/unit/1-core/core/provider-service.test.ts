@@ -841,6 +841,92 @@ describe('ProviderService', () => {
       expect(config).toBeNull();
     });
 
+    it('cancels selection when the provider is replaced during bridge startup', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class ReplaceDuringBridgeMockProvider extends MockProvider {
+        constructor() {
+          super('replace-bridge', 'Replace Bridge Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'title-turbo';
+        }
+
+        async ensureBridgeStarted(): Promise<void> {
+          globalRegistry.unregister('replace-bridge');
+          globalRegistry.register(
+            new MockProvider('replace-bridge', 'Replacement', true, 'title-')
+          );
+          globalRegistry.setCuratedModels('replace-bridge', [
+            { id: 'title-turbo' },
+            { id: 'title-1' },
+          ]);
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new ReplaceDuringBridgeMockProvider());
+      globalRegistry.setCuratedModels('replace-bridge', [{ id: 'title-turbo' }, { id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig(
+        'replace-bridge' as unknown as ProviderId
+      );
+
+      expect(config).toBeNull();
+    });
+
+    it('keeps a canonical title model selected through an alias-only curated entry', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class AliasCatalogMockProvider extends MockProvider {
+        constructor() {
+          super('alias-catalog', 'Alias Catalog Provider', true, 'alias-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'slashless';
+        }
+
+        async getModels(): Promise<ModelInfo[]> {
+          return [
+            {
+              id: 'org/slashless-model',
+              name: 'Slashless Model',
+              alias: 'slashless',
+              family: 'mock',
+              provider: 'alias-catalog',
+              contextWindow: 100000,
+              description: 'Alias catalog model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new AliasCatalogMockProvider());
+      globalRegistry.setCuratedModels('alias-catalog', [{ id: 'slashless' }, { id: 'alias-1' }]);
+
+      const config = await realService.getTitleGenerationConfig(
+        'alias-catalog' as unknown as ProviderId
+      );
+
+      expect(config?.modelId).toBe('org/slashless-model');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
+    });
+
     it('heals a provider-rejected title override to an allowed catalog model', async () => {
       const globalRegistry = getProviderRegistry();
       const realService = new ProviderService();

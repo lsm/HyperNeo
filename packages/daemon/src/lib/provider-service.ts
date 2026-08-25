@@ -262,6 +262,7 @@ export class ProviderService {
       provider,
       candidates: [titleOverride, sessionModelId],
       ensureBuildable: true,
+      registry: this.getRegistry(),
       ensureBridges: (p, modelId) => this.ensureProviderBridges(p, modelId),
     });
     if (result.status === 'unavailable') return null;
@@ -285,6 +286,7 @@ export class ProviderService {
       provider,
       candidates: [provider.getTitleGenerationModel?.(), provider.getModelForTier?.('haiku')],
       ensureBuildable: false,
+      registry: this.getRegistry(),
       ensureBridges: () => Promise.resolve(),
     });
     if (result.status !== 'selected' || !result.providerModelId) return null;
@@ -322,6 +324,7 @@ export class ProviderService {
       provider,
       candidates: [titleOverride, tierFallback],
       ensureBuildable: true,
+      registry: this.getRegistry(),
       ensureBridges: (p, modelId) => this.ensureProviderBridges(p, modelId),
     });
     let modelId = result.providerModelId;

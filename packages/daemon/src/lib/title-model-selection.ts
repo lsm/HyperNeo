@@ -1,12 +1,8 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import {
-  getProviderCatalogModels,
-  isCuratedOutModel,
-  resolveVisibleCanonicalModelId,
-} from './model-service.js';
-import { getProviderRegistry } from './providers/registry.js';
+import { getProviderCatalogModels, resolveVisibleCanonicalModelId } from './model-service.js';
+import type { ProviderRegistry } from './providers/registry.js';
 
 export type TitleModelSelectionStatus = 'selected' | 'unavailable' | 'noProvider';
 
@@ -16,7 +12,7 @@ export interface TitleModelSelectionCtx {
   candidates: Array<string | undefined>;
   ensureBuildable: boolean;
   ensureBridges: (provider: Provider, modelId: string) => Promise<void>;
-  registry: ReturnType<typeof getProviderRegistry>;
+  registry: ProviderRegistry;
   catalogModels: ModelInfo[];
   catalogLoaded?: boolean;
   providerModelId?: string;
@@ -28,7 +24,7 @@ export interface TitleModelSelectionCtx {
 export interface TitleModelSelectionInput
   extends Omit<
     TitleModelSelectionCtx,
-    'registry' | 'catalogModels' | 'catalogLoaded' | 'sdkConfig' | 'status'
+    'catalogModels' | 'catalogLoaded' | 'sdkConfig' | 'status'
   > {}
 
 export interface TitleModelSelectionResult {
@@ -58,8 +54,8 @@ function withCatalog(
   return { ...ctx, catalogModels, catalogLoaded: true };
 }
 
-function curatedSetFor(providerId: string): Set<string> | undefined {
-  const curatedModels = getProviderRegistry().getCuratedModels(providerId);
+function curatedSetFor(registry: ProviderRegistry, providerId: string): Set<string> | undefined {
+  const curatedModels = registry.getCuratedModels(providerId);
   if (curatedModels === undefined) return undefined;
   return new Set(curatedModels.map((model) => model.id));
 }
@@ -89,7 +85,7 @@ export async function selectPreferredCandidateStage(
     if (registry.getCuratedModels(providerId) === undefined) {
       return { ...ctx, providerModelId: canonicalId, status: 'selected' };
     }
-    let allowed = curatedSetFor(providerId)?.has(canonicalId) ?? false;
+    let allowed = curatedSetFor(registry, providerId)?.has(canonicalId) ?? false;
     if (!allowed) {
       const curatedEntries = registry.getCuratedModels(providerId);
       if (curatedEntries === undefined) {
@@ -141,11 +137,11 @@ async function healFromCatalog(
   ctx: TitleModelSelectionCtx,
   buildError?: unknown
 ): Promise<TitleModelSelectionCtx | null> {
-  const { providerId, provider } = ctx;
+  const { provider } = ctx;
   if (!provider) return null;
   const catalogModels = await getProviderCatalogModels(ctx.providerId, provider).catch(() => []);
   for (const model of catalogModels) {
-    if (isCuratedOutModel(model.id, providerId)) continue;
+    if (!(await curationAllows(ctx, model.id, catalogModels))) continue;
     try {
       const sdkConfig = provider.buildSdkConfig(model.id);
       return {
@@ -159,6 +155,27 @@ async function healFromCatalog(
   return null;
 }
 
+async function curationAllows(
+  ctx: TitleModelSelectionCtx,
+  modelId: string,
+  catalogModels: ModelInfo[]
+): Promise<boolean> {
+  const { providerId, registry } = ctx;
+  if (registry.getCuratedModels(providerId) === undefined) return true;
+  const canonicalId =
+    (await resolveVisibleCanonicalModelId(modelId, providerId, 'global', catalogModels)) ?? modelId;
+  if (curatedSetFor(ctx.registry, providerId)?.has(canonicalId)) return true;
+  const curatedEntries = registry.getCuratedModels(providerId);
+  if (!curatedEntries) return true;
+  for (const entry of curatedEntries) {
+    const entryCanonical =
+      (await resolveVisibleCanonicalModelId(entry.id, providerId, 'global', catalogModels)) ??
+      entry.id;
+    if (entryCanonical === canonicalId) return true;
+  }
+  return false;
+}
+
 export async function routeThroughProviderSdkStage(
   ctx: TitleModelSelectionCtx
 ): Promise<TitleModelSelectionCtx> {
@@ -169,11 +186,16 @@ export async function routeThroughProviderSdkStage(
   const { providerId, provider } = ctx;
   const modelId = ctx.providerModelId;
   await ctx.ensureBridges(provider, modelId);
-  const curatedNow = getProviderRegistry().getCuratedModels(providerId);
-  if (
-    curatedNow !== undefined &&
-    (curatedNow.length === 0 || isCuratedOutModel(modelId, providerId))
-  ) {
+  const registeredNow = ctx.registry.get(providerId);
+  if (!registeredNow || registeredNow !== provider) {
+    return {
+      ...ctx,
+      status: 'unavailable',
+      providerModelId: undefined,
+      sdkConfig: null,
+    };
+  }
+  if (!(await curationAllows(ctx, modelId, ctx.catalogModels))) {
     const healed = await healFromCatalog(ctx);
     return healed ?? { ...ctx, providerModelId: undefined, sdkConfig: null, status: 'unavailable' };
   }
@@ -204,7 +226,6 @@ export async function selectTitleGenerationModel(
 ): Promise<TitleModelSelectionResult> {
   const result = await run({
     ...input,
-    registry: getProviderRegistry(),
     catalogModels: [],
     sdkConfig: null,
     status: null,
