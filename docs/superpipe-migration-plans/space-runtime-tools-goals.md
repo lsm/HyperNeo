@@ -104,7 +104,11 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Step-by-step migration**:
   1. Move `deliverDirectSteerUnderCoordination` into `stagedRun('direct-steer-flush', (s) => [...])`.
   2. First `snapshot` gathers session, processing status, parent-task limited, deferred rows, and partitions entries.
-  3. `decide` runs `decideDirectSteerFlush` over the snapshot.
+  3. `decide` stages express the admission branches DIRECTLY (review
+     correction: no separately executed `decideDirectSteerFlush` `decisionRun`
+     inside this staged flow — that splits the business path across two
+     composition boundaries; the branches become this pipeline's own decide
+     stages).
   4. `effect` `save-passenger-copy` (when `proceed`) writes the passenger row and publishes `deferred`. Register `compensate` that calls `discardPassengerCopy`.
   5. `resnapshot` re-reads session and parent-task state.
   6. Second `decide` aborts if the session left processing or became
@@ -206,7 +210,11 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: The `PostApprovalRouter` shell calls `stagedRun('post-approval-route', ...)` with `deps`. Effects call `resolveCompletionOutcome`, `taskRepo.updateTask`, `goalService.handleTaskTerminal`, `evolutionScopeService.captureCompletedTaskEvidence`, `spawner.spawnPostApprovalSubSession`, `clearPendingCompletionState`. The final `halt` returns `PostApprovalRouteResult`.
 - **Step-by-step migration**:
   1. `snapshot` gathers task (fresh), workflow, routes, liveness.
-  2. `decide` runs `decidePostApprovalRoute`.
+  2. `decide` stages express the routing branches DIRECTLY (review
+     correction: do not extract and run a separate `decidePostApprovalRoute`
+     runner from this staged flow — a second composition boundary for the
+     same dispatch operation; the branches are this pipeline's decide
+     stages).
   3. Branch `notApproved` → `halt` with `skipped`.
   4. Branch `noRoutes` → `effect` `terminalize-no-route`: when the task
      belongs to a goal, PASS the terminal updates to
@@ -416,7 +424,13 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction: the node-agent `get_task` shell must MAP `spaceMismatch` to `notFound` (or normalize an out-of-space task to `null` before the decision) — the current handler deliberately masks a valid foreign-space task as the same `Task not found` response as an unknown UUID, and exposing `spaceMismatch` would reveal that the foreign task exists, changing the tool contract.
 - **Shell/effect wiring**:
   - `get_task_detail` shell: runs the `decisionRun`, returns `jsonResult`.
-  - `list_task_members` shell: runs the `decisionRun`, then if `task.workflowRunId` is null returns `success: true, executions: []`, otherwise reads `nodeExecutionRepo.listByWorkflowRun`.
+  - `list_task_members` shell: runs the `decisionRun`, then if
+    `task.workflowRunId` is null returns `success: true, executions: []`
+    PLUS the existing `task_id` and the message `This task has no associated
+    workflow run.` (review correction: returning only the bare shape changes
+    the tool's response contract and removes the task correlation callers
+    receive on every successful arm), otherwise reads
+    `nodeExecutionRepo.listByWorkflowRun`.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/tools/task-target-resolution-pipeline.ts` exporting `decideTaskTargetResolution`.
   2. Replace the inline if-cascades in both tools with the `decisionRun`.
@@ -560,7 +574,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     decision: GoalAutomationAdmissionDecision | null;
   }
   ```
-- **Pure core design**: `decideCompletedTaskAutomation` with branches: `notApplicable`, `disabled`, `missingScope`, `ambiguousScope`, `belowThreshold`, `proceed`. `proceed` carries `count`.
+- **Pure core design**: `decideCompletedTaskAutomation` with branches: `notApplicable`, `disabled`, `ambiguousScope`, `missingScope`, `belowThreshold`, `proceed`. `proceed` carries `count`. Review correction: when the completed task has NO explicit `evolutionScopeId` and more than one goal scope exists, the current `onTaskCompleted` returns `ambiguous_scope` BEFORE calling `resolveScopeForTask` — the ctx must snapshot the ambiguity flag (scope count) separately from the resolved `scope`, and `ambiguousScope` must win over `missingScope`, or a null resolution is indistinguishable from a genuinely missing scope.
 - **Shell/effect wiring**: The `GoalAutomationService` shell calls `decideCompletedTaskAutomation`; if `proceed`, it calls `this.enqueue(...)`. Return `GoalAutomationEnqueueResult`.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/goals/goal-automation-admission-pipeline.ts`.
@@ -662,6 +676,18 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
   1. Define the direct sync pipeline `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effect functions).
   2. Gather stage loads task and goal, computes `nextStatus`.
+  3b. Admission gates BEFORE any update or terminal effect (review
+      correction): missing task → halt; missing goal → halt; goal-space
+      mismatch (`goal.spaceId !== existing.spaceId`) → return `null` — the
+      current `handleTaskTerminal` returns `null` before entering
+      `runAtomic` for a foreign-space goal (pinned by the cross-space test);
+      without these gates the pipeline could clear an active-task pointer
+      and record terminal bookkeeping against a foreign goal.
+  3c. Nonterminal transitions stamp the structured result (current goal,
+      `nextTask: null`, existing `terminalGeneration`, `notification: null`)
+      BEFORE halting (review correction: the current method returns that
+      shaped result, not `null`; halting without it loses the branch's
+      return contract — add a parity row).
   3. Decide stage `is-terminal` is the plain terminal-status check (NOT
      `decideReportableTerminal`); if `false`, halt (`.end` returns early).
      The reportability decision runs later, at the notification stage.

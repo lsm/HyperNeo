@@ -328,11 +328,14 @@ anywhere in this plan.
   (`m.provider || inferFromId || PROVIDER_FROM_FAMILY[family] ||
   'anthropic'`), assembly, then a provider-then-family sort. Cold (fetch
   handlers only).
-- **Proposed combinator.** `inferProviderFromModelId` → `decisionRun`
-  (query-retry template: keep the rule order as gates). Family
-  classification → extract `classifyModelFamily(modelId): string` as its own
-  `decisionRun`. `mapRawModelsToModelInfos` itself → raw P1 transform
-  pipeline: `stageClassifyFamily` → `stageInferProvider` → `stageAssemble` →
+- **Proposed combinator.** ONE raw P1 transform pipeline
+  (`map-raw-models`) for the whole mapping operation (review correction:
+  running separate family/provider `decisionRun`s per row splits this
+  mapping across three pipeline boundaries and adds two complete runner
+  invocations per model). The family and provider classifiers stay ORDINARY
+  PURE HELPERS (`classifyModelFamily`, `inferProviderFromModelId` — rule
+  order preserved inside each) consumed by the pipeline stages:
+  `stageClassifyFamily` → `stageInferProvider` → `stageAssemble` →
   `stageSort`, ctx threading the models array.
 - **Input/output snapshot design.** Provider ctx: `{ modelId: string;
   decision: string | undefined | null }` — careful: `decisionRun` halts on
@@ -359,9 +362,9 @@ anywhere in this plan.
      `qwen2.5:latest` → ollama; `gpt-oss:120b` vs `gpt-oss:mini-cloud`).
   2. Migrate `inferProviderFromModelId` to gates + `decisionRun`
      ('infer-model-provider'), wrapper maps sentinel → undefined.
-  3. Extract `classifyModelFamily` (currently inline) as its own decisionRun;
-     pin its table including the default `sonnet` and the `/` → openrouter
-     tail rule.
+  3. Extract `classifyModelFamily` (currently inline) as an ordinary pure
+     helper — NOT its own `decisionRun` (review correction); pin its table
+     including the default `sonnet` and the `/` → openrouter tail rule.
   4. Compose `mapRawModelsToModelInfos` as the P1 pipeline; wrapper signature
      unchanged.
 - **Tests.** Tables above; keep the hook-level fetch/switch tests green
@@ -564,9 +567,12 @@ anywhere in this plan.
   flat predicates, not cascades).
 - **Proposed combinator.** `decisionRun`.
 - **Input/output snapshot design.** Wrapper owns normalization (the
-  try/catch JSON path). Ctx = `{ msg: string; lower: string; decision:
-  string | null }`; no terminal gate; wrapper returns `ctx.decision ??
-  'Something went wrong. Please try again.'`.
+  try/catch JSON path) AND the NULLISH EARLY RETURN (review correction:
+  when `err` is `null`/`undefined` the current function returns exactly
+  `'Something went wrong.'` before any normalization, pinned by the existing
+  suite — retain that guard first, then normalize). Ctx = `{ msg: string;
+  lower: string; decision: string | null }`; no terminal gate; wrapper
+  returns `ctx.decision ?? 'Something went wrong. Please try again.'`.
 - **Pure core design.** Gates: `gatePassThrough` (decides `msg` when NOT
   `isInternalMessage(msg)` — the `msg || 'Something went wrong.'` empty-string
   fallback folds in here) → `gateConnectionLost` (websocket / not connected) →
