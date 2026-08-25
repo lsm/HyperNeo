@@ -214,6 +214,20 @@ describe('OllamaProvider', () => {
     expect(models).toEqual([]);
   });
 
+  it('fails scoped discovery closed with an empty catalog on transport errors', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(async () => new Response('boom', { status: 500 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'session-key' });
+
+    expect(models).toEqual([]);
+  });
+
   it('bypasses the Ollama model cache for forced remote discovery', async () => {
     let callCount = 0;
     const fetchMock = mock(async () => {

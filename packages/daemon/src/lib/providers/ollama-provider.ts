@@ -176,11 +176,8 @@ export class OllamaProvider implements Provider {
         DEFAULT_PROBE_TIMEOUT_MS,
         true
       );
-    } catch (error) {
-      if (error instanceof OllamaModelAuthError) {
-        return [];
-      }
-      return this.fallbackModels();
+    } catch {
+      return [];
     }
   }
 
