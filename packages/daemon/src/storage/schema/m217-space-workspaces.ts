@@ -16,6 +16,12 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
+function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
+  return !!db
+    .prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
+    .get(columnName);
+}
+
 function deriveLabel(workspacePath: string): string {
   const trimmed = workspacePath.replace(/[\\/]+$/, '').trim();
   if (trimmed.length === 0) return '';
@@ -40,6 +46,8 @@ export function runMigration217(db: BunDatabase): void {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workspaces_space_id ON space_workspaces(space_id)`);
+
+  if (!tableHasColumn(db, 'spaces', 'workspace_path')) return;
 
   const hasPrimary = db.prepare(
     `SELECT 1 FROM space_workspaces WHERE space_id = ? AND is_primary = 1 LIMIT 1`
