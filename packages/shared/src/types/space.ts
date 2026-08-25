@@ -524,6 +524,7 @@ export interface SpaceTask {
   createdByTaskScheduleId?: string | null;
   goalId?: string | null;
   evolutionScopeId?: string | null;
+  workspacePath?: string | null;
   workflowModelOverrides?: Record<string, string>;
   activeSession?: 'worker' | 'leader' | null;
   taskAgentSessionId?: string | null;
@@ -644,6 +645,7 @@ export interface CreateSpaceTaskParams {
   createdBySession?: string | null;
   taskAgentSessionId?: string | null;
   createdByTaskScheduleId?: string | null;
+  workspacePath?: string | null;
 }
 
 export interface InternalCreateSpaceTaskParams extends CreateSpaceTaskParams {
@@ -662,6 +664,7 @@ export interface UpdateSpaceTaskParams {
   workflowRunId?: string | null;
   preferredWorkflowId?: string | null;
   createdByTaskId?: string | null;
+  workspacePath?: string | null;
   activeSession?: 'worker' | 'leader' | null;
   taskAgentSessionId?: string | null;
   startedAt?: number | null;
