@@ -26,7 +26,7 @@ For each function below, the plan picks the combinator that matches the existing
 | `handler-outcome-routing.ts:routeFeedSteerOutcome` | `decisionRun` (`feed-steer-outcome`) | Maps `FeedSteerOutcome` to a `HandlerOutcomeRoute` with park-budget gates. |
 | `context-reset-planner.ts:planInjectContextReset` | Ordinary pure helper consumed by `message-delivery-pipeline.ts` (review correction: its own `decisionRun` would make every inject-delivery run execute an inner pipeline) | Six-guard sequential cascade that admits `clear_before_deliver` only when every guard passes. |
 | `context-reset-planner.ts:planTurnEndFlushContextReset` | `decisionRun` (`turn-end-flush-context-reset`) | Three-guard cascade for `clear_then_flush` vs `flush_without_clear`. |
-| `message-ownership-gates.ts:resolveDeliveryRole` | `decisionRun` (`delivery-role`) | Small priority table with TypeScript overloads. |
+| `message-ownership-gates.ts:resolveDeliveryRole` | Ordinary pure priority-table helper (review correction: not a `decisionRun` — it is called twice inside the arbitration pipeline and from other delivery paths; a runner here would nest pipeline executions per call) | Small priority table with TypeScript overloads. |
 
 ## Existing superpipe examples to emulate
 
@@ -335,12 +335,11 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyExplicitRequestedGate` — `requestedRole !== undefined`; decide it.
   - `applyConstraintFallbackGate` — `uniqueConstraintHit`; decide `'steer'`.
   - `applyDefaultTurnGate` — default; decide `'turn'`.
-- **Shell/effect wiring:** Keep the overloaded exported function `resolveDeliveryRole(args)` as a wrapper around `deliveryRoleRun` returning `ctx.decision`. For the `uniqueConstraintHit: false` overload, the wrapper can safely narrow/cast the result to `MessageDeliveryRole` because the gates guarantee it. Callers in `delivery-turn-routing.ts`, `message-delivery.ts`, and `message-delivery-outbox.ts` continue to use the wrapper unchanged.
+- **Shell/effect wiring:** Review correction — keep `resolveDeliveryRole(args)` as the ORDINARY PURE HELPER it is today (priority-table function, overloads unchanged). Do NOT convert it to a `deliveryRoleRun` runner: `planDeliveryRoleArbitration` calls it TWICE inside its enqueue gate, so a runner would execute a nested pipeline twice per arbitration and split one operation across three pipeline runs. Callers in `delivery-turn-routing.ts`, `message-delivery.ts`, and `message-delivery-outbox.ts` continue to call the plain helper unchanged.
 - **Step-by-step migration:**
-  1. Define `DeliveryRoleCtx` and `deliveryRoleRun`.
-  2. Port the priority table to gates.
-  3. Keep the existing overloads on the wrapper, casting from the runner's `DeliveryRoleResolution` as needed.
-- **Tests:** `message-ownership-gates.test.ts` covers all cases. Add `delivery-role-gates.test.ts` testing each gate and the overload behavior.
+  1. Keep `resolveDeliveryRole` as an ordinary pure priority-table helper (review correction — no `DeliveryRoleCtx`/`deliveryRoleRun` conversion).
+  2. The arbitration gates (`applyReuseGate`, `applyEnqueueGate`) call the helper directly as pure functions.
+- **Tests:** `message-ownership-gates.test.ts` covers all cases unchanged.
 - **Risks/caveats:** The overload contract is load-bearing: `uniqueConstraintHit: false` must never return `'explicit_role_rejected'`. The `applyExplicitTurnRejectedGate` must fire only for `requestedRole === 'turn'`, not for `requestedRole === 'steer'`. This function is on the hot path for every message delivery, so the `decisionRun` microsecond overhead (≈2 µs) is acceptable but should be benchmarked if any performance regression is observed.
 
 ---

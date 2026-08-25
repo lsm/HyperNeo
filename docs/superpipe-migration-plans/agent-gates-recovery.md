@@ -60,7 +60,7 @@ Two structural rules applied throughout:
 | `circuit-breaker-transitions.ts:extractErrorPattern` | `decisionRun` | `circuit-breaker-error-pattern` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | `decisionRun` | `circuit-breaker-trip-message` |
 | `fallback-recovery.ts:extractResetTimestamp` | Parsing stages of the `fallback-cooldown` pipeline (review correction: not a separately-run pipeline — nesting `fallback-reset-parse` inside `fallback-cooldown` splits the complete cooldown path across nested pipeline runs) |
-| `fallback-recovery.ts:computeCooldown` | `decisionRun` | `fallback-cooldown` |
+| `fallback-recovery.ts:computeCooldown` | Ordinary pure helper for `rate-limit-trip`'s cooldown-resolution stage (review correction round 17: `fallback-cooldown` as a separate runner makes every no-hint trip execute a nested pipeline) |
 | `fallback-recovery.ts:resolveFallbackChain`, `classifyLimitKind` | none (leaves) | — |
 | `rate-limit-watchdog-gates.ts:decideRateLimitTrip` | `decisionRun` | `rate-limit-trip` |
 | `rate-limit-watchdog-gates.ts:refinedResetAtMs` | none (leaf) | — |
@@ -642,7 +642,7 @@ compensated. No site in this plan performs effects, so none uses it.
 - **current summary.** `decideRateLimitTrip`
   (`rate-limit-watchdog-gates.ts:20-45`): billing-terminal hint →
   `surface-billing`; else pick `cooldownFromReset(hint.resetAtMs)` when the
-  hint is usable, otherwise `computeCooldown`; non-free-wait at/over
+  hint is usable, otherwise `computeCooldown` (pure helper); non-free-wait at/over
   `maxAutoRetries` → `give-up`; else `cooldown` with `charge`. Consumers:
   `rate-limit-watchdog.ts:211-253` (`scheduleRetry` — interprets by
   charging `retryCount`, scheduling cooldown, firing LLM refinement for
