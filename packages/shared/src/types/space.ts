@@ -338,6 +338,7 @@ export type SpaceGoalEventSnapshot = Partial<{
   lastCheckInAt: number | null;
   nextCheckInAt: number | null;
   completedAt: number | null;
+  workspacePath?: string | null;
   checkInCronExpression?: string | null;
   checkInTimezone?: string | null;
 }>;
@@ -409,6 +410,7 @@ export interface SpaceGoal {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+  workspacePath?: string | null;
   revision: number;
 }
 
@@ -427,6 +429,7 @@ export interface CreateSpaceGoalParams {
   autoTriggerNext?: boolean;
   checkInCronExpression?: string | null;
   checkInTimezone?: string;
+  workspacePath?: string | null;
   triggerImmediately?: boolean;
   primaryOwnerAgentId?: string | null;
 }
@@ -446,6 +449,7 @@ export interface UpdateSpaceGoalParams {
   autoTriggerNext?: boolean;
   checkInCronExpression?: string | null;
   checkInTimezone?: string;
+  workspacePath?: string | null;
   pendingNextRun?: boolean;
   activeTaskId?: string | null;
   lastTaskId?: string | null;

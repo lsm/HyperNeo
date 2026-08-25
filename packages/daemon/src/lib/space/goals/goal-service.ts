@@ -1052,6 +1052,7 @@ function snapshotGoal(goal: SpaceGoal, cadence?: GoalCadence): SpaceGoalEventSna
     lastCheckInAt: goal.lastCheckInAt,
     nextCheckInAt: goal.nextCheckInAt,
     completedAt: goal.completedAt,
+    workspacePath: goal.workspacePath,
     checkInCronExpression: cadence?.checkInCronExpression,
     checkInTimezone: cadence?.checkInTimezone,
   };
