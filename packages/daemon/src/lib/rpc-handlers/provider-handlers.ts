@@ -600,6 +600,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
       !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
     ) {
+      provider.clearModelCache?.();
       return { success: false, reason: 'superseded' };
     }
     if (models.length === 0) {
@@ -616,6 +617,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
         !isUnchangedSavedConfig(currentRecord, savedConfig)
       ) {
+        provider.clearModelCache?.();
         return { success: false, reason: 'superseded' };
       }
 
@@ -647,6 +649,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             if (currentRow && currentRow.configJson === persistedConfig.configJson) {
               providerRepo.updateProvider(request.id, { configJson: record.configJson });
             }
+            provider.clearModelCache?.();
             return { success: false, reason: 'superseded' };
           }
           if (applyDiscoveredProviderModels(record.providerId, normalizedDiscovered)) {
