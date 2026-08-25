@@ -2298,15 +2298,14 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('pins: startup arm recurses after the publication await with no intervening guard (reachable window)', async () => {
-      buildSpy
-        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
-        .mockRejectedValueOnce(new Error('stop after retry'));
+    it('pins: startup arm revalidates after the publication await — a replacement during the publication does not launch another attempt', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
       const ctx = createContext();
       runner = new QueryRunner(ctx);
-      (
-        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
-      )._consumedUserMessages.set(1, [
+      const runnerPrivate = runner as unknown as {
+        _consumedUserMessages: Map<number, unknown[]>;
+      };
+      runnerPrivate._consumedUserMessages.set(1, [
         { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
       ]);
       let markCalled!: () => void;
@@ -2327,13 +2326,125 @@ describe('QueryRunner', () => {
       releaseDisplay();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(enqueueWithIdSpy).toHaveBeenCalledWith(
         'consumed-uuid',
         expect.arrayContaining([expect.objectContaining({ text: 'C' })]),
         false,
         { prepend: true }
       );
+      expect(runnerPrivate._consumedUserMessages.has(1)).toBe(false);
+    });
+
+    it('pins: startup arm resnapshots the route across the setIdle await — an interrupt flip abandons before any shared mutation', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      getStateSpy.mockReturnValue({ status: 'interrupted' });
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: startup arm pre-recursion gate abandons when cleanup begins during the publication', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      let cleaningUp = false;
+      const ctx = createContext({ isCleaningUp: () => cleaningUp });
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages.set(1, [
+        { uuid: 'consumed-uuid', content: [{ type: 'text' as const, text: 'C' }] },
+      ]);
+      let markCalled!: () => void;
+      const displayCalled = new Promise<void>((resolve) => {
+        markCalled = resolve;
+      });
+      let releaseDisplay!: () => void;
+      const displayGate = new Promise<void>((resolve) => {
+        releaseDisplay = resolve;
+      });
+      runner.displayErrorAsAssistantMessage = mock(async () => {
+        markCalled();
+        await displayGate;
+      });
+      runner.start();
+      await displayCalled;
+      cleaningUp = true;
+      releaseDisplay();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm resnapshots the route across the setIdle await — a cleanup flip abandons before teardown', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let cleaningUp = false;
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        isCleaningUp: () => cleaningUp,
+      });
+      runner = new QueryRunner(ctx);
+      const idle = gateSetIdle();
+      runner.start();
+      await idle.waitCalled();
+      cleaningUp = true;
+      idle.release();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).not.toHaveBeenCalled();
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('pins: message-not-found arm revalidates immediately before recursion — a cleanup flip across the exit await does not launch another attempt', async () => {
+      const consumeSpy = mock(() => 'consumed-uuid');
+      buildSpy.mockRejectedValue(new Error('No message found with message.uuid of: stale-uuid'));
+      let cleaningUp = false;
+      let releaseExit!: () => void;
+      const exitGate = new Promise<void>((resolve) => {
+        releaseExit = resolve;
+      });
+      let markTerminate!: () => void;
+      const terminateReached = new Promise<void>((resolve) => {
+        markTerminate = resolve;
+      });
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        markTerminate();
+      });
+      const ctx = createContext({
+        consumePendingResumeSessionAt: consumeSpy,
+        isCleaningUp: () => cleaningUp,
+        processExitedPromise: exitGate,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await terminateReached;
+      cleaningUp = true;
+      releaseExit();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(consumeSpy).toHaveBeenCalledTimes(1);
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
   });
 
