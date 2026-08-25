@@ -785,6 +785,25 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
+          if (
+            updates.configJson !== undefined &&
+            existing.configJson !== updates.configJson &&
+            isCurationOnlyConfigUpdate(existing.configJson, updates.configJson)
+          ) {
+            const restoredConfig = restoreServerDiscoveredModels(
+              updates.configJson,
+              existing.configJson
+            );
+            if (restoredConfig && restoredConfig.length > MAX_JSON_FIELD_LEN) {
+              throw new Error(
+                `configJson must be ≤ ${MAX_JSON_FIELD_LEN} chars after restoring persisted discovery`
+              );
+            }
+            if (restoredConfig !== undefined) {
+              updates.configJson = restoredConfig;
+            }
+          }
+
           let record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
 
@@ -812,11 +831,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 record.configJson,
                 existing.configJson
               );
-              if (restoredConfig && restoredConfig.length > MAX_JSON_FIELD_LEN) {
-                throw new Error(
-                  `configJson must be ≤ ${MAX_JSON_FIELD_LEN} chars after restoring persisted discovery`
-                );
-              }
               if (restoredConfig !== record.configJson) {
                 record =
                   providerRepo.updateProvider(data.id, { configJson: restoredConfig }) ?? record;

@@ -1298,6 +1298,44 @@ describe('Provider RPC handlers', () => {
       expect(storedAfter.models).toEqual([{ id: 'remote-a' }]);
     });
 
+    it('rejects a stale-snapshot curation save that would overflow the configJson limit after restoring discovery', async () => {
+      const pad = 'x'.repeat(65_450);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china', pad }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      const storedBefore = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedBefore.discoveredModels).toBeDefined();
+
+      const staleSnapshot = JSON.stringify({
+        region: 'china',
+        pad,
+        models: [{ id: 'remote-a' }],
+      });
+      const originalConfig = repo.getProvider(created.id)?.configJson;
+      expect(staleSnapshot.length).toBeLessThanOrEqual(64 * 1024);
+
+      await expect(
+        handlers.get('providers.update')!(
+          { id: created.id, params: { configJson: staleSnapshot } },
+          {}
+        )
+      ).rejects.toThrow(/after restoring persisted discovery/);
+      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
+    });
+
     it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
