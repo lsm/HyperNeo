@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getAcpCommandIdentity } from '@hyperneo/shared/acp';
+import { envValue } from '../spawn-env.ts';
 
 export { getAcpCommandIdentity, parseAcpCommand } from '@hyperneo/shared/acp';
 
@@ -43,6 +44,9 @@ const ACP_SAFE_ENV_KEYS = [
 
 export function buildAcpSafeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return Object.fromEntries(
-    ACP_SAFE_ENV_KEYS.flatMap((key) => (env[key] === undefined ? [] : [[key, env[key]]]))
+    ACP_SAFE_ENV_KEYS.flatMap((key) => {
+      const value = envValue(env, key);
+      return value === undefined ? [] : [[key, value]];
+    })
   );
 }

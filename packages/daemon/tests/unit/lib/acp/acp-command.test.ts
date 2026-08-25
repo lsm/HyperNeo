@@ -53,6 +53,21 @@ describe('buildAcpSafeEnv', () => {
 
     expect(buildAcpSafeEnv(windowsEnv)).toEqual(windowsEnv);
   });
+
+  test.skipIf(process.platform !== 'win32')(
+    'resolves case-variant keys through the shared case-insensitive accessor',
+    () => {
+      expect(
+        buildAcpSafeEnv({
+          AppData: 'C:\\Users\\devin\\AppData\\Roaming',
+          ComSpec: 'C:\\Windows\\system32\\cmd.exe',
+        })
+      ).toEqual({
+        APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
+        COMSPEC: 'C:\\Windows\\system32\\cmd.exe',
+      });
+    }
+  );
 });
 
 describe('parseAcpCommand', () => {

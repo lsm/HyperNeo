@@ -29,6 +29,9 @@ const SOURCE: Record<string, string> = {
   CURL_CA_BUNDLE: '/tmp/curl-ca.pem',
   GIT_SSL_CAINFO: '/tmp/git-ca.pem',
   GIT_SSL_CAPATH: '/tmp/git-ca-dir',
+  GIT_SSL_VERSION: 'tlsv1.3',
+  GIT_SSL_CIPHER_LIST: 'ECDHE-RSA-AES256-GCM-SHA384',
+  GIT_CONFIG_NOSYSTEM: '1',
   GIT_EXEC_PATH: '/usr/libexec/git-core',
   ANTHROPIC_API_KEY: 'anthropic-secret',
   CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
@@ -86,6 +89,7 @@ describe('buildGitCommandEnv', () => {
     });
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
@@ -102,6 +106,8 @@ describe('buildGitSshEnv', () => {
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
     expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
+    expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
+    expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
