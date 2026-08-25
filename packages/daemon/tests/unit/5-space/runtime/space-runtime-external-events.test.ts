@@ -1664,6 +1664,39 @@ describe('SpaceRuntime external event subscriptions', () => {
     );
   });
 
+  test('rebuildRunInterests resolves topicFrom interests after the run PR is recorded', async () => {
+    const workflow = createWorkflow('code', {
+      eventInterests: [
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    let list = runtime.listSubscriptions(run.id, SPACE_ID, 'code');
+    expect(list.success).toBe(true);
+    expect(list.success ? list.result.active : []).toHaveLength(0);
+
+    stampRunPr(run.id, 'https://github.com/lsm/HyperNeo/pull/2969');
+    runtime.rebuildRunInterests(run.id);
+    list = runtime.listSubscriptions(run.id, SPACE_ID, 'code');
+    expect(list.success).toBe(true);
+    const active = list.success ? list.result.active : [];
+    expect(active).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          topic: 'github/lsm/HyperNeo/pull_request/2969.*',
+          subscriptionKind: 'static',
+        }),
+      ])
+    );
+  });
+
   test('allows the first 10 event interests for an agent slot', async () => {
     const workflow = createWorkflow();
     const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

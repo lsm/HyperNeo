@@ -1280,6 +1280,10 @@ export class SpaceRuntimeService {
     return this.runtime.listSubscriptions(workflowRunId, spaceId, nodeId);
   }
 
+  rebuildRunInterests(workflowRunId: string): void {
+    this.runtime.rebuildRunInterests(workflowRunId);
+  }
+
   async stopActiveWork(spaceId: string): Promise<void> {
     const { taskRepo } = this.config;
 

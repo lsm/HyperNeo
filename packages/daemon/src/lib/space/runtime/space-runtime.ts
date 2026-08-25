@@ -872,6 +872,20 @@ export class SpaceRuntime {
     this.registerRunInterests(run.id, task.id, workflow.nodes);
   }
 
+  rebuildRunInterests(runId: string): void {
+    const run = this.config.workflowRunRepo.getRun(runId);
+    if (!run) return;
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
+    if (!workflow) return;
+    try {
+      this.registerRunInterestsFromWorkflow(run, workflow);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to rebuild static interests for run ${runId}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
   registerSubscription(
     workflowRunId: string,
     taskId: string,

@@ -120,6 +120,7 @@ export interface NodeAgentToolsConfig {
   auditLogRepo?: McpAuditLogRepository;
   externalEventStore?: ExternalEventStore;
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
+  onArtifactSaved?: (runId: string) => void | Promise<void>;
   hookEngine?: WorkflowHookEngine;
 }
 
@@ -575,6 +576,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           summary: summary ?? undefined,
           dataKeys: data ? Object.keys(data) : undefined,
         });
+
+        const callback = config.onArtifactSaved;
+        if (callback) {
+          try {
+            await callback(record.runId);
+          } catch {
+            // ignore
+          }
+        }
 
         return jsonResult({
           success: true,

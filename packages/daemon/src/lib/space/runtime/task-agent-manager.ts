@@ -4681,6 +4681,13 @@ export class TaskAgentManager {
                 `Failed to emit space.hookState.updated for hook ${hookId}: ${err instanceof Error ? err.message : String(err)}`
               );
             });
+          try {
+            this.config.spaceRuntimeService.rebuildRunInterests(workflowRunId);
+          } catch (err) {
+            log.warn(
+              `TaskAgentManager: failed to rebuild run interests after hook ${hookId} update: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
         },
       });
     }
@@ -4713,6 +4720,15 @@ export class TaskAgentManager {
       auditLogRepo: this.auditLogRepo,
       externalEventStore: this.config.externalEventStore,
       onRestoreNodeAgent,
+      onArtifactSaved: (runId) => {
+        try {
+          this.config.spaceRuntimeService.rebuildRunInterests(runId);
+        } catch (err) {
+          log.warn(
+            `TaskAgentManager: failed to rebuild run interests after artifact save: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      },
       replyRoutingLookup: (fromAgentName) => {
         const registry = this.config.replyRoutingRegistry;
         return registry ? registry.get(taskId, fromAgentName) : null;
