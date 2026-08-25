@@ -159,6 +159,12 @@ The launcher contract extends the owner-review contract with:
 - **Declare the contract between goals** in each goal's `nextSteps`: what each goal is
   waiting on, in terms the other goal's task outcomes can satisfy ("B 2.4.0 waits on A
   task #N done: RPC + migration merged; field names frozen as listed").
+- **The launcher is the sole trigger authority.** Pattern goals run with `autoTriggerNext`
+  disabled: a queued successor is auto-created *and claimed* inside the terminal
+  transaction — before the launcher reviews the outcome — so the goal's pointer is
+  already occupied with stale-`nextSteps` work when the launcher wakes. If a goal is
+  found with a queued successor active on wake, reconcile it through the drift sequence
+  (pause → cancel) before re-triggering.
 - **Choose the gate mechanism per coupling** using the taxonomy in §5 — hard artifact
   gates become gated tasks (`depends_on`); judgment gates `pause_goal` the dependent
   goal for the gate's duration with the condition recorded in `nextSteps`.
@@ -240,8 +246,10 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   prerequisite task terminally fails and the doctrine re-triggers a fresh A task, the
   gated B task stays bound to the dead ID — a pre-start gated task is not even visibly
   blocked (it remains `open` but unschedulable, since only running dependents get
-  `dependency_failed`). Each fresh A trigger must rebind B (`update_task(depends_on=…)`
-  with the new ID — safe here, B has not started) or cancel and recreate the gated task.
+  `dependency_failed`). Rebind B with `update_task(depends_on=…)` when B is still
+  `open`/`blocked` — that path only reopens `blocked` dependency-reason tasks, so a
+  **cascade-cancelled** B (A was cancelled) must instead be recreated as a fresh gated
+  task.
 
 The tempting alternative — `trigger_goal_task` on B, then attaching `depends_on` with
 `update_task` — is **rejected as unsafe**: if dispatch already started the task, adding
@@ -267,7 +275,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 | Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | Respond on the next wake or launcher reminder. Goals in a launcher objective therefore default to **no check-in schedule**: while an outcome sits unreviewed, the goal's own check-in fire would create a new task from stale `nextSteps` on the cleared pointer and bump the revision so the pending outcome's CAS fails — if a schedule must exist, pause it around pending outcomes |
 | Launcher wakes but never reviews | Nag re-prompts the **same** agent; there is no auto-escalation on repeated ignored wakes | Accepted v1 failure mode, stated honestly: a wedged owner leaves notifications pending indefinitely. Pending notifications have **no human-facing surface today** (no web/RPC query exposes them) — humans can only infer trouble from stalled goal state. Notification visibility plus bounded escalation are folded into the deferred primitive (§7) |
 | Daemon restart mid-loop | Notifications persisted in the terminal transaction; startup recovery; inbox replay | None needed |
-| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer | Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). If retries are exhausted: `pause_goal` on B first, then cancel B's active task (`cancel_workflow_run: true` where applicable) — pausing alone does not stop active work, and B must not publish against a failed prerequisite — then pause A's goal too, record in `nextSteps`, escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
+| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer — unless `autoTriggerNext` had a queued successor, which is auto-created and claimed inside the terminal transaction (§4 disables this; reconcile through the drift sequence if found) | Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). If retries are exhausted: ensure B is paused (a hard gate will have paused it already, and `pauseGoal` accepts only active goals — treat an existing paused state as done), then cancel B's active task (`cancel_workflow_run: true` where applicable) — pausing alone does not stop active work, and B must not publish against a failed prerequisite — then pause A's goal too, record in `nextSteps`, escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
 | Contract drift after B started | A's follow-up outcome wakes launcher; the goal-revision CAS protects **A's** rolling state during review | Pause B, cancel its active task (`cancel_workflow_run: true` for workflow-backed ones), acknowledge the outcome notification, record the fresh contract, resume, re-trigger (§4 ordering). Known limitation: the CAS does not extend to B — updating B goes through `update_goal`, which has no observed-revision parameter, so a concurrent human edit to B can be overwritten (last-writer-wins; §7) |
 | Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then pause dependent goals and escalate to the human; never spin |
 | Human decision needed | `send_session_message` to the Space chat / coordinator session (requires **Space autonomy level 4**); below that: durable high-priority draft task + the decision recorded in goal `nextSteps` | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight". Treat autonomy ≥4 as a launcher deployment prerequisite for the messaging path |
