@@ -182,6 +182,7 @@ export class SpaceAgentInactivityWatchdogService {
       acquired.claim.id,
       decision.claimKey,
       decision.configRevision,
+      activityBaseline,
       boundInactivityNagPrompt(config.prompt)
     );
   }
@@ -192,6 +193,7 @@ export class SpaceAgentInactivityWatchdogService {
     claimId: string,
     claimKey: string,
     acquiredConfigRevision: number | null,
+    activityBaseline: number | undefined,
     prompt: string
   ): Promise<void> {
     const space = await this.deps.spaceManager.getSpace(spaceId);
@@ -225,11 +227,13 @@ export class SpaceAgentInactivityWatchdogService {
     ) {
       return;
     }
-    const lastActivityAt = resolveLastActivityAt({
-      latestConsumedMessageAt: recheckSession.latestConsumedMessageAt,
-      sessionCreatedAt: recheckSession.sessionCreatedAt,
-      agentCreatedAt: recheckAgent.createdAt,
-    });
+    const lastActivityAt =
+      activityBaseline ??
+      resolveLastActivityAt({
+        latestConsumedMessageAt: recheckSession.latestConsumedMessageAt,
+        sessionCreatedAt: recheckSession.sessionCreatedAt,
+        agentCreatedAt: recheckAgent.createdAt,
+      });
     const recheck = decideInactivityNag({
       now: this.deps.now?.() ?? Date.now(),
       enabled: recheckConfig.enabled,
