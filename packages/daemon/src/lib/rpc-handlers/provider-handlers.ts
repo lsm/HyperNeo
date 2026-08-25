@@ -638,7 +638,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       } else {
         const inFlight = getCurrentCacheLoad();
         if (inFlight) {
-          await inFlight.catch(() => {});
+          await raceWithTimeout(
+            inFlight.catch(() => {}),
+            DISCOVERY_REFRESH_TIMEOUT_MS
+          ).catch(() => {});
           const supersededDuringWait =
             getModelsCacheClearSequence() !== clearsAtStart ||
             JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
@@ -835,7 +838,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             (updates.configJson !== undefined && !curationOnlyConfigUpdate);
 
           if (shouldResync) {
-            if (curationOnlyConfigUpdate && updates.configJson !== undefined) {
+            if (
+              curationOnlyConfigUpdate &&
+              updates.configJson !== undefined &&
+              data.credentials === undefined
+            ) {
               const restoredConfig = restoreServerDiscoveredModels(
                 record.configJson,
                 existing.configJson
