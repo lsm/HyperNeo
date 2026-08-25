@@ -1,5 +1,10 @@
 import { spawn as nodeSpawn } from 'node:child_process';
-import type { Options, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  HookCallback,
+  Options,
+  SpawnedProcess,
+  SpawnOptions,
+} from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -24,6 +29,7 @@ import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
+import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -396,6 +402,8 @@ export class QueryRunner {
 
   private queryLiveness: { promise: Promise<void>; isLive: () => boolean } | null = null;
 
+  private readonly attemptTokens = new QueryAttemptRegistry();
+
   private hasLiveQuery(): boolean {
     const queryPromise = this.ctx.queryPromise;
     if (!queryPromise) return false;
@@ -525,12 +533,35 @@ export class QueryRunner {
     }
   }
 
+  private createAttemptBoundPreToolUseHook(attemptToken: QueryAttemptToken): HookCallback {
+    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook();
+    return async (input, toolUseID, options) => {
+      if (attemptToken.isLive()) return hook(input, toolUseID, options);
+      const { session, logger } = this.ctx;
+      logger.warn(
+        `PreToolUse hook: denying callback from superseded query attempt ` +
+          `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+      );
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason:
+            'The query attempt that issued this tool call was superseded by an automatic retry ' +
+            'or a replacement query.',
+        },
+      };
+    };
+  }
+
   private async runQuery(
     queryGeneration: number,
     retryAttempt = 0,
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+
+    const attemptToken = this.attemptTokens.allocate();
 
     let startupPermit: SdkStartupPermit | null = null;
     const releaseStartupPermit = (reason: string): void => {
@@ -615,7 +646,7 @@ export class QueryRunner {
       }
 
       optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      optionsBuilder.setAskUserQuestionHook(this.ctx.askUserQuestionHandler.createPreToolUseHook());
+      optionsBuilder.setAskUserQuestionHook(this.createAttemptBoundPreToolUseHook(attemptToken));
       let queryOptions = await optionsBuilder.build();
 
       if (provider?.setSessionThinkingConfig) {
@@ -1041,7 +1072,7 @@ export class QueryRunner {
 
       if (routeDecision.route.action === 'startup_timeout_retry') {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
           idleFirst: true,
@@ -1064,7 +1095,7 @@ export class QueryRunner {
       if (routeDecision.route.action === 'message_not_found_retry') {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
           resetStartupState: true,
@@ -1089,7 +1120,7 @@ export class QueryRunner {
         stateManager.getState().status !== 'interrupted'
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
           resetStartupState: true,
@@ -1111,7 +1142,7 @@ export class QueryRunner {
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
             `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
         );
-        return await this.runRetryTeardown(queryGeneration, {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: retryAttempt + 1,
           recoveryState,
           resetStartupState: true,
@@ -1374,6 +1405,7 @@ export class QueryRunner {
 
   private async runRetryTeardown(
     queryGeneration: number,
+    attemptToken: QueryAttemptToken,
     options: RetryTeardownOptions
   ): Promise<void> {
     const { messageQueue, stateManager, logger } = this.ctx;
@@ -1538,6 +1570,7 @@ export class QueryRunner {
     };
 
     const recurseNextAttempt = async (): Promise<void> => {
+      this.attemptTokens.invalidate(attemptToken);
       await this.runQuery(queryGeneration, options.nextAttempt, options.recoveryState);
     };
 

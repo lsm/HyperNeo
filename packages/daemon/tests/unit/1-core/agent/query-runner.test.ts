@@ -10,7 +10,7 @@ import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-class
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -19,6 +19,10 @@ import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-mana
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import {
+  QueryAttemptRegistry,
+  type QueryAttemptToken,
+} from '../../../../src/lib/agent/query-attempt-token';
 
 describe('QueryRunner', () => {
   let runner: QueryRunner;
@@ -5453,6 +5457,157 @@ describe('QueryRunner', () => {
         expectRoute(routeTerminal(ErrorCategory.AUTHENTICATION));
       });
     });
+  });
+
+  describe('attempt-token primitive + PreToolUse binding (B5a)', () => {
+    let savedApiKey: string | undefined;
+    let innerHookCalls: unknown[];
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+      innerHookCalls = [];
+      createPreToolUseHookSpy.mockImplementation(() => async (...args: unknown[]) => {
+        innerHookCalls.push(args[0]);
+        return {};
+      });
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+    });
+
+    function askUserQuestionHookInput(toolUseId: string) {
+      return {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_use_id: toolUseId,
+        tool_input: {
+          questions: [
+            {
+              question: 'Proceed?',
+              header: 'Next step',
+              options: [
+                { label: 'Yes', description: 'Continue' },
+                { label: 'No', description: 'Stop' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      };
+    }
+
+    async function invokeHook(hook: HookCallback, toolUseId: string) {
+      return hook(
+        askUserQuestionHookInput(toolUseId) as unknown as Parameters<HookCallback>[0],
+        toolUseId,
+        { signal: new AbortController().signal }
+      );
+    }
+
+    function denyDecisionOf(result: Awaited<ReturnType<HookCallback>>) {
+      const output = result as {
+        hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+      };
+      return output.hookSpecificOutput ?? {};
+    }
+
+    it('allocates attempt tokens that supersede on the next allocation and on invalidation', () => {
+      const registry = new QueryAttemptRegistry();
+      const first = registry.allocate();
+      expect(first.isLive()).toBe(true);
+      const second = registry.allocate();
+      expect(first.isLive()).toBe(false);
+      expect(second.isLive()).toBe(true);
+      expect(registry.invalidate(second)).toBe(true);
+      expect(second.isLive()).toBe(false);
+      expect(registry.invalidate(second)).toBe(false);
+      const third = registry.allocate();
+      expect(registry.invalidate(first)).toBe(false);
+      expect(third.isLive()).toBe(true);
+    });
+
+    it('passes the PreToolUse hook through while its attempt token is live and denies once invalid', async () => {
+      const registry = new QueryAttemptRegistry();
+      const token = registry.allocate();
+      runner = createRunner();
+      const bindAttemptHook = (
+        runner as unknown as {
+          createAttemptBoundPreToolUseHook: (token: QueryAttemptToken) => HookCallback;
+        }
+      ).createAttemptBoundPreToolUseHook.bind(runner);
+      const hook = bindAttemptHook(token);
+
+      await invokeHook(hook, 'tu-live');
+      expect(innerHookCalls).toHaveLength(1);
+
+      registry.invalidate(token);
+      const denied = denyDecisionOf(await invokeHook(hook, 'tu-stale'));
+      expect(denied.permissionDecision).toBe('deny');
+      expect(denied.permissionDecisionReason).toContain('superseded');
+      expect(innerHookCalls).toHaveLength(1);
+    });
+
+    it('invalidates the predecessor attempt token before the recursive runQuery is invoked', async () => {
+      const probeHolder: { result?: Promise<Awaited<ReturnType<HookCallback>>> } = {};
+      buildSpy.mockImplementation(async () => {
+        const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<
+          [HookCallback]
+        >;
+        if (hookInstalls.length === 2 && probeHolder.result === undefined) {
+          probeHolder.result = invokeHook(hookInstalls[0][0], 'tu-predecessor');
+        }
+        throw new Error('SDK startup timeout - query aborted');
+      });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      const probe = probeHolder.result;
+      if (probe === undefined) throw new Error('predecessor hook probe never ran');
+      const probed = denyDecisionOf(await probe);
+      expect(probed.permissionDecision).toBe('deny');
+      expect(innerHookCalls).toHaveLength(0);
+    });
+
+    it('denies a late PreToolUse callback that outlives the retry teardown exit timeout', async () => {
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      const ctx = createContext({
+        processExitedPromise: new Promise<void>(() => {}),
+      });
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      const hookInstalls = setAskUserQuestionHookSpy.mock.calls as unknown as Array<[HookCallback]>;
+      const latePredecessor = denyDecisionOf(await invokeHook(hookInstalls[0][0], 'tu-late'));
+      expect(latePredecessor.permissionDecision).toBe('deny');
+      expect(innerHookCalls).toHaveLength(0);
+      await invokeHook(hookInstalls[1][0], 'tu-successor');
+      expect(innerHookCalls).toHaveLength(1);
+    }, 15000);
   });
 });
 

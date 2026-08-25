@@ -428,7 +428,23 @@ describe('QueryRunner startup gate', () => {
     await waitFor(() => setPermissionMode.mock.calls.length > 0);
     await settle();
 
-    expect(setAskUserQuestionHook).toHaveBeenCalledWith(preToolUseHook);
+    expect(setAskUserQuestionHook).toHaveBeenCalled();
+    const installedHook = setAskUserQuestionHook.mock.calls[0][0] as unknown as (
+      input: unknown,
+      toolUseId: string | undefined,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>;
+    await installedHook(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'tu-wiring',
+        tool_input: { questions: [] },
+      },
+      'tu-wiring',
+      { signal: new AbortController().signal }
+    );
+    expect(preToolUseHook).toHaveBeenCalled();
     expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
 
     await completeQuery(spawned[0], waitFor);
