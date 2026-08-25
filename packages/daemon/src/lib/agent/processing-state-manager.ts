@@ -265,10 +265,15 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        const drainCeiling = Math.max(fenceStartToken, ...this.suppressedFenceCarryTokens);
-        const drained = [...this.idleWaiters.values()].filter((w) =>
-          this.waiterOwnedByTransition(w, opts?.owner, drainCeiling)
-        );
+        const carryCeiling =
+          this.suppressedFenceCarryTokens.length > 0
+            ? Math.max(...this.suppressedFenceCarryTokens)
+            : Number.NEGATIVE_INFINITY;
+        const drainCeiling = Math.max(fenceStartToken, carryCeiling);
+        const drained = [...this.idleWaiters.values()].filter((w) => {
+          if (this.waiterOwnedByTransition(w, opts?.owner, drainCeiling)) return true;
+          return opts?.owner !== undefined && w.owner != null && w.owner.turnToken <= carryCeiling;
+        });
         for (const w of drained) {
           this.idleWaiters.delete(w.id);
           w.endOnce();
