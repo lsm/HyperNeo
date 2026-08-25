@@ -7,10 +7,17 @@ import * as path from 'node:path';
 type StartRecord = { resolve: () => void; reject: (err: Error) => void };
 const startCalls = vi.hoisted(() => [] as StartRecord[]);
 const stopCalls = vi.hoisted(() => [] as unknown[]);
+const constructOpts = vi.hoisted(() => [] as Record<string, unknown>[]);
+const constructFailure = vi.hoisted(() => ({ message: '' }));
 
 vi.mock('@github/copilot-sdk', () => {
   class MockCopilotClient {
-    constructor(_opts: unknown) {}
+    constructor(opts: unknown) {
+      constructOpts.push(opts as Record<string, unknown>);
+      if (constructFailure.message) {
+        throw new Error(constructFailure.message);
+      }
+    }
 
     async start(): Promise<void> {
       return new Promise<void>((resolve, reject) => {
@@ -38,6 +45,8 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
   beforeEach(() => {
     startCalls.length = 0;
     stopCalls.length = 0;
+    constructOpts.length = 0;
+    constructFailure.message = '';
     provider = new AnthropicToCopilotBridgeProvider('/tmp', {});
   });
 
@@ -186,5 +195,48 @@ describe('getOrCreateClient() — CopilotClient.start() lifecycle', () => {
     }
 
     await expect(p).rejects.toThrow();
+  });
+
+  it('surfaces CopilotClient construction failure as a clean provider error', async () => {
+    constructFailure.message =
+      "ResolveMessage: Cannot find package '@github/copilot/sdk' from client.js";
+
+    await expect(
+      (provider as unknown as { getOrCreateClient(token?: string): Promise<unknown> })[
+        'getOrCreateClient'
+      ]('gho_test_token')
+    ).rejects.toThrow(
+      "Failed to start GitHub Copilot client: ResolveMessage: Cannot find package '@github/copilot/sdk' from client.js"
+    );
+
+    expect((provider as unknown as Record<string, unknown>)['clientCache']).toBeUndefined();
+    expect(startCalls).toHaveLength(0);
+  });
+
+  it('surfaces start() rejection as a clean provider error', async () => {
+    const getOrCreate = (
+      provider as unknown as {
+        getOrCreateClient(token?: string): Promise<unknown>;
+      }
+    ).getOrCreateClient.bind(provider);
+
+    const p = getOrCreate('gho_test_token');
+    expect(startCalls).toHaveLength(1);
+    startCalls[0].reject(new Error('CLI server exited with code 1'));
+
+    await expect(p).rejects.toThrow('Failed to start GitHub Copilot client: CLI server exited');
+    expect((provider as unknown as Record<string, unknown>)['clientCache']).toBeUndefined();
+  });
+
+  it('propagates the clean client-startup error through listRemoteModels()', async () => {
+    (provider as unknown as Record<string, unknown>)['tokenCache'] = {
+      token: 'gho_test',
+      expiresAt: Date.now() + 60_000,
+    };
+    constructFailure.message = "ResolveMessage: Cannot find package '@github/copilot/sdk'";
+
+    await expect(provider.listRemoteModels()).rejects.toThrow(
+      "Failed to start GitHub Copilot client: ResolveMessage: Cannot find package '@github/copilot/sdk'"
+    );
   });
 });
