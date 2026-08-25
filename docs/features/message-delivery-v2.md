@@ -623,10 +623,10 @@ turn end. Everything else keeps the digest path unchanged.
   Upstream rate-limit fold rows (the `external_event_digest` envelopes
   SpaceRuntime emits past its 10/min delivery budget) participate too: a fold
   containing any direct-class event joins the burst with all of its events,
-  and sparse fold entries whose classification fields are missing are
-  re-hydrated from the external-event store (lazily — only potentially-direct
-  topics that do not already classify, so digest-tier passengers cost no
-  lookups). Duplicate admissions of the same message uuid are ignored. When
+  and every potentially-direct entry is re-hydrated from the external-event
+  store inside the admission gate (one keyed lookup per direct-family event
+  to recover classification and render fields; digest-tier passengers cost
+  no lookups). Duplicate admissions of the same message uuid are ignored. When
   the deferred backlog cap supersedes
   buffered rows into an early envelope, that envelope is itself admitted to
   the buffer, so cap-folded direct events still reach the mid-turn steer.
