@@ -23,6 +23,7 @@ import { humanSessionColumnsPredicate } from '../../storage/schema/session-count
 import { Logger } from '../logger.ts';
 import { hashString32 } from '../runtime-hash.ts';
 import { mapActiveTurnEntryRow } from './activity-preview.ts';
+import { runSpaceTaskMessageExpansion } from './space-task-message-expansion-pipeline.ts';
 
 export { buildActiveTurnSummariesFromRows } from './activity-preview.ts';
 
@@ -63,7 +64,6 @@ const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD = 2048;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX = 1200;
 const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS = '…';
-const MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES = 16 * 1024 * 1024;
 
 function capPreviewString(value: string): string {
   return value.length <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX
@@ -4074,49 +4074,34 @@ export function setupLiveQueryHandlers(
   const stmtSpaceGithubEvent = db.prepare(
     'SELECT id, summary, external_url FROM space_github_events WHERE id = ? AND task_id = ?'
   );
+  const stmtSpaceTaskScope = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?');
 
-  messageHub.onRequest('spaceTaskMessage.get', async (data) => {
+  messageHub.onRequest('spaceTaskMessage.get', (data) => {
     const { taskId, messageId } = data as { taskId?: unknown; messageId?: unknown };
-    if (typeof taskId !== 'string' || !taskId || typeof messageId !== 'string' || !messageId) {
-      throw new Error('spaceTaskMessage.get requires taskId and messageId');
+    const outcome = runSpaceTaskMessageExpansion({
+      taskId: typeof taskId === 'string' ? taskId : '',
+      messageId: typeof messageId === 'string' ? messageId : '',
+      findSpaceTaskScope: (id) => stmtSpaceTaskScope.get(id),
+      findSdkMessage: (id, task) =>
+        (stmtSpaceTaskMessage.get(id, task) as { sdk_message: string } | undefined)?.sdk_message,
+      findGithubEvent: (id, task) =>
+        stmtSpaceGithubEvent.get(id, task) as
+          | { id: string; summary: string; external_url: string }
+          | undefined,
+    });
+    switch (outcome.status) {
+      case 'invalidInput':
+        throw new Error('spaceTaskMessage.get requires taskId and messageId');
+      case 'unauthorized':
+        throw new Error(`Unauthorized: space task "${taskId}" not found`);
+      case 'notFound':
+        throw new Error('Message not found');
+      case 'tooLarge':
+        throw new Error(
+          `spaceTaskMessage.get: message "${outcome.messageId}" exceeds the expansion size limit`
+        );
     }
-    const spaceTask = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as
-      | { space_id: string }
-      | undefined;
-    if (!spaceTask) {
-      throw new Error(`Unauthorized: space task "${taskId}" not found`);
-    }
-    const row = stmtSpaceTaskMessage.get(messageId, taskId) as { sdk_message: string } | undefined;
-    let sdkMessage: string | null = row?.sdk_message ?? null;
-    if (sdkMessage === null) {
-      const githubEvent = stmtSpaceGithubEvent.get(messageId, taskId) as
-        | { id: string; summary: string; external_url: string }
-        | undefined;
-      if (githubEvent) {
-        sdkMessage = JSON.stringify({
-          type: 'user',
-          uuid: githubEvent.id,
-          message: {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `[GitHub] ${githubEvent.summary}\n${githubEvent.external_url}`,
-              },
-            ],
-          },
-        });
-      }
-    }
-    if (sdkMessage === null) {
-      throw new Error('Message not found');
-    }
-    if (Buffer.byteLength(sdkMessage, 'utf8') > MAX_SPACE_TASK_MESSAGE_EXPANSION_BYTES) {
-      throw new Error(
-        `spaceTaskMessage.get: message "${messageId}" exceeds the expansion size limit`
-      );
-    }
-    return { sdkMessage };
+    return { sdkMessage: outcome.sdkMessage };
   });
 
   const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {
