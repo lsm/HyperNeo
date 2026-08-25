@@ -8,7 +8,6 @@ import {
   gateCompacting,
   gateNoWindow,
   gatePercentDisabled,
-  gateSdkEarlier,
   scaledAutoCompactWindow,
   type ContextBudgetCtx,
 } from '../../../../src/lib/agent/context-budget-decision';
@@ -97,7 +96,7 @@ describe('decideContextBudgetCompaction', () => {
     ).toEqual({ action: 'none', reason: 'percent_disabled' });
   });
 
-  test('an SDK threshold at or below ours stands down (equal avoids double-fire)', () => {
+  test('an SDK threshold at or below ours with usage past ours fires the backstop (SDK missed)', () => {
     expect(
       decideContextBudgetCompaction(
         baseInput({
@@ -106,7 +105,7 @@ describe('decideContextBudgetCompaction', () => {
           sdkAutoCompactThreshold: 230_400,
         })
       )
-    ).toEqual({ action: 'none', reason: 'sdk_compacts_earlier' });
+    ).toEqual({ action: 'compact', reason: 'over_threshold_sdk_missed' });
     expect(
       decideContextBudgetCompaction(
         baseInput({
@@ -115,16 +114,28 @@ describe('decideContextBudgetCompaction', () => {
           sdkAutoCompactThreshold: 200_000,
         })
       )
-    ).toEqual({ action: 'none', reason: 'sdk_compacts_earlier' });
+    ).toEqual({ action: 'compact', reason: 'over_threshold_sdk_missed' });
   });
 
-  test('an SDK threshold strictly later than ours lets the daemon act', () => {
+  test('an SDK threshold later than ours but already crossed by usage is treated as missed', () => {
     expect(
       decideContextBudgetCompaction(
         baseInput({
           totalUsed: 240_000,
           sdkAutoCompactEnabled: true,
           sdkAutoCompactThreshold: 230_401,
+        })
+      )
+    ).toEqual({ action: 'compact', reason: 'over_threshold_sdk_missed' });
+  });
+
+  test('an SDK threshold beyond current usage lets the daemon act first', () => {
+    expect(
+      decideContextBudgetCompaction(
+        baseInput({
+          totalUsed: 240_000,
+          sdkAutoCompactEnabled: true,
+          sdkAutoCompactThreshold: 250_000,
         })
       )
     ).toEqual({ action: 'compact', reason: 'over_threshold_sdk_later' });
@@ -176,7 +187,6 @@ describe('gate pass-through identity', () => {
     expectIdentity(gateCooldown);
     expectIdentity(gateCompacting);
     expectIdentity(gateBelowThreshold);
-    expectIdentity(gateSdkEarlier);
   });
 
   test('the final gate always decides', () => {

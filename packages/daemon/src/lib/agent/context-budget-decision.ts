@@ -6,13 +6,13 @@ export type ContextBudgetNoneReason =
   | 'percent_disabled'
   | 'cooldown_active'
   | 'compaction_in_progress'
-  | 'below_threshold'
-  | 'sdk_compacts_earlier';
+  | 'below_threshold';
 
 export type ContextBudgetCompactReason =
   | 'over_threshold_sdk_disabled'
   | 'over_threshold_sdk_unknown'
-  | 'over_threshold_sdk_later';
+  | 'over_threshold_sdk_later'
+  | 'over_threshold_sdk_missed';
 
 export type ContextBudgetDecision =
   | { action: 'none'; reason: ContextBudgetNoneReason }
@@ -64,16 +64,6 @@ export function scaledAutoCompactWindow(
   return contextBudgetThreshold(configuredWindow, rawPercent ?? undefined);
 }
 
-function sdkThresholdKnown(
-  ctx: ContextBudgetCtx
-): ctx is ContextBudgetCtx & { sdkAutoCompactThreshold: number } {
-  return (
-    ctx.sdkAutoCompactEnabled === true &&
-    typeof ctx.sdkAutoCompactThreshold === 'number' &&
-    ctx.sdkAutoCompactThreshold > 0
-  );
-}
-
 export function gateNoWindow(ctx: ContextBudgetCtx): ContextBudgetCtx {
   if (!hasValidWindow(ctx.configuredWindow)) {
     return decided(ctx, { action: 'none', reason: 'no_window' });
@@ -107,20 +97,14 @@ export function gateBelowThreshold(ctx: ContextBudgetCtx): ContextBudgetCtx {
   return ctx;
 }
 
-export function gateSdkEarlier(ctx: ContextBudgetCtx): ContextBudgetCtx {
-  if (!sdkThresholdKnown(ctx) || !hasValidWindow(ctx.configuredWindow)) return ctx;
-  const ourThreshold = contextBudgetThreshold(ctx.configuredWindow, ctx.autoCompactPercent);
-  return ctx.sdkAutoCompactThreshold <= ourThreshold
-    ? decided(ctx, { action: 'none', reason: 'sdk_compacts_earlier' })
-    : ctx;
-}
-
 export function gateCompactFinal(ctx: ContextBudgetCtx): ContextBudgetCtx {
   const reason: ContextBudgetCompactReason =
     ctx.sdkAutoCompactEnabled === false
       ? 'over_threshold_sdk_disabled'
-      : typeof ctx.sdkAutoCompactThreshold === 'number'
-        ? 'over_threshold_sdk_later'
+      : typeof ctx.sdkAutoCompactThreshold === 'number' && ctx.sdkAutoCompactThreshold > 0
+        ? ctx.totalUsed >= ctx.sdkAutoCompactThreshold
+          ? 'over_threshold_sdk_missed'
+          : 'over_threshold_sdk_later'
         : 'over_threshold_sdk_unknown';
   return decided(ctx, { action: 'compact', reason });
 }
@@ -131,7 +115,6 @@ const contextBudgetRun = decisionRun<ContextBudgetCtx>('context-budget-compactio
   gateCooldown,
   gateCompacting,
   gateBelowThreshold,
-  gateSdkEarlier,
   gateCompactFinal,
 ]);
 
