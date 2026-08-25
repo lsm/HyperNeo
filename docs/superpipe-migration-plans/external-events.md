@@ -13,7 +13,7 @@ The target is **planning only**: no source code is changed by this document.
 | `github/github-normalizer.ts` normalizer family | Raw superpipe transforms for per-kind normalizers; `decisionRun` for webhook/poll dispatch | Each normalizer is a pure payload-to-`NormalizedGitHubEvent \| null` transform. `normalizeGitHubWebhook` and `normalizeGitHubPollingRow` are dispatchers over known event/endpoint kinds. |
 | `event-essence.ts:formatExternalEventEssence` | Raw superpipe transform | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
 | `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. |
-| `deferred-event-digest.ts:renderDigestGroup` | `decisionRun` | A single switch over `group.kind` with one branch per kind; `decisionRun` halts on the first matching renderer and returns the rendered string. |
+| `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called as a stage of the digest pipeline — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper (or direct stages) inside `build-external-event-digest-message`. |
 | `deferred-event-digest.ts:parseDeferredExternalEventText` | Raw superpipe transform with `!hasEntry` early exit | Try JSON, then rate-limit text. Each parse attempt either produces an entry and halts, or falls through. |
 | `event-tiers.ts:classifyExternalEventDirectSteer` | `decisionRun` | A short precedence chain over topic suffixes/state/conclusion/actor. First matching gate wins; fall-through returns `null`. |
 | `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` | `decisionRun` | Validation gates each produce an `invalid` decision and halt; the final gate builds the `ok` pattern. The shell preserves the current throw-on-error contract. |
@@ -478,7 +478,7 @@ const buildDigestPipeline = superpipe<{ isDone: (ctx: BuildDigestMessageCtx) => 
   .pipe(sortEvents, 'ctx', 'ctx')
   .pipe(decideIncludeDate, 'ctx', 'ctx')
   .pipe(groupEvents, 'ctx', 'ctx')
-  .pipe(renderGroups, 'ctx', 'ctx')    // calls renderDigestGroup decisionRun
+  .pipe(renderGroups, 'ctx', 'ctx')    // renders groups via the pure kind-switch helper
   .pipe(assembleMessage, 'ctx', 'ctx')
   .end('ctx');
 ```
@@ -487,8 +487,12 @@ const buildDigestPipeline = superpipe<{ isDone: (ctx: BuildDigestMessageCtx) => 
 - `sortEvents`: stable sort by `orderTime` with index tie-break.
 - `decideIncludeDate`: true when more than one UTC date is present.
 - `groupEvents`: `digestGroupKind` + `digestGroupKey`, collect into a `Map`.
-- `renderGroups`: iterate `DIGEST_GROUP_ORDER`, call `renderDigestGroup` for
-  matching groups, append to `lines`.
+- `renderGroups`: iterate `DIGEST_GROUP_ORDER`, render each matching group
+  via the kind switch — kept as an ORDINARY PURE HELPER or direct stages,
+  not a separately-run `renderDigestGroup` `decisionRun` (review correction:
+  that would recreate a second composition boundary for a private helper
+  inside the one `build-external-event-digest-message` business path) — and
+  append to `lines`.
 - `assembleMessage`: header + lines + footer joined with `\n`.
 
 #### Shell/effect wiring
@@ -512,8 +516,10 @@ export function buildExternalEventDigestMessage(
 
 #### Step-by-step migration
 
-1. Convert `renderDigestGroup` to a `decisionRun` first (it is private and has
-   no other callers).
+1. Keep `renderDigestGroup` as a private pure helper (review correction: it
+   is private with no other callers — converting it to a separately-run
+   `decisionRun` would add a second composition boundary inside this one
+   business path).
 2. Add a `BuildDigestMessageCtx` type and the `isDone` helper.
 3. Replace the body of `buildExternalEventDigestMessage` with the pipeline
    stages above.
@@ -555,8 +561,12 @@ Callers: only `buildExternalEventDigestMessage`.
 
 #### Proposed combinator
 
-`decisionRun`. Each kind is a gate that, when matched, sets `ctx.decision` to
-the rendered string and halts. The `other` gate is the final catch-all.
+Ordinary pure helper with a `switch (group.kind)` (review correction — not
+a separately-run `decisionRun`: this is a private helper inside the one
+`build-external-event-digest-message` business path; a second composition
+boundary is exactly what the one-pipeline-per-business-path rule removes).
+Each kind is a case returning the rendered string; `other` is the
+catch-all.
 
 #### Input/output snapshot design
 
@@ -580,14 +590,16 @@ function decided(
   return { ...ctx, decision };
 }
 
-const renderDigestGroupRun = decisionRun<RenderDigestGroupCtx>('render-digest-group', [
-  gateCheck,
-  gateReview,
-  gatePrComment,
-  gateState,
-  gateReaction,
-  gateOther,
-]);
+function renderDigestGroup(group: DigestGroup, opts: RenderOpts): string {
+  switch (group.kind) {
+    case 'check': return renderCheck(group, opts);
+    case 'review': return renderReview(group, opts);
+    case 'pr_comment': return renderPrComment(group, opts);
+    case 'state': return renderState(group, opts);
+    case 'reaction': return renderReaction(group, opts);
+    default: return renderOther(group, opts);
+  }
+}
 ```
 
 Each gate:

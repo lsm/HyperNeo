@@ -294,7 +294,12 @@ The repo already has several proven pipelines. Use these as the model for each s
        resnapshot → reinject. Model it as an `inject-failed` branch (or an
        in-stage catch that diverts) so the flow continues into activation;
        pin it with a stale-live-session test.
-     - `activate`: `activateNode`.
+     - `activate`: `activateNode` — with an explicit CAUGHT-FAILURE branch
+       (review correction: when `activateNode` throws, or the refreshed
+       session injection throws, the current tool catches the error, audits
+       it, and returns a specific `{ success: false, error: ... }` result; an
+       ordinary effect failure would terminate the run with an error outcome
+       before the final tool-result mapping).
      - `resnapshot` execution after activation.
      - `injectAfterActivation`: re-inject.
      - `queue`: `pendingMessageQueue.enqueue`.
@@ -626,7 +631,13 @@ The repo already has several proven pipelines. Use these as the model for each s
      The reportability decision runs later, at the notification stage.
   4. `effect` `update-task` applies `transition.updates`.
   5. `resnapshot` task.
-  6. `decide` `already-notified` checks existing notifications for this `terminalGeneration`.
+  6. `decide` `already-notified` checks existing notifications for this
+     `terminalGeneration`; when set, HALT immediately, returning the current
+     goal and a null notification (review correction: the existing method
+     returns BEFORE clearing the active task, recording another goal event,
+     rerunning evidence/automation, or creating another next task — an
+     idempotent retry must not repeat any terminal bookkeeping; pin the retry
+     path in the parity tests).
   7. `effect` `clear-active-task`.
   8. `effect` `record-goal-event`.
   9. `effect` `capture-evidence` (when `done`).
@@ -641,6 +652,13 @@ The repo already has several proven pipelines. Use these as the model for each s
   13. `resnapshot` goal.
   14. `effect` `record-outcome-notification`.
   15. `halt` returns `{ goal, nextTask, terminalGeneration, notification }`.
+  16. Post-commit shell (review correction): AFTER `runAtomic` resolves, the
+      shell invokes `emitTaskCreated` (when a next task was created) and
+      `onOutcomeNotification` (when a notification was recorded), deferring
+      both via `setImmediate` when `transition.deferPostCommitEffects` is set
+      — carry that flag in the pipeline state and retain this step; without it
+      migrated goal progress stops waking subscribers or announcing the next
+      task.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts` and `packages/daemon/tests/unit/5-space/runtime/goal-outcome-wake-flip.test.ts`.
 - **Risks/caveats**: Review correction — Forge evidence capture (`evolutionScopeService.captureCompletedTaskEvidence`) and goal automation (`goalAutomationService.onTaskCompleted`) are BEST-EFFORT in the current code (each is wrapped in its own catch around `goal-service.ts:426-440` and failures are logged, then the flow continues to clear the active task and record the notification). Their pipeline stages must retain those local catch/log boundaries: an ordinary effect stage whose throw escapes would roll back the entire terminal transition inside `runAtomic`. This is the most complex goal effect chain. Because it runs inside `runAtomic`, the transaction provides atomicity. Review correction — `stagedRun` is async-only (`endAsync`), so it cannot run inside the synchronous `db.transaction(fn)()` wrapper without committing early (the transaction commits when the Promise is returned, and the task/goal/notification effects then land outside it, breaking `terminalGeneration` deduplication). Compose this path as a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic`, using the transaction-bound repo methods; an async `runAtomic` variant cannot preserve atomicity without an async-capable DB transaction primitive. Do not introduce in-flow retries.
 
@@ -824,7 +842,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 
 1. ~~**Async `stagedRun` inside synchronous `runAtomic`**~~ Resolved by review: keep both as sync `superpipe` pipelines with `.end` inside the existing `runAtomic`. Converting `runAtomic` to an async variant is OFF the table — `stagedRun` returns a Promise, the SQLite transaction wrapper is synchronous, and either option commits before the task/goal/notification writes finish, breaking terminal-generation deduplication.
 2. ~~**Goal-service transaction boundaries**~~ Resolved by review: `handleTaskTerminal` never becomes a `stagedRun` outside the transaction. The sync pipeline's effect stages run inside `runAtomic` and use the transaction-bound repo methods; atomicity comes from the transaction, not from the pipeline.
-3. **Post-approval router atomicity and CAS**: The current post-approval path uses blind `taskRepo.updateTask`. Should we introduce a `claimPostApprovalDispatch` reservation/CAS in `SpaceTaskRepository` before migrating to `stagedRun`?
+3. ~~**Post-approval router atomicity and CAS**~~ Resolved by review: yes — the tokenized `claimPostApprovalDispatch` reservation (with the verified-release rules in the steps above) is REQUIRED, not optional; retaining the current blind update lets two concurrent `route` calls both pass the snapshot, spawn separate live sessions, and overwrite the task row.
 4. **Deferred digest atomic primitive**: Should `foldDeferredExternalEventsAtFlush` and `foldDeferredExternalEventOverflow` be backed by a single `foldDeferredRows` repository primitive that supersedes and inserts under one transaction, rather than a multi-effect `stagedRun`?
 5. **Unification of tool and RPC shells**: Several task flows (`publish`, `approve`, `archive`, `update`) are duplicated between `space-agent-tools.ts`, `node-agent-tools.ts`, `space-task-handlers.ts`, and `task-agent-manager.ts`. Do we create a `space-task-operations.ts` module with shared shells, or keep the pipeline in one place and call it from each handler?
 6. **Hot-path `decideGenericAddressRouting`**: It is called once per target in a `for` loop. Is this loop small enough that the `decisionRun` overhead is acceptable? If targets can be large, consider a raw `superpipe` transform or keep it inline.
