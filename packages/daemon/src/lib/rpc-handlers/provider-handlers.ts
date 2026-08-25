@@ -554,6 +554,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       releaseAppliedProviderSlice,
       schedulePendingSliceRelease,
       markProviderRefreshSucceeded,
+      mergeDiscoveredWithStatic,
     } = await import('../model-service.js');
     const clearsAtStart = getModelsCacheClearSequence();
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
@@ -568,9 +569,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         discoveryPromise.catch(() => {}),
         DISCOVERY_SETTLE_GRACE_MS
       ).catch(() => {});
+      provider.clearModelCache?.();
       throw error;
     }
     if (discovered.length === 0) {
+      provider.clearModelCache?.();
       throw new Error(`Provider ${record.providerId} returned no models`);
     }
     const modelsPromise = provider.getModels();
@@ -582,6 +585,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         modelsPromise.catch(() => {}),
         DISCOVERY_SETTLE_GRACE_MS
       ).catch(() => {});
+      provider.clearModelCache?.();
       throw error;
     }
 
@@ -593,6 +597,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       return { success: false, reason: 'superseded' };
     }
     if (models.length === 0) {
+      provider.clearModelCache?.();
       throw new Error(`Provider ${record.providerId} returned no models`);
     }
     const persistedConfig = parseProviderConfig(savedConfig.configJson);
@@ -613,9 +618,10 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         baseUrl: savedConfig.baseUrl,
         configJson: providerRepo.getProvider(request.id)?.configJson,
       };
+      const normalizedDiscovered = mergeDiscoveredWithStatic(record.providerId, discovered);
       const applied = applyDiscoveredProviderModels(
         record.providerId,
-        discovered,
+        normalizedDiscovered,
         'global',
         persistedDiscovered
       );
@@ -637,7 +643,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
             return { success: false, reason: 'superseded' };
           }
-          if (applyDiscoveredProviderModels(record.providerId, discovered)) {
+          if (applyDiscoveredProviderModels(record.providerId, normalizedDiscovered)) {
             releaseAppliedProviderSlice(record.providerId);
           } else {
             schedulePendingSliceRelease(record.providerId);
@@ -806,6 +812,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 record.configJson,
                 existing.configJson
               );
+              if (restoredConfig && restoredConfig.length > MAX_JSON_FIELD_LEN) {
+                throw new Error(
+                  `configJson must be ≤ ${MAX_JSON_FIELD_LEN} chars after restoring persisted discovery`
+                );
+              }
               if (restoredConfig !== record.configJson) {
                 record =
                   providerRepo.updateProvider(data.id, { configJson: restoredConfig }) ?? record;

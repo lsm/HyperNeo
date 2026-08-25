@@ -17,6 +17,7 @@ import {
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
 import { getProviderRegistry } from './providers/registry.js';
+import { mergeDiscoveredModels } from './providers/shared/discovery-cache.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -149,6 +150,14 @@ function mergeWithFallbackModels(
   }
 
   return Array.from(modelMap.values());
+}
+
+export function mergeDiscoveredWithStatic(
+  providerId: string,
+  discovered: ReadonlyArray<ModelInfo>
+): ModelInfo[] {
+  const staticModels = STATIC_MODEL_METADATA.filter((model) => model.provider === providerId);
+  return mergeDiscoveredModels(staticModels, discovered);
 }
 
 const refreshInProgress = new Map<string, Promise<void>>();
