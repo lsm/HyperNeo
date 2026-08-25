@@ -111,9 +111,11 @@ export class OAuthRefreshScheduler {
     if (refreshed) {
       this.retryCounts.delete(retryKey);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
-      if (nextCredentials) {
-        await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
-      }
+      try {
+        if (nextCredentials) {
+          await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
+        }
+      } catch {}
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
       await this.onProviderChanged?.(provider.id, 'refreshed');

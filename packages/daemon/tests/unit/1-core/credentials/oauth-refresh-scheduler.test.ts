@@ -464,7 +464,7 @@ describe('OAuthRefreshScheduler', () => {
     expect(stopResolved).toBe(true);
   });
 
-  it('stop waits for a failing tick without propagating its rejection', async () => {
+  it('completes the tick and stop drains it when token persistence fails', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));
     const manager = new FakeCredentialManager();
@@ -477,14 +477,19 @@ describe('OAuthRefreshScheduler', () => {
     manager.storeOAuthTokens = async () => {
       throw new Error('credential store failed');
     };
+    let invalidated = false;
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
       now: () => 0,
       refreshWindowMs: 10_000,
+      onProviderChanged: () => {
+        invalidated = true;
+      },
     });
 
-    await expect(scheduler.tick()).rejects.toThrow('credential store failed');
+    await expect(scheduler.tick()).resolves.toBeUndefined();
 
+    expect(invalidated).toBe(true);
     await expect(scheduler.stop()).resolves.toBeUndefined();
   });
 

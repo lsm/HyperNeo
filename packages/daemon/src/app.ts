@@ -473,14 +473,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               }
             }
           }
-          const { clearModelsCache } = await import('./lib/model-service.js');
-          clearModelsCache();
         } catch (error) {
           logError(
             `[Daemon] Scheduled credential-change invalidation failed for ${providerId}:`,
             error
           );
         }
+        const { clearModelsCache } = await import('./lib/model-service.js');
+        clearModelsCache();
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
