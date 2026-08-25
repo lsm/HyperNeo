@@ -17,7 +17,6 @@ const SESSION_ID = 'session-steer';
 const PR_URL = 'https://github.com/lsm/HyperNeo/pull/2828';
 const DEBOUNCE_MS = 50;
 const MAX_BURST_WAIT_MS = 150;
-const COOLDOWN_MS = 200;
 
 interface StoredRow {
   message: SDKUserMessage;
@@ -268,7 +267,6 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     },
     directSteerDebounceMs: DEBOUNCE_MS,
     directSteerMaxBurstWaitMs: MAX_BURST_WAIT_MS,
-    directSteerCooldownMs: COOLDOWN_MS,
   } as unknown as TaskAgentManagerConfig;
 
   const manager = new TaskAgentManager(config);
@@ -579,43 +577,7 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     expect(steerJobs(harness.jobs)).toHaveLength(1);
   });
 
-  it('splits a mixed fold so only budgeted classes steer while cooled classes stay deferred', async () => {
-    const harness = makeHarness();
-    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'warm-review'));
-    await sleep(DEBOUNCE_MS + 40);
-    expect(steerRows(harness.rows)).toHaveLength(1);
-
-    const essences = [
-      {
-        eventId: 'mixed-review',
-        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
-        actor: 'codex[bot]',
-        commentId: 'c-mixed-review',
-      },
-      {
-        eventId: 'mixed-check',
-        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
-        conclusion: 'failure',
-        checkName: 'Daemon Tests',
-      },
-    ];
-    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
-
-    await sleep(DEBOUNCE_MS + 60);
-
-    const steers = steerRows(harness.rows);
-    expect(steers).toHaveLength(2);
-    const splitSteerText = rowText(steers[1]!.message);
-    expect(splitSteerText).toContain('Daemon Tests');
-    expect(splitSteerText).not.toContain('mixed-review');
-
-    const remainderRow = harness.rows.find(
-      (row) => row.status === 'deferred' && rowText(row.message).includes('mixed-review')
-    );
-    expect(remainderRow).toBeDefined();
-  });
-
-  it('arms cooldowns for every direct class represented in a steered fold', async () => {
+  it('steers every classified event immediately — no per-class rate cap', async () => {
     const harness = makeHarness();
     const essences = [
       {
@@ -646,46 +608,9 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
         })
       )
     );
-    expect(harness.metrics.getCounters().directSteerSuppressedByCooldown).toBe(1);
     await sleep(DEBOUNCE_MS + 40);
-    expect(steerRows(harness.rows)).toHaveLength(1);
-  });
-
-  it('drops a mixed burst at flush when a represented class cooled meanwhile', async () => {
-    const harness = makeHarness();
-    await injectDefer(harness.manager, checkFailedText('early-chk', 'Daemon Tests'));
-    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'mixed-verdict'));
-
-    await sleep(DEBOUNCE_MS + 80);
-
     expect(steerRows(harness.rows)).toHaveLength(2);
     expect(harness.metrics.getCounters().directSteerInjected).toBe(2);
-
-    const mixedEssences = [
-      {
-        eventId: 'late-review',
-        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
-        actor: 'codex[bot]',
-        commentId: 'c-late-review',
-      },
-      {
-        eventId: 'late-check',
-        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
-        conclusion: 'failure',
-        checkName: 'Lint',
-      },
-    ];
-    await injectDefer(
-      harness.manager,
-      buildDeferredEventDigestEnvelopeText(mixedEssences as never)
-    );
-
-    await sleep(DEBOUNCE_MS + 60);
-
-    expect(steerRows(harness.rows)).toHaveLength(2);
-    const mixedRow = harness.rows.find((row) => rowText(row.message).includes('late-review'));
-    expect(mixedRow?.status).toBe('deferred');
-    expect(harness.metrics.getCounters().directSteerSuppressedByCooldown).toBeGreaterThanOrEqual(1);
   });
 
   it('bounds the buffer by expanded event count, not row count', async () => {
@@ -729,49 +654,6 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
       status: 'consumed',
     });
     expect(preexisting.status).toBe('consumed');
-  });
-
-  it('consumes the real row id when splitting a mixed fold delivered under an existing uuid', async () => {
-    const harness = makeHarness();
-    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'warm-review'));
-    await sleep(DEBOUNCE_MS + 40);
-    expect(steerRows(harness.rows)).toHaveLength(1);
-
-    const mixedEssences = [
-      {
-        eventId: 'split-review',
-        topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
-        actor: 'codex[bot]',
-        commentId: 'c-split-review',
-      },
-      {
-        eventId: 'split-check',
-        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
-        conclusion: 'failure',
-        checkName: 'Daemon Tests',
-      },
-    ];
-    const mixedFoldText = buildDeferredEventDigestEnvelopeText(mixedEssences as never);
-    harness.rows.push(deferredRowFixture('db-pre', 'uuid-pre', mixedFoldText));
-    await harness.manager.injectSubSessionMessage(
-      SESSION_ID,
-      mixedFoldText,
-      true,
-      undefined,
-      'defer',
-      'system',
-      'uuid-pre'
-    );
-
-    await sleep(DEBOUNCE_MS + 60);
-
-    expect(harness.statusUpdates).toContainEqual({ dbIds: ['db-pre'], status: 'consumed' });
-    expect(harness.rows.find((row) => row.dbId === 'db-pre')?.status).toBe('consumed');
-    const steers = steerRows(harness.rows);
-    expect(steers).toHaveLength(2);
-    const splitSteerText = rowText(steers[1]!.message);
-    expect(splitSteerText).toContain('Daemon Tests');
-    expect(splitSteerText).not.toContain('split-review');
   });
 
   it('keeps cap-folded events in the mid-turn steer via the replacement envelope', async () => {
@@ -1194,27 +1076,6 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
       ({ dbIds, status }) => status === 'consumed' && dbIds.length === 1
     );
     expect(passengerCopyConsumed).toBe(true);
-  });
-
-  it('falls back to the digest tier when the per-class cooldown budget is exceeded', async () => {
-    const harness = makeHarness();
-    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'rev-first'));
-    await sleep(DEBOUNCE_MS + 40);
-    expect(steerRows(harness.rows)).toHaveLength(1);
-
-    await injectDefer(harness.manager, reviewVerdictText('APPROVED', 'rev-second'));
-    expect(harness.metrics.getCounters().directSteerSuppressedByCooldown).toBe(1);
-
-    await sleep(DEBOUNCE_MS + 40);
-    expect(steerRows(harness.rows)).toHaveLength(1);
-
-    const secondRow = harness.rows.find((row) => rowText(row.message).includes('APPROVED'));
-    expect(secondRow?.status).toBe('deferred');
-    expect(
-      harness.statusUpdates.some(
-        ({ dbIds, status }) => status === 'consumed' && secondRow && dbIds.includes(secondRow.dbId)
-      )
-    ).toBe(false);
   });
 
   it('does not steer digest-tier events mid-turn', async () => {

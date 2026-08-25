@@ -645,20 +645,19 @@ path unchanged.
   lock the turn-end fold holds — and only folds rows that are still `deferred`;
   if the turn ended first (turn-end flush already consumed them), no steer is
   emitted and nothing is delivered twice.
-- **Cooldown / backpressure**: after a steer fires for a class, further
-  direct-class events for that (session, class) fall back to the digest tier
-  until the cooldown expires (re-checked both at buffer time and at flush time,
-  and armed synchronously before the flush's first await so an in-flight flush
-  counts against the cap); overflow therefore still surfaces at turn end.
+- **No rate cap**: the classifier is the only gate — every event it marks
+  direct steers, no matter how many arrive. Admission runs as a SuperPipe
+  `decisionRun` pipeline (`external-event-steer-admission-pipeline.ts`: delivery-v2 →
+  provenance → session-state → direct-class → buffer-capacity gates); the only
+  suppression is the buffer event-count bound below, which guards steer size
+  (context window), not rate.
 - **Tunables** (module constants in `task-agent-manager.ts`, overridable via
   `TaskAgentManagerConfig` for tests):
   `DIRECT_STEER_DEBOUNCE_MS = 20_000` (trailing-edge burst window),
   `DIRECT_STEER_MAX_BURST_WAIT_MS = 60_000` (hard cap so a drip cannot starve
   the steer forever),
-  `DIRECT_STEER_COOLDOWN_MS = 600_000` (per session+class rate cap),
-  `DIRECT_STEER_BUFFER_MAX_ENTRIES = 200`, and
-  `DIRECT_STEER_COOLDOWN_MAP_CAP = 1_000` (bounded cooldown bookkeeping).
-- **Observability**: every injected steer and every cooldown suppression is
+  and `DIRECT_STEER_BUFFER_MAX_ENTRIES = 200` (steer size bound).
+- **Observability**: every injected steer and every buffer-cap suppression is
   logged and counted in the external-event queue-health snapshot
   (`directSteerInjected`, `directSteerInjectedByClass`,
   `directSteerSuppressedByCooldown`).
