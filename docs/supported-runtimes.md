@@ -35,7 +35,7 @@ Both runtimes are pinned to **exact versions** — no `^`/`~` ranges, matching t
 - **Bun**: root `package.json` `packageManager: "bun@1.3.14"` plus `bun-version: 1.3.14` in every CI setup step.
 - **Deno**: `deno-version: 2.9.4` in the `deno-boot-smoke` CI job (`denoland/setup-deno@v2`). There is no `deno.json`; the workflow is the pin of record.
 
-Bumps are deliberate, coordinated edits (root pin + workflow pins together for Bun; workflow pin + smoke-script expectation for Deno), landing through a PR like any other change.
+Bumps are deliberate, coordinated edits landing through a PR like any other change: for Bun, the root `packageManager` pin plus every CI `bun-version` step together; for Deno, the workflow pin plus the `isDeno2Point9()` checks that gate the session-loop test and its `deno-daemon-server` helper — those checks are the real enforcement of the supported line (a stale check leaves the manual integration suite skipped or rejected), so a minor-version bump touches them too.
 
 ## CI coverage
 
@@ -47,6 +47,8 @@ Dual support is guarded in two places:
 ```bash
 cd packages/daemon && bun test ./tests/online/deno/session-loop.test.ts
 ```
+
+- Known gap: the native folder-picker dialog (`dialog.pickFolder`) still spawns through `Bun.spawn` directly (`packages/daemon/src/lib/rpc-handlers/dialog-handlers.ts`), so under Deno the handler catches the resulting error and returns `null` — folder picking in the workspace/Space creation UIs silently no-ops. The `runtime-spawn` seam covers the space runtime and SDK subprocesses; porting the dialog handlers onto it is future work.
 
 ## Why dual support is cheap: the runtime seams
 
@@ -70,4 +72,5 @@ The daemon avoids runtime-specific APIs at the seams, so each runtime plugs in a
 ## Future work
 
 - `deno check` type coverage in CI (the `bun-types` vs Deno types gap is real and untested).
+- Port the remaining direct `Bun.spawn` call sites — the dialog folder picker above — onto `runtime-spawn`.
 - Flip `deno-boot-smoke` from `continue-on-error` to a required check once it has been green for a sustained stretch.
