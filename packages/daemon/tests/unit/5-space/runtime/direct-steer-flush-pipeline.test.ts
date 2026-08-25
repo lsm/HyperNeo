@@ -279,4 +279,62 @@ describe('direct-steer flush pipeline', () => {
     expect(outcome.stage).toBe('persistSteer');
     expect(discarded).toEqual([{ sessionId: SESSION_ID, dbId: 'passenger-db-1' }]);
   });
+
+  it('skips and rolls back the saved steer when the session leaves processing right before enqueue', async () => {
+    const essences = [reviewCommentEssence('rc-1'), humanCommentEssence('human-1')];
+    const e = entry('msg-1', 'db-1', essences);
+    const processingCalls = [true, true, false];
+    const discardedPassengers: Array<string | null> = [];
+    const discardedSteers: string[] = [];
+    let enqueued = 0;
+    const outcome = await flush([e], {
+      getDeferredUuids: () => new Set(['msg-1']),
+      savePassenger: () => 'passenger-db-1',
+      getSessionProcessing: () => processingCalls.shift() ?? false,
+      discardPassenger: (_sessionId, dbId) => {
+        discardedPassengers.push(dbId);
+        return Promise.resolve();
+      },
+      discardSteer: (_sessionId, messageId) => {
+        discardedSteers.push(messageId);
+        return Promise.resolve();
+      },
+      enqueueSteer: () => {
+        enqueued += 1;
+      },
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_not_processing' });
+    expect(discardedPassengers).toEqual(['passenger-db-1']);
+    expect(discardedSteers.length).toBe(1);
+    expect(enqueued).toBe(0);
+  });
+
+  it('skips and rolls back the saved steer when the parent task becomes limited right before enqueue', async () => {
+    const essences = [reviewCommentEssence('rc-1'), humanCommentEssence('human-1')];
+    const e = entry('msg-1', 'db-1', essences);
+    const limitedCalls = [false, false, true];
+    const discardedPassengers: Array<string | null> = [];
+    const discardedSteers: string[] = [];
+    let enqueued = 0;
+    const outcome = await flush([e], {
+      getDeferredUuids: () => new Set(['msg-1']),
+      savePassenger: () => 'passenger-db-1',
+      isParentTaskLimited: () => limitedCalls.shift() ?? false,
+      discardPassenger: (_sessionId, dbId) => {
+        discardedPassengers.push(dbId);
+        return Promise.resolve();
+      },
+      discardSteer: (_sessionId, messageId) => {
+        discardedSteers.push(messageId);
+        return Promise.resolve();
+      },
+      enqueueSteer: () => {
+        enqueued += 1;
+      },
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'parent_task_limited' });
+    expect(discardedPassengers).toEqual(['passenger-db-1']);
+    expect(discardedSteers.length).toBe(1);
+    expect(enqueued).toBe(0);
+  });
 });

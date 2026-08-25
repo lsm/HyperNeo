@@ -219,7 +219,17 @@ async function persistSteer(ctx: DirectSteerFlushCtx): Promise<DirectSteerFlushC
   }
 }
 
-async function enqueueDelivery(ctx: DirectSteerFlushCtx): Promise<DirectSteerFlushCtx> {
+async function guardAndEnqueueDelivery(ctx: DirectSteerFlushCtx): Promise<DirectSteerFlushCtx> {
+  if (ctx.deps.isParentTaskLimited(ctx.sessionId)) {
+    await ctx.deps.discardPassenger(ctx.sessionId, ctx.passengerDbId ?? null);
+    await ctx.deps.discardSteer(ctx.sessionId, ctx.steerMessageId!);
+    return { ...ctx, outcome: { action: 'skip', reason: 'parent_task_limited' } };
+  }
+  if (!ctx.deps.getSessionProcessing(ctx.sessionId)) {
+    await ctx.deps.discardPassenger(ctx.sessionId, ctx.passengerDbId ?? null);
+    await ctx.deps.discardSteer(ctx.sessionId, ctx.steerMessageId!);
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_not_processing' } };
+  }
   try {
     ctx.deps.enqueueSteer(ctx.sessionId, ctx.steerMessageId!);
     return ctx;
@@ -289,7 +299,7 @@ const run = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(persistSteer, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
-  .pipe(enqueueDelivery, 'ctx', 'ctx')
+  .pipe(guardAndEnqueueDelivery, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(commit, 'ctx', 'ctx')
   .error(rollback, ['ctx'])
