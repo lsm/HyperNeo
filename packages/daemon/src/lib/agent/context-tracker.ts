@@ -74,6 +74,10 @@ export class ContextTracker {
     return true;
   }
 
+  isCoolingDown(cooldownMs = DEFAULT_COMPACTION_COOLDOWN_MS): boolean {
+    return Date.now() - this.lastCompactionTriggerAt < cooldownMs;
+  }
+
   markCompactionTriggered(): void {
     this.lastCompactionTriggerAt = Date.now();
   }

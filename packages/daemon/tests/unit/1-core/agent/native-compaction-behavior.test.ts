@@ -8,8 +8,8 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import {
   buildProviderSettings,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
-  shouldUseHyperNeoCompactFallback,
 } from '../../../../src/lib/agent/query-options-builder';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import {
@@ -23,8 +23,8 @@ import type {
 } from '../../../../src/lib/internal-event-bus';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
-  getModelContextWindow,
   codexBackendContextWindow,
+  getModelContextWindow,
   MODEL_CONTEXT_WINDOWS,
 } from '../../../../src/lib/providers/codex-models';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
@@ -39,11 +39,11 @@ describe('N1: native SDK auto-compaction is used (never disabled for kimi/codex)
     expected: 'native' | { autoCompactEnabled: true; autoCompactWindow: number };
   }> = [
     {
-      label: 'kimi K2.7 (262144) — armed with real window',
+      label: 'kimi K2.7 (262144) — non-K3 id, scaled to the default 90%',
       provider: 'kimi',
       contextWindow: 262_144,
       model: 'kimi-k2.7-code',
-      expected: { autoCompactEnabled: true, autoCompactWindow: 262_144 },
+      expected: { autoCompactEnabled: true, autoCompactWindow: 235_929 },
     },
     {
       label: 'kimi K3 (1M) — armed with 1M window',
@@ -177,10 +177,10 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     );
   });
 
-  it("the daemon passes Kimi's real window; the SDK clamps it to a threshold safely below it", () => {
+  it("the daemon passes Kimi K3's real 1M window; K2.7 rides the scaled default", () => {
     const k2Window = buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code')?.autoCompactWindow;
     const k3Window = buildProviderSettings('kimi', 1_048_576, 'kimi-k3')?.autoCompactWindow;
-    expect(k2Window).toBe(262_144);
+    expect(k2Window).toBe(Math.floor((262_144 * 90) / 100));
     expect(k3Window).toBe(1_048_576);
 
     const SDK_FALLBACK_WINDOW = 200_000;
@@ -195,36 +195,26 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
   });
 });
 
-describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
+describe('N3: enforcement boundary — native providers untouched, fallback set stays empty', () => {
   it('PROVIDER_NO_SDK_AUTO_COMPACT is empty (no provider uses the async /compact fallback)', () => {
     expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
   });
 
-  it.each([
-    ['anthropic', 'anthropic'],
-    ['anthropic-copilot', 'anthropic-copilot'],
-    ['anthropic-codex', 'anthropic-codex'],
-    ['glm', 'glm'],
-    ['deepseek', 'deepseek'],
-    ['kimi', 'kimi'],
-    ['minimax', 'minimax'],
-    ['openrouter', 'openrouter'],
-    ['ollama', 'ollama'],
-    ['ollama-cloud', 'ollama-cloud'],
-    ['acp', 'acp'],
-  ])('shouldUseHyperNeoCompactFallback(%s) is false', (_label, providerId) => {
-    expect(shouldUseHyperNeoCompactFallback(providerId)).toBe(false);
+  it('the four native context-window providers are exactly the documented set', () => {
+    expect([...NATIVE_CONTEXT_WINDOW_PROVIDER_IDS].sort()).toEqual(
+      ['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm'].sort()
+    );
   });
 
-  it('every Kimi and Codex model id resolves to no HyperNeo fallback', () => {
-    const ids = [
-      ...KimiProvider.MODELS.map((m) => m.id),
-      ...(Object.keys(MODEL_CONTEXT_WINDOWS) as Array<keyof typeof MODEL_CONTEXT_WINDOWS>),
-    ];
-    for (const id of ids) {
-      expect(shouldUseHyperNeoCompactFallback('kimi'), `kimi/${id}`).toBe(false);
-      expect(shouldUseHyperNeoCompactFallback('anthropic-codex'), `codex/${id}`).toBe(false);
-    }
+  it.each([
+    ['anthropic', 200_000],
+    ['anthropic-copilot', 200_000],
+    ['anthropic-codex', 272_000],
+    ['glm', 1_000_000],
+  ] as const)('%s ignores window and percent entirely (SDK keeps its own compaction)', (providerId, window) => {
+    expect(buildProviderSettings(providerId, window)).toBeUndefined();
+    expect(buildProviderSettings(providerId, window, undefined, 55)).toBeUndefined();
+    expect(buildProviderSettings(providerId, window, undefined, 100)).toBeUndefined();
   });
 });
 
@@ -242,6 +232,8 @@ function driveCompactionRefresh(opts: {
   contextWindow: number;
   totalUsed: number;
   sdkMaxTokens?: number;
+  compactingActive?: boolean;
+  cooldownActive?: boolean;
 }): CompactionRefreshHarness {
   const session: Session = {
     id: 'compact-session',
@@ -295,6 +287,7 @@ function driveCompactionRefresh(opts: {
     beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
     setCompacting: mock(async () => {}),
+    getIsCompacting: mock(() => opts.compactingActive ?? false),
     getState: mock(() => ({ phase: 'idle' })),
   } as unknown as ProcessingStateManager;
 
@@ -302,6 +295,7 @@ function driveCompactionRefresh(opts: {
     getContextInfo: mock(() => ({ totalTokens: 1000, maxTokens: 128000 })),
     updateWithDetailedBreakdown: mock(() => {}),
     shouldCompact: mock(() => false),
+    isCoolingDown: mock(() => opts.cooldownActive ?? false),
     shouldCompactAt: shouldCompactAtSpy,
     markCompactionTriggered: markCompactionTriggeredSpy,
   } as unknown as ContextTracker;
@@ -444,7 +438,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
   });
 
-  it('Kimi K3 (1M) session near capacity does NOT enqueue /compact', async () => {
+  it('Kimi K3 (1M) session near capacity now enqueues /compact exactly once (daemon backstop)', async () => {
     setModelsCache(
       new Map([
         [
@@ -476,11 +470,46 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('Kimi K3 below the default 90% threshold does not compact', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'kimi-k3',
+              name: 'Kimi K3',
+              provider: 'kimi',
+              contextWindow: 1_048_576,
+              preferContextWindowMetadata: true,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+
+    const harness = driveCompactionRefresh({
+      provider: 'kimi',
+      model: 'kimi-k3',
+      contextWindow: 1_048_576,
+      totalUsed: 900_000,
+      sdkMaxTokens: 1_048_576,
+    });
+
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
     expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
   });
 
-  it('holds across the Kimi/Codex model matrix (every canonical model near capacity, no /compact)', async () => {
+  it('splits across the Kimi/Codex model matrix near capacity (kimi backstops, codex native)', async () => {
     const kimiCases = KimiProvider.MODELS.map((m) => ({
       provider: 'kimi',
       model: m.id,
@@ -495,13 +524,12 @@ describe('N4: literal /compact never enters the transcript or provider request',
       contextWindow: MODEL_CONTEXT_WINDOWS[id],
       sdkMaxTokens: MODEL_CONTEXT_WINDOWS[id],
     }));
-    const matrix = [...kimiCases, ...codexCases];
 
     expect(kimiCases.map((c) => c.model).sort()).toEqual(
       ['k3-256k', 'kimi-for-coding', 'kimi-k2.7-code-highspeed', 'kimi-k3[1m]'].sort()
     );
 
-    for (const c of matrix) {
+    for (const c of [...kimiCases, ...codexCases]) {
       setModelsCache(
         new Map([
           [
@@ -527,11 +555,25 @@ describe('N4: literal /compact never enters the transcript or provider request',
       });
       await harness.handler.handleMessage(resultMessage());
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
-        '/compact',
-        true
-      );
-      expect(harness.markCompactionTriggeredSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalled();
+      if (c.provider === 'kimi') {
+        expect(harness.enqueueSpy, `${c.provider}/${c.model}`).toHaveBeenCalledWith(
+          '/compact',
+          true
+        );
+        expect(
+          harness.markCompactionTriggeredSpy,
+          `${c.provider}/${c.model}`
+        ).toHaveBeenCalledTimes(1);
+      } else {
+        expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
+          '/compact',
+          true
+        );
+        expect(
+          harness.markCompactionTriggeredSpy,
+          `${c.provider}/${c.model}`
+        ).not.toHaveBeenCalled();
+      }
     }
   });
 
@@ -622,44 +664,103 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
   });
 
-  it('when the dormant fallback fires, the handler enqueues /compact as internal (production call site)', async () => {
-    const TEST_PROVIDER = 'test-fallback-provider';
-    const fallbackSet = PROVIDER_NO_SDK_AUTO_COMPACT as Set<string>;
-    fallbackSet.add(TEST_PROVIDER);
-    try {
-      setModelsCache(
-        new Map([
+  it('when the context budget is exceeded on a custom provider, the handler enqueues /compact as internal (production call site)', async () => {
+    const TEST_PROVIDER = 'test-budget-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
           [
-            'global',
-            [
-              {
-                id: 'fb-model',
-                name: 'Fallback Model',
-                provider: TEST_PROVIDER,
-                contextWindow: 200_000,
-                available: true,
-              },
-            ],
+            {
+              id: 'budget-model',
+              name: 'Budget Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
           ],
-        ])
-      );
-      const harness = driveCompactionRefresh({
-        provider: TEST_PROVIDER,
-        model: 'fb-model',
-        contextWindow: 200_000,
-        totalUsed: 195_000,
-        sdkMaxTokens: 200_000,
-      });
-      await harness.handler.handleMessage(resultMessage());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'budget-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
-      expect(harness.shouldCompactAtSpy).toHaveBeenCalled();
-      expect(harness.markCompactionTriggeredSpy).toHaveBeenCalled();
-      expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
-    } finally {
-      fallbackSet.delete(TEST_PROVIDER);
-      setModelsCache(new Map());
-    }
+    expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
+    expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
+  });
+
+  it('autoCompactPercent 100 opts a custom provider out of the daemon backstop', async () => {
+    const TEST_PROVIDER = 'test-optout-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'optout-model',
+              name: 'Opt-out Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              autoCompactPercent: 100,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'optout-model',
+      contextWindow: 200_000,
+      totalUsed: 199_000,
+      sdkMaxTokens: 200_000,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+  });
+
+  it('an active SDK compaction suppresses the backstop', async () => {
+    const TEST_PROVIDER = 'test-compacting-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'compacting-model',
+              name: 'Compacting Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'compacting-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+      compactingActive: true,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
   });
 });

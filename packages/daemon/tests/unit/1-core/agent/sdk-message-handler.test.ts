@@ -81,6 +81,9 @@ describe('SDKMessageHandler', () => {
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
+  let getIsCompactingSpy: ReturnType<typeof mock>;
+  let isCoolingDownSpy: ReturnType<typeof mock>;
+  let markCompactionTriggeredHandlerSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
   let enqueueMessageSpy: ReturnType<typeof mock>;
@@ -157,12 +160,16 @@ describe('SDKMessageHandler', () => {
     setIdleSpy = mock(async () => {});
     beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
+    getIsCompactingSpy = mock(() => false);
+    isCoolingDownSpy = mock(() => false);
+    markCompactionTriggeredHandlerSpy = mock(() => {});
     getStateSpy = mock(() => ({ phase: 'idle' }));
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
       setCompacting: setCompactingSpy,
+      getIsCompacting: getIsCompactingSpy,
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
 
@@ -173,7 +180,8 @@ describe('SDKMessageHandler', () => {
       updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
       shouldCompact: mock(() => false),
       shouldCompactAt: mock(() => false),
-      markCompactionTriggered: mock(() => {}),
+      isCoolingDown: isCoolingDownSpy,
+      markCompactionTriggered: markCompactionTriggeredHandlerSpy,
     } as unknown as ContextTracker;
 
     enqueueMessageSpy = mock(async () => 'context-id');
@@ -3975,7 +3983,7 @@ describe('SDKMessageHandler', () => {
         setModelsCache(new Map());
       });
 
-      it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
+      it('does not enqueue /compact while below the default 90% budget', async () => {
         setModelsCache(
           new Map([
             [
@@ -4037,7 +4045,71 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
       });
 
-      it('does not enqueue /compact for custom-provider sessions (SDK handles via Options.settings)', async () => {
+      it('enqueues /compact once when the budget is exceeded with an unknown SDK threshold', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 950_000 }],
+          totalTokens: 950_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 95,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          autoCompactThreshold: undefined,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredHandlerSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
+        expect(getIsCompactingSpy).toHaveBeenCalled();
+        expect(isCoolingDownSpy).toHaveBeenCalled();
+      });
+
+      it('does not enqueue /compact for a custom provider below its budget even when the SDK reports disabled auto-compact', async () => {
         setModelsCache(
           new Map([
             [
@@ -4202,7 +4274,7 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('does NOT enqueue /compact for global Kimi (SDK native auto-compact handles it)', async () => {
+      it('enqueues /compact for global Kimi past the default budget (daemon backstop)', async () => {
         setModelsCache(
           new Map([
             [
@@ -4262,11 +4334,11 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
 
-      it('does NOT enqueue /compact for China Kimi (SDK native auto-compact handles it)', async () => {
+      it('enqueues /compact for China Kimi past the default budget (daemon backstop)', async () => {
         setModelsCache(
           new Map([
             [
@@ -4326,8 +4398,8 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true);
       });
     });
 

@@ -43,7 +43,10 @@ import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
-import { reserveBasedThreshold } from './context-tracker.js';
+import {
+  decideContextBudgetCompaction,
+  contextBudgetThreshold,
+} from './context-budget-decision.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -52,6 +55,7 @@ import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import {
   getBuiltFallbackIdentity,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   shouldUseHyperNeoCompactFallback,
 } from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
@@ -1506,27 +1510,30 @@ export class SDKMessageHandler {
         });
 
         const providerId = session.config.provider;
-        if (!providerId) {
+        if (!providerId || NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
           return;
         }
-        const shouldUseFallback = shouldUseHyperNeoCompactFallback(providerId);
-        const actualContextWindow = modelInfo?.contextWindow;
-        if (shouldUseFallback && actualContextWindow && actualContextWindow > 0) {
-          const hyperNeoCompactThreshold = reserveBasedThreshold(actualContextWindow, providerId);
-          if (
-            contextInfo.totalUsed >= hyperNeoCompactThreshold &&
-            contextTracker.shouldCompactAt(hyperNeoCompactThreshold)
-          ) {
-            contextTracker.markCompactionTriggered();
-            this.logger.info(
-              `Triggering HyperNeo compaction fallback for session ${session.id} ` +
-                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${hyperNeoCompactThreshold} ` +
-                `of ${actualContextWindow} tokens)`
-            );
-            void this.ctx.messageQueue.enqueue('/compact', true).catch((error) => {
-              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-            });
-          }
+        const decision = decideContextBudgetCompaction({
+          totalUsed: contextInfo.totalUsed,
+          configuredWindow: modelInfo?.contextWindow,
+          autoCompactPercent: modelInfo?.autoCompactPercent,
+          sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
+          sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
+          cooldownActive: contextTracker.isCoolingDown(),
+          compactingActive: this.ctx.stateManager.getIsCompacting(),
+        });
+        if (decision.action === 'compact') {
+          const configuredWindow = modelInfo?.contextWindow ?? 0;
+          const threshold = contextBudgetThreshold(configuredWindow, modelInfo?.autoCompactPercent);
+          contextTracker.markCompactionTriggered();
+          this.logger.info(
+            `Daemon context-budget compaction for session ${session.id} ` +
+              `(provider=${providerId}, reason=${decision.reason}, ` +
+              `${contextInfo.totalUsed} >= ${threshold} of ${configuredWindow} tokens)`
+          );
+          void this.ctx.messageQueue.enqueue('/compact', true).catch((error) => {
+            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+          });
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
