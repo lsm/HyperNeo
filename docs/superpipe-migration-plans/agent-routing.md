@@ -15,9 +15,9 @@ For each function below, the plan picks the combinator that matches the existing
 
 | Symbol | Proposed combinator | Rationale |
 | --- | --- | --- |
-| `turn-end-routing.ts:routeTurnEnd` | `decisionRun` | A long first-match cascade over `sessionState` and `result` events that stops once a `TurnEndPlan` is produced. |
-| `query-retry-routing.ts:classifyQueryRetryRoute` | `decisionRun` (`query-retry-classify`) | Pure classifier with ten mutually exclusive retry/terminal arms. |
-| `query-retry-routing.ts:resolveDecision` | `decisionRun` (`query-retry-finalize`) | Maps a `QueryRetryRoute` to a `QueryRetryDecision`; the `rate_limit_handoff` `declined` branch is a recursive call back into the classifier/finalizer. |
+| `turn-end-routing.ts:routeTurnEnd` | Gates extend the existing `turn-end-pipeline.ts` `decisionRun` (no separate runner) | The routing cascade is the final gate group of the one SDK turn-end business path. |
+| `query-retry-routing.ts:classifyQueryRetryRoute` | Classifier gates of the single `route-query-retry` direct pipeline | Pure classifier with ten mutually exclusive retry/terminal arms; first match wins via self-guarding stages. |
+| `query-retry-routing.ts:resolveDecision` | Finalizer gates of the same `route-query-retry` pipeline | Maps a `QueryRetryRoute` to a `QueryRetryDecision`; the `rate_limit_handoff` `declined` branch re-runs the single pipeline with an amended env. |
 | `query-retry-routing.ts:decideProviderTerminalCategory` | None (pure core leaf) | Regex classifier used by the terminal gate; not a pipeline on its own. |
 | `query-retry-routing.ts:resolveTerminalMessageHint` | None (pure core leaf) | Hint producer used by the terminal gate; not a pipeline on its own. |
 | `delivery-turn-routing.ts:resolveSteerAdmission` | `decisionRun` (`steer-admission`) | `aborted`/`park`/`promote`/`awaiting_acceptance`/`feed` first-match cascade. |
@@ -62,11 +62,11 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/turn-end-routing.ts:routeTurnEnd`
 
 - **Current summary:** A 170-line hand-rolled cascade that maps a `TurnEndEvent` (`result` or `sessionState`) plus `TurnEndFlags` and `queryMode` to a `TurnEndPlan`. The plan controls idle-fencing, `finishTurn`, queue replay, suppression timer handling, and flag transitions for the next turn. It is the final routing gate inside the existing `turn-end-pipeline.ts` `decisionRun`.
-- **Proposed combinator:** `decisionRun` named `sdk-turn-end-routing`. A `TurnEndPlanCtx` carries `flags`, `event`, `queryMode`, and a `decision: TurnEndPlan | null`.
+- **Proposed combinator:** Review correction — do NOT create a separate `sdk-turn-end-routing` `decisionRun`. `routeTurnEnd` is the final routing gate of the ONE SDK turn-end business path, which `turn-end-pipeline.ts` already owns; extend `turn-end-pipeline.ts` directly with these routing gates (CLAUDE.md: one pipeline per business path), rather than leaving the path split across nested pipelines. The gate list below is unchanged; it joins the existing pipeline in place of the current `applyTurnEndRoutingGate` delegation.
 - **Input/output snapshot design:**
   - Input: `{ flags: TurnEndFlags; event: TurnEndEvent; queryMode: 'immediate' | 'manual; }` (the wrapper injects `decision: null`).
   - Output: `TurnEndPlan`.
-- **Pure core design:** Decompose the cascade into named gates, each returning either `ctx` or `{ ...ctx, decision: <plan> }`. `decisionRun` halts (`!hasDecided`) after the first gate that produces a plan.
+- **Pure core design:** Decompose the cascade into named gates, each returning either `ctx` or `{ ...ctx, decision: <plan> }`, appended to `turn-end-pipeline.ts`'s existing gate list in the current routing position (its own `!hasDecided` semantics apply unchanged, since the plan decision is the pipeline's terminal decision).
   - `applySessionStateNonIdleGate` — `event.kind === 'sessionState' && event.state !== 'idle'`.
   - `applySessionStateClearAwaitingGate` — `event.kind === 'sessionState' && event.state === 'idle' && flags.clearAwaitingTrailingIdle`.
   - `applySessionStateSuppressedIdleGate` — `event.kind === 'sessionState' && event.state === 'idle' && flags.suppressIdleOnNextResult`.
@@ -78,13 +78,12 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyResultLegacySuccessGate` — `event.kind === 'result' && event.result.isTopLevel && event.result.isSuccess && !flags.suppressIdleOnNextResult && !flags.usesSessionStateChangedTurnEnd && !flags.expectsSessionStateIdleAfterResult && event.result.isLimitRecoveryEngaged === false`.
   - `applyResultDefaultGate` — all remaining `result` cases.
   `makePlan` and `canReplay` remain private helpers used by the gates.
-- **Shell/effect wiring:** The exported `routeTurnEnd(flags, event, ctx)` becomes a thin wrapper around `turnEndRouteRun(...)`. It returns `ctx.decision`. The immediate shell is `turn-end-pipeline.ts`, which copies the returned plan into `ctx.plan` and then the final `applyFinalGate` assembles the full `TurnEndPipelineDecision`. The actual effects (setIdle, cancel/rearm timers, replay queue) are executed by `AgentSession`/queue code that consumes the plan, not by the routing pipeline.
+- **Shell/effect wiring:** The exported `routeTurnEnd(flags, event, ctx)` stays as a thin wrapper for the parity suite, invoking the extended `turn-end-pipeline.ts` runner and returning the plan decision. In production the gates run inline in that pipeline: the plan lands in `ctx.plan` and the final `applyFinalGate` assembles the full `TurnEndPipelineDecision`. The actual effects (setIdle, cancel/rearm timers, replay queue) are executed by `AgentSession`/queue code that consumes the plan, not by the routing pipeline.
 - **Step-by-step migration:**
-  1. Introduce `TurnEndPlanCtx` and `turnEndRouteRun` in `turn-end-routing.ts`.
-  2. Extract each top-level branch into a named gate function.
-  3. Keep `makePlan`, `canReplay`, and `resetTurnEndFlags` as pure helpers.
-  4. Replace the body of `routeTurnEnd` with the runner call and a fallback `makePlan(flags)` if `decision` is somehow null.
-  5. Leave `turn-end-pipeline.ts` unchanged except to confirm it still calls `routeTurnEnd` with the same signature.
+  1. Extract each top-level branch of the `routeTurnEnd` cascade into a named gate function in `turn-end-routing.ts` (gates are exported; `makePlan`, `canReplay`, and `resetTurnEndFlags` stay pure helpers).
+  2. Extend `turn-end-pipeline.ts`'s gate list with these routing gates in the current routing position, replacing the `applyTurnEndRoutingGate` delegation to the hand-rolled cascade.
+  3. Replace the body of `routeTurnEnd` with a call into the extended pipeline and a fallback `makePlan(flags)` if `decision` is somehow null (wrapper kept for the parity suite).
+  4. Confirm `turn-end-pipeline.test.ts` and `turn-end-routing.test.ts` both stay green.
 - **Tests:** Keep `turn-end-routing.test.ts` as a parity suite (it already calls `routeTurnEnd`). Add `turn-end-routing-gates.test.ts` that tests each gate independently: no-op when conditions do not match, correct plan when they do, and that `!hasDecided` halts. Add a contract test that `applyDefaultResultGate` always produces a plan for any `result` not caught earlier. Ensure `turn-end-pipeline.test.ts` still passes.
 - **Risks/caveats:** The `sessionState` and `result` branches are not strictly mutually exclusive until the guard conditions are checked, so gate order must mirror the current `if` order exactly. `makePlan` is called by several gates with different `nextFlags` and `afterEffectsFlags`; any mismatch in flag merging is a regression. `queryMode` only affects `allowQueueReplay` but must be threaded through every `makePlan` call. `turn-end-pipeline.ts` is not yet wired into runtime in this branch (only tests import it), but the migration must still keep its API stable.
 
@@ -141,12 +140,12 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyTerminalFinalizer`
 - **Shell/effect wiring:** `resolveDecision` stays a private wrapper for parity tests: it seeds `route` and runs `routeQueryRetryRun`, returning `ctx.decision`. Production callers use the single-run `decideQueryRetry`. The `QueryRetryFinalizer` produced is a pure data object (with closures for `skipFinalizerIdle`) consumed by `query-runner.ts` to decide which teardown steps to skip.
 - **Step-by-step migration:**
-  1. Define `QueryRetryFinalizeCtx` and `queryRetryFinalizeRun`.
-  2. Replace each `case` with a gate that checks `ctx.route.action === '<action>'` and sets `ctx.decision`.
-  3. Move the `rate_limit_handoff` switch into `applyRateLimitHandoffFinalizeGate`.
+  1. Add the finalizer gates to the SAME `routeQueryRetryRun` pipeline, after the classifier gates (review correction: no separate `queryRetryFinalizeRun` runner and no separate `resolveDecision` production call — that would recreate two composition boundaries; the business path is one pipeline).
+  2. Replace each `case` with a gate that checks `ctx.route.action === '<action>'` and `ctx.decision === null`, then sets `ctx.decision`.
+  3. Move the `rate_limit_handoff` switch into `applyRateLimitHandoffFinalizeGate`; its `declined` branch re-invokes `routeQueryRetryRun` with the amended env.
   4. Keep `makeFinalizer`, `skipIdleDueToRecovery`, `skipFinalizerIdleDueToLifecycle`, and `skipFinalizerIdleAlways` as helpers used by the gates.
-  5. Update `decideQueryRetry` to call `classifyQueryRetryRoute` then `resolveDecision`.
-- **Tests:** `query-retry-routing.test.ts` is the parity suite. Add `query-retry-finalize-gates.test.ts` that tests each finalizer gate per `route.action`, including the `rate_limit_handoff` `accepted`/`declined`/`thrown`/`undefined` branches and the recursive recompute. Add a contract test that the recursive `declined` path returns the same decision as the current hand-rolled function.
+  5. Update `decideQueryRetry` to invoke `routeQueryRetryRun` ONCE and return `ctx.decision`.
+- **Tests:** `query-retry-routing.test.ts` is the parity suite. Add `query-retry-finalize-gates.test.ts` that tests each finalizer gate per `route.action`, including the `rate_limit_handoff` `accepted`/`declined`/`thrown`/`undefined` branches and the `declined` recompute. Add a contract test that the `declined` path returns the same decision as the current hand-rolled function.
 - **Risks/caveats:** `makeFinalizer` uses `skipFinalizerIdle` as a closure over `env` (e.g., `skipIdleDueToRecovery` and `skipFinalizerIdleDueToLifecycle`). The final test in `query-retry-routing.test.ts` calls `skipFinalizerIdle` with a resnapped env and expects a different result, so the closure must capture the right values; keep the helper definitions exactly as closures, not pre-resolved booleans. `resolveDecision` is currently not exported, so the migration can keep it private.
 
 ---
@@ -357,7 +356,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 
 ## Open questions
 
-1. **Should `routeTurnEnd` be folded into `turn-end-pipeline.ts`?** ADR 0004 says one pipeline per business path. The business path is "SDK turn-end outcome," and `turn-end-pipeline.ts` already owns it. This plan keeps `routeTurnEnd` as a separate `decisionRun` inside `turn-end-routing.ts` to match the scope, but an alternative is to replace `applyTurnEndRoutingGate` and `applyFinalGate` with a single set of `decide` stages directly in `turn-end-pipeline.ts`.
+1. ~~**Should `routeTurnEnd` be folded into `turn-end-pipeline.ts`?**~~ Resolved by review: yes — the routing gates extend `turn-end-pipeline.ts` directly (one pipeline per business path); no separate `sdk-turn-end-routing` runner.
 2. ~~**Should `classifyQueryRetryRoute` and `resolveDecision` remain two separate `decisionRun`s or be one combined pipeline?**~~ Resolved by review: they compose as ONE `route-query-retry` pipeline per business path; the `rate_limit_handoff` `declined` branch re-invokes that pipeline with `hasRateLimitHandoff: false` (a fresh run, terminating by construction).
 3. ~~**How should the `rate_limit_handoff` `declined` recompute be modeled without a recursive call?**~~ Resolved with the combined pipeline above: the finalizer gate re-runs `routeQueryRetryRun` once with the amended environment; no wrapper recursion and no duplicated classifier gates.
 4. **Is `resolveDeliveryRole` too hot for `decisionRun` overhead?** It runs on every message enqueue. The `decisionRun` overhead is ~2 µs per call, but if deliveries become a bottleneck, this function may be a candidate to keep as a plain function or a raw `superpipe` transform with no gates. A microbenchmark should confirm.

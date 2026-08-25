@@ -228,7 +228,7 @@ The repo already has several proven pipelines. Use these as the model for each s
      session termination cannot be confirmed (crash window), where the
      expiring-claim fallback eventually unblocks).
   10. `halt` returns `spawn` result.
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), the spawn compensation path, AND the round-3 row: `record-dispatched-session` throwing leaves the claim in place and terminates the spawned session (task must NOT become dispatchable again).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts` and `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`. Add a `stagedRun` contract test that verifies each branch, the reservation CAS (including the concurrent-caller race: second caller halts at `reserve-dispatch` and no session is spawned), the spawn compensation path, AND the round-4 row: `record-dispatched-session` throwing terminates this caller's spawned session and then CONDITIONALLY RELEASES the claim after verified termination (task becomes dispatchable again); the claim is retained ONLY when termination cannot be confirmed — never left durably held with no live session, which would block every retry at `reserve-dispatch`.
 - **Risks/caveats**: This is the most effect-heavy site. The current code does not use CAS; concurrent spawns can overwrite the task — hence the reservation-before-spawn step above; without it, a conditional `record-dispatched-session` alone protects the row but leaves the losing spawned session orphaned and active. The compensations are asymmetric by design: claim-release only pre-spawn, session-termination only post-spawn. `goalService.handleTaskTerminal` must remain inside the same transaction as the task update if possible; otherwise the task could be `done` without the goal seeing it.
 
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:send_message_to_task`
@@ -258,7 +258,13 @@ The repo already has several proven pipelines. Use these as the model for each s
   3. `decide` `delivery-mode` runs the second `decisionRun`.
   4. Guarded `effect` branches:
      - `deliverToSpaceAgent`: call `SpaceDeliveryFacade.routeMessage`.
-     - `injectLive`: `taskAgentManager.injectSubSessionMessage`.
+     - `injectLive`: `taskAgentManager.injectSubSessionMessage`. Review
+       correction: an `injectLive` THROW on a stale live session is NOT a
+       pipeline failure — the current tool catches it
+       (`space-agent-tools.ts:2674-2710`) and falls through `activateNode` →
+       resnapshot → reinject. Model it as an `inject-failed` branch (or an
+       in-stage catch that diverts) so the flow continues into activation;
+       pin it with a stale-live-session test.
      - `activate`: `activateNode`.
      - `resnapshot` execution after activation.
      - `injectAfterActivation`: re-inject.
@@ -593,7 +599,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   14. `effect` `record-outcome-notification`.
   15. `halt` returns `{ goal, nextTask, terminalGeneration, notification }`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts` and `packages/daemon/tests/unit/5-space/runtime/goal-outcome-wake-flip.test.ts`.
-- **Risks/caveats**: This is the most complex goal effect chain. Because it runs inside `runAtomic`, the transaction provides atomicity. Review correction — `stagedRun` is async-only (`endAsync`), so it cannot run inside the synchronous `db.transaction(fn)()` wrapper without committing early (the transaction commits when the Promise is returned, and the task/goal/notification effects then land outside it, breaking `terminalGeneration` deduplication). Compose this path as a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic`, using the transaction-bound repo methods; an async `runAtomic` variant cannot preserve atomicity without an async-capable DB transaction primitive. Do not introduce in-flow retries.
+- **Risks/caveats**: Review correction — Forge evidence capture (`evolutionScopeService.captureCompletedTaskEvidence`) and goal automation (`goalAutomationService.onTaskCompleted`) are BEST-EFFORT in the current code (each is wrapped in its own catch around `goal-service.ts:426-440` and failures are logged, then the flow continues to clear the active task and record the notification). Their pipeline stages must retain those local catch/log boundaries: an ordinary effect stage whose throw escapes would roll back the entire terminal transition inside `runAtomic`. This is the most complex goal effect chain. Because it runs inside `runAtomic`, the transaction provides atomicity. Review correction — `stagedRun` is async-only (`endAsync`), so it cannot run inside the synchronous `db.transaction(fn)()` wrapper without committing early (the transaction commits when the Promise is returned, and the task/goal/notification effects then land outside it, breaking `terminalGeneration` deduplication). Compose this path as a direct synchronous `superpipe` pipeline with `.end` inside the existing `runAtomic`, using the transaction-bound repo methods; an async `runAtomic` variant cannot preserve atomicity without an async-capable DB transaction primitive. Do not introduce in-flow retries.
 
 ### `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` and `validateSubscriptionTargetTask`
 

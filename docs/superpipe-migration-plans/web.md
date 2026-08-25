@@ -751,9 +751,14 @@ anywhere in this plan.
   admission gates → interpret-decision stage(s): the queue/reject arms
   run their effects and stamp `outcome`, then a `!outcomeStamped`-style halt
   guard; the `send` arm continues through `stageSendRequest` (async effect:
-  `onSendStart`, arm timeout, live `getHub()` read with queue divert, await
-  request, `onMessageAccepted`, clear
-  timeout, stamp outcome). Timeout resource stays in the hook (ref owned by
+  `onSendStart`, arm timeout, live `getHub()` read, await request,
+  `onMessageAccepted`, clear timeout, stamp outcome). Review correction on
+  the connected-without-hub diversion: when the live `getHub()` read comes
+  back empty, the stage must run the SAME completion sequence as the
+  current hook (`useSendMessage.ts:95-121`) — enqueue the queued action,
+  `onSendComplete()`, CLEAR the armed timeout, then stamp a successful
+  outcome — never a bare divert mid-sequence, or the send stays marked
+  in-flight and the armed timer later emits a false timeout error. Timeout resource stays in the hook (ref owned by
   the hook per ADR Decision 5 — pipeline receives `armTimeout`/`clearTimeout`
   values). Errors: `stageSendRequest` throws propagate out of `.endAsync`;
   the shell (the `useCallback` body) keeps the existing catch and performs
