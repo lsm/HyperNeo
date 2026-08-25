@@ -176,10 +176,12 @@ The launcher contract extends the owner-review contract with:
   `cancel_task` **with `cancel_workflow_run: true`** for workflow-backed tasks (a bare
   `cancel_task` terminalizes the task record but leaves the run's agents executing the
   stale contract; the pause also stops the terminal seam from auto-creating the
-  successor), acknowledge the resulting outcome notification with the supersession
-  reason, record the fresh contract in B's `nextSteps`, `resume_goal`, then
-  `trigger_goal_task`. (`interrupt_session` alone only stops the current turn; the task
-  stays active and a subsequent `trigger_goal_task` would throw or merely queue.)
+  successor). Dispose **both** pending notifications — A's original outcome review and
+  the one B's cancellation produces when its task is goal-linked (a standalone gated
+  task produces only A's) — then record the fresh contract in B's `nextSteps`,
+  `resume_goal`, and `trigger_goal_task`. (`interrupt_session` alone only stops the
+  current turn; the task stays active and a subsequent `trigger_goal_task` would throw
+  or merely queue.)
 - **No tight loops.** Cross-goal re-evaluation rides the launcher's own reminders and
   the gating goal's wakes/check-ins — the scheduling guardrail's durable-vs-transient
   rule already forbids in-turn polling for durable concerns.
@@ -272,7 +274,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 
 | Failure | Existing mechanism | Launcher doctrine |
 | --- | --- | --- |
-| Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | Respond on the next wake or launcher reminder. Goals in a launcher objective therefore default to **no check-in schedule**: while an outcome sits unreviewed, the goal's own check-in fire would create a new task from stale `nextSteps` on the cleared pointer and bump the revision so the pending outcome's CAS fails — if a schedule must exist, pause it around pending outcomes |
+| Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | Respond on the next wake or launcher reminder. Goals in a launcher objective therefore default to **no check-in schedule**: while an outcome sits unreviewed, the goal's own check-in fire would create a new task from stale `nextSteps` on the cleared pointer, and any goal mutation — including a late `pause_goal` — bumps the revision so the pending outcome's goal-state update is CAS-rejected. If a schedule must exist, pause the goal **immediately after triggering** its task and keep it paused through outcome review |
 | Launcher wakes but never reviews | Nag re-prompts the **same** agent; there is no auto-escalation on repeated ignored wakes | Accepted v1 failure mode, stated honestly: a wedged owner leaves notifications pending indefinitely. Pending notifications have **no human-facing surface today** (no web/RPC query exposes them) — humans can only infer trouble from stalled goal state. Notification visibility plus bounded escalation are folded into the deferred primitive (§7) |
 | Daemon restart mid-loop | Notifications persisted in the terminal transaction; startup recovery; inbox replay | None needed |
 | A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer — unless `autoTriggerNext` had a queued successor, which is auto-created and claimed inside the terminal transaction (§4 disables this; reconcile through the drift sequence if found) | Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). If retries are exhausted: ensure B is paused (a hard gate will have paused it already, and `pauseGoal` accepts only active goals — treat an existing paused state as done), then cancel B's active task (`cancel_workflow_run: true` where applicable) — pausing alone does not stop active work, and B must not publish against a failed prerequisite — then pause A's goal too, record in `nextSteps`, escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
