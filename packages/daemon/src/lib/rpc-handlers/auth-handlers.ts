@@ -341,7 +341,12 @@ export function setupAuthHandlers(
         }
         const credentials = await provider.getCredentials?.();
         if (credentials?.type === 'oauth') {
-          await credentialManager?.storeOAuthTokens(providerId, credentials);
+          try {
+            await credentialManager?.storeOAuthTokens(providerId, credentials);
+          } catch (storageError) {
+            await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
+            throw storageError;
+          }
         }
         await clearCacheAndNotifyProvidersChanged(providerId, providerRepo, internalEventBus);
         return { success: true };

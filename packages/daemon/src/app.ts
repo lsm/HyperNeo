@@ -320,6 +320,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
+    {
+      const { setProviderRepository } = await import('./lib/model-service.ts');
+      setProviderRepository(db.providers);
+    }
     const earlySpaceRepo = new SpaceRepository(db.getDatabase());
     const earlyLogEvidenceService = new EvolutionLogEvidenceService({
       evolutionRepo: db.evolution,

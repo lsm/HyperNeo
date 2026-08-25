@@ -4702,5 +4702,39 @@ describe('Model Service', () => {
 
       expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
     });
+
+    it('hydrates fallback models from persisted discoveredModels when a provider fails to load', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, setProviderRepository } = await import(
+        '../../../../src/lib/model-service'
+      );
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const records = new Map<string, { id: string; providerId: string; configJson: string }>();
+      let nextId = 1;
+      const repo = {
+        getProviderByProviderId: (providerId: string) => records.get(providerId) ?? null,
+      } as never;
+      records.set('remote', {
+        id: String(nextId++),
+        providerId: 'remote',
+        configJson: JSON.stringify({
+          discoveredModels: { models: [{ id: 'curated-only', name: 'Curated Only' }] },
+        }),
+      });
+      setProviderRepository(repo);
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'remote',
+        getModels: async () => {
+          throw new Error('remote endpoint down');
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      await refreshModels();
+
+      const ids = getAvailableModels('global').map((model) => model.id);
+      expect(ids).toContain('curated-only');
+    });
   });
 });

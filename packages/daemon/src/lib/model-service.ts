@@ -1,6 +1,7 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider, ProviderFailureErrorKind } from '@hyperneo/shared/provider';
 import type { QueryLike } from './agent/query-like.ts';
+import type { ProviderRepository } from '../storage/repositories/provider-repository.ts';
 import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { DeepSeekProvider } from './providers/deepseek-provider.js';
@@ -187,6 +188,12 @@ const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
 const pendingSliceReleases = new Set<string>();
 
+let providerRepositoryRef: ProviderRepository | null = null;
+
+export function setProviderRepository(repo: ProviderRepository): void {
+  providerRepositoryRef = repo;
+}
+
 function pendingSliceKey(cacheKey: string, providerId: string): string {
   return `${cacheKey}:${providerId}`;
 }
@@ -368,12 +375,70 @@ type ProviderModelLoadResult =
   | { status: 'unavailable'; models: ModelInfo[] }
   | { status: 'failed'; models: ModelInfo[]; error?: unknown };
 
-function fallbackModelsFor(provider: Provider): ModelInfo[] {
+function fallbackModelsFor(
+  provider: Provider,
+  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
+): ModelInfo[] {
   const cached = provider.getCachedModels?.();
   if (cached && cached.length > 0) {
     return cached;
   }
-  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+  const staticSlice = STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+  if (persistedDiscovered.length === 0) return staticSlice;
+  const knownIds = new Set(staticSlice.map((model) => model.id));
+  const persistedSlice: ModelInfo[] = persistedDiscovered
+    .filter((entry) => !knownIds.has(entry.id))
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name ?? entry.id,
+      alias: '',
+      family: provider.id,
+      provider: provider.id,
+      contextWindow: 128000,
+      preferContextWindowMetadata: true,
+      description: `${entry.name ?? entry.id} via ${provider.id}`,
+      releaseDate: '',
+      available: true,
+    }));
+  return [...staticSlice, ...persistedSlice];
+}
+
+function extractPersistedDiscovered(configJson: string | undefined): Array<{
+  id: string;
+  name?: string;
+}> {
+  if (!configJson) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  const obj = parsed as Record<string, unknown>;
+  const discovered = obj.discoveredModels;
+  if (!discovered || typeof discovered !== 'object' || Array.isArray(discovered)) return [];
+  const models = (discovered as { models?: unknown }).models;
+  if (!Array.isArray(models)) return [];
+  return models.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id !== 'string') return [];
+    const name = (entry as { name?: unknown }).name;
+    return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
+  });
+}
+
+function getPersistedDiscoveredForProvider(
+  providerId: string
+): Array<{ id: string; name?: string }> {
+  if (!providerRepositoryRef) return [];
+  try {
+    const record = providerRepositoryRef.getProviderByProviderId(providerId);
+    return extractPersistedDiscovered(record?.configJson);
+  } catch {
+    return [];
+  }
 }
 
 function withCuratedEntries(providerId: string, models: ModelInfo[]): ModelInfo[] {
@@ -408,6 +473,7 @@ async function loadProviderModels(
   provider: Provider,
   options?: { forceRemote?: boolean }
 ): Promise<ProviderModelLoadResult> {
+  const persistedDiscovered = getPersistedDiscoveredForProvider(provider.id);
   try {
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
@@ -428,11 +494,11 @@ async function loadProviderModels(
     }
     return {
       status: 'failed',
-      models: fallbackModelsFor(provider),
+      models: fallbackModelsFor(provider, persistedDiscovered),
       error: new Error('Provider returned no models'),
     };
   } catch (error) {
-    return { status: 'failed', models: fallbackModelsFor(provider), error };
+    return { status: 'failed', models: fallbackModelsFor(provider, persistedDiscovered), error };
   }
 }
 
