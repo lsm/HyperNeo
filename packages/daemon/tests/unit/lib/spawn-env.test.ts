@@ -27,6 +27,7 @@ const SOURCE: Record<string, string> = {
   https_proxy: 'http://legacy-proxy.corp.example:8080',
   SSL_CERT_FILE: '/tmp/corp-ca.pem',
   CURL_CA_BUNDLE: '/tmp/curl-ca.pem',
+  REQUESTS_CA_BUNDLE: '/tmp/requests-ca.pem',
   GIT_SSL_CAINFO: '/tmp/git-ca.pem',
   GIT_SSL_CAPATH: '/tmp/git-ca-dir',
   GIT_SSL_VERSION: 'tlsv1.3',
@@ -69,6 +70,7 @@ describe('buildCommandEnv', () => {
     expect(env.https_proxy).toBe(SOURCE.https_proxy);
     expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
     expect(env.CURL_CA_BUNDLE).toBe(SOURCE.CURL_CA_BUNDLE);
+    expect(env.REQUESTS_CA_BUNDLE).toBe(SOURCE.REQUESTS_CA_BUNDLE);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 });
@@ -169,10 +171,12 @@ describe('buildSdkRuntimeEnv', () => {
       ANTHROPIC_BASE_URL: 'https://router.corp.example',
       API_TIMEOUT_MS: '300000',
       CLAUDE_CODE_GIT_BASH_PATH: 'C:\\Program Files\\Git\\bin\\bash.exe',
+      CLAUDE_CONFIG_DIR: '/custom/claude-config',
     });
     expect(env.ANTHROPIC_BASE_URL).toBe('https://router.corp.example');
     expect(env.API_TIMEOUT_MS).toBe('300000');
     expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/custom/claude-config');
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
