@@ -1,15 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
-const LFS_ATTRIBUTE_PATTERN = /filter\s*=\s*lfs/;
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
 const LFS_PROBE_TIMEOUT_MS = 60_000;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 
 function isLfsPointerContent(content: string): boolean {
   const lines = content.split('\n');
@@ -42,10 +41,7 @@ export async function indexContainsLfsPointer(
     if (code === 1) return false;
     throw err;
   }
-  for (const rel of candidates
-    .split('\0')
-    .map((entry) => entry.trim())
-    .filter(Boolean)) {
+  for (const rel of candidates.split('\0').filter(Boolean)) {
     const { stdout } = await execFileAsync('git', ['show', `:${rel}`], {
       cwd,
       encoding: 'utf8',
@@ -59,25 +55,11 @@ export async function indexContainsLfsPointer(
 }
 
 export async function worktreeDeclaresLfsAttributes(
-  worktreePath: string,
-  listFiles: () => Promise<string>,
+  listLfsTrackedFiles: () => Promise<string>,
   hasPointerBlob?: () => Promise<boolean>
 ): Promise<boolean> {
-  const files = (await listFiles())
-    .split('\0')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  const attrFiles = files.filter(
-    (entry) => entry === '.gitattributes' || entry.endsWith('/.gitattributes')
-  );
-  for (const rel of attrFiles) {
-    const content = await readFile(join(worktreePath, rel), 'utf-8');
-    const activeAttributes = content
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('#'))
-      .join('\n');
-    if (LFS_ATTRIBUTE_PATTERN.test(activeAttributes)) return true;
-  }
+  const lfsTracked = (await listLfsTrackedFiles()).split('\0').filter(Boolean);
+  if (lfsTracked.length > 0) return true;
   if (hasPointerBlob) return hasPointerBlob();
   return false;
 }

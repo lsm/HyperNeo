@@ -13,6 +13,7 @@ import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
 import {
   GIT_PROBE_MAX_BUFFER_BYTES,
+  LFS_ATTR_PATHSPEC,
   indexContainsLfsPointer,
   worktreeDeclaresLfsAttributes,
 } from '../../worktree-lfs.ts';
@@ -240,15 +241,18 @@ export class SpaceWorktreeManager {
       tracked = stdout;
     } catch (err) {
       const declaresLfs = await worktreeDeclaresLfsAttributes(
-        worktreePath,
         async () => {
-          const { stdout } = await execFileAsync('git', ['ls-files', '-z'], {
-            cwd: worktreePath,
-            encoding: 'utf8',
-            timeout: 60_000,
-            maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-            env: buildGitCommandEnv(),
-          });
+          const { stdout } = await execFileAsync(
+            'git',
+            ['ls-files', '-z', '--', LFS_ATTR_PATHSPEC],
+            {
+              cwd: worktreePath,
+              encoding: 'utf8',
+              timeout: 60_000,
+              maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+              env: buildGitCommandEnv(),
+            }
+          );
           return stdout;
         },
         () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv())

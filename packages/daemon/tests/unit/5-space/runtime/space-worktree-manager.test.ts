@@ -237,7 +237,8 @@ describe('createTaskWorktree', () => {
     })()
   )('fails creation when LFS detection fails in an LFS-declaring repo', async () => {
     writeFileSync(join(repoDir, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
-    execSync('git add .gitattributes', { cwd: repoDir, stdio: 'pipe' });
+    writeFileSync(join(repoDir, 'asset.bin'), 'placeholder\n');
+    execSync('git add .gitattributes asset.bin', { cwd: repoDir, stdio: 'pipe' });
     execSync('git commit -m "track lfs"', { cwd: repoDir, stdio: 'pipe' });
 
     const taskId = seedTask(db, spaceId, 'task-lfs-fail', 88);

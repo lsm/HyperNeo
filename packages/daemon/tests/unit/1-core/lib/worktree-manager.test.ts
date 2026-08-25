@@ -58,16 +58,6 @@ vi.mock('node:os', async (importOriginal) => {
   };
 });
 
-const fsPromisesMocks = vi.hoisted(() => ({ readFile: vi.fn() }));
-
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return {
-    ...actual,
-    readFile: passthrough(fsPromisesMocks.readFile, actual.readFile),
-  };
-});
-
 const childProcessMocks = vi.hoisted(() => ({ execFile: vi.fn() }));
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -425,10 +415,9 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      fsPromisesMocks.readFile.mockResolvedValue('*.bin filter=lfs diff=lfs merge=lfs -text');
       mockGitRaw.mockImplementation(async (args: string[]) => {
         if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
-        if (args[0] === 'ls-files') return '.gitattributes';
+        if (args[0] === 'ls-files') return 'asset.bin';
         return '';
       });
 
@@ -489,14 +478,13 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      fsPromisesMocks.readFile.mockResolvedValue('# *.bin filter=lfs diff=lfs merge=lfs -text');
       childProcessMocks.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
           cb(null, { stdout: '', stderr: '' })
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
         if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
-        if (args[0] === 'ls-files') return '.gitattributes';
+        if (args[0] === 'ls-files') return '';
         return '';
       });
 
@@ -537,7 +525,7 @@ describe('WorktreeManager', () => {
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
         if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
-        if (args[0] === 'ls-files') return 'asset.bin';
+        if (args[0] === 'ls-files') return '';
         return '';
       });
 
@@ -581,7 +569,7 @@ describe('WorktreeManager', () => {
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
         if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
-        if (args[0] === 'ls-files') return 'docs/lfs.md';
+        if (args[0] === 'ls-files') return '';
         return '';
       });
 
@@ -622,7 +610,7 @@ describe('WorktreeManager', () => {
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
         if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
-        if (args[0] === 'ls-files') return 'fixture.bin';
+        if (args[0] === 'ls-files') return '';
         return '';
       });
 
@@ -632,38 +620,6 @@ describe('WorktreeManager', () => {
       });
 
       expect(result?.branch).toBe('session/session-123');
-    });
-
-    it('should fail worktree creation when the LFS attribute file cannot be read', async () => {
-      const shortKey = shortKeyFor('/test/repo');
-      existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
-        true
-      );
-      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
-      existsSyncResults.set(
-        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
-        false
-      );
-      mockGitRevparse.mockResolvedValue('.git');
-      readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      fsPromisesMocks.readFile.mockRejectedValue(new Error('EACCES: permission denied'));
-      mockGitRaw.mockImplementation(async (args: string[]) => {
-        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
-        if (args[0] === 'ls-files') return '.gitattributes';
-        return '';
-      });
-
-      await expect(
-        manager.createWorktree({
-          sessionId: 'session-123',
-          repoPath: '/test/repo',
-        })
-      ).rejects.toThrow('Failed to create worktree');
-
-      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });
 
     it('should not delete a pre-existing fallback branch when worktree add fails', async () => {

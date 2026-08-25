@@ -2,7 +2,11 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { indexContainsLfsPointer, worktreeDeclaresLfsAttributes } from './worktree-lfs.ts';
+import {
+  LFS_ATTR_PATHSPEC,
+  indexContainsLfsPointer,
+  worktreeDeclaresLfsAttributes,
+} from './worktree-lfs.ts';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -53,8 +57,7 @@ async function hydrateLfsObjects(git: SimpleGit, worktreePath: string): Promise<
   } catch (err) {
     if (
       await worktreeDeclaresLfsAttributes(
-        worktreePath,
-        () => git.raw(['ls-files', '-z']),
+        () => git.raw(['ls-files', '-z', '--', LFS_ATTR_PATHSPEC]),
         () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv())
       )
     ) {
