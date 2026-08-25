@@ -579,6 +579,23 @@ export function ProvidersSettings() {
     }
   };
 
+  const isStaleVisibleModelsFetch = (
+    provider: EnrichedProvider,
+    generation: number,
+    fingerprint: string
+  ): boolean => {
+    if (generation !== visibleModelsGenRef.current[provider.id]) return true;
+    const currentProvider = providersRef.current.find((p) => p.id === provider.id);
+    if (!currentProvider || fingerprint !== getVisibleModelsFingerprint(currentProvider)) {
+      setVisibleModelsPanels((prev) => ({
+        ...prev,
+        [provider.id]: EMPTY_VISIBLE_MODELS_PANEL,
+      }));
+      return true;
+    }
+    return false;
+  };
+
   const handleFetchVisibleModels = async (provider: EnrichedProvider) => {
     const fingerprint = getVisibleModelsFingerprint(provider);
     const generation = (visibleModelsGenRef.current[provider.id] ?? 0) + 1;
@@ -596,15 +613,7 @@ export function ProvidersSettings() {
     const remote = await listProviderRemoteModels(provider.id, { ...options, force: true }).catch(
       (err) => ({ models: [], error: err })
     );
-    if (generation !== visibleModelsGenRef.current[provider.id]) return;
-    const currentProvider = providersRef.current.find((p) => p.id === provider.id);
-    if (!currentProvider || fingerprint !== getVisibleModelsFingerprint(currentProvider)) {
-      setVisibleModelsPanels((prev) => ({
-        ...prev,
-        [provider.id]: EMPTY_VISIBLE_MODELS_PANEL,
-      }));
-      return;
-    }
+    if (isStaleVisibleModelsFetch(provider, generation, fingerprint)) return;
     const curatedList = readCuratedModels(provider);
     if ('error' in remote) {
       const candidates = mergeVisibleModelCandidates([curatedList]);
@@ -626,6 +635,7 @@ export function ProvidersSettings() {
         .catch(() => null)) as {
         models?: Array<{ id?: unknown; display_name?: unknown; provider?: unknown }>;
       } | null;
+      if (isStaleVisibleModelsFetch(provider, generation, fingerprint)) return;
       const cachedProviderModels = (cached?.models ?? []).flatMap((model) =>
         model.provider === provider.providerId && typeof model.id === 'string'
           ? [
@@ -1178,11 +1188,17 @@ export function ProvidersSettings() {
                                 variant="secondary"
                                 onClick={() => handleFetchVisibleModels(provider)}
                                 loading={visiblePanel.fetching}
-                                disabled={visiblePanel.fetching || !provider.isEnabled}
+                                disabled={
+                                  visiblePanel.fetching ||
+                                  !provider.isEnabled ||
+                                  hasUnsavedVisibleModels
+                                }
                                 title={
-                                  provider.isEnabled
-                                    ? 'Fetch remote model candidates'
-                                    : 'Enable this provider to fetch model candidates'
+                                  !provider.isEnabled
+                                    ? 'Enable this provider to fetch model candidates'
+                                    : hasUnsavedVisibleModels
+                                      ? 'Save or revert your selection before fetching again'
+                                      : 'Fetch remote model candidates'
                                 }
                               >
                                 Fetch models

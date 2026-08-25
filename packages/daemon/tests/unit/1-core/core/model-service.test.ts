@@ -3081,6 +3081,29 @@ describe('Model Service', () => {
       ]);
     });
 
+    it('retains curated models that forced discovery omits', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        listRemoteModels: async () => [{ ...mockModels[0], provider: 'remote-provider' }],
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      getProviderRegistry().setCuratedModels('remote-provider', [
+        { id: 'sonnet' },
+        { id: 'curated-only', name: 'Curated Only' },
+      ]);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels(undefined, { forceRemote: true });
+
+      const visibleIds = getAvailableModels('global')
+        .filter((model) => model.provider === 'remote-provider')
+        .map((model) => model.id);
+      expect(visibleIds).toContain('sonnet');
+      expect(visibleIds).toContain('curated-only');
+    });
+
     it('replaces a larger cache after successful forced discovery', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];

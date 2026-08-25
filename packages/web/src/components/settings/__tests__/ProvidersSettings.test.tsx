@@ -2223,5 +2223,76 @@ describe('ProvidersSettings', () => {
       );
       expect(mockUpdateProvider).not.toHaveBeenCalled();
     });
+
+    it('disables refetching while the selection has unsaved changes', async () => {
+      const provider = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      mockListProviders.mockResolvedValue({ providers: [provider] });
+      mockListProviderRemoteModels.mockResolvedValue({
+        models: [{ id: 'kimi-k3' }, { id: 'kimi-k4' }],
+      });
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-k4')
+      );
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      expect(mockListProviderRemoteModels).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).toContain('kimi-k4')
+      );
+
+      const boxes = screen
+        .getByTestId('visible-models-panel')
+        .querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      fireEvent.click(boxes[0]);
+
+      expect(screen.getByText('Fetch models').closest('button')).toHaveProperty('disabled', true);
+    });
+
+    it('discards a fetch whose cached lookup resolves after the provider changed', async () => {
+      const p1 = createMockProvider('k1', 'kimi', { displayName: 'Kimi' });
+      const p2 = createMockProvider('k1', 'kimi', {
+        displayName: 'Kimi',
+        configJson: JSON.stringify({ region: 'global' }),
+      });
+      mockListProviders.mockResolvedValue({ providers: [p1] });
+      mockListProviderRemoteModels.mockResolvedValue({ models: [{ id: 'kimi-k3' }] });
+
+      let resolveCached!: (value: unknown) => void;
+      mockRequest.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveCached = resolve;
+          })
+      );
+
+      const { container } = render(<ProvidersSettings />);
+      await waitFor(() => expect(container.textContent).toContain('Kimi'));
+      await expandFirstProvider(container);
+
+      fireEvent.click(screen.getByText('Fetch models'));
+      await waitFor(() =>
+        expect(mockRequest).toHaveBeenCalledWith('models.list', { useCache: true })
+      );
+
+      mockListProviders.mockResolvedValue({ providers: [p2] });
+      const eventHandler = mockOnEvent.mock.calls.find(
+        (call) => call[0] === 'providers.changed'
+      )?.[1];
+      await act(async () => {
+        eventHandler?.();
+      });
+
+      resolveCached!({ models: [{ id: 'kimi-k3', display_name: 'Stale', provider: 'kimi' }] });
+
+      await waitFor(() =>
+        expect(screen.getByTestId('visible-models-panel').textContent).not.toContain('kimi-k3')
+      );
+    });
   });
 });
