@@ -52,7 +52,7 @@ import { buildSelectionPrompt } from '../../../../src/lib/space/runtime/llm-work
 
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
-    '7311191056e1a47f3b0ffafd763e8d8ea154c0eff06b28990996e1043bd9a63e',
+    '377b3fe59756ad328b5298d801f3aba86599fc6dd53634e5c0713f2e61cbef46',
   CODER_EXTERNAL_GATE_BLOCK: '958e3f7e97345795c71e59a786774ca421f41bbae126dce93d42ae48ae4b77c3',
   CODER_ONLY_MERGE_INSTRUCTIONS: '1133cbeed3b82f1ab4dd8181d898dbbaec5e70d596122b50ec2600bc2fe1262b',
   CODER_ONLY_PROMPT: 'c4d1af76f16422d77b53e6bc48ed05f4ae627702d4f7a12b080826ff6b269ce4',
