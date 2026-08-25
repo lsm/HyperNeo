@@ -9,8 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
 import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
-import { resolveWorkflowNodeSlot } from './spawn-slot-resolution.ts';
-import { stagedRun, type StagedRunOutcome } from './staged-run.ts';
+import { type StagedRunOutcome, stagedRun } from './staged-run.ts';
 import { validateExecutionAgainstWorkflow } from './workflow-node-execution-validation.ts';
 
 export interface IndexedSessionInspection {
@@ -57,6 +56,12 @@ export interface SpawnExecutionFlowDeps {
   getNodeExecution(executionId: string): NodeExecution | null;
   isSpawningExecution(executionId: string): boolean;
   inspectIndexedSession(agentSessionId: string | null): IndexedSessionInspection;
+  resolveSlot(
+    space: Space,
+    workflow: SpaceWorkflow,
+    execution: NodeExecution,
+    task: SpaceTask
+  ): WorkflowNodeSlotResolution | null;
   reserveExecution(executionId: string): void;
   releaseExecution(executionId: string): void;
   reserveTaskSpawn(taskId: string): 'won' | 'superseded';
@@ -77,6 +82,7 @@ export interface SpawnExecutionFlowDeps {
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
   injectKickoffMessage(sessionId: string, message: string): Promise<void>;
+  activateSpawnedSessionPoolAssignment(executionId: string, sessionId: string): void;
 }
 
 export interface SpawnExecutionFlowInput {
@@ -136,18 +142,17 @@ export function runSpawnExecutionFlow(
       s.snapshot({
         name: 'gather-spawn-admission',
         provides: ['freshTask', 'slotResolution', 'workflowValid', 'isSpawning', 'indexedSession'],
-        reads: ['task', 'workflow', 'execution'],
-        run: (view) => ({
-          freshTask: deps.getFreshTask(view.task.id) ?? view.task,
-          slotResolution: resolveWorkflowNodeSlot(
-            view.workflow,
-            view.execution.workflowNodeId,
-            view.execution.agentName
-          ),
-          workflowValid: validateExecutionAgainstWorkflow(view.execution, view.workflow).valid,
-          isSpawning: deps.isSpawningExecution(view.execution.id),
-          indexedSession: deps.inspectIndexedSession(view.execution.agentSessionId),
-        }),
+        reads: ['task', 'space', 'workflow', 'execution'],
+        run: (view) => {
+          const freshTask = deps.getFreshTask(view.task.id) ?? view.task;
+          return {
+            freshTask,
+            slotResolution: deps.resolveSlot(view.space, view.workflow, view.execution, freshTask),
+            workflowValid: validateExecutionAgainstWorkflow(view.execution, view.workflow).valid,
+            isSpawning: deps.isSpawningExecution(view.execution.id),
+            indexedSession: deps.inspectIndexedSession(view.execution.agentSessionId),
+          };
+        },
       }),
       s.decide({
         name: 'admission',
@@ -347,6 +352,15 @@ export function runSpawnExecutionFlow(
             workspacePath: view.workspacePath,
           });
           await deps.injectKickoffMessage(view.spawnedSessionId, message);
+        },
+      }),
+      s.effect({
+        name: 'activate-pool-assignment',
+        when: 'proceedFresh',
+        reads: ['execution', 'spawnedSessionId'],
+        writes: [],
+        run: (view) => {
+          deps.activateSpawnedSessionPoolAssignment(view.execution.id, view.spawnedSessionId);
         },
       }),
       s.effect({

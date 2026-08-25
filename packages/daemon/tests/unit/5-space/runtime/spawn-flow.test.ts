@@ -12,6 +12,7 @@ import {
   isSpawnFlowWaitConcurrent,
   runSpawnExecutionFlow,
 } from '../../../../src/lib/space/runtime/spawn-flow';
+import { resolveWorkflowNodeSlot } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 
 const TASK_ID = 'task-1240';
 const RUN_ID = 'run-1240';
@@ -115,8 +116,8 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     status: 'in_progress' as const,
     agentSessionId: SPAWNED_SESSION_ID,
   };
-  let liveIndexedSessionId: string | null = null;
-  let workspaceGate: Promise<string> | null = null;
+  const liveIndexedSessionId: string | null = null;
+  const workspaceGate: Promise<string> | null = null;
   const heldTaskReservations = new Set<string>();
 
   const deps: SpawnExecutionFlowDeps = {
@@ -124,6 +125,8 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
     getNodeExecution: () => boundExecution,
     isSpawningExecution: (executionId) => spawningExecutionIds.has(executionId),
     inspectIndexedSession: (agentSessionId) => ({ sessionId: agentSessionId, alive: false }),
+    resolveSlot: (_space, workflow, execution, _task) =>
+      resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName),
     reserveExecution: (executionId) => {
       calls.push('reserve');
       reservations.push(executionId);
@@ -196,6 +199,9 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
       calls.push(`inject:${sessionId}`);
       injected.push({ sessionId, message });
     },
+    activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
+      calls.push(`activate-pool:${executionId}:${sessionId}`);
+    },
   };
 
   return {
@@ -246,7 +252,7 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
 }
 
 describe('spawn flow — proceed_fresh path', () => {
-  test('runs admission, task reservation, reserve, spawn, bind, early reservation release, attach, register, kickoff, and halts with the session id', async () => {
+  test('runs admission, task reservation, reserve, spawn, bind, early reservation release, attach, register, kickoff, pool activation, and halts with the session id', async () => {
     const h = makeFlowFixture();
     const outcome = await h.run();
     expect(outcome).toEqual({ status: 'completed', result: SPAWNED_SESSION_ID });
@@ -262,6 +268,7 @@ describe('spawn flow — proceed_fresh path', () => {
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
       'kickoff-message',
       `inject:${SPAWNED_SESSION_ID}`,
+      `activate-pool:${EXECUTION_ID}:${SPAWNED_SESSION_ID}`,
       `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
     expect(h.cancels).toEqual([]);
@@ -285,6 +292,7 @@ describe('spawn flow — proceed_fresh path', () => {
       `release-task:${TASK_ID}`,
       'attach',
       `register:${TASK_ID}:${NODE_ID}:${SPAWNED_SESSION_ID}`,
+      `activate-pool:${EXECUTION_ID}:${SPAWNED_SESSION_ID}`,
       `flush-pending:${RUN_ID}:${AGENT_NAME}`,
     ]);
   });

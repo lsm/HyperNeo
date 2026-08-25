@@ -1,20 +1,19 @@
-import { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'preact/hooks';
-import { useComputed } from '@preact/signals';
 import type {
   SpaceWorkerAgent,
   ThinkingLevel,
   WorkflowChannel,
-  WorkflowNodeAgent,
   WorkflowHook,
+  WorkflowNodeAgent,
 } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
+import { useComputed } from '@preact/signals';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { skillsStore } from '../../../lib/skills-store';
 import type { NodeDraft } from '../WorkflowNodeCard';
-import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
-import { WorkflowModelSelect } from './WorkflowModelSelect';
+import { buildOverride, extractOverrideValue, isMultiAgentNode } from '../WorkflowNodeCard';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { HookEditorPanel } from './HookEditorPanel';
-import { skillsStore } from '../../../lib/skills-store';
-import { normalizeThinkingLevel } from '@hyperneo/shared';
+import { WorkflowModelSelect } from './WorkflowModelSelect';
 
 function isCoordinatorAgent(agent: SpaceWorkerAgent): boolean {
   return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';

@@ -1,24 +1,24 @@
-import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type {
+  McpServerConfig,
+  MessageContent,
+  MessageHub,
+  MessageImage,
+  MessageInputKind,
+  MessageOrigin,
+  NodeExecution,
+  Session,
   Space,
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
-  NodeExecution,
-  MessageHub,
-  McpServerConfig,
-  MessageContent,
-  MessageImage,
-  MessageInputKind,
-  MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
-  Session,
 } from '@hyperneo/shared';
-import type { SkillsManager } from '../../skills-manager.ts';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
-import type { UUID } from 'crypto';
+import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
+import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import {
@@ -47,23 +47,31 @@ import { classifyExternalEventDirectSteer } from '../../../lib/external-events/e
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import type { SessionManager } from '../../session-manager.ts';
-import type { SpaceManager } from '../managers/space-manager.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
-import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import type { SessionManager } from '../../session-manager.ts';
+import type { SkillsManager } from '../../skills-manager.ts';
+import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
+import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
+import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
+import {
+  activateModelPoolReservation,
+  applyModelPoolToSlot,
+  type ModelPoolAssignmentMap,
+  raiseModelPoolDeferred,
+  releaseModelPoolReservation,
+  reserveModelPoolSlot,
+} from './model-pool-scheduler.ts';
+import type { SpaceRuntimeService } from './space-runtime-service.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -77,26 +85,54 @@ export interface VerifiedSessionStop {
   stopped: boolean;
   detail?: string;
 }
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
+
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
+import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import { Logger } from '../../logger.ts';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
+import { extractReplyToSessionId } from '../agent-message-envelope.ts';
+import {
+  buildCustomAgentTaskMessage,
+  DEFAULT_CUSTOM_AGENT_MODEL,
+  resolveAgentInit,
+} from '../agents/custom-agent.ts';
+import type { EvolutionScopeService } from '../evolution-scope-service.ts';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers.ts';
-import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
-import { createGithubConnector } from './connectors/github-connector.ts';
-import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
 import { jsonResult } from '../tools/tool-result.ts';
-import {
-  assertExecutionValidAgainstWorkflow,
-  PermanentSpawnError,
-  SPAWN_BINDABLE_EXECUTION_STATUSES,
-  SPAWN_RESERVABLE_TASK_STATUSES,
-  SpawnSupersededError,
-  isSpawnSupersededError,
-  validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation.ts';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
 import { decideActivationRouting, selectWorkflowNodeForAgent } from './activation-routing.ts';
+import { AgentMessageRouter } from './agent-message-router.ts';
+import type { WorkflowArtifactProfile } from './artifact-profile.ts';
+import { ChannelResolver } from './channel-resolver.ts';
+import { ChannelRouter } from './channel-router.ts';
+import { createGithubConnector } from './connectors/github-connector.ts';
+import { HookExecutor } from './hook-executor.ts';
+import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
+import {
+  deliverInjectedMessage,
+  flipDeliveryRowToDeferred,
+  reopenFailedDeliveryRow,
+  settleDeliveryRowStatus,
+} from './injection-delivery-steps.ts';
+import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
+import {
+  formatPendingRowForNodeAgent,
+  formatPendingRowForSpaceAgent,
+  isHumanPendingSource,
+} from './pending-envelope.ts';
+import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -109,45 +145,23 @@ import {
   buildSlotOverrides,
   findAvailableSessionId,
   resolveSpawnWorkspace,
+  resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
-import { ChannelResolver } from './channel-resolver.ts';
-import { ChannelRouter } from './channel-router.ts';
-import { AgentMessageRouter } from './agent-message-router.ts';
-import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import type { WorkflowArtifactProfile } from './artifact-profile.ts';
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
-import type { EvolutionScopeService } from '../evolution-scope-service.ts';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import { HookExecutor } from './hook-executor.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
 } from './workflow-hook-engine.ts';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
-import { buildCustomAgentTaskMessage, resolveAgentInit } from '../agents/custom-agent.ts';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
-import { Logger } from '../../logger.ts';
-import { extractReplyToSessionId } from '../agent-message-envelope.ts';
-import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
-import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 import {
-  formatPendingRowForNodeAgent,
-  formatPendingRowForSpaceAgent,
-  isHumanPendingSource,
-} from './pending-envelope.ts';
-import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
-import {
-  deliverInjectedMessage,
-  flipDeliveryRowToDeferred,
-  reopenFailedDeliveryRow,
-  settleDeliveryRowStatus,
-} from './injection-delivery-steps.ts';
+  assertExecutionValidAgainstWorkflow,
+  isSpawnSupersededError,
+  PermanentSpawnError,
+  SPAWN_BINDABLE_EXECUTION_STATUSES,
+  SPAWN_RESERVABLE_TASK_STATUSES,
+  SpawnSupersededError,
+  validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation.ts';
 
 const log = new Logger('task-agent-manager');
 
@@ -354,6 +368,8 @@ export class TaskAgentManager {
     string,
     Array<(outcome: { status: 'resolved'; sessionId: string } | { status: 'failed' }) => void>
   >();
+
+  private modelPoolAssignments: ModelPoolAssignmentMap = new Map();
 
   private completionCallbacks: CompletionCallbackMap = new Map();
 
@@ -664,7 +680,11 @@ export class TaskAgentManager {
     execution: NodeExecution,
     options: SpawnTaskAgentOptions = {}
   ): Promise<string> {
-    const spawnState = { reservationHeld: false, reservedExecution: false };
+    const spawnState: {
+      reservationHeld: boolean;
+      reservedExecution: boolean;
+      appliedSlot?: WorkflowNodeAgent;
+    } = { reservationHeld: false, reservedExecution: false };
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
       space,
@@ -674,12 +694,14 @@ export class TaskAgentManager {
       kickoff: options.kickoff ?? true,
     });
     if (outcome.status === 'error') {
+      releaseModelPoolReservation(this.modelPoolAssignments, execution);
       if (spawnState.reservedExecution) {
         this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       }
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
+      releaseModelPoolReservation(this.modelPoolAssignments, execution);
       if (spawnState.reservedExecution) {
         this.settleConcurrentSpawnWaiters(execution.id, { status: 'failed' });
       }
@@ -780,6 +802,7 @@ export class TaskAgentManager {
   private buildSpawnExecutionFlowDeps(spawnState: {
     reservationHeld: boolean;
     reservedExecution: boolean;
+    appliedSlot?: WorkflowNodeAgent;
   }): SpawnExecutionFlowDeps {
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -867,71 +890,112 @@ export class TaskAgentManager {
         }
         return workspacePath;
       },
+      resolveSlot: (_space, workflow, execution, _task) =>
+        resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName) ?? null,
       createSpawnedSession: async (request) => {
-        const slotOverrides = buildSlotOverrides(request.slot, {
-          task: request.task,
-          node: request.node,
-          workflow: request.workflow,
-          workflowRun: request.workflowRun,
-        });
-
-        let init = resolveAgentInit({
-          task: request.task,
-          space: request.space,
-          agentManager: this.config.spaceAgentManager,
-          sessionId: request.sessionId,
-          workspacePath: request.workspacePath,
-          workflowRun: request.workflowRun,
-          workflow: request.workflow,
-          slotOverrides,
-          agentId: request.slot.agentId,
-        });
-
-        const customAgent = request.kickoff
-          ? this.config.spaceAgentManager.getById(request.slot.agentId)
-          : null;
-        if (request.kickoff && !customAgent) {
-          throw new PermanentSpawnError(`Agent not found: ${request.slot.agentId}`);
-        }
-
-        const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-          request.task.id,
-          request.sessionId,
-          request.execution.agentName,
-          request.space.id,
-          request.workflowRun.id,
-          request.workspacePath,
-          request.execution.workflowNodeId
-        );
-
-        init = assembleNodeAgentSessionInit({
-          baseInit: init,
-          title: formatWorkflowNodeSessionTitle(request.task, request.execution.agentName),
-          nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
-          agentMemoryMcpServers: this.buildAgentMemoryMcpServers(
-            request.space.id,
-            request.sessionId
-          ),
-        });
-
-        const actualSessionId = await this.createSubSession(
-          request.task.id,
-          request.sessionId,
-          init,
-          {
-            agentId: request.slot.agentId,
-            agentName: request.execution.agentName,
-            nodeId: request.execution.workflowNodeId,
-            deferFreshExecutionBind: true,
-            freshSessionOnly: true,
+        const customAgent = this.config.spaceAgentManager.getById(request.slot.agentId);
+        let slot = request.slot;
+        let poolProvider: string | undefined;
+        if (customAgent) {
+          const poolApplication = applyModelPoolToSlot({
+            slot: request.slot,
+            task: request.task,
+            node: request.node,
+            agent: customAgent,
+            spaceId: request.space.id,
+            assignments: this.modelPoolAssignments,
+            getSessionStatus: (sessionId: string) =>
+              this.agentSessionIndex.get(sessionId)?.getProcessingState().status,
+            now: Date.now(),
+          });
+          if ('deferred' in poolApplication) {
+            raiseModelPoolDeferred(customAgent.name, request.space.id);
           }
-        );
-
-        const spawned = this.getSubSession(actualSessionId);
-        if (!spawned) {
-          throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+          slot = poolApplication.slot;
+          poolProvider = poolApplication.provider;
         }
-        return actualSessionId;
+        spawnState.appliedSlot = slot;
+        const assignedModel =
+          slot.model ??
+          customAgent?.model ??
+          request.space.defaultModel ??
+          DEFAULT_CUSTOM_AGENT_MODEL;
+        const assignment = {
+          spaceId: request.space.id,
+          taskId: request.task.id,
+          model: assignedModel,
+        };
+        reserveModelPoolSlot(this.modelPoolAssignments, request.execution, assignment);
+
+        try {
+          const slotOverrides = {
+            ...buildSlotOverrides(slot, {
+              task: request.task,
+              node: request.node,
+              workflow: request.workflow,
+              workflowRun: request.workflowRun,
+            }),
+            ...(poolProvider ? { provider: poolProvider } : {}),
+          };
+
+          let init = resolveAgentInit({
+            task: request.task,
+            space: request.space,
+            agentManager: this.config.spaceAgentManager,
+            sessionId: request.sessionId,
+            workspacePath: request.workspacePath,
+            workflowRun: request.workflowRun,
+            workflow: request.workflow,
+            slotOverrides,
+            agentId: slot.agentId,
+          });
+
+          if (request.kickoff && !customAgent) {
+            throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
+          }
+
+          const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+            request.task.id,
+            request.sessionId,
+            request.execution.agentName,
+            request.space.id,
+            request.workflowRun.id,
+            request.workspacePath,
+            request.execution.workflowNodeId
+          );
+
+          init = assembleNodeAgentSessionInit({
+            baseInit: init,
+            title: formatWorkflowNodeSessionTitle(request.task, request.execution.agentName),
+            nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
+            agentMemoryMcpServers: this.buildAgentMemoryMcpServers(
+              request.space.id,
+              request.sessionId
+            ),
+          });
+
+          const actualSessionId = await this.createSubSession(
+            request.task.id,
+            request.sessionId,
+            init,
+            {
+              agentId: slot.agentId,
+              agentName: request.execution.agentName,
+              nodeId: request.execution.workflowNodeId,
+              deferFreshExecutionBind: true,
+              freshSessionOnly: true,
+            }
+          );
+
+          const spawned = this.getSubSession(actualSessionId);
+          if (!spawned) {
+            throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+          }
+          return actualSessionId;
+        } catch (err) {
+          releaseModelPoolReservation(this.modelPoolAssignments, request.execution);
+          throw err;
+        }
       },
       bindExecutionToSession: (execution, sessionId) => {
         const expected = SPAWN_BINDABLE_EXECUTION_STATUSES.includes(execution.status)
@@ -1017,7 +1081,7 @@ export class TaskAgentManager {
           workspacePath: request.workspacePath,
           goal: linkedGoal,
           relevantScopeLessons,
-          slotOverrides: buildSlotOverrides(request.slot, {
+          slotOverrides: buildSlotOverrides(spawnState.appliedSlot ?? request.slot, {
             task: request.task,
             node: request.node,
             workflow: request.workflow,
@@ -1043,6 +1107,9 @@ export class TaskAgentManager {
         await this.withSessionInjectLock(spawned.session.id, () =>
           this.injectMessageIntoSession(spawned, message)
         );
+      },
+      activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
+        activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
       },
     };
   }
@@ -4783,87 +4850,123 @@ export class TaskAgentManager {
     const workspacePath = this.taskWorktreePaths.get(taskId) ?? space.workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
-    const slotOverrides = buildSlotOverrides(matchedSlot, {
-      task,
-      node: matchedNode,
-      workflow,
-      workflowRun: workflowRun ?? undefined,
-    });
-
-    const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(matchedSlot.name)}`;
-    const sessionId = this.resolveSessionId(baseSessionId);
-
-    let init = resolveAgentInit({
-      task,
-      space,
-      agentManager: this.config.spaceAgentManager,
-      sessionId,
-      workspacePath,
-      workflowRun: workflowRun ?? undefined,
-      workflow,
-      slotOverrides,
-      agentId: matchedSlot.agentId,
-    });
-
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-      taskId,
-      sessionId,
-      matchedSlot.name,
-      spaceId,
-      workflowRunId ?? '',
-      workspacePath,
-      matchedNodeId
-    );
-    init = {
-      ...init,
-      title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
-      mcpServers: {
-        ...init.mcpServers,
-        'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-        'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
-          space,
-          sessionId
-        ),
-        ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
-      },
-    };
-
-    const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
-      agentId: matchedSlot.agentId,
-      agentName: matchedSlot.name,
-      nodeId: matchedNodeId,
-    });
-
-    const spawned = this.getSubSession(actualSessionId);
-    if (!spawned) {
-      throw new Error(
-        `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
-      );
+    const poolAgent = this.config.spaceAgentManager.getById(matchedSlot.agentId);
+    let slot = matchedSlot;
+    let poolProvider: string | undefined;
+    if (poolAgent) {
+      const poolApplication = applyModelPoolToSlot({
+        slot: matchedSlot,
+        task,
+        node: { id: matchedNodeId },
+        agent: poolAgent,
+        spaceId,
+        assignments: this.modelPoolAssignments,
+        getSessionStatus: (sessionId: string) =>
+          this.agentSessionIndex.get(sessionId)?.getProcessingState().status,
+        now: Date.now(),
+      });
+      if ('deferred' in poolApplication) {
+        raiseModelPoolDeferred(poolAgent.name, spaceId);
+      }
+      slot = poolApplication.slot;
+      poolProvider = poolApplication.provider;
     }
+    const assignedModel =
+      slot.model ?? poolAgent?.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
+    const reservationKey = { id: `post-approval:${taskId}:${slot.name}:${generateUUID()}` };
+    const assignment = { spaceId, taskId, model: assignedModel };
+    reserveModelPoolSlot(this.modelPoolAssignments, reservationKey, assignment);
 
-    spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
-      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
-    };
+    try {
+      const slotOverrides = {
+        ...buildSlotOverrides(slot, {
+          task,
+          node: matchedNode,
+          workflow,
+          workflowRun: workflowRun ?? undefined,
+        }),
+        ...(poolProvider ? { provider: poolProvider } : {}),
+      };
 
-    await this.ensureNodeAgentAttached(spawned, {
-      taskId,
-      subSessionId: actualSessionId,
-      agentName: matchedSlot.name,
-      spaceId,
-      workflowRunId: workflowRunId ?? '',
-      workspacePath,
-      workflowNodeId: matchedNodeId,
-      phase: 'spawn',
-    });
+      const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(slot.name)}`;
+      const sessionId = this.resolveSessionId(baseSessionId);
 
-    await this.withSessionInjectLock(spawned.session.id, () =>
-      this.injectMessageIntoSession(spawned, kickoffMessage)
-    );
+      let init = resolveAgentInit({
+        task,
+        space,
+        agentManager: this.config.spaceAgentManager,
+        sessionId,
+        workspacePath,
+        workflowRun: workflowRun ?? undefined,
+        workflow,
+        slotOverrides,
+        agentId: slot.agentId,
+      });
 
-    log.info(
-      `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
-    );
-    return { sessionId: actualSessionId };
+      const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+        taskId,
+        sessionId,
+        matchedSlot.name,
+        spaceId,
+        workflowRunId ?? '',
+        workspacePath,
+        matchedNodeId
+      );
+      init = {
+        ...init,
+        title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
+        mcpServers: {
+          ...init.mcpServers,
+          'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+          'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+            space,
+            sessionId
+          ),
+          ...this.buildAgentMemoryMcpServers(spaceId, sessionId),
+        },
+      };
+
+      const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
+        agentId: matchedSlot.agentId,
+        agentName: matchedSlot.name,
+        nodeId: matchedNodeId,
+      });
+
+      const spawned = this.getSubSession(actualSessionId);
+      if (!spawned) {
+        throw new Error(
+          `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
+        );
+      }
+
+      spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
+        await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+      };
+
+      await this.ensureNodeAgentAttached(spawned, {
+        taskId,
+        subSessionId: actualSessionId,
+        agentName: matchedSlot.name,
+        spaceId,
+        workflowRunId: workflowRunId ?? '',
+        workspacePath,
+        workflowNodeId: matchedNodeId,
+        phase: 'spawn',
+      });
+
+      await this.withSessionInjectLock(spawned.session.id, () =>
+        this.injectMessageIntoSession(spawned, kickoffMessage)
+      );
+
+      log.info(
+        `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
+      );
+      activateModelPoolReservation(this.modelPoolAssignments, reservationKey, actualSessionId);
+      return { sessionId: actualSessionId };
+    } catch (err) {
+      releaseModelPoolReservation(this.modelPoolAssignments, reservationKey);
+      throw err;
+    }
   }
 
   private findLiveSubSessionForAgent(task: SpaceTask, agentName: string): string | null {
