@@ -2,8 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { ErrorCategory } from '../../../../src/lib/error-manager';
 import {
   classifyQueryRetryRoute,
+  decideQueryRetry,
   type QueryRetryEnvironment,
   type QueryRetryErrorSignal,
+  type QueryRetryFinalizer,
   type QueryRetryRoute,
 } from '../../../../src/lib/agent/query-retry-routing';
 
@@ -39,6 +41,18 @@ function signal(overrides: Partial<QueryRetryErrorSignal> = {}): QueryRetryError
     isRateLimit: false,
     rateLimitHint: null,
     apiValidationText: null,
+    ...overrides,
+  };
+}
+
+function finalizer(overrides: Partial<QueryRetryFinalizer> = {}): QueryRetryFinalizer {
+  return {
+    skipQueueClear: false,
+    skipStop: false,
+    skipCatchIdle: false,
+    skipFinalizerIdle: false,
+    skipBeginTerminalIdle: false,
+    skipErrorManager: false,
     ...overrides,
   };
 }
@@ -202,4 +216,522 @@ describe('query-retry-routing', () => {
       expect(route).toMatchObject(expected);
     });
   }
+});
+
+describe('decideQueryRetry', () => {
+  const cases: Array<{
+    name: string;
+    signal?: Partial<QueryRetryErrorSignal>;
+    env?: Partial<QueryRetryEnvironment>;
+    expectedRoute: QueryRetryRoute;
+    expectedFinalizer: QueryRetryFinalizer;
+  }> = [
+    {
+      name: 'startup timeout with consumed prompt retries and finalizes as a retry arm',
+      signal: { isStartupTimeout: true },
+      env: { hasConsumedPrompt: true },
+      expectedRoute: { action: 'startup_timeout_retry', redeliver: 'consumed' },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'startup timeout interrupted routes terminal with default finalizer',
+      signal: { isStartupTimeout: true },
+      env: {
+        hasConsumedPrompt: true,
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.TIMEOUT,
+        messageHint: 'startup_timeout',
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'message not found retry arm skips queue clear and terminal handling',
+      signal: { isMessageNotFound: true },
+      expectedRoute: { action: 'message_not_found_retry' },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'transient retry arm skips queue clear and terminal handling',
+      signal: { isTransientConnectionError: true },
+      env: { hasConsumedPrompt: true },
+      expectedRoute: { action: 'transient_retry' },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'transient interrupted routes terminal CONNECTION',
+      signal: { isTransientConnectionError: true },
+      env: {
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.CONNECTION,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'transient aborted controller routes terminal CONNECTION',
+      signal: { isTransientConnectionError: true },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: true,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.CONNECTION,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'provider 5xx backoff arm skips queue clear and terminal handling',
+      signal: { rawText: '503 Service Unavailable', isRetryableProviderError: true },
+      env: { hasConsumedPrompt: true },
+      expectedRoute: { action: 'provider_backoff', nextAttempt: 1 },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'provider 5xx interrupted routes terminal SYSTEM',
+      signal: { rawText: '503 Service Unavailable', isRetryableProviderError: true },
+      env: {
+        hasConsumedPrompt: true,
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.SYSTEM,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'provider 5xx exhausted routes terminal SYSTEM',
+      signal: { rawText: '503 Service Unavailable', isRetryableProviderError: true },
+      env: { attempt: 3, hasConsumedPrompt: true },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.SYSTEM,
+        messageHint: 'provider_exhausted',
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'provider 5xx exhausted on provider family routes PROVIDER_UNAVAILABLE',
+      signal: { rawText: '503 Service Unavailable', isRetryableProviderError: true },
+      env: { attempt: 3, providerFamily: 'provider', hasConsumedPrompt: true },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.PROVIDER_UNAVAILABLE,
+        messageHint: 'provider_exhausted',
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'aborted_noop clears the queue and skips terminal handling',
+      signal: { errorName: 'AbortError' },
+      expectedRoute: { action: 'aborted_noop' },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'aborted_noop with cooldown scheduled suppresses finalizer idle',
+      signal: { errorName: 'AbortError' },
+      env: {
+        recoveryState: { rateLimitCooldownScheduled: true },
+      },
+      expectedRoute: { action: 'aborted_noop' },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'aborted_noop with limit recovery pending suppresses finalizer idle',
+      signal: { errorName: 'AbortError' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expectedRoute: { action: 'aborted_noop' },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'aborted_noop with rate_limit_cooldown status suppresses finalizer idle',
+      signal: { errorName: 'AbortError' },
+      env: {
+        lifecycle: {
+          processingStatus: 'rate_limit_cooldown',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: { action: 'aborted_noop' },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'cleanup_noop skips queue clear and all terminal effects',
+      signal: { isStartupTimeout: true },
+      env: { isCleaningUp: true, hasConsumedPrompt: true },
+      expectedRoute: { action: 'cleanup_noop' },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'superseded_noop skips all teardown',
+      signal: { isRetryableProviderError: true },
+      env: { isSuperseded: true, hasConsumedPrompt: true },
+      expectedRoute: { action: 'superseded_noop' },
+      expectedFinalizer: finalizer({
+        skipQueueClear: true,
+        skipStop: true,
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'api_validation skips error manager',
+      signal: {
+        rawText: '400 prompt is too long',
+        apiValidationText: '**API Error (400)**: prompt is too long',
+      },
+      expectedRoute: {
+        action: 'api_validation',
+        text: '**API Error (400)**: prompt is too long',
+      },
+      expectedFinalizer: finalizer({
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'api_validation with cooldown scheduled suppresses idle',
+      signal: {
+        rawText: '400 prompt is too long',
+        apiValidationText: '**API Error (400)**: prompt is too long',
+      },
+      env: {
+        recoveryState: { rateLimitCooldownScheduled: true },
+      },
+      expectedRoute: {
+        action: 'api_validation',
+        text: '**API Error (400)**: prompt is too long',
+      },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'terminal auth runs full terminal finalizer',
+      signal: { rawText: 'invalid_api_key' },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.AUTHENTICATION,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'terminal with limit recovery pending skips finalizer idle',
+      signal: { rawText: 'invalid_api_key' },
+      env: {
+        lifecycle: {
+          processingStatus: 'processing',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: true,
+        },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.AUTHENTICATION,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer({
+        skipFinalizerIdle: true,
+      }),
+    },
+    {
+      name: 'terminal with rate_limit_cooldown status skips finalizer idle',
+      signal: { rawText: 'invalid_api_key' },
+      env: {
+        lifecycle: {
+          processingStatus: 'rate_limit_cooldown',
+          abortSignalAborted: false,
+          isLimitRecoveryPending: false,
+        },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.AUTHENTICATION,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer({
+        skipFinalizerIdle: true,
+      }),
+    },
+    {
+      name: 'terminal with incoming cooldown flag recomputes and does not skip',
+      signal: { rawText: 'invalid_api_key' },
+      env: {
+        attempt: 0,
+        recoveryState: { rateLimitCooldownScheduled: true },
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.AUTHENTICATION,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'rate limit handoff accepted suppresses terminal and idle',
+      signal: {
+        rawText: '429 please upgrade your plan',
+        isRateLimit: true,
+        rateLimitHint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      env: {
+        hasRateLimitHandoff: true,
+        rateLimitHandoffResult: 'accepted',
+      },
+      expectedRoute: {
+        action: 'rate_limit_handoff',
+        hint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipFinalizerIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'rate limit handoff declined falls back to terminal RATE_LIMIT',
+      signal: {
+        rawText: '429 please upgrade your plan',
+        isRateLimit: true,
+        rateLimitHint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      env: {
+        hasRateLimitHandoff: true,
+        rateLimitHandoffResult: 'declined',
+      },
+      expectedRoute: {
+        action: 'terminal',
+        category: ErrorCategory.RATE_LIMIT,
+        messageHint: undefined,
+      },
+      expectedFinalizer: finalizer(),
+    },
+    {
+      name: 'rate limit handoff thrown skips terminal but keeps finalizer idle',
+      signal: {
+        rawText: '429 please upgrade your plan',
+        isRateLimit: true,
+        rateLimitHint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      env: {
+        hasRateLimitHandoff: true,
+        rateLimitHandoffResult: 'thrown',
+      },
+      expectedRoute: {
+        action: 'rate_limit_handoff',
+        hint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+    {
+      name: 'rate limit handoff without result defers terminal and idle',
+      signal: {
+        rawText: '429 please upgrade your plan',
+        isRateLimit: true,
+        rateLimitHint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      env: {
+        hasRateLimitHandoff: true,
+      },
+      expectedRoute: {
+        action: 'rate_limit_handoff',
+        hint: { kind: 'usage_limit', billingTerminal: true },
+      },
+      expectedFinalizer: finalizer({
+        skipCatchIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    },
+  ];
+
+  for (const { name, signal: sig, env: e, expectedRoute, expectedFinalizer } of cases) {
+    it(name, () => {
+      const decision = decideQueryRetry({
+        errorSignal: signal(sig ?? {}),
+        env: env(e ?? {}),
+      });
+      expect(decision.route).toEqual(expectedRoute);
+      expect(decision.finalizer).toEqual(expectedFinalizer);
+    });
+  }
+
+  describe('lifecycle status × abort signal × cleanup matrix', () => {
+    const PROVIDER_5XX_MSG = '503 Service Unavailable';
+    const ABORT_MSG = 'the query was aborted';
+
+    const matrix: Array<{
+      name: string;
+      signal: Partial<QueryRetryErrorSignal>;
+      env: Partial<QueryRetryEnvironment>;
+      expectedAction: QueryRetryRoute['action'];
+    }> = [
+      {
+        name: 'startup with abort signal still retries',
+        signal: { isStartupTimeout: true },
+        env: {
+          hasConsumedPrompt: true,
+          lifecycle: {
+            processingStatus: 'processing',
+            abortSignalAborted: true,
+            isLimitRecoveryPending: false,
+          },
+        },
+        expectedAction: 'startup_timeout_retry',
+      },
+      {
+        name: 'transient with abort signal routes terminal',
+        signal: { isTransientConnectionError: true },
+        env: {
+          hasConsumedPrompt: true,
+          lifecycle: {
+            processingStatus: 'processing',
+            abortSignalAborted: true,
+            isLimitRecoveryPending: false,
+          },
+        },
+        expectedAction: 'terminal',
+      },
+      {
+        name: 'provider with abort signal routes terminal',
+        signal: { rawText: PROVIDER_5XX_MSG, isRetryableProviderError: true },
+        env: {
+          hasConsumedPrompt: true,
+          lifecycle: {
+            processingStatus: 'processing',
+            abortSignalAborted: true,
+            isLimitRecoveryPending: false,
+          },
+        },
+        expectedAction: 'terminal',
+      },
+      {
+        name: 'message not found with abort signal still retries',
+        signal: { isMessageNotFound: true },
+        env: {
+          lifecycle: {
+            processingStatus: 'processing',
+            abortSignalAborted: true,
+            isLimitRecoveryPending: false,
+          },
+        },
+        expectedAction: 'message_not_found_retry',
+      },
+      {
+        name: 'aborted_noop with cleanup suppresses queue clear',
+        signal: { errorName: 'AbortError', rawText: ABORT_MSG },
+        env: { isCleaningUp: true },
+        expectedAction: 'cleanup_noop',
+      },
+      {
+        name: 'terminal with supersede suppresses all teardown',
+        signal: { rawText: 'invalid_api_key' },
+        env: { isSuperseded: true },
+        expectedAction: 'superseded_noop',
+      },
+      {
+        name: 'provider with cleanup routes cleanup_noop',
+        signal: { rawText: PROVIDER_5XX_MSG, isRetryableProviderError: true },
+        env: { isCleaningUp: true, hasConsumedPrompt: true },
+        expectedAction: 'cleanup_noop',
+      },
+      {
+        name: 'transient with cleanup routes cleanup_noop',
+        signal: { isTransientConnectionError: true },
+        env: { isCleaningUp: true, hasConsumedPrompt: true },
+        expectedAction: 'cleanup_noop',
+      },
+    ];
+
+    for (const { name, signal: sig, env: e, expectedAction } of matrix) {
+      it(name, () => {
+        const decision = decideQueryRetry({
+          errorSignal: signal(sig),
+          env: env(e),
+        });
+        expect(decision.route.action).toBe(expectedAction);
+      });
+    }
+  });
 });

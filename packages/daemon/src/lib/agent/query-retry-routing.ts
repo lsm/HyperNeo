@@ -1,7 +1,10 @@
 import { ErrorCategory } from '../error-manager.ts';
+import { decisionRun } from '../space/runtime/decision-pipeline.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 
 export type QueryRetryProviderFamily = 'anthropic' | 'provider';
+
+export type QueryRetryHandoffResult = 'accepted' | 'declined' | 'thrown';
 
 export interface QueryRetryLifecycle {
   processingStatus:
@@ -26,6 +29,7 @@ export interface QueryRetryEnvironment {
   isSuperseded: boolean;
   hasRateLimitHandoff: boolean;
   recoveryState: { rateLimitCooldownScheduled: boolean };
+  rateLimitHandoffResult?: QueryRetryHandoffResult;
 }
 
 export interface QueryRetryErrorSignal {
@@ -56,6 +60,25 @@ export type QueryRetryRoute =
 export interface QueryRetryRouteInput {
   errorSignal: QueryRetryErrorSignal;
   env: QueryRetryEnvironment;
+}
+
+export interface QueryRetryFinalizer {
+  skipQueueClear: boolean;
+  skipStop: boolean;
+  skipCatchIdle: boolean;
+  skipFinalizerIdle: boolean;
+  skipBeginTerminalIdle: boolean;
+  skipErrorManager: boolean;
+}
+
+export interface QueryRetryDecision {
+  route: QueryRetryRoute;
+  finalizer: QueryRetryFinalizer;
+}
+
+interface QueryRetryDecisionCtx extends QueryRetryRouteInput {
+  route: QueryRetryRoute | null;
+  decision: QueryRetryDecision | null;
 }
 
 function isQueryInterrupted(
@@ -153,4 +176,171 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     category: decideProviderTerminalCategory(errorSignal, env),
     messageHint: resolveTerminalMessageHint(errorSignal, env),
   };
+}
+
+function makeFinalizer(overrides: Partial<QueryRetryFinalizer>): QueryRetryFinalizer {
+  return {
+    skipQueueClear: false,
+    skipStop: false,
+    skipCatchIdle: false,
+    skipFinalizerIdle: false,
+    skipBeginTerminalIdle: false,
+    skipErrorManager: false,
+    ...overrides,
+  };
+}
+
+function skipIdleDueToRecovery(env: QueryRetryEnvironment): boolean {
+  return (
+    env.recoveryState.rateLimitCooldownScheduled ||
+    env.lifecycle.isLimitRecoveryPending ||
+    env.lifecycle.processingStatus === 'rate_limit_cooldown'
+  );
+}
+
+function skipFinalizerIdleDueToLifecycle(env: QueryRetryEnvironment): boolean {
+  return (
+    env.lifecycle.isLimitRecoveryPending || env.lifecycle.processingStatus === 'rate_limit_cooldown'
+  );
+}
+
+function resolveDecision(route: QueryRetryRoute, env: QueryRetryEnvironment): QueryRetryDecision {
+  const handoff = env.rateLimitHandoffResult ?? null;
+  if (route.action === 'rate_limit_handoff') {
+    if (handoff === 'accepted') {
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: true,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    }
+    if (handoff === 'thrown') {
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipIdleDueToRecovery(env),
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    }
+    if (handoff === 'declined') {
+      return {
+        route: { action: 'terminal', category: ErrorCategory.RATE_LIMIT, messageHint: undefined },
+        finalizer: makeFinalizer({
+          skipFinalizerIdle: skipFinalizerIdleDueToLifecycle(env),
+        }),
+      };
+    }
+    return {
+      route,
+      finalizer: makeFinalizer({
+        skipCatchIdle: true,
+        skipBeginTerminalIdle: true,
+        skipErrorManager: true,
+      }),
+    };
+  }
+
+  switch (route.action) {
+    case 'superseded_noop':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipStop: true,
+          skipCatchIdle: true,
+          skipFinalizerIdle: true,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'cleanup_noop':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipCatchIdle: true,
+          skipFinalizerIdle: true,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'aborted_noop':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: true,
+          skipFinalizerIdle: skipIdleDueToRecovery(env),
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    case 'api_validation':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipCatchIdle: env.recoveryState.rateLimitCooldownScheduled,
+          skipFinalizerIdle: skipIdleDueToRecovery(env),
+          skipErrorManager: true,
+        }),
+      };
+    case 'terminal':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipFinalizerIdle: skipFinalizerIdleDueToLifecycle(env),
+        }),
+      };
+    case 'startup_timeout_retry':
+    case 'message_not_found_retry':
+    case 'transient_retry':
+    case 'provider_backoff':
+      return {
+        route,
+        finalizer: makeFinalizer({
+          skipQueueClear: true,
+          skipBeginTerminalIdle: true,
+          skipErrorManager: true,
+        }),
+      };
+    default:
+      return { route, finalizer: makeFinalizer({}) };
+  }
+}
+
+function decided(ctx: QueryRetryDecisionCtx, decision: QueryRetryDecision): QueryRetryDecisionCtx {
+  return { ...ctx, decision };
+}
+
+function applyClassifierGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
+  return {
+    ...ctx,
+    route: classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env }),
+  };
+}
+
+function applyArmMappingGate(ctx: QueryRetryDecisionCtx): QueryRetryDecisionCtx {
+  const route =
+    ctx.route ?? classifyQueryRetryRoute({ errorSignal: ctx.errorSignal, env: ctx.env });
+  return decided(ctx, resolveDecision(route, ctx.env));
+}
+
+const queryRetryDecisionRun = decisionRun<QueryRetryDecisionCtx>('query-retry-arm', [
+  applyClassifierGate,
+  applyArmMappingGate,
+]);
+
+export function decideQueryRetry(input: QueryRetryRouteInput): QueryRetryDecision {
+  const ctx = queryRetryDecisionRun({
+    errorSignal: input.errorSignal,
+    env: input.env,
+    route: null,
+  });
+  return ctx.decision ?? resolveDecision(ctx.route ?? classifyQueryRetryRoute(input), input.env);
 }
