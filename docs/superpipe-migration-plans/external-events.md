@@ -345,9 +345,10 @@ Callers:
 
 #### Proposed combinator
 
-Raw superpipe transform. The event-type branch becomes either a `decisionRun`
-stage that selects the field-set to copy, or a sequence of guarded
-`copyXFields` stages.
+Raw superpipe transform. The event-type branch is an ORDINARY PURE HELPER
+(`decideFieldSet`) or guarded `copyXFields` stages — review correction round
+20: never a `decisionRun`; it is an internal stage of this formatting
+operation.
 
 #### Input/output snapshot design
 
@@ -1085,10 +1086,7 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
    applies here: normalization is synchronous and effect-free. The exported
    function signatures stay stable via thin wrappers over the single pipeline.
 
-3. **`classifyExternalEventDirectSteer` hot path**: The function is called once
-   per essence. Should we benchmark the `decisionRun` overhead against the
-   current `if/else` before finalizing, and if the overhead is measurable, keep
-   a compact direct implementation inside `partitionDirectSteerEssences`?
+3. ~~**`classifyExternalEventDirectSteer` hot path**~~ Resolved by review: it stays an ordinary ordered classifier called per essence from `partitionDirectSteerEssences` — no `decisionRun`, nothing to benchmark.
 
 4. **Error vs decision for `composeGitHubSubscriptionPattern` and
    `validateRemoteHook`**: These currently throw/return error strings. The plan

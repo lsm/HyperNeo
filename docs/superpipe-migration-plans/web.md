@@ -338,12 +338,12 @@ anywhere in this plan.
   `stageClassifyFamily` → `stageInferProvider` → `stageAssemble` →
   `stageSort`, ctx threading the models array.
 - **Input/output snapshot design.** Review correction: plain helper signatures, NO per-model decision-run contexts — `inferProviderFromModelId(modelId): string | undefined` and `classifyModelFamily(modelId): string` take/return plain values inside the pipeline's stages (`decisionRun` contexts here would restore two nested runner invocations per model). Helper detail:
-  `decision !== null`, and `undefined` is a meaningful outcome here; use the
-  sentinel `'unknown-provider'` internally and map to `undefined` in the
-  wrapper (the daemon `decisionRun` types `decision: unknown`, so a
-  final `gateNoProvider` deciding the sentinel keeps halt semantics
-  well-defined). Family ctx analogous with default gate deciding `'sonnet'`.
+  `inferProviderFromModelId` returns `undefined` for no match (ordered rules,
+  fall-through); `classifyModelFamily` returns `'sonnet'` as its default.
   Map pipeline ctx: `{ rawModels, classified: ModelInfo[] }`.
+
+- **Step-by-step migration.**
+  1. Extend `src/hooks/__tests__/useModelSwitcher.test.ts` (exists) with
 - **Pure core design.** Gates mirror the exact current rule order — the
   regexes (`qwen[\w.-]*:[1-9]\d{2,}b` before the looser `qwen[\w.-]*:`) and
   the `-cloud` suffix check are ordered constraints; each gate owns one rule
@@ -654,7 +654,12 @@ anywhere in this plan.
   1. `src/lib/__tests__/provider-brand.test.ts` exists — pin each scrub in
      isolation AND composition (openrouter `vendor: model (Kimi)` loses both
      wrappers; kimi `Kimi K3` keeps `K3`).
-  2. Compose `superpipe('shorten-model-name')` pipeline; wrapper keeps
+  2. Keep `shortenModelName` as the ORDINARY PURE HELPER it is today
+     (review correction round 20: no `superpipe('shorten-model-name')`
+     pipeline — both `NewChatModelPicker` and `SessionStatusBar` call it
+     inside model-item rendering loops, so a pipeline here executes per
+     dropdown item per render; if ever pipelined, call-site memoization is a
+     mandatory prerequisite in the same step). Wrapper keeps
      `(name, provider?) => string`.
 - **Tests.** Suite above.
 - **Risks/caveats.** Per-item render cadence in two components. Pipeline run

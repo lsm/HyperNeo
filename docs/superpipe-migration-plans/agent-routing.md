@@ -209,7 +209,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 ### `packages/daemon/src/lib/agent/delivery-turn-routing.ts:planDeliveryRoleArbitration`
 
 - **Current summary:** Decides whether a delivery reuses an existing active role or enqueues a new one. Computes the role and, for fresh implicit deliveries, a `uniqueConstraintFallback` (`steer`) in case a unique constraint hits at enqueue time. Called by `message-delivery.ts:deliverMessage` and `message-delivery-outbox.ts:persistAndEnqueueDelivery` synchronously before `jobQueue.enqueue`.
-- **Proposed combinator:** `decisionRun` named `delivery-role-arbitration`.
+- **Proposed combinator:** Review correction round 20 — arbitration stays an ORDINARY PURE SHARED HELPER composed into each complete delivery pipeline (`deliverMessage`, `persistAndEnqueueDelivery`): its reuse/enqueue branches plus the corresponding `jobQueue.enqueue` effect and unique-constraint handling are stages of those delivery operations. A standalone admission-only arbitration pipeline leaves the central enqueue effect outside, splitting both delivery callers at that boundary.
 - **Input/output snapshot design:**
   - Input: `{ existingActiveRole: MessageDeliveryRole | null; requestedRole?: MessageDeliveryRole; }`.
   - Output: `DeliveryRoleArbitration`.
@@ -315,7 +315,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
   - `applyFlushWithoutClearGate` — default.
 - **Shell/effect wiring:** Wrapper `planTurnEndFlushContextReset(args)` returns `ctx.decision`. Called by `message-delivery-pipeline.ts:applyFlushContextResetGate`. The clear, if any, is performed by the turn-end flush path.
 - **Step-by-step migration:**
-  1. Define `TurnEndFlushContextResetCtx` and `turnEndFlushContextResetRun`.
+  1. Extract the three reset guards as ordinary pure helpers (review correction round 20: no `TurnEndFlushContextResetCtx`/`turnEndFlushContextResetRun` runner — `message-turn-end-flush` calls this planner from `applyFlushContextResetGate`, so a runner would nest a reset pipeline per flush).
   2. Port the three branches to gates.
 - **Tests:** `context-reset-planner.test.ts` is parity. Add `turn-end-flush-context-reset-gates.test.ts`.
 - **Risks/caveats:** `taskDeliverableCount` is computed by the caller from the flush plan. The default path does not set a `reason` except in the active-delivery-job case. Ensure the `active_delivery_job` reason only appears when the slot resets context and prior context is present, matching the current second branch.

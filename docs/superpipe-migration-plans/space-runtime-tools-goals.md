@@ -169,7 +169,16 @@ The repo already has several proven pipelines. Use these as the model for each s
   2. `snapshot` runs `partitionDeferredExternalEventRows` and stores `partition`.
   3. `decide` halts (`!proceed` branch) if `partition.digestRows.length === 0`.
   4. `effect` `supersede-stale-folds` calls `ops.supersedeStaleFolds(keepUuid)`.
-  5. `effect` `save-fold-row` calls `saveFoldRowIdempotently` with deterministic UUID. If this fails, the superseded stale folds are already gone; this is fine because the source rows are still `deferred` and the next flush will recompute. However, for true atomicity consider a single `foldDigest` repo primitive.
+  5. `effect` `save-fold-row` calls `saveFoldRowIdempotently` with deterministic
+     UUID and STORES its return in `state.saved` (review correction round 20:
+     `stagedRun` effect stages may return only `void`/`won`/`superseded`
+     (`staged-run.ts:405-412`) — returning the saved object is a contract
+     error, and discarding it would leave `FlushFoldState.saved` null so the
+     halt could not build the current result; write it into the shared state
+     box). If this fails, the superseded stale folds are already gone; this is
+     fine because the source rows are still `deferred` and the next flush will
+     recompute. However, for true atomicity consider a single `foldDigest` repo
+     primitive.
   6. `effect` `mark-sources-superseded` calls `ops.markSuperseded(sourceDbIds)`.
   7. `halt` builds and returns `DeferredEventDigestFlushResult`.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`. Add `stagedRun`-specific tests: no digest rows, duplicate deterministic UUID, failure after save before mark (verify idempotency), and overflow fold interaction.
@@ -186,7 +195,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   1. Define `stagedRun<OverflowFoldState>('fold-deferred-overflow', (s) => [...])`.
   2. `snapshot` copies input rows and cap.
   3. `decide` runs `planDeferredExternalEventRows` and branches `noOverflow` (halt with `null`) or `overflow`.
-  4. `effect` `save-overflow-envelope` saves the fold row idempotently.
+  4. `effect` `save-overflow-envelope` saves the fold row idempotently and
+     stores its return (`dbId` + UUID-adjusted message) in the shared
+     OverflowFoldState result box (review correction round 20: `stagedRun`
+     effect stages may return only `void`/`won`/`superseded`
+     (`staged-run.ts:405-412`) — discarding the saved object would leave the
+     halt unable to build `DeferredEventOverflowFoldResult`).
   5. `effect` `mark-overflow-superseded` marks the overflow rows.
   6. `halt` returns the result.
 - **Tests**: Same `deferred-event-digest.test.ts` plus tests for the cap boundary and fold-vs-raw selection.
@@ -580,12 +594,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: `decideCompletedTaskAutomation` with branches: `notApplicable`, `disabled`, `ambiguousScope`, `missingScope`, `belowThreshold`, `proceed`. `proceed` carries `count`. Review correction: when the completed task has NO explicit `evolutionScopeId` and more than one goal scope exists, the current `onTaskCompleted` returns `ambiguous_scope` BEFORE calling `resolveScopeForTask` — the ctx must snapshot the ambiguity flag (scope count) separately from the resolved `scope`, and `ambiguousScope` must win over `missingScope`, or a null resolution is indistinguishable from a genuinely missing scope.
-- **Shell/effect wiring**: The `GoalAutomationService` shell calls `decideCompletedTaskAutomation`; if `proceed`, it calls `this.enqueue(...)`. Return `GoalAutomationEnqueueResult`.
+- **Shell/effect wiring** (review correction round 20): the snapshot/admission gates AND the `this.enqueue(...)` job-queue effect compose directly in ONE named completed-task-automation pipeline; the service shell only gathers inputs and returns `GoalAutomationEnqueueResult`.
 - **Step-by-step migration**:
-  1. Create `packages/daemon/src/lib/space/goals/goal-automation-admission-pipeline.ts`.
-  2. Move the gate logic from `onTaskCompleted` into `decideCompletedTaskAutomation`.
-  3. Keep the evidence selection and cursor reads in the shell as snapshot input.
-  4. `onTaskCompleted` becomes: read snapshot → `decisionRun` → if `proceed`, `enqueue`.
+  1. Create the mixed pipeline (snapshot stage reads evidence/cursor inputs gathered by the shell).
+  2. Move the gate logic from `onTaskCompleted` into its admission stages.
+  3. Add the guarded `enqueue` effect stage (`proceed`) to the SAME pipeline.
+  4. `onTaskCompleted` becomes: gather snapshot → run the pipeline once → return its result.
 - **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
 - **Risks/caveats**: The admission table must be unit-tested independently of the job queue. The `below_threshold` branch carries `count`; ensure that is preserved in the decision payload.
 
@@ -800,7 +814,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   3. Replace the if-cascade with ordered gates.
   4. Update `agent-message-router.ts` to call the new function.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/agent-message-routing-pipeline.test.ts` and `packages/daemon/tests/unit/5-space/agent/agent-message-router.test.ts`.
-- **Risks/caveats**: This is called once per target in `deliverGenericMessage`. `decisionRun` adds ~2 µs per call, negligible compared to the downstream delivery. The `notFound` branch currently falls through; ensure the `decisionRun` terminal fallback is `notFound` with `target`.
+- **Risks/caveats**: This is called once per target in `deliverGenericMessage`. `decisionRun` adds ~2 µs per call, negligible compared to the downstream delivery. Review correction round 20: keep `decideGenericAddressRouting` as an ORDINARY PURE HELPER (or compose its gates into the existing routing operation) — `send` has already run `decideAgentMessageRouting` when `delegateGeneric` chooses it, and `deliverGenericMessage` then invokes this classifier once per target, so a standalone runner would add one nested pipeline per target to one message-routing operation. Preserve the current `notFound` fall-through with `target`.
 
 ### `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets`
 
@@ -838,7 +852,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/activation-routing.ts:decideActivationRouting`
 
 - **Current summary**: Given existing execution facts and workflow resolvability, decides whether to reuse, reset, reject, spawn, or return empty.
-- **Proposed combinator**: `decisionRun`.
+- **Proposed combinator**: Review correction round 20 — migrate the COMPLETE activation business path (`activateTargetSessionsForMessage`, which invokes the classifier three times around reset, workflow activation, resnapshot, and spawn effects) to ONE mixed/resnapshot pipeline; these classifications become its stages or plain helpers. Converting only the classifier into a standalone runner would execute a new pipeline three times while preserving the imperative outer cascade.
 - **Input snapshot design**:
   ```ts
   interface ActivationRoutingCtx {

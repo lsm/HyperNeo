@@ -620,8 +620,10 @@ compensated. No site in this plan performs effects, so none uses it.
 - **shell/effect wiring.** No shell changes: all consumers call the wrappers,
   which keep the exact signatures (`computeCooldown(errorMessage, count,
   now?, jitterFn?)`).
-- **step-by-step migration.** 1) One combined cooldown pipeline + wrapper in
-  `fallback-recovery.ts` with reset parsing inline; 2) everything else
+- **step-by-step migration.** 1) Keep `computeCooldown` as PLAIN HELPER LOGIC
+  in `fallback-recovery.ts` (reset parsing inline; review correction round 20:
+  no cooldown pipeline or wrapper — `rate-limit-trip`'s stage calls the
+  helper directly); 2) everything else
   continues to compile unchanged (same exports); 3) land before the
   `limit-error-assess` apply, which consumes the helper.
 - **tests.** Existing `fallback-recovery.test.ts` is the parity proof
