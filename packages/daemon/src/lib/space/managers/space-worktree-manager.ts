@@ -11,7 +11,7 @@ import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
 import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
-import { worktreeDeclaresLfsAttributes } from '../../worktree-lfs.ts';
+import { indexContainsLfsPointer, worktreeDeclaresLfsAttributes } from '../../worktree-lfs.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -234,15 +234,19 @@ export class SpaceWorktreeManager {
       });
       tracked = stdout;
     } catch (err) {
-      const declaresLfs = await worktreeDeclaresLfsAttributes(worktreePath, async () => {
-        const { stdout } = await execFileAsync('git', ['ls-files', '-z'], {
-          cwd: worktreePath,
-          encoding: 'utf8',
-          timeout: 60_000,
-          env: buildGitCommandEnv(),
-        });
-        return stdout;
-      });
+      const declaresLfs = await worktreeDeclaresLfsAttributes(
+        worktreePath,
+        async () => {
+          const { stdout } = await execFileAsync('git', ['ls-files', '-z'], {
+            cwd: worktreePath,
+            encoding: 'utf8',
+            timeout: 60_000,
+            env: buildGitCommandEnv(),
+          });
+          return stdout;
+        },
+        () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv())
+      );
       if (declaresLfs) {
         throw new Error(
           `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${

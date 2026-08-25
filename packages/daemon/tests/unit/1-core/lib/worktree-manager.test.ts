@@ -68,6 +68,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
+const childProcessMocks = vi.hoisted(() => ({ execFile: vi.fn() }));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFile: passthrough(childProcessMocks.execFile, actual.execFile),
+  };
+});
+
 let existsSyncResults: Map<string, boolean>;
 const mkdirSyncSpy = fsOsMocks.mkdirSync;
 const writeFileSyncSpy = fsOsMocks.writeFileSync;
@@ -85,6 +95,7 @@ describe('WorktreeManager', () => {
     mockGitRaw.mockReset();
     mockGitRevparse.mockReset();
     mockGitBranch.mockReset();
+    childProcessMocks.execFile.mockReset();
 
     mockGitRaw.mockResolvedValue('');
     mockGitRevparse.mockResolvedValue('');
@@ -479,6 +490,10 @@ describe('WorktreeManager', () => {
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
       fsPromisesMocks.readFile.mockResolvedValue('# *.bin filter=lfs diff=lfs merge=lfs -text');
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(null, { stdout: '', stderr: '' })
+      );
       mockGitRaw.mockImplementation(async (args: string[]) => {
         if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
         if (args[0] === 'ls-files') return '.gitattributes';
@@ -491,6 +506,41 @@ describe('WorktreeManager', () => {
       });
 
       expect(result?.branch).toBe('session/session-123');
+    });
+
+    it('should fail worktree creation when index blobs carry the LFS pointer signature', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(null, { stdout: 'asset.bin', stderr: '' })
+      );
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return 'asset.bin';
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });
 
     it('should fail worktree creation when the LFS attribute file cannot be read', async () => {

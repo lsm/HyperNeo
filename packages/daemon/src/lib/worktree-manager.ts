@@ -2,7 +2,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { worktreeDeclaresLfsAttributes } from './worktree-lfs.ts';
+import { indexContainsLfsPointer, worktreeDeclaresLfsAttributes } from './worktree-lfs.ts';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -51,7 +51,13 @@ async function hydrateLfsObjects(git: SimpleGit, worktreePath: string): Promise<
   try {
     tracked = await git.raw(['lfs', 'ls-files']);
   } catch (err) {
-    if (await worktreeDeclaresLfsAttributes(worktreePath, () => git.raw(['ls-files', '-z']))) {
+    if (
+      await worktreeDeclaresLfsAttributes(
+        worktreePath,
+        () => git.raw(['ls-files', '-z']),
+        () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv())
+      )
+    ) {
       throw new Error(
         `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${
           err instanceof Error ? err.message : String(err)

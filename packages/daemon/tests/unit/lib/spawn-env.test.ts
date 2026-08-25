@@ -20,6 +20,7 @@ const SOURCE: Record<string, string> = {
   SHELL: '/bin/zsh',
   TMPDIR: '/var/folders/ab/',
   LANG: 'en_US.UTF-8',
+  LC_CTYPE: 'en_US.UTF-8',
   DISPLAY: ':0',
   WAYLAND_DISPLAY: 'wayland-0',
   XDG_RUNTIME_DIR: '/run/user/1000',
@@ -33,12 +34,15 @@ const SOURCE: Record<string, string> = {
   GIT_SSL_VERSION: 'tlsv1.3',
   GIT_SSL_CIPHER_LIST: 'ECDHE-RSA-AES256-GCM-SHA384',
   GIT_CONFIG_NOSYSTEM: '1',
+  GIT_ATTR_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
+  EMAIL: 'agent@example.com',
   GIT_ALLOW_PROTOCOL: 'file:https',
   GIT_PROXY_SSL_CAINFO: '/tmp/proxy-ca.pem',
   GIT_PROXY_SSL_CERT: '/tmp/proxy-cert.pem',
   GIT_PROXY_SSL_KEY: '/tmp/proxy-key.pem',
   GIT_PROXY_SSL_CERT_PASSWORD_PROTECTED: '1',
+  GIT_HTTP_PROXY_AUTHMETHOD: 'basic',
   GIT_EXEC_PATH: '/usr/libexec/git-core',
   ANTHROPIC_API_KEY: 'anthropic-secret',
   CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
@@ -63,6 +67,7 @@ describe('buildOsBaselineEnv', () => {
     expect(env.PATH).toBe(SOURCE.PATH);
     expect(env.HOME).toBe(SOURCE.HOME);
     expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
+    expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
@@ -101,6 +106,7 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
+    expect(env.GIT_ATTR_NOSYSTEM).toBe('1');
     expect(env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
@@ -128,6 +134,7 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_PROXY_SSL_CERT).toBe(SOURCE.GIT_PROXY_SSL_CERT);
     expect(env.GIT_PROXY_SSL_KEY).toBe(SOURCE.GIT_PROXY_SSL_KEY);
     expect(env.GIT_PROXY_SSL_CERT_PASSWORD_PROTECTED).toBe('1');
+    expect(env.GIT_HTTP_PROXY_AUTHMETHOD).toBe('basic');
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
@@ -211,6 +218,7 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_AUTHOR_EMAIL).toBe('agent@example.com');
     expect(env.GIT_COMMITTER_NAME).toBe('Agent Bot');
     expect(env.GIT_COMMITTER_EMAIL).toBe('agent@example.com');
+    expect(env.EMAIL).toBe('agent@example.com');
     expect(env.GIT_EXEC_PATH).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
