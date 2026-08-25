@@ -125,7 +125,7 @@ function normalizePullRequestWebhook(
 ): GitHubEvent | null {
   const { action, pull_request, repository, sender } = payload;
 
-  if (!['opened', 'synchronize', 'closed'].includes(action)) {
+  if (!['opened', 'synchronize', 'closed', 'edited'].includes(action)) {
     return null;
   }
 

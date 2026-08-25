@@ -153,7 +153,7 @@ import {
   resolveQuiesceSourceNodeId,
   selectSiblingsToQuiesce,
 } from './run-completion-settlement.ts';
-import { resolveTopicFromInterest } from './parse-pr-url.ts';
+import { parsePrUrl, resolveTopicFromInterest } from './parse-pr-url.ts';
 import {
   decideSpawnAdmission,
   selectPromotablePendingExecutions,
@@ -1048,6 +1048,8 @@ export class SpaceRuntime {
       canonicalTask.status !== 'archived' &&
       canonicalTask.status !== 'cancelled';
 
+    const primaryLinkUrl = this.config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
+    const allowedHosts = new Set(['github.com', process.env.GH_HOST ?? '']);
     const declared: SubscriptionDeclaredInterest[] = [];
     if (workflow) {
       for (const node of workflow.nodes) {
@@ -1060,12 +1062,15 @@ export class SpaceRuntime {
         }
         for (const agent of agents) {
           for (const interest of agent.eventInterests ?? []) {
-            const topic = typeof interest.topic === 'string' ? interest.topic : null;
+            const declaredTopic =
+              typeof interest.topic === 'string'
+                ? interest.topic
+                : resolveTopicFromInterest(interest, primaryLinkUrl, allowedHosts);
             declared.push({
               nodeId: node.id,
               nodeName: node.name,
               agentName: agent.name,
-              topic,
+              topic: declaredTopic,
               topicFrom: interest.topicFrom ?? null,
               label: interest.label ?? null,
               active: false,
@@ -4113,6 +4118,21 @@ export class SpaceRuntime {
     }
 
     this.storeWorkflowChannels(run.id, workflow.channels ?? []);
+
+    if (description && this.config.artifactRepo) {
+      const parsed = parsePrUrl(description);
+      if (parsed) {
+        this.config.artifactRepo.upsert({
+          id: crypto.randomUUID(),
+          runId: run.id,
+          nodeId: startNode.id,
+          artifactType: 'link',
+          artifactKey: 'pr',
+          data: { kind: 'pr', url: description.trim() },
+        });
+        this.rebuildRunInterests(run.id);
+      }
+    }
 
     return { run, tasks: canonicalTask ? [canonicalTask] : [] };
   }

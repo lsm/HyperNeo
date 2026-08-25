@@ -545,6 +545,16 @@ export class SpaceWorkflowManager {
             `${interestLoc}.topicFrom.pattern: must be a non-empty string with no surrounding whitespace`
           );
         }
+        const substituted = topicFrom.pattern
+          .replaceAll('{owner}', 'dummy')
+          .replaceAll('{repo}', 'dummy')
+          .replaceAll('{number}', '1');
+        const validation = validateGlobPattern(substituted);
+        if (!validation.valid) {
+          throw new WorkflowValidationError(
+            `${interestLoc}.topicFrom.pattern: ${validation.reason ?? 'invalid external-event topic pattern after substitution'}`
+          );
+        }
       }
     }
   }
