@@ -692,11 +692,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     inactivityConfigRepo: spaceAgentInactivityConfigRepo,
     inactivityClaimRepo: spaceAgentInactivityClaimRepo,
     inactivityRunNow: (spaceId, agentId) => {
+      const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
+      const db = deps.db.getDatabase();
+      const anchorRow =
+        sessionId !== null && sessionId !== undefined
+          ? (db.prepare(`SELECT last_active_at FROM sessions WHERE id = ?`).get(sessionId) as {
+              last_active_at?: string | null;
+            } | null)
+          : null;
+      const activityBaseline = toEpochMs(anchorRow?.last_active_at) ?? undefined;
       let task: Promise<void>;
       const run = async () => {
         try {
-          const sessionId = longHorizonAgentRepo.getById(agentId)?.sessionId;
-          const db = deps.db.getDatabase();
           const deadline = Date.now() + 120_000;
           while (!inactivityRunNowCancelled && Date.now() < deadline) {
             if (sessionId !== null && sessionId !== undefined) {
@@ -728,7 +735,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             });
           }
           if (!inactivityRunNowCancelled) {
-            await spaceAgentInactivityWatchdog.scanAgent(spaceId, agentId).catch(() => {});
+            await spaceAgentInactivityWatchdog
+              .scanAgent(spaceId, agentId, activityBaseline)
+              .catch(() => {});
           }
         } finally {
           pendingInactivityRunNow.delete(task);

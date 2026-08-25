@@ -84,18 +84,20 @@ export class SpaceAgentInactivityWatchdogService {
     }
   }
 
-  async scanAgent(spaceId: string, agentId: string): Promise<void> {
+  async scanAgent(spaceId: string, agentId: string, activityBaseline?: number): Promise<void> {
     const config = this.deps.configRepo.getByAgent(spaceId, agentId);
     if (config === null || !config.enabled) return;
     const agent = this.deps.agentRepo.getById(agentId);
     if (agent === null || agent.spaceId !== spaceId) return;
     const session = this.deps.getSessionSnapshot(spaceId, agentId);
     if (session === null) return;
-    const lastActivityAt = resolveLastActivityAt({
-      latestConsumedMessageAt: session.latestConsumedMessageAt,
-      sessionCreatedAt: session.sessionCreatedAt,
-      agentCreatedAt: agent.createdAt,
-    });
+    const lastActivityAt =
+      activityBaseline ??
+      resolveLastActivityAt({
+        latestConsumedMessageAt: session.latestConsumedMessageAt,
+        sessionCreatedAt: session.sessionCreatedAt,
+        agentCreatedAt: agent.createdAt,
+      });
     if (lastActivityAt === null) return;
     const space = await this.deps.spaceManager.getSpace(spaceId);
     let claim = this.deps.claimRepo.getByAgent(spaceId, agentId);
