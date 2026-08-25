@@ -1,19 +1,13 @@
-import type { ModelInfo, Provider, ProviderInfo, Session } from '@hyperneo/shared';
+import type { Provider, ProviderInfo, Session } from '@hyperneo/shared';
 import type {
   ProviderInfo as NewProviderInfo,
-  ProviderSessionConfig,
   ProviderSdkConfig,
-  Provider as RegisteredProvider,
+  ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
-import {
-  getCuratedModelIds,
-  getProviderCatalogModels,
-  isCuratedOutModel,
-  resolveVisibleCanonicalModelId,
-} from './model-service.js';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { providerSessionConfigForSession } from './providers/session-config.js';
+import { selectTitleGenerationModel } from './title-model-selection.js';
 
 function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
   return {
@@ -71,7 +65,7 @@ function mergeOriginalEnvVars(...originals: OriginalEnvVars[]): OriginalEnvVars 
   const merged: OriginalEnvVars = {};
   for (const original of originals) {
     for (const [key, value] of Object.entries(original)) {
-      if (!Object.prototype.hasOwnProperty.call(merged, key)) {
+      if (!Object.hasOwn(merged, key)) {
         Reflect.set(merged, key, value);
       }
     }
@@ -256,73 +250,6 @@ export class ProviderService {
     return models[0]?.id || 'default';
   }
 
-  private async getProviderCatalogModels(
-    providerId: string,
-    provider: RegisteredProvider
-  ): Promise<ModelInfo[]> {
-    return getProviderCatalogModels(providerId, provider);
-  }
-
-  private async resolveVisibleCuratedModel(
-    providerId: string,
-    provider: RegisteredProvider,
-    ...candidates: Array<string | undefined>
-  ): Promise<string | undefined> {
-    const registry = this.getRegistry();
-    if (registry.getCuratedModels(providerId) === undefined) {
-      const preferred = candidates.find((candidate) => candidate !== undefined);
-      if (preferred !== undefined) {
-        return preferred;
-      }
-      const catalogModels = await this.getProviderCatalogModels(providerId, provider);
-      return catalogModels[0]?.id;
-    }
-    const curatedNow = registry.getCuratedModels(providerId);
-    if (curatedNow !== undefined && curatedNow.length === 0) {
-      return undefined;
-    }
-    const catalogModels = await this.getProviderCatalogModels(providerId, provider);
-    const catalogIds = new Set(catalogModels.map((model) => model.id));
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      const canonicalId =
-        (await resolveVisibleCanonicalModelId(candidate, providerId, 'global', catalogModels)) ??
-        candidate;
-      const curatedEntries = registry.getCuratedModels(providerId);
-      if (curatedEntries === undefined) {
-        return canonicalId;
-      }
-      let allowed = getCuratedModelIds(providerId)?.has(canonicalId) ?? false;
-      if (!allowed) {
-        for (const entry of curatedEntries) {
-          const entryCanonical =
-            (await resolveVisibleCanonicalModelId(entry.id, providerId, 'global', catalogModels)) ??
-            entry.id;
-          if (entryCanonical === canonicalId) {
-            allowed = true;
-            break;
-          }
-        }
-      }
-      if (!allowed) continue;
-      if (!catalogIds.has(canonicalId)) continue;
-      return canonicalId;
-    }
-    const curatedAfter = registry.getCuratedModels(providerId);
-    if (curatedAfter === undefined) {
-      return catalogModels[0]?.id;
-    }
-    for (const entry of curatedAfter) {
-      const canonical =
-        (await resolveVisibleCanonicalModelId(entry.id, providerId, 'global', catalogModels)) ??
-        entry.id;
-      if (catalogIds.has(canonical)) {
-        return canonical;
-      }
-    }
-    return undefined;
-  }
-
   async getTitleGenerationModels(
     providerId: string,
     sessionModelId: string
@@ -330,41 +257,19 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     const titleOverride = provider?.getTitleGenerationModel?.();
-    let providerModelId = titleOverride ?? sessionModelId;
-    if (provider) {
-      const resolved = await this.resolveVisibleCuratedModel(
-        providerId,
-        provider,
-        titleOverride,
-        sessionModelId
-      );
-      if (!resolved) return null;
-      providerModelId = resolved;
-    }
-    let sdkModelId = provider?.translateModelIdForSdk?.(providerModelId) ?? providerModelId;
-    await this.ensureProviderBridges(provider, providerModelId);
-    try {
-      const sdkConfig = provider?.buildSdkConfig(providerModelId);
-      sdkModelId = sdkConfig?.envVars.ANTHROPIC_MODEL ?? sdkModelId;
-    } catch {
-      if (provider) {
-        const catalogModels = await this.getProviderCatalogModels(providerId, provider).catch(
-          () => []
-        );
-        for (const model of catalogModels) {
-          if (isCuratedOutModel(model.id, providerId)) continue;
-          try {
-            const sdkConfig = provider.buildSdkConfig(model.id);
-            providerModelId = model.id;
-            sdkModelId =
-              sdkConfig?.envVars.ANTHROPIC_MODEL ??
-              provider.translateModelIdForSdk?.(model.id) ??
-              model.id;
-            break;
-          } catch {}
-        }
-      }
-    }
+    const result = await selectTitleGenerationModel({
+      providerId,
+      provider,
+      candidates: [titleOverride, sessionModelId],
+      ensureBuildable: true,
+      ensureBridges: (p, modelId) => this.ensureProviderBridges(p, modelId),
+    });
+    if (result.status === 'unavailable') return null;
+    const providerModelId = result.providerModelId ?? titleOverride ?? sessionModelId;
+    const sdkModelId =
+      result.sdkConfig?.envVars.ANTHROPIC_MODEL ??
+      provider?.translateModelIdForSdk?.(providerModelId) ??
+      providerModelId;
     return {
       providerModelId,
       sdkModelId,
@@ -375,13 +280,15 @@ export class ProviderService {
     const registry = await this.getReadyRegistry();
     const provider = registry.get(providerId);
     if (!provider) return null;
-    const preferred = await this.resolveVisibleCuratedModel(
+    const result = await selectTitleGenerationModel({
       providerId,
       provider,
-      provider.getTitleGenerationModel?.(),
-      provider.getModelForTier?.('haiku')
-    );
-    return preferred ?? null;
+      candidates: [provider.getTitleGenerationModel?.(), provider.getModelForTier?.('haiku')],
+      ensureBuildable: false,
+      ensureBridges: () => Promise.resolve(),
+    });
+    if (result.status !== 'selected' || !result.providerModelId) return null;
+    return result.providerModelId;
   }
 
   async getTitleGenerationModel(
@@ -410,12 +317,14 @@ export class ProviderService {
 
     const titleOverride = provider.getTitleGenerationModel?.();
     const tierFallback = provider.getModelForTier('haiku');
-    let modelId = await this.resolveVisibleCuratedModel(
+    const result = await selectTitleGenerationModel({
       providerId,
       provider,
-      titleOverride,
-      tierFallback
-    );
+      candidates: [titleOverride, tierFallback],
+      ensureBuildable: true,
+      ensureBridges: (p, modelId) => this.ensureProviderBridges(p, modelId),
+    });
+    let modelId = result.providerModelId;
     if (!modelId) {
       if (registry.getCuratedModels(providerId) !== undefined) return null;
       modelId = 'default';
@@ -423,34 +332,15 @@ export class ProviderService {
 
     let baseUrl = 'https://api.anthropic.com';
     let apiVersion = 'v1';
-    await this.ensureProviderBridges(provider, modelId);
-    try {
-      const sdkConfig = provider.buildSdkConfig(modelId);
-      modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? modelId;
-      baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
-      apiVersion = sdkConfig.apiVersion || apiVersion;
-    } catch (err) {
-      const catalogModels = await this.getProviderCatalogModels(providerId, provider).catch(
-        () => []
+    if (result.sdkConfig) {
+      modelId = result.sdkConfig.envVars.ANTHROPIC_MODEL ?? modelId;
+      baseUrl = (result.sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
+      apiVersion = result.sdkConfig.apiVersion || apiVersion;
+    } else {
+      this.logger.warn(
+        `[ProviderService] getTitleGenerationConfig: buildSdkConfig failed for provider` +
+          ` '${providerId}' — falling back to Anthropic defaults. Cause: ${result.buildError}`
       );
-      let healed = false;
-      for (const candidate of catalogModels) {
-        if (isCuratedOutModel(candidate.id, providerId)) continue;
-        try {
-          const sdkConfig = provider.buildSdkConfig(candidate.id);
-          modelId = sdkConfig.envVars.ANTHROPIC_MODEL ?? candidate.id;
-          baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
-          apiVersion = sdkConfig.apiVersion || apiVersion;
-          healed = true;
-          break;
-        } catch {}
-      }
-      if (!healed) {
-        this.logger.warn(
-          `[ProviderService] getTitleGenerationConfig: buildSdkConfig failed for provider` +
-            ` '${providerId}' — falling back to Anthropic defaults. Cause: ${err}`
-        );
-      }
     }
 
     return { modelId, baseUrl, apiVersion };
@@ -834,65 +724,63 @@ export class ProviderService {
       return;
     }
 
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_API_KEY')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_API_KEY')) {
       if (original.ANTHROPIC_API_KEY !== undefined) {
         process.env.ANTHROPIC_API_KEY = original.ANTHROPIC_API_KEY;
       } else {
         delete process.env.ANTHROPIC_API_KEY;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_AUTH_TOKEN')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_AUTH_TOKEN')) {
       if (original.ANTHROPIC_AUTH_TOKEN !== undefined) {
         process.env.ANTHROPIC_AUTH_TOKEN = original.ANTHROPIC_AUTH_TOKEN;
       } else {
         delete process.env.ANTHROPIC_AUTH_TOKEN;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_OAUTH_TOKEN')) {
+    if (Object.hasOwn(original, 'CLAUDE_CODE_OAUTH_TOKEN')) {
       if (original.CLAUDE_CODE_OAUTH_TOKEN !== undefined) {
         process.env.CLAUDE_CODE_OAUTH_TOKEN = original.CLAUDE_CODE_OAUTH_TOKEN;
       } else {
         delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_BASE_URL')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_BASE_URL')) {
       if (original.ANTHROPIC_BASE_URL !== undefined) {
         process.env.ANTHROPIC_BASE_URL = original.ANTHROPIC_BASE_URL;
       } else {
         delete process.env.ANTHROPIC_BASE_URL;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_MODEL')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_MODEL')) {
       if (original.ANTHROPIC_MODEL !== undefined) {
         process.env.ANTHROPIC_MODEL = original.ANTHROPIC_MODEL;
       } else {
         delete process.env.ANTHROPIC_MODEL;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_SUBAGENT_MODEL')) {
+    if (Object.hasOwn(original, 'CLAUDE_CODE_SUBAGENT_MODEL')) {
       if (original.CLAUDE_CODE_SUBAGENT_MODEL !== undefined) {
         process.env.CLAUDE_CODE_SUBAGENT_MODEL = original.CLAUDE_CODE_SUBAGENT_MODEL;
       } else {
         delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ENABLE_TOOL_SEARCH')) {
+    if (Object.hasOwn(original, 'ENABLE_TOOL_SEARCH')) {
       if (original.ENABLE_TOOL_SEARCH !== undefined) {
         process.env.ENABLE_TOOL_SEARCH = original.ENABLE_TOOL_SEARCH;
       } else {
         delete process.env.ENABLE_TOOL_SEARCH;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'API_TIMEOUT_MS')) {
+    if (Object.hasOwn(original, 'API_TIMEOUT_MS')) {
       if (original.API_TIMEOUT_MS !== undefined) {
         process.env.API_TIMEOUT_MS = original.API_TIMEOUT_MS;
       } else {
         delete process.env.API_TIMEOUT_MS;
       }
     }
-    if (
-      Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
-    ) {
+    if (Object.hasOwn(original, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) {
       if (original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
           original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
@@ -900,56 +788,56 @@ export class ProviderService {
         delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')) {
+    if (Object.hasOwn(original, 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')) {
       if (original.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined) {
         process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = original.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       } else {
         delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_SONNET_MODEL')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_DEFAULT_SONNET_MODEL')) {
       if (original.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
         process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = original.ANTHROPIC_DEFAULT_SONNET_MODEL;
       } else {
         delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_HAIKU_MODEL')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_DEFAULT_HAIKU_MODEL')) {
       if (original.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
         process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = original.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       } else {
         delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_OPUS_MODEL')) {
+    if (Object.hasOwn(original, 'ANTHROPIC_DEFAULT_OPUS_MODEL')) {
       if (original.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
         process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = original.ANTHROPIC_DEFAULT_OPUS_MODEL;
       } else {
         delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_AGENT_SDK_CLIENT_APP')) {
+    if (Object.hasOwn(original, 'CLAUDE_AGENT_SDK_CLIENT_APP')) {
       if (original.CLAUDE_AGENT_SDK_CLIENT_APP !== undefined) {
         process.env.CLAUDE_AGENT_SDK_CLIENT_APP = original.CLAUDE_AGENT_SDK_CLIENT_APP;
       } else {
         delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'PORT')) {
+    if (Object.hasOwn(original, 'PORT')) {
       if (original.PORT !== undefined) {
         process.env.PORT = original.PORT;
       } else {
         delete process.env.PORT;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'HYPERNEO_PORT')) {
+    if (Object.hasOwn(original, 'HYPERNEO_PORT')) {
       if (original.HYPERNEO_PORT !== undefined) {
         process.env.HYPERNEO_PORT = original.HYPERNEO_PORT;
       } else {
         delete process.env.HYPERNEO_PORT;
       }
     }
-    if (Object.prototype.hasOwnProperty.call(original, 'NEOKAI_PORT')) {
+    if (Object.hasOwn(original, 'NEOKAI_PORT')) {
       if (original.NEOKAI_PORT !== undefined) {
         process.env.NEOKAI_PORT = original.NEOKAI_PORT;
       } else {

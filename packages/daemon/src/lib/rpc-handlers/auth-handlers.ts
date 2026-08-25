@@ -17,6 +17,7 @@ import {
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry.ts';
+import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import {
@@ -144,7 +145,6 @@ export function setupAuthHandlers(
       try {
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
-          const { bumpProviderCatalogEpoch } = await import('../model-service.js');
           bumpProviderCatalogEpoch(providerId);
           if (credentials.type === 'oauth') {
             await credentialManager?.storeOAuthTokens(providerId, credentials);
@@ -193,7 +193,6 @@ export function setupAuthHandlers(
       }
 
       try {
-        const { bumpProviderCatalogEpoch } = await import('../model-service.js');
         bumpProviderCatalogEpoch(providerId);
         const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
           'provider-credential-manager.hasEnvironmentCredentials',
@@ -293,7 +292,6 @@ export function setupAuthHandlers(
       }
 
       try {
-        const { bumpProviderCatalogEpoch } = await import('../model-service.js');
         bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
         if (!refreshed) {

@@ -1,26 +1,26 @@
 import type { ModelInfo, Session } from '@hyperneo/shared';
-import type { QueryLike } from './agent/query-like.ts';
-import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
-import { getProviderRegistry } from './providers/registry.js';
-import {
-  clearProviderFailure,
-  classifyProviderFailure,
-  getAllProviderFailures,
-  getProviderFailure,
-  recordClassifiedProviderFailure,
-  removeProviderFailure,
-} from './providers/provider-failure-store.js';
 import type {
   Provider,
   ProviderFailureErrorKind,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
+import type { QueryLike } from './agent/query-like.ts';
+import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
+import { DeepSeekProvider } from './providers/deepseek-provider.js';
+import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
-import { DeepSeekProvider } from './providers/deepseek-provider.js';
 import { MinimaxProvider } from './providers/minimax-provider.js';
-import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
+import {
+  classifyProviderFailure,
+  clearProviderFailure,
+  getAllProviderFailures,
+  getProviderFailure,
+  recordClassifiedProviderFailure,
+  removeProviderFailure,
+} from './providers/provider-failure-store.js';
+import { getProviderRegistry } from './providers/registry.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -543,6 +543,7 @@ async function loadProviderCatalogModels(
     }
     const epochAtFetch = providerCatalogEpoch;
     try {
+      provider.clearModelCache?.();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const fetched = await Promise.race([
         provider.getModels(),
