@@ -15,6 +15,11 @@ import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
 import type { IdleOwnerScope } from './processing-state-manager.ts';
 import {
+  createQueryRestartCtx,
+  runQueryRestartPipeline,
+  type QueryRestartHost,
+} from './query-restart-pipeline.ts';
+import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
   migrateSDKSessionFile,
@@ -286,56 +291,59 @@ export class QueryLifecycleManager {
   }
 
   async restart(options?: { idleOwner?: IdleOwnerScope }): Promise<void> {
-    const { session, internalEventBus, messageHandler } = this.ctx;
-    let reachedSuppressedIdle = false;
-
+    const idleOwner = options?.idleOwner;
+    const ctx = createQueryRestartCtx(this.buildQueryRestartHost(idleOwner), idleOwner);
     try {
-      messageHandler.resetCircuitBreaker();
-      this.ctx.resetTaskNotificationRequery?.();
-      await internalEventBus.publish('session.errorClear', { sessionId: session.id });
-      if (!this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
-        this.logger.info('Restart abandoned: a successor delivery owns the session.');
-        throw new IdleRestartSupersededError();
-      }
-
-      await this.stop();
-      if (!this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
-        this.logger.info('Restart abandoned: a successor delivery owns the session.');
-        throw new IdleRestartSupersededError();
-      }
-
-      await this.ctx.stateManager.setIdle({
-        suppressDeliveryWaiters: true,
-        owner: options?.idleOwner,
-      });
-      reachedSuppressedIdle = true;
-
-      if (session.config.provider !== 'acp' && session.sdkSessionId) {
-        const isValid = this.validateAndRepairWithMigration();
-        if (!isValid) {
-          this.logger.warn(
-            `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
-              'Emitting sdk_resume_choice for user, but starting query anyway.'
-          );
-          await this.emitSdkResumeChoiceMessage();
-        }
-      }
-
-      await this.ctx.clearModelsCache();
-      if (!this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
-        this.logger.info('Restart abandoned: a successor delivery owns the session.');
-        throw new IdleRestartSupersededError();
-      }
-
-      await this.ctx.startStreamingQuery();
+      await runQueryRestartPipeline(ctx);
     } catch (error) {
-      if (error instanceof IdleRestartSupersededError) throw error;
-      if (reachedSuppressedIdle && this.ctx.stateManager.isIdleOwnerCurrent(options?.idleOwner)) {
+      if (ctx.reachedSuppressedIdle && this.ctx.stateManager.isIdleOwnerCurrent(idleOwner)) {
         this.ctx.stateManager.releaseIdleWaiters();
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Query restart failed: ${errorMessage}`);
     }
+    if (ctx.superseded) {
+      this.logger.info('Restart abandoned: a successor delivery owns the session.');
+      throw new IdleRestartSupersededError();
+    }
+  }
+
+  private buildQueryRestartHost(idleOwner?: IdleOwnerScope): QueryRestartHost {
+    return {
+      isIdleOwnerCurrent: () => this.ctx.stateManager.isIdleOwnerCurrent(idleOwner),
+      resetTurnGuards: () => {
+        this.ctx.messageHandler.resetCircuitBreaker();
+        this.ctx.resetTaskNotificationRequery?.();
+      },
+      publishErrorClear: async () => {
+        await this.ctx.internalEventBus.publish('session.errorClear', {
+          sessionId: this.ctx.session.id,
+        });
+      },
+      stopQuery: () => this.stop(),
+      settleSuppressedIdle: (owner?: IdleOwnerScope) =>
+        this.ctx.stateManager.setIdle({
+          suppressDeliveryWaiters: true,
+          owner,
+        }),
+      repairSessionFile: async () => {
+        const { session } = this.ctx;
+        if (session.config.provider !== 'acp' && session.sdkSessionId) {
+          const isValid = this.validateAndRepairWithMigration();
+          if (!isValid) {
+            this.logger.warn(
+              `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
+                'Emitting sdk_resume_choice for user, but starting query anyway.'
+            );
+            await this.emitSdkResumeChoiceMessage();
+          }
+        }
+      },
+      clearModelsCacheState: () => this.ctx.clearModelsCache(),
+      startStreaming: async () => {
+        await this.ctx.startStreamingQuery();
+      },
+    };
   }
 
   async reset(options?: { restartAfter?: boolean }): Promise<{ success: boolean; error?: string }> {

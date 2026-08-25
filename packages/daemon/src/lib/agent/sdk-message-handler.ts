@@ -947,7 +947,7 @@ export class SDKMessageHandler {
         const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
         if (terminalFence) {
           await stateManager.setIdle({ fence: terminalFence });
-        } else {
+        } else if (!this.isInvocationStale(invocationGeneration)) {
           await stateManager.setIdle();
         }
       }
@@ -1279,6 +1279,14 @@ export class SDKMessageHandler {
     return fence;
   }
 
+  private isInvocationStale(invocationGeneration: number | null): boolean {
+    return (
+      invocationGeneration != null &&
+      this.ctx.getQueryGeneration != null &&
+      this.ctx.getQueryGeneration() !== invocationGeneration
+    );
+  }
+
   private async finishTurn(
     allowQueueReplay = true,
     invocationGeneration: number | null = null
@@ -1298,7 +1306,7 @@ export class SDKMessageHandler {
     const terminalFence = this.consumePendingTerminalFence(invocationGeneration);
     if (terminalFence) {
       await stateManager.setIdle({ fence: terminalFence });
-    } else {
+    } else if (!this.isInvocationStale(invocationGeneration)) {
       await stateManager.setIdle();
     }
 
@@ -1330,7 +1338,7 @@ export class SDKMessageHandler {
             suppressIdleCallback: true,
             fence: terminalFence,
           });
-        } else {
+        } else if (!this.isInvocationStale(invocationGeneration)) {
           await this.ctx.stateManager.setIdle({
             suppressDeliveryWaiters: true,
             suppressIdlePublish: true,
