@@ -157,6 +157,7 @@ interface Harness {
   jobs: EnqueuedJob[];
   metrics: ExternalEventQueueMetrics;
   memoryQueue: Array<{ messageId: string; content: unknown }>;
+  setLimitedParentTask(value: boolean): void;
   setFailJobEnqueue(value: boolean): void;
   setProcessingStatus(status: string): void;
   setPublishSideEffect(fn: ((payload: Record<string, unknown>) => void) | null): void;
@@ -171,6 +172,7 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
   const memoryQueue: Array<{ messageId: string; content: unknown }> = [];
   let processingStatus = processingStatusArg;
   let failJobEnqueue = false;
+  let limitedParentTask = false;
   const eventPayloads = new Map<string, Record<string, unknown>>();
   let publishSideEffect: ((payload: Record<string, unknown>) => void) | null = null;
 
@@ -249,7 +251,7 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     },
     workflowRunRepo: { getRun: () => ({ workflowId: 'wf-steer' }) },
     taskRepo: {
-      getTask: () => null,
+      getTask: () => (limitedParentTask ? { status: 'rate_limited' } : null),
       listByWorkflowRunIncludingArchived: () => [],
     },
     spaceRuntimeService: { queueHealthMetrics: metrics },
@@ -281,6 +283,9 @@ function makeHarness(processingStatusArg = 'processing'): Harness {
     jobs,
     metrics,
     memoryQueue,
+    setLimitedParentTask: (value: boolean) => {
+      limitedParentTask = value;
+    },
     setFailJobEnqueue: (value: boolean) => {
       failJobEnqueue = value;
     },
@@ -611,6 +616,42 @@ describe('TaskAgentManager direct-inject tier mid-turn steer', () => {
     await sleep(DEBOUNCE_MS + 40);
     expect(steerRows(harness.rows)).toHaveLength(2);
     expect(harness.metrics.getCounters().directSteerEnqueued).toBe(2);
+  });
+
+  it('hydrates render fields for sparse direct events that already classify', async () => {
+    const harness = makeHarness();
+    harness.eventPayloads.set('sparse-chk', {
+      checkName: 'Rendered Check Name',
+    });
+    const essences = [
+      {
+        eventId: 'sparse-chk',
+        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
+      },
+    ];
+    await injectDefer(harness.manager, buildDeferredEventDigestEnvelopeText(essences as never));
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    const steers = steerRows(harness.rows);
+    expect(steers).toHaveLength(1);
+    expect(rowText(steers[0]!.message)).toContain('Rendered Check Name');
+  });
+
+  it('skips the steer when the parent task becomes limited while the burst is pending', async () => {
+    const harness = makeHarness();
+    const subSessions = (
+      harness.manager as unknown as { subSessions: Map<string, Map<string, AgentSession>> }
+    ).subSessions;
+    subSessions.set('task-limited', new Map([[SESSION_ID, {} as AgentSession]]));
+    await injectDefer(harness.manager, reviewVerdictText('CHANGES_REQUESTED', 'lim-evt'));
+    harness.setLimitedParentTask(true);
+
+    await sleep(DEBOUNCE_MS + 60);
+
+    expect(steerRows(harness.rows)).toHaveLength(0);
+    expect(steerJobs(harness.jobs)).toHaveLength(0);
+    expect(harness.metrics.getCounters().directSteerEnqueued).toBe(0);
   });
 
   it('bounds the buffer by expanded event count, not row count', async () => {

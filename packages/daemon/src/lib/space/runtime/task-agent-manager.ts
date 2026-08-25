@@ -3822,6 +3822,13 @@ export class TaskAgentManager {
       );
       return;
     }
+    if (this.parentTaskLimitedForSession(sessionId)) {
+      log.debug(
+        `TaskAgentManager: skipping direct steer for session ${sessionId} — parent task ` +
+          `became rate/usage-limited while the burst was pending; rows stay deferred`
+      );
+      return;
+    }
     const { messages: deferredRows } = this.config.db.getUserMessagesByStatus(
       sessionId,
       'deferred'
@@ -3893,11 +3900,13 @@ export class TaskAgentManager {
     const postPassengerSession = this.getTrackedSession(sessionId);
     if (
       !postPassengerSession ||
-      postPassengerSession.getProcessingState().status !== 'processing'
+      postPassengerSession.getProcessingState().status !== 'processing' ||
+      this.parentTaskLimitedForSession(sessionId)
     ) {
       log.debug(
         `TaskAgentManager: direct steer for session ${sessionId} aborted — session left ` +
-          `processing while preserving passengers; rows stay deferred`
+          `processing or the parent task became limited while preserving passengers; ` +
+          `rows stay deferred`
       );
       discardPassengerCopy();
       return;
@@ -3961,6 +3970,12 @@ export class TaskAgentManager {
         status: 'consumed',
       })
       .catch(() => {});
+  }
+
+  private parentTaskLimitedForSession(sessionId: string): boolean {
+    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
+    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
+    return parentTask ? isRateOrUsageLimited(parentTask.status) : false;
   }
 
   private getTrackedSession(sessionId: string): AgentSession | null {

@@ -66,11 +66,7 @@ export function enrichDirectSteerEssences(
   essences: ExternalEventEssenceEntry[],
   hydrate: (essence: ExternalEventEssenceEntry) => ExternalEventEssenceEntry
 ): ExternalEventEssenceEntry[] {
-  return essences.map((essence) => {
-    if (classifyExternalEventDirectSteer(essence) !== null) return essence;
-    if (!potentiallyDirect(essence)) return essence;
-    return hydrate(essence);
-  });
+  return essences.map((essence) => (potentiallyDirect(essence) ? hydrate(essence) : essence));
 }
 
 function decided<Ctx extends { decision: unknown }>(
