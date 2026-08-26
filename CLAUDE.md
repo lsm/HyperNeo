@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/model switching, file/git operations, MCP servers, checkpoints, and Space multi-agent workflows.
 
-- **Runtimes:** Bun 1.3.14 (pinned release runtime, root `package.json`) and Deno 2.9.x (supported alternative for the daemon; see `docs/supported-runtimes.md`)
+- **Runtimes:** Bun 1.4.0 (pinned release runtime, root `package.json`) and Deno 2.9.x (supported alternative for the daemon; see `docs/supported-runtimes.md`)
 - **Backend:** Hono, Claude Agent SDK, SQLite
 - **Frontend:** Preact + Signals + Vite + Tailwind; use Preact conventions, not React-specific APIs
 - **Transport:** custom MessageHub RPC/pub-sub protocol over WebSocket
@@ -18,7 +18,7 @@ HyperNeo is a browser UI for the Claude Agent SDK: multi-session chat, provider/
 - `packages/daemon` — backend, sessions, providers, persistence, Space orchestration
 - `packages/shared` — shared types and MessageHub protocol
 - `packages/messaging` — transport-independent messaging contracts
-- `packages/prompts` — agent-facing prompts authored as markdown; `bun run prompts:generate` emits the committed TS registry (`check:prompts-sync` guards freshness)
+- `packages/prompts` — agent-facing prompts authored as markdown; `src/mod.ts` imports every `.md` at runtime via `with { type: 'text' }` (supported by both Bun and Deno) — there is no generated registry and no sync step; the attribute is mandatory (Bun silently renders attribute-less `.md` imports to HTML)
 - `packages/web` — Preact frontend
 - `packages/ui` — component library
 - `packages/skills` — bundled skill plugins
