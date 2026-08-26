@@ -1006,6 +1006,125 @@ describe('ContextFetcher.fetch', () => {
     expect(info?.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
   });
 
+  it('returns null when the SDK usage call never resolves', async () => {
+    const getContextUsage = mock(() => new Promise(() => {}));
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('test-session');
+    const startedAt = Date.now();
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(15000);
+  }, 20000);
+
+  it('de-duplicates concurrent usage requests while one is pending', async () => {
+    let resolveUsage: (value: ReturnType<typeof baseResponse>) => void = () => {};
+    const getContextUsage = mock(
+      () =>
+        new Promise((resolve) => {
+          resolveUsage = resolve;
+        })
+    );
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('dedupe-session');
+    const first = fetcher.fetch(query);
+    const second = await fetcher.fetch(query);
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(second).toBeNull();
+
+    resolveUsage(baseResponse({ totalTokens: 1000, maxTokens: 200000, percentage: 0.5 }));
+    const info = await first;
+    expect(info?.totalUsed).toBe(1000);
+  });
+
+  it('issues a fresh usage request after a pending one goes stale', async () => {
+    const getContextUsage = mock(() => new Promise(() => {}));
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('stale-session');
+    fetcher.overrideUsageRequestStaleMsForTest(20);
+    void fetcher.fetch(query);
+
+    const deduped = await fetcher.fetch(query);
+    expect(deduped).toBeNull();
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const recovered = await fetcher.fetch(query);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(recovered).toBeNull();
+  }, 20000);
+
+  it('returns null when the SDK usage call throws synchronously', async () => {
+    const getContextUsage = mock(() => {
+      throw new Error('control channel closed');
+    });
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('sync-throw-session');
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+  });
+
+  it('keeps the daemon backstop off at percent 100 and treats a zero SDK threshold as unknown', () => {
+    const response = baseResponse({
+      totalTokens: 150000,
+      maxTokens: 200000,
+      percentage: 75,
+      autoCompactThreshold: 100000,
+      isAutoCompactEnabled: true,
+    });
+    const metadata = {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+    };
+
+    const atHundred = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 150000 },
+      { ...metadata, autoCompactPercent: 100 }
+    );
+    expect(atHundred.autoCompactThreshold).toBe(150000);
+    expect(atHundred.daemonBackstopActive).toBe(false);
+
+    const atHundredSdkDisabled = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 150000, isAutoCompactEnabled: false },
+      { ...metadata, autoCompactPercent: 100 }
+    );
+    expect(atHundredSdkDisabled.autoCompactThreshold).toBe(150000);
+    expect(atHundredSdkDisabled.daemonBackstopActive).toBe(false);
+
+    const zeroSdk = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 0 },
+      { ...metadata, autoCompactPercent: 80 }
+    );
+    expect(zeroSdk.autoCompactThreshold).toBe(160000);
+    expect(zeroSdk.daemonBackstopActive).toBe(true);
+
+    const zeroRawWithReserve = ContextFetcher.toContextInfo(
+      baseResponse({
+        totalTokens: 150000,
+        maxTokens: 200000,
+        percentage: 75,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: true,
+        categories: [
+          { name: 'Messages', tokens: 117000, color: 'blue' },
+          { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+          { name: 'Free space', tokens: 50000, color: 'gray-dim' },
+        ],
+      }),
+      { ...metadata, autoCompactPercent: 80 }
+    );
+    expect(zeroRawWithReserve.autoCompactThreshold).toBe(160000);
+    expect(zeroRawWithReserve.daemonBackstopActive).toBe(true);
+  });
+
   describe('capacity mismatch warning', () => {
     it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {
       const getContextUsage = mock(async () =>

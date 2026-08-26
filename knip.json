@@ -49,6 +49,7 @@
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/ack-selection.ts": ["exports"],
+    "packages/daemon/src/lib/agent/context-budget-decision.ts": ["exports"],
     "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
     "packages/daemon/src/lib/agent/message-queue-timeout-policy.ts": ["exports"],
