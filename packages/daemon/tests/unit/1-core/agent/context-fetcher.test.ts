@@ -1092,12 +1092,37 @@ describe('ContextFetcher.fetch', () => {
     expect(atHundred.autoCompactThreshold).toBe(150000);
     expect(atHundred.daemonBackstopActive).toBe(false);
 
+    const atHundredSdkDisabled = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 150000, isAutoCompactEnabled: false },
+      { ...metadata, autoCompactPercent: 100 }
+    );
+    expect(atHundredSdkDisabled.autoCompactThreshold).toBe(150000);
+    expect(atHundredSdkDisabled.daemonBackstopActive).toBe(false);
+
     const zeroSdk = ContextFetcher.toContextInfo(
       { ...response, autoCompactThreshold: 0 },
       { ...metadata, autoCompactPercent: 80 }
     );
     expect(zeroSdk.autoCompactThreshold).toBe(160000);
     expect(zeroSdk.daemonBackstopActive).toBe(true);
+
+    const zeroRawWithReserve = ContextFetcher.toContextInfo(
+      baseResponse({
+        totalTokens: 150000,
+        maxTokens: 200000,
+        percentage: 75,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: true,
+        categories: [
+          { name: 'Messages', tokens: 117000, color: 'blue' },
+          { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+          { name: 'Free space', tokens: 50000, color: 'gray-dim' },
+        ],
+      }),
+      { ...metadata, autoCompactPercent: 80 }
+    );
+    expect(zeroRawWithReserve.autoCompactThreshold).toBe(160000);
+    expect(zeroRawWithReserve.daemonBackstopActive).toBe(true);
   });
 
   describe('capacity mismatch warning', () => {

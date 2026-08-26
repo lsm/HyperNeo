@@ -371,16 +371,19 @@ export class ContextFetcher {
         modelMetadata?.autoCompactPercent
       );
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
+      const sdkThresholdKnown =
+        rawSdkAutoCompactThreshold === undefined
+          ? typeof autoCompactThreshold === 'number'
+          : rawSdkAutoCompactThreshold > 0;
       if (
+        resolvedAutoCompactPercent < AUTO_COMPACT_PERCENT_MAX &&
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
         budgetThreshold <= capacity &&
-        ((resolvedAutoCompactPercent > AUTO_COMPACT_PERCENT_DEFAULT &&
-          resolvedAutoCompactPercent < AUTO_COMPACT_PERCENT_MAX) ||
+        (resolvedAutoCompactPercent > AUTO_COMPACT_PERCENT_DEFAULT ||
           response.isAutoCompactEnabled === false ||
-          typeof autoCompactThreshold !== 'number' ||
-          autoCompactThreshold <= 0 ||
-          autoCompactThreshold > budgetThreshold)
+          !sdkThresholdKnown ||
+          (autoCompactThreshold ?? 0) > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;
         daemonBackstopActive = true;
