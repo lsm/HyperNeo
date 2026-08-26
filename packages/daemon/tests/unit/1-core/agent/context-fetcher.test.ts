@@ -213,6 +213,8 @@ describe('ContextFetcher.toContextInfo', () => {
     });
     expect(atFifty.totalCapacity).toBe(200000);
     expect(atFifty.autoCompactThreshold).toBe(100000);
+    expect(atFifty.daemonBackstopActive).toBe(true);
+    expect(atFifty.sdkAutoCompactThreshold).toBe(167000);
     expect(atFifty.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
 
     const atNinety = ContextFetcher.toContextInfo(response, {
@@ -223,6 +225,30 @@ describe('ContextFetcher.toContextInfo', () => {
     });
     expect(atNinety.autoCompactThreshold).toBe(180000);
     expect(atNinety.breakdown['Free space']).toEqual({ tokens: 90000, percent: 45 });
+  });
+
+  it('treats a non-positive SDK auto-compact threshold as unknown and arms the backstop', () => {
+    for (const autoCompactThreshold of [0, Number.NaN]) {
+      const response = baseResponse({
+        totalTokens: 90000,
+        maxTokens: 200000,
+        rawMaxTokens: 200000,
+        percentage: 45,
+        model: 'ce-model',
+        autoCompactThreshold,
+        isAutoCompactEnabled: true,
+        categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+      });
+
+      const info = ContextFetcher.toContextInfo(response, {
+        id: 'ce-model',
+        contextWindow: 200000,
+        provider: 'custom-endpoint:test',
+      });
+
+      expect(info.daemonBackstopActive).toBe(true);
+      expect(info.autoCompactThreshold).toBe(180000);
+    }
   });
 
   it('recalculates free space against the armed window when metadata capacity differs from SDK capacity', () => {
@@ -661,7 +687,9 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(262144);
     expect(info.totalUsed).toBe(90584);
     expect(info.breakdown['Reserved for Autocompact']).toBeUndefined();
-    expect(info.autoCompactThreshold).toBe(212144);
+    expect(info.autoCompactThreshold).toBe(235929);
+    expect(info.daemonBackstopActive).toBe(true);
+    expect(info.sdkAutoCompactThreshold).toBeFalsy();
 
     const nonFreeCategories = Object.entries(info.breakdown).filter(
       ([name]) => !name.toLowerCase().includes('free space')
@@ -672,10 +700,7 @@ describe('ContextFetcher.toContextInfo', () => {
       expect(data.tokens).toBeLessThanOrEqual(info.totalUsed);
     }
 
-    const reservedTokens = info.totalCapacity - (info.autoCompactThreshold ?? 0);
-    expect(info.breakdown['Free space'].tokens).toBe(
-      info.totalCapacity - info.totalUsed - reservedTokens
-    );
+    expect(info.breakdown['Free space'].tokens).toBe(121560);
   });
 
   it('keeps SDK free space when metadata matches SDK capacity', () => {
@@ -1017,6 +1042,20 @@ describe('ContextFetcher.fetch', () => {
     expect(info).toBeNull();
     expect(Date.now() - startedAt).toBeLessThan(15000);
   }, 20000);
+
+  it('returns null when getContextUsage throws synchronously', async () => {
+    const getContextUsage = mock(() => {
+      throw new Error('query closed');
+    });
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('throwing-session');
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+    const second = await fetcher.fetch(query);
+    expect(second).toBeNull();
+  });
 
   it('de-duplicates concurrent usage requests while one is pending', async () => {
     let resolveUsage: (value: ReturnType<typeof baseResponse>) => void = () => {};

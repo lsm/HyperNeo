@@ -96,7 +96,13 @@ export class ContextFetcher {
       return null;
     }
 
-    const request = query.getContextUsage();
+    let request: Promise<SDKControlGetContextUsageResponse>;
+    try {
+      request = query.getContextUsage();
+    } catch (error) {
+      this.logger.warn('query.getContextUsage() failed:', error);
+      return null;
+    }
     this.inFlightUsage = request;
     this.inFlightUsageStartedAt = Date.now();
     request
@@ -358,6 +364,10 @@ export class ContextFetcher {
       !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
     ) {
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
+      const rawThresholdKnown =
+        typeof rawSdkAutoCompactThreshold === 'number' &&
+        Number.isFinite(rawSdkAutoCompactThreshold) &&
+        rawSdkAutoCompactThreshold > 0;
       if (
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
@@ -365,8 +375,8 @@ export class ContextFetcher {
         (resolveAutoCompactPercent(modelMetadata?.autoCompactPercent) >
           AUTO_COMPACT_PERCENT_DEFAULT ||
           response.isAutoCompactEnabled === false ||
-          typeof autoCompactThreshold !== 'number' ||
-          autoCompactThreshold > budgetThreshold)
+          !rawThresholdKnown ||
+          rawSdkAutoCompactThreshold > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;
         daemonBackstopActive = true;
