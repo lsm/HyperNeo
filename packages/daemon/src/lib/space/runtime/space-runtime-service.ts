@@ -1862,7 +1862,7 @@ export class SpaceRuntimeService {
       additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
 
-    agentSession.mergeRuntimeMcpServers(additional);
+    await agentSession.mergeRuntimeMcpServers(additional);
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(

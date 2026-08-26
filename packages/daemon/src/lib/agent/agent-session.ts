@@ -134,7 +134,7 @@ import {
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
-import { resolveModelAlias } from '../model-service.ts';
+import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -523,7 +523,7 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
-      this.enforceRestoredContextBudget();
+      this.restoredBudgetEnforcement = this.enforceRestoredContextBudget();
     }
     this.stateManager.restoreFromDatabase();
 
@@ -756,9 +756,11 @@ export class AgentSession
     if (restoredState.status === 'waiting_for_input') return;
     this.initialPendingReplayScheduled = true;
     queueMicrotask(() => {
-      this.replayPendingMessagesForImmediateMode().catch((error) => {
-        this.logger.warn('Failed to replay pending messages after startup:', error);
-      });
+      this.restoredBudgetEnforcement
+        .then(() => this.replayPendingMessagesForImmediateMode())
+        .catch((error) => {
+          this.logger.warn('Failed to replay pending messages after startup:', error);
+        });
     });
   }
 
@@ -1208,7 +1210,9 @@ export class AgentSession
     return this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
   }
 
-  private enforceRestoredContextBudget(): void {
+  private restoredBudgetEnforcement: Promise<void> = Promise.resolve();
+
+  private async enforceRestoredContextBudget(): Promise<void> {
     const providerId = this.session.config.provider;
     if (!providerId || providerId === 'acp') {
       return;
@@ -1220,11 +1224,18 @@ export class AgentSession
     if (!restored || restored.totalUsed <= 0) {
       return;
     }
-    const configuredWindow = restored.totalCapacity > 0 ? restored.totalCapacity : undefined;
+    const modelInfo = await getSessionModelInfo(this.session);
+    const configuredWindow =
+      modelInfo?.contextWindow && modelInfo.contextWindow > 0
+        ? modelInfo.contextWindow
+        : restored.totalCapacity > 0
+          ? restored.totalCapacity
+          : undefined;
+    const autoCompactPercent = modelInfo?.autoCompactPercent ?? restored.autoCompactPercent;
     const decision = decideContextBudgetCompaction({
       totalUsed: restored.totalUsed,
       configuredWindow,
-      autoCompactPercent: restored.autoCompactPercent,
+      autoCompactPercent,
       sdkAutoCompactEnabled: restored.isAutoCompactEnabled,
       sdkAutoCompactThreshold: restored.sdkAutoCompactThreshold,
       cooldownActive: false,
@@ -1233,7 +1244,7 @@ export class AgentSession
     if (decision.action !== 'compact') {
       return;
     }
-    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, restored.autoCompactPercent);
+    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, autoCompactPercent);
     this.contextTracker.markCompactionTriggered(budgetKey);
     this.logger.info(
       `Daemon context-budget compaction for restored session ${this.session.id} ` +
