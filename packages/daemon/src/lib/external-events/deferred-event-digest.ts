@@ -455,17 +455,22 @@ interface DigestRenderOptions {
   renderAllReviewBodies?: boolean;
 }
 
-function renderDigestGroup(
-  group: DigestGroup,
-  includeDate: boolean,
-  options: DigestRenderOptions = {}
+export interface RenderEventBlockOptions extends DigestRenderOptions {
+  count?: number;
+  events?: ExternalEventEssenceEntry[];
+  includeDate?: boolean;
+}
+
+export function renderEventBlock(
+  entry: ExternalEventEssenceEntry,
+  options: RenderEventBlockOptions = {}
 ): string {
   const snippetMaxChars = options.snippetMaxChars ?? DIGEST_SNIPPET_MAX_CHARS;
-  const events = group.events;
-  const latest = events[events.length - 1];
-  if (!latest) return '';
-  const count = events.length;
-  switch (group.kind) {
+  const includeDate = options.includeDate ?? false;
+  const events = options.events ?? [entry];
+  const latest = entry;
+  const count = options.count ?? events.length;
+  switch (digestGroupKind(entry)) {
     case 'check': {
       const cancelled = events.filter((entry) => cancelledConclusion(entry.conclusion)).length;
       const mostlyCancelled =
@@ -567,6 +572,17 @@ function renderDigestGroup(
       return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
     }
   }
+}
+
+function renderDigestGroup(
+  group: DigestGroup,
+  includeDate: boolean,
+  options: DigestRenderOptions = {}
+): string {
+  const events = group.events;
+  const latest = events[events.length - 1];
+  if (!latest) return '';
+  return renderEventBlock(latest, { ...options, includeDate, count: events.length, events });
 }
 
 function digestHeader(
