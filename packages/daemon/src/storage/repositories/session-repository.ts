@@ -494,9 +494,11 @@ export class SessionRepository {
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS c FROM sessions
-          WHERE space_id = ? AND workspace_path = ? AND status NOT IN ('archived', 'ended')`
+          WHERE space_id = ?
+            AND (workspace_path = ? OR main_repo_path = ?)
+            AND status NOT IN ('archived', 'ended')`
       )
-      .get(spaceId, workspacePath) as { c: number } | undefined;
+      .get(spaceId, workspacePath, workspacePath) as { c: number } | undefined;
     return row?.c ?? 0;
   }
 }

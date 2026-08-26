@@ -42,16 +42,18 @@ function insertSession(
   id: string,
   spaceId: string,
   workspacePath: string,
-  status: string
+  status: string,
+  mainRepoPath?: string
 ): void {
   db.prepare(
-    `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status,
-       config, metadata, type, session_context)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO sessions (id, title, workspace_path, main_repo_path, created_at, last_active_at,
+       status, config, metadata, type, session_context)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     `Session ${id}`,
     workspacePath,
+    mainRepoPath ?? null,
     new Date().toISOString(),
     new Date().toISOString(),
     status,
@@ -254,6 +256,30 @@ describe('SpaceWorkspaceManager', () => {
         path: '/repo/a-secondary',
       });
       insertSession(db, 'session-1', SPACE_A, '/repo/a-secondary', 'active');
+
+      await expect(manager.removeWorkspace(SPACE_A, secondary.id)).rejects.toThrow(
+        WorkspaceRemovalBlockedError
+      );
+      try {
+        await manager.removeWorkspace(SPACE_A, secondary.id);
+      } catch (err) {
+        expect((err as WorkspaceRemovalBlockedError).reason).toBe('active_sessions');
+      }
+    });
+
+    test('blocks removal for active worktree sessions tied to the workspace', async () => {
+      const secondary = workspaceRepo.create({
+        spaceId: SPACE_A,
+        path: '/repo/a-secondary',
+      });
+      insertSession(
+        db,
+        'session-worktree',
+        SPACE_A,
+        '/repo/a-secondary/worktree',
+        'active',
+        '/repo/a-secondary'
+      );
 
       await expect(manager.removeWorkspace(SPACE_A, secondary.id)).rejects.toThrow(
         WorkspaceRemovalBlockedError
