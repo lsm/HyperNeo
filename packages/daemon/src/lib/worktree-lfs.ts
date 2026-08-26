@@ -221,7 +221,7 @@ function validateBlobStream(
   oid: string
 ): Promise<boolean> {
   return new Promise((resolvePromise) => {
-    const child = spawn('git', ['cat-file', oid], { cwd, env });
+    const child = spawn('git', ['cat-file', '-p', oid], { cwd, env });
     const state = createPointerScanState();
     let settled = false;
     const timer = setTimeout(() => {

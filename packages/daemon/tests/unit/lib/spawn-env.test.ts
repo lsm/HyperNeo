@@ -34,6 +34,7 @@ const SOURCE: Record<string, string> = {
   'ProgramFiles(x86)': 'C:\\Program Files (x86)',
   ProgramW6432: 'C:\\Program Files',
   DISPLAY: ':0',
+  XAUTHORITY: '/tmp/.Xauthority',
   WAYLAND_DISPLAY: 'wayland-0',
   XDG_RUNTIME_DIR: '/run/user/1000',
   HTTPS_PROXY: 'https://proxy.corp.example:8443',
@@ -214,6 +215,7 @@ describe('buildGitSshEnv', () => {
     });
     expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
     expect(env.DISPLAY).toBe(SOURCE.DISPLAY);
+    expect(env.XAUTHORITY).toBe(SOURCE.XAUTHORITY);
     expect(env.DBUS_SESSION_BUS_ADDRESS).toBe(SOURCE.DBUS_SESSION_BUS_ADDRESS);
     expect(env.XDG_RUNTIME_DIR).toBe(SOURCE.XDG_RUNTIME_DIR);
     expect(env.WAYLAND_DISPLAY).toBe(SOURCE.WAYLAND_DISPLAY);

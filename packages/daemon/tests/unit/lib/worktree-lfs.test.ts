@@ -343,7 +343,8 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
     expect(gitCalls.some((call) => call.slice(1).some((arg) => arg.includes('�')))).toBe(false);
     const catFileCall = gitCalls.find((call) => call[1] === 'cat-file');
-    expect(catFileCall?.[2]).toBe(rawOid);
+    expect(catFileCall?.[2]).toBe('-p');
+    expect(catFileCall?.[3]).toBe(rawOid);
   });
 
   test('accepts extension records between oid and size', async () => {
@@ -389,7 +390,8 @@ describe('indexContainsLfsPointer', () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
     await indexContainsLfsPointer('/repo', {});
     const catFileCall = gitCalls.find((call) => call[1] === 'cat-file');
-    expect(catFileCall?.[2]).toBe(BLOB_OID);
+    expect(catFileCall?.[2]).toBe('-p');
+    expect(catFileCall?.[3]).toBe(BLOB_OID);
     expect(gitCalls.some((call) => call.some((arg) => arg.startsWith(':./')))).toBe(false);
   });
 
@@ -410,7 +412,8 @@ describe('indexContainsLfsPointer', () => {
     });
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
     const catFileCall = gitCalls.find((call) => call[1] === 'cat-file');
-    expect(catFileCall?.[2]).toBe(BLOB_OID);
+    expect(catFileCall?.[2]).toBe('-p');
+    expect(catFileCall?.[3]).toBe(BLOB_OID);
   });
 
   test('skips candidates whose blobs cannot be read', async () => {
