@@ -629,7 +629,12 @@ anywhere in this plan.
   try/catch JSON path) AND the NULLISH EARLY RETURN (review correction:
   when `err` is `null`/`undefined` the current function returns exactly
   `'Something went wrong.'` before any normalization, pinned by the existing
-  suite — retain that guard first, then normalize). Review correction (PR
+  suite — retain that guard first, then normalize; review correction, codex
+  round 10: the guard MOVES INTO the exported `normalizeUserError` core —
+  the PR 14 send stage calls the core directly, and a wrapper-only guard
+  would let a nullish `hub.request` rejection surface as the string
+  `'null'` or an unsafe `undefined`; wrapper behavior is unchanged either
+  way). Review correction (PR
   #2982): `JSON.stringify` can SUCCEED while producing `undefined` (a
   function, symbol, or object whose `toJSON` returns `undefined`), so today's
   `msg` can be `undefined` and reaches `msg || 'Something went wrong.'` —
@@ -741,11 +746,13 @@ anywhere in this plan.
      `(name, provider?) => string`.
 - **Tests.** Suite above.
 - **Risks/caveats.** Per-item render cadence in two components. Pipeline run
-  is ~µs but the dropdown loops multiply it; acceptable, and cheap to
-  neutralize — either a module-level `Map<name+provider, string>` cache in
-  the wrapper (model lists are small, stable), or `useMemo` the label arrays
-  at the two call sites (preferred; no lib change). Flag in review whichever
-  lands. `getProviderBrandColor` and the style helpers are out of scope.
+  is ~µs but the dropdown loops multiply it; acceptable (review correction,
+  codex round 10: NO memoization lands with PR 11 — that slice is pins-only
+  with `prod Δ = 0` and both components excluded; the module-level
+  `Map<name+provider, string>` cache and the call-site `useMemo` options
+  are DEFERRED to open question 5 and land only with a future measured,
+  approved pipeline conversion). `getProviderBrandColor` and the style
+  helpers are out of scope.
 
 ### `packages/web/src/hooks/useTargetSessionContext.ts:resolveTargetSessionId`
 
@@ -928,7 +935,9 @@ anywhere in this plan.
   stage — sanitize through the ORDINARY SHARED CORE extracted in PR 3
   (`normalizeUserError`, the named arm predicates, and `isInternalMessage`
   — the same plain
-  building blocks the `sanitize-user-error` gates compose from; NOT the
+  building blocks the `sanitize-user-error` gates compose from, WITH the
+  nullish guard inside the core so a `null`/`undefined` rejection
+  sanitizes to the fallback, codex round 10; NOT the
   `sanitizeUserError` decisionRun wrapper, which would nest the PR 3
   pipeline inside this one and split the send business path across nested
   pipeline boundaries — the identical correction applied to the router
@@ -1160,13 +1169,17 @@ optional router phase 2. No per-site section is left uncovered.
 - **Scope**: `packages/web/src/lib/user-error.ts` — order-pair rows FIRST
   (a message matching both `timeout` and `fetch` substrings maps to timeout;
   circular-object `JSON.stringify` throw path; Error/string/object inputs),
-  then the wrapper retaining the NULLISH EARLY RETURN before normalization
+  then the wrapper delegating to the core (the NULLISH EARLY RETURN now
+  lives INSIDE the exported `normalizeUserError`, codex round 10 — wrapper
+  behavior unchanged)
   (review correction) and gates `gatePassThrough` → `gateConnectionLost` →
   `gateTimeout` → `gateEconn` → `gateFetch` → `gateFailedToSend` with
   substring lists and arm order verbatim; `INTERNAL_PATTERNS` untouched.
   Review correction (codex round 8): the module ALSO exports the ordinary
   shared core the gates are composed from — `normalizeUserError(err):
-  string` (the try/catch JSON normalization), the named arm predicates
+  string` (the NULLISH guard first — `null`/`undefined` →
+  `'Something went wrong.'`, codex round 10 — then the try/catch JSON
+  normalization), the named arm predicates
   (`matchesConnectionLost`, `matchesTimeout`, `matchesEconn`, `matchesFetch`,
   `matchesFailedToSend`), and `isInternalMessage` (the pass-through
   discriminator, currently private — codex round 9) — so direct consumers
@@ -1495,7 +1508,9 @@ optional router phase 2. No per-site section is left uncovered.
   returned boolean, codex round 4), and overlapping sends each keep
   their own timer with no false timeout — as the deliberate divergences;
   the late-SUCCESS row stays green UNCHANGED (`onMessageAccepted` + `true`
-  return preserved, codex round 5)
+  return preserved, codex round 5); a nullish-rejection row
+  (`hub.request` rejecting with `null`/`undefined` sanitizes to
+  `'Something went wrong.'` via the core's guard, codex round 10)
   plus the new pipeline-level admission decision-table test.
 - **Depends on**: PR 1, PR 3, PR 13 (PR 3 is now EXPLICIT — codex round 9:
   the send stage consumes its ordinary sanitization CORE —
@@ -1566,8 +1581,10 @@ optional router phase 2. No per-site section is left uncovered.
    (plus tests) suffice? The else-if signal cascade is the largest remaining
    hand-rolled gate chain in web, but it is also stable and fully covered;
    the rewrite touches the routing spine for modest readability gain.
-4. **`getCurrentAction` purity.** The streaming-duration `Date.now()` and the
-   shell-owned fallback rotator are acceptable impurities for now; if we ever
+4. **`getCurrentAction` purity.** The streaming-duration `Date.now()` is the
+   one remaining acceptable impurity (the fallback rotation lives INSIDE the
+   terminal gate per the codex round-7 correction — not the shell); if we
+   ever
    want deterministic pipeline-level tests, inject `now` and a rotation
    counter through the input snapshot. Worth doing only when a test actually
    needs it.
