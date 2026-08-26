@@ -392,7 +392,10 @@ gate's hold lifecycle):
   terminal result must be race-safe — a same-Space actor's `retry_task` can reopen a
   `done` gate between observation and these calls, and nothing else rejects the stale
   decision — via a terminal-generation CAS/lease on the task or a combined
-  consume-result-and-`update_goal` operation in the store surface. Consumption is
+  consume-result-and-`update_goal` operation in the store surface — for **both**
+  shapes: the Forge consumption marker's write atomically validates the task's current
+  terminal generation too, so an actor reopening the gate between outcome-read and
+  marker-write cannot have its stale success consumed as real. Consumption is
   persisted per gated shape (the standalone task ID, or the Forge proposal/task pair)
   and enforced in the shared task-transition path — every reopening route
   (`retry_task`, `update_task(status: 'in_progress')`, any future tool) checks it — so
@@ -579,11 +582,18 @@ ADR 0004 applies to new combinators.
    (b) crash-safe gated-task creation (`create_standalone_task` idempotency key /
    combined create-and-record, Forge-path atomicity or reconciliation — §5);
    (c) the attributable pause operation (combined hold-and-pause transaction or pause
-   caller token — §6);
+   caller token — §6) and an **idempotent workflow-run cancellation surface** (or
+   durable cancellation intent / combined cancel-task-and-run operation): `cancel_task`
+   performs `cancelTaskCascade` before its run-cancellation branch, so a crash between
+   them strands a live run behind a `cancelled` task that `retry_task` cannot recover
+   (`cancelled → cancelled` is rejected) — §6;
    (d) race-safe terminal handling — a terminal-generation CAS/lease for consuming
    standalone results and a recoverable completion-intent reconciliation (§5), plus
-   **tracked-gate mutation protection**: while a gate task sits behind an unmet
-   prerequisite, dependency replacement/removal and terminal-status transitions on it
+   **tracked-gate mutation protection**: from gate creation **until its terminal
+   generation is consumed by the launcher** — not merely while a prerequisite is
+   unmet; after A reaches `done` an unrelated actor could still transition the open or
+   running gate directly to `done` and have the protocol consume a forged success —
+   dependency replacement/removal and status transitions on it
    are restricted to the launcher or authorized coordinator (an unrelated actor could
    otherwise clear `depends_on` to make the release dispatch early or forge a `done`
    that the protocol consumes as success);
@@ -604,7 +614,9 @@ ADR 0004 applies to new combinators.
    does **manual** proposal/task creation (`create_forge_task_proposal` →
    `create_task_from_forge_proposal`, currently membership-checked only). Sole trigger authority holds throughout the objective, not only during
    holds; plus
-   dependency-reopen leases so a retried `done` prerequisite stops its started
+   **dependency-reopen leases enforced at the shared task-transition seam** — every
+   reopen path for a `done` prerequisite (`retry_task`, `update_task(status:
+   'in_progress')`, future tools alike, not only "retried" ones) stops its started
    dependents and wakes the launcher instead of silently revoking the gate, and
    **consumption enforcement on every reopening path** — `update_task(status:
    'in_progress')` permits `done → in_progress` just as `retry_task` does, so a
