@@ -267,6 +267,14 @@ export class ModelSwitchHandler {
           session: { config: session.config },
         });
 
+        if (querySuperseded()) {
+          logger.info(
+            'Inactive-branch model switch was committed but superseded before session-file ' +
+              'maintenance; the replacement query inherits the switched model.'
+          );
+          return { success: true, model: resolvedModel };
+        }
+
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
         if (clearAcpSessionId && previousAcpSessionId) {

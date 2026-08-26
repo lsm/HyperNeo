@@ -180,16 +180,16 @@ export class RateLimitWatchdog {
 
     const { provider, model } = this.deps.getCurrentModel();
     const currentCanonical = (await this.deps.resolveModelId?.(provider, model)) ?? model;
-    if (querySuperseded()) {
-      this.logger.info('Model resolution completed but the query was superseded; aborting.');
+    if (entryGeneration !== this.generation || querySuperseded()) {
+      this.logger.info('Model resolution completed but the episode was superseded; aborting.');
       return true;
     }
     this.triedKeys.add(`${provider}/${currentCanonical}`);
 
     if (this.chain === null) {
       const chain = await this.deps.resolveChain();
-      if (querySuperseded()) {
-        this.logger.info('Chain resolution completed but the query was superseded; aborting.');
+      if (entryGeneration !== this.generation || querySuperseded()) {
+        this.logger.info('Chain resolution completed but the episode was superseded; aborting.');
         return true;
       }
       this.chain = chain;
@@ -206,9 +206,9 @@ export class RateLimitWatchdog {
           canonicalKey.set(entry, `${entry.provider}/${canonical}`);
         })
       );
-      if (querySuperseded()) {
+      if (entryGeneration !== this.generation || querySuperseded()) {
         this.logger.info(
-          'Availability resolution completed but the query was superseded; aborting.'
+          'Availability resolution completed but the episode was superseded; aborting.'
         );
         return true;
       }
@@ -265,15 +265,15 @@ export class RateLimitWatchdog {
       );
       return false;
     }
-    if (trip.charge) {
-      this.retryCount++;
-    }
-
     if (entryGeneration !== this.generation || querySuperseded()) {
       this.logger.info(
         'Cooldown resolution completed but episode was superseded; aborting schedule.'
       );
       return true;
+    }
+
+    if (trip.charge) {
+      this.retryCount++;
     }
 
     const armed = await this.scheduleCooldown(

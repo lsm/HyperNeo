@@ -913,7 +913,9 @@ export class AcpQueryRunner {
           });
         }
 
-        this._lastConsumedUserMessage = null;
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this._lastConsumedUserMessage = null;
+        }
         if (this.ctx.queryPromise === queryPromiseBeforeFinalizerIdle) {
           this.ctx.queryPromise = null;
         }

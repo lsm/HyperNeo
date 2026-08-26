@@ -183,7 +183,9 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
         createCanUseToolCallback: () => async () => true,
         createPreToolUseHook: () => async () => ({}),
       } as unknown as AskUserQuestionHandler,
-      messageHandler: {} as unknown as SDKMessageHandler,
+      messageHandler: {
+        consumedTerminalFenceFor: () => false,
+      } as unknown as SDKMessageHandler,
 
       queryObject: null,
       queryPromise: null,
