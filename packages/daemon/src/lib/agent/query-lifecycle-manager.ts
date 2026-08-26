@@ -745,7 +745,7 @@ export class QueryLifecycleManager {
       return;
     }
 
-    await this.restart();
+    await this.restart({ idleOwner: stateManager.getCurrentIdleOwner() });
   }
 
   async executeDeferredRestartIfPending(
@@ -766,13 +766,15 @@ export class QueryLifecycleManager {
       if (error instanceof IdleRestartSupersededError) {
         this.ctx.pendingRestartReason = reason;
         if (rescheduleDepth < 8) {
-          const waiter = this.ctx.stateManager.waitForIdleTransition();
+          const successorOwner = this.ctx.stateManager.getCurrentIdleOwner();
+          const waiter = this.ctx.stateManager.waitForIdleTransition(
+            undefined,
+            undefined,
+            successorOwner
+          );
           void waiter.promise.then(() => {
             if (!this.ctx.pendingRestartReason) return;
-            void this.executeDeferredRestartIfPending(
-              this.ctx.stateManager.getCurrentIdleOwner(),
-              rescheduleDepth + 1
-            );
+            void this.executeDeferredRestartIfPending(successorOwner, rescheduleDepth + 1);
           });
         }
       }

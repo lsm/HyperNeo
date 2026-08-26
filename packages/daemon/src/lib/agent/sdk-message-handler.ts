@@ -723,9 +723,12 @@ export class SDKMessageHandler {
   async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
     const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
+    const invocationStale = this.isInvocationStale(invocationGeneration);
 
-    this.ctx.bumpDeliveryTurnActivity?.();
-    this.ctx.reportFirstDeliverySDKResponse?.(message.type);
+    if (!invocationStale) {
+      this.ctx.bumpDeliveryTurnActivity?.();
+      this.ctx.reportFirstDeliverySDKResponse?.(message.type);
+    }
 
     if (isSDKStreamEvent(message)) {
       await stateManager.detectPhaseFromMessage(message);
@@ -1139,6 +1142,7 @@ export class SDKMessageHandler {
     settledTurnOwner?: IdleOwnerScope
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) return;
 
     const confirmsArmedClear = this.matchesArmedClearResult(message);
 

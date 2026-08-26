@@ -1468,6 +1468,7 @@ export class AgentSession
   ): Promise<void> {
     const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
+      queryGeneration === this.getQueryGeneration() &&
       this.session.config.provider !== 'acp' &&
       isSDKSessionStateChangedMessage(message) &&
       message.state !== 'idle'
