@@ -3147,6 +3147,104 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect((queued as Record<string, unknown>).deliveryState).toBe('queued');
       });
 
+      test('keeps latest artifact state rows outside the ordinary window', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('old-write', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-old-write',
+                name: 'Write',
+                input: { file_path: '/a.txt', content: 'v1' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('old-todo', sessionId, now + 1100, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tu-old-todo', name: 'TodoWrite', input: { todos: [] } },
+            ],
+          },
+        });
+        insertSdkMessageAt('new-write', sessionId, now + 1200, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-new-write',
+                name: 'Write',
+                input: { file_path: '/a.txt', content: 'v2' },
+              },
+            ],
+          },
+        });
+        for (let i = 0; i < 5; i += 1) {
+          insertSdkMessageAt(
+            `f-anchor-${i}`,
+            sessionId,
+            now + 2000 + i * 2,
+            { type: 'user', uuid: `u-f-anchor-${i}`, message: { role: 'user', content: `a${i}` } },
+            'user'
+          );
+          insertSdkMessageAt(`flood-${i}`, sessionId, now + 2001 + i * 2, {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: `flood ${i}` }] },
+          });
+        }
+
+        const ids = queryCompact(taskId, 1).map((r) => r.id as string);
+        expect(ids).toContain('new-write');
+        expect(ids).toContain('old-todo');
+        expect(ids).not.toContain('old-write');
+        expect(ids.filter((id) => id.startsWith('flood-'))).toHaveLength(1);
+      });
+
+      test('admits artifact state rows older than the recent-turn cutoff', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('old-todo', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tu-cutoff-todo', name: 'TodoWrite', input: { todos: [] } },
+            ],
+          },
+        });
+        insertSdkMessageAt('old-text', sessionId, now + 1050, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'stale' }] },
+        });
+
+        const sessionB = 'sess-artifact-cutoff';
+        insertSession(sessionB, 'worker', '{"status":"processing"}');
+        sessionTaskIds.set(sessionB, taskId);
+        for (let i = 0; i < 100; i += 1) {
+          insertSdkMessageAt(
+            `b-anchor-${i}`,
+            sessionB,
+            now + 3000 + i,
+            { type: 'user', uuid: `u-b-art-${i}`, message: { role: 'user', content: `b${i}` } },
+            'user'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => r.id as string);
+        expect(ids).toContain('old-todo');
+        expect(ids).not.toContain('old-text');
+      });
+
       test('maps user-message send_status to the delivery lifecycle + retrying (compact feed)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
