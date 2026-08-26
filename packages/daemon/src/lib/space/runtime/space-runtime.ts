@@ -141,9 +141,6 @@ import {
   isTransientSpawnError,
   MissingWorkflowAgentError,
 } from './workflow-node-execution-validation.ts';
-import { extractReplyToSessionId } from '../agent-message-envelope.ts';
-import { formatPendingRowForSpaceAgent } from './pending-envelope.ts';
-import { collectActiveSpaceDeliveryIds } from './space-agent-pending-drain.ts';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 import { selectWorkflow } from './workflow-selector.ts';
 import { decideRunTickAdmission, selectTimedOutExecutions } from './run-tick-admission-gates.ts';
@@ -4972,14 +4969,7 @@ export class SpaceRuntime {
     const pendingMessageRepo = this.config.pendingMessageRepo;
     pendingMessageRepo?.enforceRetention({
       runId: run.id,
-      excludeIds: collectActiveSpaceDeliveryIds({
-        repo: pendingMessageRepo,
-        workflowRunId: run.id,
-        spaceChatSessionId: `space:chat:${run.spaceId}`,
-        resolveReplySession: (row) => extractReplyToSessionId(formatPendingRowForSpaceAgent(row)),
-        probeDeliveryStatus: (sessionId, messageId) =>
-          this.getSdkMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus,
-      }),
+      excludeIds: this.config.taskAgentManager?.activeSpaceDeliveryIdsForRun?.(run.id) ?? [],
     });
     const hasQueuedNodeHandoff =
       pendingMessageRepo
@@ -6662,17 +6652,7 @@ export class SpaceRuntime {
     const tam = this.config.taskAgentManager;
     if (!repo || !tam) return false;
 
-    repo.expireStale(
-      runId,
-      collectActiveSpaceDeliveryIds({
-        repo,
-        workflowRunId: runId,
-        spaceChatSessionId: `space:chat:${run.spaceId}`,
-        resolveReplySession: (row) => extractReplyToSessionId(formatPendingRowForSpaceAgent(row)),
-        probeDeliveryStatus: (sessionId, messageId) =>
-          this.getSdkMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus,
-      })
-    );
+    repo.expireStale(runId, tam.activeSpaceDeliveryIdsForRun?.(runId) ?? []);
     const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
     const isTerminalTask =
       canonicalTask.status === 'done' ||

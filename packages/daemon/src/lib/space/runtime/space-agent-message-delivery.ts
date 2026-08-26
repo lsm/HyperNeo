@@ -18,8 +18,12 @@ export interface LateSettlementRequest {
   onConsumed: (settledSessionId: string) => void;
 }
 
+export interface SpaceAgentLateSettlementHandle {
+  cancel(): void;
+}
+
 export interface SpaceAgentLateSettlementOwner {
-  arm(request: LateSettlementRequest): void;
+  arm(request: LateSettlementRequest): SpaceAgentLateSettlementHandle;
 }
 
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
@@ -29,8 +33,8 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
   private readonly waiters = new Set<{ cancel(): void }>();
   private disposed = false;
 
-  arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): void {
-    if (this.disposed) return;
+  arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
+    if (this.disposed) return { cancel: () => {} };
     const late = waitForDeliveryConsumption(sessionId, messageId);
     this.waiters.add(late);
     const expiry = setTimeout(() => {
@@ -52,6 +56,14 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
         );
       }
     });
+    return {
+      cancel: () => {
+        clearTimeout(expiry);
+        late.cancel();
+        this.timers.delete(expiry);
+        this.waiters.delete(late);
+      },
+    };
   }
 
   dispose(): void {
@@ -175,16 +187,18 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
     return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
   }
   if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
-    ctx.deps.lateSettlement.arm({
+    const lateArm = ctx.deps.lateSettlement.arm({
       sessionId,
       messageId,
       onConsumed: ctx.deps.onConsumed,
     });
     const armed = readSettledStatus(ctx);
     if (armed === 'consumed') {
+      lateArm.cancel();
       return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
     }
     if (armed === 'failed') {
+      lateArm.cancel();
       return {
         ...ctx,
         outcome: {

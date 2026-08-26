@@ -47,7 +47,6 @@ function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
 function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const settledIds = new Set<string>();
   const activeDeliveryIds: string[] = [];
-  const lateDeadLetterIds = new Set<string>();
   for (const row of ctx.listedRows ?? []) {
     if (settledIds.has(row.id)) continue;
     const replyTo = ctx.deps.resolveReplySession(row);
@@ -56,21 +55,16 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
         ? [replyTo, ctx.spaceChatSessionId]
         : [ctx.spaceChatSessionId];
     let consumedAt: string | null = null;
+    let activeSeen = false;
+    let failedSeen = false;
     for (const sessionId of candidates) {
       const sendStatus = ctx.deps.probeDeliveryStatus(sessionId, row.id);
       if (sendStatus === 'consumed') {
         consumedAt = sessionId;
         break;
       }
-      let failedSeen = false;
+      if (sendStatus === 'enqueued' || sendStatus === 'submitted') activeSeen = true;
       if (sendStatus === 'failed') failedSeen = true;
-      if (
-        (sendStatus === 'enqueued' || sendStatus === 'submitted') &&
-        !activeDeliveryIds.includes(row.id)
-      ) {
-        activeDeliveryIds.push(row.id);
-      }
-      if (failedSeen) lateDeadLetterIds.add(row.id);
     }
     if (consumedAt) {
       if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
@@ -80,7 +74,11 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
       settledIds.add(row.id);
       continue;
     }
-    if (lateDeadLetterIds.has(row.id)) {
+    if (activeSeen) {
+      if (!activeDeliveryIds.includes(row.id)) activeDeliveryIds.push(row.id);
+      continue;
+    }
+    if (failedSeen) {
       if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
         ctx.deps.repo.markAttemptFailed(row.id, LATE_DEAD_LETTER_ERROR);
       }
