@@ -31,12 +31,14 @@ export class SpaceWorktreeManager {
     taskId: string,
     taskTitle: string,
     taskNumber: number,
-    baseBranch?: string
+    baseBranch?: string,
+    repoRoot?: string
   ): Promise<{ path: string; slug: string }> {
     const space = this.spaceRepo.getSpace(spaceId);
     if (!space) {
       throw new Error(`Space not found: ${spaceId}`);
     }
+    const gitRoot = repoRoot ?? space.workspacePath;
 
     const existing = this.worktreeRepo.getByTaskId(spaceId, taskId);
     if (existing) {
@@ -46,7 +48,7 @@ export class SpaceWorktreeManager {
     const existingSlugs = this.worktreeRepo.listSlugs(spaceId);
     const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
 
-    const worktreesDir = getWorktreeBaseDir(space.workspacePath, (msg) => this.logger.warn(msg));
+    const worktreesDir = getWorktreeBaseDir(gitRoot, (msg) => this.logger.warn(msg));
     if (!existsSync(worktreesDir)) {
       mkdirSync(worktreesDir, { recursive: true });
     }
@@ -60,7 +62,7 @@ export class SpaceWorktreeManager {
       );
       try {
         execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
-          cwd: space.workspacePath,
+          cwd: gitRoot,
           timeout: 30_000,
         });
       } catch {
@@ -70,21 +72,21 @@ export class SpaceWorktreeManager {
 
     try {
       execFileSync('git', ['worktree', 'prune'], {
-        cwd: space.workspacePath,
+        cwd: gitRoot,
         timeout: 30_000,
       });
     } catch {}
 
     try {
       const branches = execFileSync('git', ['branch', '--list', branchName], {
-        cwd: space.workspacePath,
+        cwd: gitRoot,
         encoding: 'utf8',
         timeout: 30_000,
       });
       if (branches.trim().length > 0) {
         this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
         execFileSync('git', ['branch', '-D', branchName], {
-          cwd: space.workspacePath,
+          cwd: gitRoot,
           timeout: 30_000,
         });
       }
@@ -102,7 +104,7 @@ export class SpaceWorktreeManager {
               'git',
               ['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD'],
               {
-                cwd: space.workspacePath,
+                cwd: gitRoot,
                 timeout: 30_000,
                 stdio: 'pipe',
               }

@@ -227,6 +227,115 @@ describe('createTaskWorktree', () => {
   });
 });
 
+describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
+  let secondaryDir: string;
+
+  beforeEach(async () => {
+    secondaryDir = await makeGitRepo('secondary');
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(secondaryDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  test('secondary-repo task lands under that repo project dir; default task unchanged', async () => {
+    const defaultTaskId = seedTask(db, spaceId, 'task-ws11-default', 60);
+    const secondaryTaskId = seedTask(db, spaceId, 'task-ws11-secondary', 61);
+
+    const defaultResult = await manager.createTaskWorktree(
+      spaceId,
+      defaultTaskId,
+      'Default Repo Task',
+      60
+    );
+    const secondaryResult = await manager.createTaskWorktree(
+      spaceId,
+      secondaryTaskId,
+      'Secondary Repo Task',
+      61,
+      undefined,
+      secondaryDir
+    );
+
+    expect(defaultResult.path).toBe(
+      join(testBaseDir, getProjectShortKey(repoDir), 'worktrees', defaultResult.slug)
+    );
+    expect(secondaryResult.path).toBe(
+      join(testBaseDir, getProjectShortKey(secondaryDir), 'worktrees', secondaryResult.slug)
+    );
+    expect(existsSync(defaultResult.path)).toBe(true);
+    expect(existsSync(secondaryResult.path)).toBe(true);
+
+    const primaryBranches = execSync('git branch --list', { cwd: repoDir }).toString();
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+
+    expect(primaryBranches).toContain(`space/${defaultResult.slug}`);
+    expect(primaryBranches).not.toContain(`space/${secondaryResult.slug}`);
+    expect(secondaryBranches).toContain(`space/${secondaryResult.slug}`);
+    expect(secondaryBranches).not.toContain(`space/${defaultResult.slug}`);
+  });
+
+  test('secondary-repo worktree is registered in that repo only, path unchanged for lookups', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-list', 62);
+    const { path } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Secondary Only',
+      62,
+      undefined,
+      secondaryDir
+    );
+
+    const primaryWorktrees = execSync('git worktree list', { cwd: repoDir }).toString();
+    const secondaryWorktrees = execSync('git worktree list', { cwd: secondaryDir }).toString();
+    expect(primaryWorktrees).not.toContain(path);
+    expect(secondaryWorktrees).toContain(path);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBe(path);
+  });
+
+  test('stale branch cleanup runs in the repoRoot repo', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-stale', 63);
+    const slug = worktreeSlug('Stale Branch Task', 63);
+    execSync(`git branch "space/${slug}" HEAD`, { cwd: secondaryDir });
+
+    const result = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Stale Branch Task',
+      63,
+      undefined,
+      secondaryDir
+    );
+
+    expect(result.slug).toBe(slug);
+    expect(existsSync(result.path)).toBe(true);
+    const secondaryWorktrees = execSync('git worktree list', { cwd: secondaryDir }).toString();
+    expect(secondaryWorktrees).toContain(result.path);
+  });
+
+  test('stale directory recovery targets the repoRoot project dir', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-stale-dir', 64);
+    const slug = worktreeSlug('Stale Dir Secondary', 64);
+    const expectedPath = join(testBaseDir, getProjectShortKey(secondaryDir), 'worktrees', slug);
+    mkdirSync(expectedPath, { recursive: true });
+
+    const result = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Stale Dir Secondary',
+      64,
+      undefined,
+      secondaryDir
+    );
+
+    expect(result.path).toBe(expectedPath);
+    expect(existsSync(result.path)).toBe(true);
+  });
+});
+
 describe('removeTaskWorktree', () => {
   test('removes the worktree directory, branch, and DB record', async () => {
     const taskId = seedTask(db, spaceId, 'task-rm-01', 10);

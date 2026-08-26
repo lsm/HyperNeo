@@ -128,7 +128,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
 
     if (row.expectedCreateCalled) {
       expect(createTaskWorktree).toHaveBeenCalledTimes(1);
-      expect(createTaskWorktree).toHaveBeenCalledWith(SPACE_ID, TASK_ID, TASK_TITLE, TASK_NUMBER);
+      expect(createTaskWorktree).toHaveBeenCalledWith(
+        SPACE_ID,
+        TASK_ID,
+        TASK_TITLE,
+        TASK_NUMBER,
+        undefined,
+        SPACE_WORKSPACE
+      );
     } else {
       expect(createTaskWorktree).not.toHaveBeenCalled();
     }
