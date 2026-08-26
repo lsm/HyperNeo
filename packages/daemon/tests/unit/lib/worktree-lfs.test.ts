@@ -23,8 +23,12 @@ vi.mock('node:child_process', async (importOriginal) => {
 
 import { indexContainsLfsPointer } from '../../../src/lib/worktree-lfs';
 
-type ProbeResult = { stdout: string; stderr: string };
+type ProbeResult = { stdout: string | Buffer; stderr: string };
 type ProbeCallback = (error: Error | null, result?: ProbeResult) => void;
+
+function binaryPaths(...paths: string[]): Buffer {
+  return Buffer.from(paths.map((path) => `${path}\0`).join(''), 'binary');
+}
 
 const LFS_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
 const POINTER_OID = `oid sha256:${'a'.repeat(64)}`;
@@ -45,7 +49,7 @@ function stubGitProbes(
 function stubGrepCandidate(blobContent: string): void {
   stubGitProbes((file, args, callback) => {
     if (file === 'git' && args[0] === 'grep') {
-      callback(null, { stdout: 'asset.bin\0', stderr: '' });
+      callback(null, { stdout: binaryPaths('asset.bin'), stderr: '' });
       return;
     }
     if (file === 'git' && args[0] === 'cat-file') {
@@ -112,7 +116,7 @@ describe('indexContainsLfsPointer', () => {
   test('skips oversized candidate blobs before reading them', async () => {
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
-        callback(null, { stdout: 'huge.bin\0asset.bin\0', stderr: '' });
+        callback(null, { stdout: binaryPaths('huge.bin', 'asset.bin'), stderr: '' });
         return;
       }
       if (file === 'git' && args[0] === 'cat-file') {
@@ -189,6 +193,49 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
+  test('accepts zero-padded size records', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 00000000000000000001\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
+  test('skips candidates whose paths cannot be looked up', async () => {
+    stubGitProbes((file, args, callback) => {
+      if (file === 'git' && args[0] === 'grep') {
+        const raw = Buffer.concat([
+          Buffer.from([0x62, 0x61, 0x64, 0xff, 0x00]),
+          Buffer.from('asset.bin\0', 'binary'),
+        ]);
+        callback(null, { stdout: raw, stderr: '' });
+        return;
+      }
+      if (file === 'git' && args[0] === 'cat-file') {
+        if (args[2] === ':./asset.bin') {
+          callback(null, { stdout: '40\n', stderr: '' });
+          return;
+        }
+        callback(Object.assign(new Error('path does not exist in index'), { code: 128 }), {
+          stdout: '',
+          stderr: '',
+        });
+        return;
+      }
+      if (file === 'git' && args[0] === 'show') {
+        if (args[1] === ':./asset.bin') {
+          callback(null, { stdout: `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`, stderr: '' });
+          return;
+        }
+        callback(new Error('path must not be read'), { stdout: '', stderr: '' });
+        return;
+      }
+      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+        stdout: '',
+        stderr: '',
+      });
+    });
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+    expect(gitCalls.some((call) => call[1] === 'show' && call[2]?.includes('�'))).toBe(false);
+  });
+
   test('accepts extension records between oid and size', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\n${EXT_RECORD}\nsize 1234\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
@@ -238,7 +285,7 @@ describe('indexContainsLfsPointer', () => {
   test('resolves stage-prefixed paths as literal filenames', async () => {
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
-        callback(null, { stdout: '2:fixture\0', stderr: '' });
+        callback(null, { stdout: binaryPaths('2:fixture'), stderr: '' });
         return;
       }
       if (file === 'git' && args[0] === 'cat-file') {

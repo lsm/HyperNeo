@@ -49,25 +49,43 @@ function isLfsPointerContent(content: string): boolean {
   if (beforeSize === undefined) return false;
   const sizeRecord = /^size \+?(\d+)\s*$/.exec(lines[beforeSize] ?? '');
   if (!sizeRecord) return false;
-  const digits = sizeRecord[1];
+  const digits = sizeRecord[1].replace(/^0+(?=\d)/, '');
   if (digits.length > 19 || (digits.length === 19 && digits > '9223372036854775807')) {
     return false;
   }
   return beforeSize + 1 === lines.length;
 }
 
+function splitCandidatePaths(stdout: string | Buffer): string[] {
+  const buf = typeof stdout === 'string' ? Buffer.from(stdout, 'utf8') : stdout;
+  const paths: string[] = [];
+  let start = 0;
+  for (let index = 0; index <= buf.length; index++) {
+    if (index !== buf.length && buf[index] !== 0) continue;
+    if (index > start) {
+      const segment = buf.subarray(start, index);
+      const utf8 = segment.toString('utf8');
+      paths.push(utf8);
+      const raw = segment.toString('latin1');
+      if (raw !== utf8) paths.push(raw);
+    }
+    start = index + 1;
+  }
+  return paths;
+}
+
 export async function indexContainsLfsPointer(
   cwd: string,
   env: Record<string, string>
 ): Promise<boolean> {
-  let candidates: string;
+  let candidates: Buffer;
   try {
     const result = await execFileAsync(
       'git',
       ['grep', '-lz', '--cached', '-F', LFS_POINTER_SIGNATURE],
       {
         cwd,
-        encoding: 'utf8',
+        encoding: 'buffer',
         timeout: LFS_PROBE_TIMEOUT_MS,
         env,
         maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
@@ -79,23 +97,28 @@ export async function indexContainsLfsPointer(
     if (code === 1) return false;
     throw err;
   }
-  for (const rel of candidates.split('\0').filter(Boolean)) {
-    const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', `:./${rel}`], {
-      cwd,
-      encoding: 'utf8',
-      timeout: LFS_PROBE_TIMEOUT_MS,
-      env,
-      maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-    });
-    if (Number(sizeOut.trim()) > LFS_CANDIDATE_MAX_BYTES) continue;
-    const { stdout } = await execFileAsync('git', ['show', `:./${rel}`], {
-      cwd,
-      encoding: 'utf8',
-      timeout: LFS_PROBE_TIMEOUT_MS,
-      env,
-      maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-    });
-    if (isLfsPointerContent(stdout)) return true;
+  for (const rel of splitCandidatePaths(candidates)) {
+    const spec = `:./${rel}`;
+    try {
+      const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', spec], {
+        cwd,
+        encoding: 'utf8',
+        timeout: LFS_PROBE_TIMEOUT_MS,
+        env,
+        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+      });
+      if (Number(sizeOut.trim()) > LFS_CANDIDATE_MAX_BYTES) continue;
+      const { stdout } = await execFileAsync('git', ['show', spec], {
+        cwd,
+        encoding: 'utf8',
+        timeout: LFS_PROBE_TIMEOUT_MS,
+        env,
+        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+      });
+      if (isLfsPointerContent(stdout)) return true;
+    } catch {
+      continue;
+    }
   }
   return false;
 }
