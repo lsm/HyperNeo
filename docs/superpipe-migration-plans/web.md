@@ -411,8 +411,11 @@ anywhere in this plan.
      unchanged.
 - **Tests.** Tables above; keep the hook-level fetch/switch tests green
   (they exercise the wrapper end-to-end).
-- **Risks/caveats.** The `undefined`-vs-sentinel subtlety is the one real
-  trap — a gate deciding `undefined` would NOT halt the run. The exported
+- **Risks/caveats.** The `undefined`-vs-sentinel subtlety (codex round 23 —
+  corrected wording: a gate deciding `undefined` DOES halt the run, because
+  `decisionRun`'s settled check is `ctx.decision !== null`
+  (`decision-pipeline.ts:10-15`) and `undefined` is non-null; no sentinels
+  are needed and later gates never execute after it). The exported
   symbols live in a hook module but are pure module-scope functions; keep the
   pipeline instances outside the hook body so re-renders never rebuild them.
 
@@ -964,10 +967,17 @@ anywhere in this plan.
   interprets through the imperative queue/reject/send bodies; keep the plain
   helper logic until the complete mixed pipeline can land).
 - **Input/output snapshot design.** Step 1 ctx: `{ sessionId, content, images?,
-  deliveryMode, sessionStatus, isSending, allowQueueWhileProcessing,` (review
+  deliveryMode: MessageDeliveryMode | undefined, sessionStatus, isSending,
+  allowQueueWhileProcessing,` (review
   correction: `sessionId` MUST ride in the per-call context — both the direct
   and queued `message.send` payloads require it, and the pure
-  `stageBuildPayload` cannot otherwise reconstruct the target session)
+  `stageBuildPayload` cannot otherwise reconstruct the target session;
+  codex round 23: `deliveryMode` enters RAW-OPTIONAL — the hook drops its
+  `'immediate'` callback default (`useSendMessage.ts:54`) and a LEADING
+  `stageNormalizeDeliveryMode` stamps `ctx.deliveryMode ??= 'immediate'`
+  inside the composition, since the value controls whether
+  `stageBuildPayload` includes `deliveryMode` and the supported no-third-arg
+  send arm must not split between wrapper and pipeline)
   isConnected, decision }` with decision union `'rejectEmpty' |
   'rejectArchived' | 'queueOffline' | 'send'`. The hook
   snapshots `session?.status`, `isSending`, and
@@ -1539,7 +1549,8 @@ optional router phase 2. No per-site section is left uncovered.
   empty-candidate HALT (`useTargetSessionContext.ts:73-74` semantics,
   codex round 4) →
   `stageSelectCurrent` → `stageApplyExecOverride`; wrapper keeps the
-  null-target exit as a LEADING gate/`!dep` halt (codex round 16), returns
+  null-target exit as a LEADING gate/`!dep` halt owned by the PIPELINE —
+  the wrapper only runs and returns it (codex rounds 16+23), returns
   `ctx.resolved`, and the override guard
   keeps the `resolved` truthiness operand (review correction) — copy it and
   the `?? candidates[0]` head-selection atomically.
@@ -1683,7 +1694,10 @@ optional router phase 2. No per-site section is left uncovered.
   stages, terminated with `.endAsync('ctx')` and typed
   `(input) => Promise<SendMessageCtx>` (codex round 22: `.end` is for fully
   sync paths per ADR 0004 — the awaiting `stageSendRequest` must run under
-  the async executor);
+  the async executor); a LEADING `stageNormalizeDeliveryMode` stamps
+  `deliveryMode ??= 'immediate'` inside the composition (codex round 23:
+  the hook passes the raw optional through, dropping its callback default
+  at `useSendMessage.ts:54`);
   `stageSendRequest` (live `getHub()` re-read immediately after
   `onSendStart` + timeout arming; an empty hub runs the exact current
   completion sequence — enqueue, `onSendComplete`, CLEAR the armed timeout,
