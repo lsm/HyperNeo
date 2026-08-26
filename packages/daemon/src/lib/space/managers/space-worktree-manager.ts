@@ -45,13 +45,13 @@ export class SpaceWorktreeManager {
       return { path: existing.path, slug: existing.slug };
     }
 
-    const existingSlugs = this.worktreeRepo.listSlugs(spaceId);
-    const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
-
     const worktreesDir = getWorktreeBaseDir(gitRoot, (msg) => this.logger.warn(msg));
     if (!existsSync(worktreesDir)) {
       mkdirSync(worktreesDir, { recursive: true });
     }
+
+    const existingSlugs = this.worktreeRepo.listSlugsUnderPath(`${worktreesDir}/`);
+    const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
 
     const worktreePath = join(worktreesDir, slug);
     const branchName = `space/${slug}`;

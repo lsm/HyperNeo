@@ -46,10 +46,10 @@ export class SpaceWorktreeRepository {
     return rows.map((r) => this.rowToRecord(r));
   }
 
-  listSlugs(spaceId: string): string[] {
+  listSlugsUnderPath(pathPrefix: string): string[] {
     const rows = this.db
-      .prepare(`SELECT slug FROM space_worktrees WHERE space_id = ?`)
-      .all(spaceId) as Array<{ slug: string }>;
+      .prepare(`SELECT slug FROM space_worktrees WHERE substr(path, 1, ?) = ?`)
+      .all(pathPrefix.length, pathPrefix) as Array<{ slug: string }>;
     return rows.map((r) => r.slug);
   }
 

@@ -404,6 +404,40 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
     expect(existsSync(path)).toBe(false);
   });
+
+  test('slug uniqueness spans spaces sharing a repo', async () => {
+    const otherSpaceId = `space-ws11-other-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(
+      otherSpaceId,
+      secondaryDir,
+      `Space ${otherSpaceId}`,
+      otherSpaceId,
+      Date.now(),
+      Date.now()
+    );
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-share-a', 68);
+    const taskB = seedTask(db, otherSpaceId, 'task-ws11-share-b', 68);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Shared Title',
+      68,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Shared Title', 68);
+
+    expect(a.slug).not.toBe(b.slug);
+    expect(a.path).not.toBe(b.path);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+  });
 });
 
 describe('removeTaskWorktree', () => {
