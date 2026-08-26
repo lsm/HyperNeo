@@ -498,10 +498,13 @@ wrapper suite already characterizes those dimensions).
 - **Scope**: `packages/daemon/src/storage/repositories/sdk-message-repository.ts`
   (`saveSDKMessage`, call site `:521`) only (steps 3–4 for this method).
   Compose the `save-sdk-message` pipeline — snapshot → admission stage calling
-  the unchanged plain `decideMessageAdmission` leaf → the method's existing
-  insert/sequence/notification effects as stages — executed as a sync `.end`
-  run inside the method's existing `db.transaction(...)` boundary; the method
-  body reduces to snapshot → run. Review correction (PR #2978): converting
+  the unchanged plain `decideMessageAdmission` leaf → ONE `atomic-write` stage
+  running the method's existing `db.transaction(...)` body unchanged →
+  post-commit notification / superseded-index-deletion stages with local
+  catch+log (review correction PR #2978: the current method COMMITS before
+  those operations and only logs their failures; running them in-transaction
+  would roll back successful inserts); the method body reduces to snapshot →
+  run. Review correction (PR #2978): converting
   only `decideMessageAdmission` while the save methods stay imperative shells
   would wire a derivation helper pipeline under the forbidden decision/effect
   split; the save operation is the business path, so the pipeline owns it.
@@ -524,14 +527,18 @@ wrapper suite already characterizes those dimensions).
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
 - **Scope**: `sdk-message-repository.ts` (`saveUserMessageCore`, call site
-  `:974`) only. Same composition as PR 2 for the user-message save path; the
-  sync `.end` run executes inside the transaction that
-  `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81` composes —
-  that caller is untouched (it hands the transaction in exactly as today).
-- **Lands**: The user-message save path runs as one complete pipeline; the
-  outbox composer's contract is unchanged.
-- **Excludes**: `message-delivery-outbox.ts` changes (none needed);
-  PRs 2 and 5.
+  `:974`) AND `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-91`.
+  Review correction (PR #2978): the pipeline boundary is the OUTER
+  persist/enqueue/post-commit flow the outbox composes — the transaction
+  stage covers persist AND queue enqueue (both are in the transaction
+  today), and `runPostSaveSideEffects` (`:84`, invoked only after commit) is
+  the post-commit stage; the outbox caller is REWIRED in this same slice
+  (leaving it untouched would split the path: publications outside the
+  claimed complete pipeline, or a message announced before a later enqueue
+  failure rolls the transaction back).
+- **Lands**: The user-message save path — persist, enqueue, and post-commit
+  side effects — runs as one complete pipeline.
+- **Excludes**: PR 4 (same repo file, sequenced).
 - **Tests**: The same three repository suites re-run unchanged.
 - **Depends on**: PR 2 (same file; sequenced for same-file churn, not
   correctness).
