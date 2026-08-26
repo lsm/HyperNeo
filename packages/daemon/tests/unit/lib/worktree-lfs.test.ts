@@ -179,6 +179,13 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('rejects trailing whitespace on the version record', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE} \n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+    stubGrepCandidate(`${LFS_SIGNATURE}\t\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
   test('rejects leading whitespace on records after the version line', async () => {
     stubGrepCandidate(
       `${LFS_SIGNATURE}\n   ext-1-x sha256:${'b'.repeat(64)}\n${POINTER_OID}\nsize 12\n`
@@ -293,6 +300,13 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
+  test('accepts negative zero size records', async () => {
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize -0\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+    stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize -00\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
   test('accepts sizes within the signed 64-bit range', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 9223372036854775807\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
@@ -368,6 +382,14 @@ describe('indexContainsLfsPointer', () => {
     const dup = `ext-0-other sha256:${'c'.repeat(64)}`;
     stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${dup}\n${POINTER_OID}\nsize 1234\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
+  test('accepts repeated identical extension records with differing digests', async () => {
+    const repeat = `ext-1-x sha256:${'c'.repeat(64)}`;
+    stubGrepCandidate(
+      `${LFS_SIGNATURE}\next-1-x sha256:${'b'.repeat(64)}\n${repeat}\n${POINTER_OID}\nsize 12\n`
+    );
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
   test('rejects leading-zero extension priorities', async () => {

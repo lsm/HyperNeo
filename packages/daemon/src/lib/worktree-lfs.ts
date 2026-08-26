@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
-const LFS_EXT_LINE_PATTERN = /^ext-(\d)-\w\S* sha256:[0-9a-f]{64}$/;
+const LFS_EXT_LINE_PATTERN = /^ext-(\d)-(\w\S*) sha256:[0-9a-f]{64}$/;
 const LFS_PROBE_TIMEOUT_MS = 60_000;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
@@ -13,20 +13,29 @@ const LFS_CANDIDATE_MAX_BYTES = 65_536;
 
 export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 
+function stripLeadingWhitespace(line: string): string {
+  return line.replace(/^\s+/, '');
+}
+
 function scanExtensionRun(
   lines: string[],
   start: number,
-  seenPriorities: Set<number>,
-  trim: boolean
+  namesByPriority: Map<number, string>,
+  stripLeading: boolean
 ): number | undefined {
   let index = start;
   while (index < lines.length) {
-    const candidate = trim ? lines[index].trim() : lines[index];
+    const candidate = stripLeading ? stripLeadingWhitespace(lines[index]) : lines[index];
     const match = LFS_EXT_LINE_PATTERN.exec(candidate);
     if (!match) break;
     const priority = Number(match[1]);
-    if (seenPriorities.has(priority)) return undefined;
-    seenPriorities.add(priority);
+    const name = match[2];
+    const knownName = namesByPriority.get(priority);
+    if (knownName !== undefined) {
+      if (knownName !== name) return undefined;
+    } else {
+      namesByPriority.set(priority, name);
+    }
     index++;
   }
   return index;
@@ -40,24 +49,25 @@ function isLfsPointerContent(content: string): boolean {
   while (end > start && allLines[end - 1].trim() === '') end--;
   const lines = allLines.slice(start, end).filter((line) => line !== '');
   if (lines.length === 0) return false;
-  const seenPriorities = new Set<number>();
+  const namesByPriority = new Map<number, string>();
 
-  const beforeVersion = scanExtensionRun(lines, 0, seenPriorities, true);
+  const beforeVersion = scanExtensionRun(lines, 0, namesByPriority, true);
   if (beforeVersion === undefined) return false;
-  if (lines[beforeVersion]?.trim() !== LFS_POINTER_SIGNATURE) return false;
+  if (stripLeadingWhitespace(lines[beforeVersion] ?? '') !== LFS_POINTER_SIGNATURE) return false;
 
-  const afterHeadExtensions = scanExtensionRun(lines, beforeVersion + 1, seenPriorities, false);
+  const afterHeadExtensions = scanExtensionRun(lines, beforeVersion + 1, namesByPriority, false);
   if (afterHeadExtensions === undefined) return false;
   if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[afterHeadExtensions] ?? '')) return false;
 
-  const beforeSize = scanExtensionRun(lines, afterHeadExtensions + 1, seenPriorities, false);
+  const beforeSize = scanExtensionRun(lines, afterHeadExtensions + 1, namesByPriority, false);
   if (beforeSize === undefined) return false;
-  const sizeRecord = /^size \+?(\d+)\s*$/.exec(lines[beforeSize] ?? '');
+  const sizeRecord = /^size ([+-]?)(\d+)\s*$/.exec(lines[beforeSize] ?? '');
   if (!sizeRecord) return false;
-  const digits = sizeRecord[1].replace(/^0+(?=\d)/, '');
+  const digits = sizeRecord[2].replace(/^0+(?=\d)/, '');
   if (digits.length > 19 || (digits.length === 19 && digits > '9223372036854775807')) {
     return false;
   }
+  if (sizeRecord[1] === '-' && digits !== '0') return false;
   return beforeSize + 1 === lines.length;
 }
 

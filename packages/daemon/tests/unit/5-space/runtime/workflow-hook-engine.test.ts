@@ -2318,6 +2318,44 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     expect(result.result.message).toBe('/Library/Java/JavaVirtualMachines/jdk-21/Contents/Home');
   });
 
+  test('NODE_ENV stays available to hook scripts for Node-based validators', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      NODE_ENV: 'production',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source: 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${NODE_ENV:-missing}\\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe('production');
+  });
+
   test('process group is killed after successful script exit', async () => {
     const originalKill = process.kill;
     const killCalls: Array<{ pid: number; signal: string | number }> = [];

@@ -101,6 +101,7 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'TMPDIR',
   'CI',
   'JAVA_HOME',
+  'NODE_ENV',
   'USERPROFILE',
   'AppData',
   'LOCALAPPDATA',

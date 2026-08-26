@@ -30,6 +30,9 @@ const SOURCE: Record<string, string> = {
   GPG_TTY: '/dev/ttys000',
   NODE_ENV: 'production',
   WINDIR: 'C:\\Windows',
+  ProgramFiles: 'C:\\Program Files',
+  'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+  ProgramW6432: 'C:\\Program Files',
   DISPLAY: ':0',
   WAYLAND_DISPLAY: 'wayland-0',
   XDG_RUNTIME_DIR: '/run/user/1000',
@@ -92,6 +95,9 @@ describe('buildOsBaselineEnv', () => {
     expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
     expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
     expect(env.WINDIR).toBe(SOURCE.WINDIR);
+    expect(env['ProgramFiles']).toBe(SOURCE['ProgramFiles']);
+    expect(env['ProgramFiles(x86)']).toBe(SOURCE['ProgramFiles(x86)']);
+    expect(env.ProgramW6432).toBe(SOURCE.ProgramW6432);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
