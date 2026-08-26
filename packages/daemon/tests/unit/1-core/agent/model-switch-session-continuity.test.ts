@@ -283,6 +283,38 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(mockSession.sdkSessionId).toBe(sdkId);
   });
 
+  it('restarts the query when only the message queue is running', async () => {
+    const sdkId = 'test-sdk-session-abc';
+    mockSession.sdkSessionId = sdkId;
+
+    handler = createHandler({
+      queryObject: null,
+      queryPromise: null,
+      messageQueue: { isRunning: mock(() => true) } as unknown as MessageQueue,
+    });
+    const result = await handler.switchModel('opus', 'anthropic');
+
+    expect(result.success).toBe(true);
+    expect(mockSession.sdkSessionId).toBe(sdkId);
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the restart when nothing is running (idle in-place switch)', async () => {
+    const sdkId = 'test-sdk-session-abc';
+    mockSession.sdkSessionId = sdkId;
+
+    handler = createHandler({
+      queryObject: null,
+      queryPromise: null,
+      messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
+    });
+    const result = await handler.switchModel('opus', 'anthropic');
+
+    expect(result.success).toBe(true);
+    expect(mockSession.sdkSessionId).toBe(sdkId);
+    expect(restartSpy).not.toHaveBeenCalled();
+  });
+
   it('clears acpSessionId when switching away from ACP', async () => {
     mockSession.config.model = 'acp-default';
     mockSession.config.provider = 'acp';
