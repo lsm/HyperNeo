@@ -80,6 +80,7 @@ Whenever decomposing a feature, refactor, removal, or change request into tasks/
 
 Standing rules for every slice:
 
+- One task = one PR. An issue may carry multiple tasks (and therefore multiple PRs); a task never carries more than one PR — if the work is two PRs, it is two tasks.
 - Construction, wiring, and deletion do not share a PR. Exception: a trivial build+wire combination is acceptable when the call-site swap is a few lines and the combined diff stays within the slice budget — when in doubt, split. Deletion never combines with anything.
 - Every slice carries a **merge contract** in its task/issue description: one line naming what the PR may and may not touch (e.g. "additive dead code, no call-site changes"), plus a prod/test line budget. If the diff exceeds the budget or starts mixing phases, stop and report the overrun — in Space-managed work set the task to `blocked`; otherwise flag it in the PR — budgets are contracts, not suggestions.
 - Reuse existing pipelines/gates where they fit; do not rebuild routing or decision logic a sibling already owns.
