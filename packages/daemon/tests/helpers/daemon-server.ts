@@ -256,9 +256,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     NODE_ENV: 'test',
   };
 
-  const repoRoot = path.resolve(__dirname, '../../../..');
-  const tsxBin = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  const daemonProcess = spawn(process.execPath, [tsxBin, serverPath], {
+  const daemonProcess = spawn('bun', [serverPath], {
     env: daemonEnv,
     stdio: 'pipe',
     detached: false,

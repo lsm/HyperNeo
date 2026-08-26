@@ -6,7 +6,7 @@ HyperNeo's daemon runs under two runtimes: **Bun** (the pinned release runtime) 
 
 | Runtime | Pinned version | Status | CI guard |
 | --- | --- | --- | --- |
-| Bun | 1.3.14 (`packageManager` in root `package.json`) | **Release runtime.** All dev/prod entry points, tests, and compiled binaries. | Full CI: check job, daemon unit/online shards, web shard, release build |
+| Bun | 1.4.0 (`packageManager` in root `package.json`) | **Release runtime.** All dev/prod entry points, tests, and compiled binaries. | Full CI: check job, daemon unit/online shards, web shard, release build |
 | Deno | 2.9.4 (`.github/workflows/main.yml`, `deno-boot-smoke` job) | **Supported alternative** for booting and running the daemon. No unstable flags required. | `deno-boot-smoke` job on every trigger + manual Deno session-loop integration test |
 | Node | — | Not supported. No claim is made about running the daemon on plain Node. | — |
 
@@ -32,7 +32,7 @@ DB_PATH=/tmp/hyperneo-deno-$(basename $(git rev-parse --show-toplevel)).db deno 
 
 Both runtimes are pinned to **exact versions** — no `^`/`~` ranges, matching the repository-wide exact-pin policy for npm dependencies:
 
-- **Bun**: root `package.json` `packageManager: "bun@1.3.14"` plus `bun-version: 1.3.14` in every CI setup step.
+- **Bun**: root `package.json` `packageManager: "bun@1.4.0"` plus `bun-version: 1.4.0` in every CI setup step.
 - **Deno**: `deno-version: 2.9.4` in the `deno-boot-smoke` CI job (`denoland/setup-deno@v2`). There is no `deno.json`; the workflow is the pin of record.
 
 Bumps are deliberate, coordinated edits landing through a PR like any other change: for Bun, the root `packageManager` pin plus every CI `bun-version` step together; for Deno, the workflow pin plus the `isDeno2Point9()` checks that gate the session-loop test and its `deno-daemon-server` helper — those checks are the real enforcement of the supported line (a stale check leaves the manual integration suite skipped or rejected), so a minor-version bump touches them too.

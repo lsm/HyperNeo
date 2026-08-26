@@ -86,6 +86,7 @@
     "@vitest/coverage-v8",
     "use-sync-external-store",
     "lucide-preact",
-    "typescript7"
+    "typescript7",
+    "tsx"
   ]
 }
