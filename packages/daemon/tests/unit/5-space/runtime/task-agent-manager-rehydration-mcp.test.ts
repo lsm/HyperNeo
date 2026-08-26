@@ -62,6 +62,15 @@ function makeFakeAgentSession(
         mcpServers: { ...(state.session.config.mcpServers ?? {}), ...additional },
       };
     },
+    detachRuntimeMcpServer: (name: string) => {
+      state.calls.push(`detachRuntimeMcpServer:${name}`);
+      const servers = state.session.config.mcpServers;
+      if (servers && name in servers) {
+        const next = { ...servers };
+        delete next[name];
+        state.session.config = { ...state.session.config, mcpServers: next };
+      }
+    },
     restartQuery: async () => {
       state.calls.push('restartQuery');
     },
@@ -496,5 +505,34 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     );
 
     expect(fake.state.metadataUpdates).toEqual([]);
+  });
+
+  test('self-heal rollback detaches the node-agent server when none existed before (WS10)', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.workspacePath = '/old/workspace';
+    const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
+    repo.getTask = () => ({
+      id: TASK_ID,
+      spaceId: SPACE_ID,
+      workflowRunId: RUN_ID,
+      status: 'in_progress',
+      title: 'Rehydrate MCP task',
+      workspacePath: '/task/heal-late',
+    });
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {
+      throw new Error('heal boom');
+    };
+
+    await expect(tam.mcpSelfHeal(fake.agentSession, ['node-agent'])).rejects.toThrow('heal boom');
+
+    expect(fake.state.metadataUpdates).toEqual([
+      { workspacePath: '/task/heal-late' },
+      { workspacePath: '/old/workspace' },
+    ]);
+    expect(fake.state.calls).toContain('detachRuntimeMcpServer:node-agent');
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeUndefined();
   });
 });

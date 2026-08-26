@@ -1737,6 +1737,8 @@ export class TaskAgentManager {
   ): void {
     if (previous) {
       session.mergeRuntimeMcpServers({ 'node-agent': previous });
+    } else {
+      session.detachRuntimeMcpServer('node-agent');
     }
   }
 
