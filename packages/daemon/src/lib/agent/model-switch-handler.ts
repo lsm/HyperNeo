@@ -18,7 +18,10 @@ import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager.
 import type { ContextTracker } from './context-tracker.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
-import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
+import {
+  IdleRestartSupersededError,
+  type QueryLifecycleManager,
+} from './query-lifecycle-manager.ts';
 import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
 import { AcpProvider } from '../providers/acp-provider.ts';
@@ -366,7 +369,7 @@ export class ModelSwitchHandler {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Model switch failed:`, error);
 
-      if (querySuperseded()) {
+      if (querySuperseded() || error instanceof IdleRestartSupersededError) {
         logger.info(
           'Model switch failure after commit with a replacement query owning the session; ' +
             'keeping the committed configuration.'
