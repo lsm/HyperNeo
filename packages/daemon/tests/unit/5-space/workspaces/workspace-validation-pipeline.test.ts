@@ -11,7 +11,7 @@ import {
   type WorkspaceRegistrySnapshot,
   type WorkspaceValidationIo,
   type WorkspaceValidationVerdict,
-} from '../../../src/lib/space/workspaces/workspace-validation-pipeline';
+} from '../../../../src/lib/space/workspaces/workspace-validation-pipeline';
 
 const SPACE_A = 'space-a';
 const SPACE_B = 'space-b';
