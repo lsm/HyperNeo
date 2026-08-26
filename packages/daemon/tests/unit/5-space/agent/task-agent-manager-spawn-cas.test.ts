@@ -127,7 +127,10 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
     spaceAgentManager: {
       getById: (id: string) => (id !== AGENT_ID ? undefined : fakeCustomAgent()),
     },
-    worktreeManager: { createTaskWorktree: () => workspaceGate.promise },
+    worktreeManager: {
+      createTaskWorktree: () => workspaceGate.promise,
+      getTaskWorktreePathSync: () => null,
+    },
   } as unknown as TaskAgentManagerConfig);
 
   const internal = tam as unknown as {

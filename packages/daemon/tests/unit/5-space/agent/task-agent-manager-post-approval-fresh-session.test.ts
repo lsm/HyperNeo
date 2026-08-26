@@ -220,6 +220,38 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
+  test('live reuse syncs the session workspace to task.workspacePath before injection', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: { session: { id: string } }, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (s, m) => {
+      injected.push({ sessionId: s.session.id, message: m });
+      return 'msg-id';
+    };
+
+    const result = await tam.spawnPostApprovalSubSession({
+      task: {
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        workspacePath: '/task/reuse-override',
+      } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    expect(result.sessionId).toBe(REVIEWER_SESSION_ID);
+    expect(injected).toHaveLength(1);
+    expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/reuse-override' });
+    expect(live.session.getSessionData().workspacePath).toBe('/task/reuse-override');
+    expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
   test('createSubSession still reuses the prior session for a normal second activation (hard constraint)', async () => {
     const tam = makeManager();
     seedLiveSession(tam);

@@ -209,7 +209,12 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
       getById: (id: string) => (id !== AGENT_ID ? undefined : fakeCustomAgent()),
     },
     ...(options.worktreeGate
-      ? { worktreeManager: { createTaskWorktree: () => options.worktreeGate } }
+      ? {
+          worktreeManager: {
+            createTaskWorktree: () => options.worktreeGate,
+            getTaskWorktreePathSync: () => null,
+          },
+        }
       : {}),
   } as unknown as TaskAgentManagerConfig);
 

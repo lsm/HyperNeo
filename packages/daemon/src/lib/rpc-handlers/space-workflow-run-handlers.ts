@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, SpaceTask } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
@@ -13,6 +13,7 @@ import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
 import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
+import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -86,13 +87,15 @@ async function resolveWorktreePath(
   spaceWorktreeManager: SpaceWorktreeManager,
   taskId?: string
 ): Promise<string | null> {
+  let fallbackTask: Pick<SpaceTask, 'workspacePath'> | null = null;
   if (taskId) {
     const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
     if (taskWorktreePath) {
       return taskWorktreePath;
     }
+    fallbackTask = spaceTaskRepo.getTask(taskId);
     log.warn(
-      `resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to root workspace`
+      `resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to the task or root workspace`
     );
   } else {
     const tasks = spaceTaskRepo.listByWorkflowRun(runId);
@@ -109,8 +112,9 @@ async function resolveWorktreePath(
       if (firstTaskWorktreePath) {
         return firstTaskWorktreePath;
       }
+      fallbackTask = tasks[0];
       log.warn(
-        `resolveWorktreePath: no worktree found for task ${tasks[0].id} in run ${runId}, falling back to root workspace`
+        `resolveWorktreePath: no worktree found for task ${tasks[0].id} in run ${runId}, falling back to the task or root workspace`
       );
     } else {
       log.warn(
@@ -120,7 +124,8 @@ async function resolveWorktreePath(
   }
 
   const space = await spaceManager.getSpace(spaceId);
-  return space?.workspacePath ?? null;
+  if (!space) return null;
+  return resolveTaskWorkspace(space, fallbackTask ?? { workspacePath: null });
 }
 
 export type SpaceWorkflowRunTaskManagerFactory = (spaceId: string) => SpaceTaskManager;

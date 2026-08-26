@@ -1,3 +1,5 @@
+import type { SpaceTask } from '@hyperneo/shared';
+import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
@@ -67,19 +69,26 @@ async function resolveWorktreeForJob(
   const run = deps.workflowRunRepo.getRun(runId);
   if (!run) return { worktreePath: null, spaceId: null };
 
+  let fallbackTask: SpaceTask | null = null;
   if (taskId) {
     const worktreePath = await deps.spaceWorktreeManager.getTaskWorktreePath(run.spaceId, taskId);
     if (worktreePath) return { worktreePath, spaceId: run.spaceId };
+    fallbackTask = deps.spaceTaskRepo.getTask(taskId);
   } else {
     const tasks = deps.spaceTaskRepo.listByWorkflowRun(runId);
     if (tasks.length > 0) {
       const first = await deps.spaceWorktreeManager.getTaskWorktreePath(run.spaceId, tasks[0].id);
       if (first) return { worktreePath: first, spaceId: run.spaceId };
+      fallbackTask = tasks[0];
     }
   }
 
   const space = await deps.spaceManager.getSpace(run.spaceId);
-  return { worktreePath: space?.workspacePath ?? null, spaceId: run.spaceId };
+  if (!space) return { worktreePath: null, spaceId: run.spaceId };
+  return {
+    worktreePath: resolveTaskWorkspace(space, fallbackTask ?? { workspacePath: null }),
+    spaceId: run.spaceId,
+  };
 }
 
 async function handleSyncGateArtifacts(

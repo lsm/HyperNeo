@@ -15,12 +15,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   const CREATED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-abc';
   const CACHED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-cached';
   const TASK_WORKSPACE = '/task/ws02a-override';
+  const STORED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-stored';
   const CREATE_ERROR = 'git worktree add failed';
 
   type Row = {
     name: string;
     taskWorkspacePath?: string;
     cachedTaskWorktreePath: string | undefined;
+    storedTaskWorktreePath?: string;
     hasWorktreeManager: boolean;
     createResult: 'success' | 'fail' | 'n/a';
     expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
@@ -59,12 +61,28 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     return { id: SPACE_ID, workspacePath: SPACE_WORKSPACE } as unknown as Space;
   }
 
-  function makeManager(worktreeManager?: SpaceWorktreeManager): TaskAgentManager {
+  function makeManager(
+    worktreeManager?: SpaceWorktreeManager,
+    options: { storedTaskWorktreePath?: string } = {}
+  ): TaskAgentManager {
     const db = new BunDatabase(':memory:');
     return new TaskAgentManager({
       db: { getDatabase: () => db },
       internalEventBus: { subscribe: () => () => {} },
-      worktreeManager,
+      taskRepo: {
+        getTask: () => ({
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          taskNumber: TASK_NUMBER,
+          title: TASK_TITLE,
+        }),
+      },
+      worktreeManager: worktreeManager
+        ? ({
+            ...worktreeManager,
+            getTaskWorktreePathSync: () => options.storedTaskWorktreePath ?? null,
+          } as unknown as SpaceWorktreeManager)
+        : undefined,
     } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
   }
 
@@ -82,7 +100,8 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     const manager = makeManager(
       row.hasWorktreeManager
         ? ({ createTaskWorktree } as unknown as SpaceWorktreeManager)
-        : undefined
+        : undefined,
+      { storedTaskWorktreePath: row.storedTaskWorktreePath }
     );
 
     const taskWorktreePaths = (manager as unknown as { taskWorktreePaths: Map<string, string> })
@@ -217,6 +236,18 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedOutcome: { kind: 'path', value: SPACE_WORKSPACE },
         expectedCreateCalled: false,
         expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
+      {
+        name: 'persisted durable worktree wins over the explicit task workspace after restart',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        storedTaskWorktreePath: STORED_PATH,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: STORED_PATH },
+        expectedCreateCalled: false,
+        expectedCachedPath: STORED_PATH,
         expectedWarning: '',
       },
     ] as Row[])('%s', async (row: Row) => {

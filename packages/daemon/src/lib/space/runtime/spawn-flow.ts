@@ -228,6 +228,7 @@ export function runSpawnExecutionFlow(
         when: 'proceedFresh',
         reads: [
           'task',
+          'freshTask',
           'space',
           'workflow',
           'workflowRun',
@@ -238,12 +239,13 @@ export function runSpawnExecutionFlow(
         writes: ['isSpawning'],
         run: async (view) => {
           deps.reserveExecution(view.execution.id);
-          const sessionId = deps.resolveSpawnSessionId(view.space, view.task, view.execution);
-          const workspacePath = await deps.resolveWorkspacePath(view.task, view.space);
+          const spawnTask = view.freshTask ?? view.task;
+          const sessionId = deps.resolveSpawnSessionId(view.space, spawnTask, view.execution);
+          const workspacePath = await deps.resolveWorkspacePath(spawnTask, view.space);
           const slotResolution = view.slotResolution!;
           attempt.workspacePath = workspacePath;
           attempt.sessionId = await deps.createSpawnedSession({
-            task: view.task,
+            task: spawnTask,
             space: view.space,
             workflow: view.workflow,
             workflowRun: view.workflowRun,

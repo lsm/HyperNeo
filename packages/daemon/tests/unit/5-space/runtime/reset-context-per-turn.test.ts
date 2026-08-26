@@ -69,6 +69,8 @@ function makeManager(opts: {
     return {
       session: { id: SESSION_ID, sdkSessionId: o.sdkSessionId },
       getProcessingState,
+      getSessionData: () => ({ id: SESSION_ID, workspacePath: null }),
+      updateMetadata: () => {},
       handleQueryTrigger: replayMock,
       ensureQueryStarted: ensureStartedMock,
       clearConversationContext: clearMock,
@@ -460,6 +462,8 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
       getProcessingState: () => ({ status: 'idle' }),
+      getSessionData: () => ({ id: SESSION_ID, workspacePath: '/w' }),
+      updateMetadata: () => {},
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: mock(async () => {
@@ -532,6 +536,8 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
       getProcessingState: () => ({ status: 'idle' }),
+      getSessionData: () => ({ id: SESSION_ID, workspacePath: '/w' }),
+      updateMetadata: () => {},
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: mock(async () => {
