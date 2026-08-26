@@ -585,18 +585,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       provider.clearModelCache?.();
       throw new Error(`Provider ${record.providerId} returned no models`);
     }
-    const modelsPromise = provider.getModels();
-    let models: ModelInfo[];
-    try {
-      models = await raceWithTimeout(modelsPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
-    } catch (error) {
-      await raceWithTimeout(
-        modelsPromise.catch(() => {}),
-        DISCOVERY_SETTLE_GRACE_MS
-      ).catch(() => {});
-      provider.clearModelCache?.();
-      throw error;
-    }
 
     if (
       getModelsCacheClearSequence() !== clearsAtStart ||
@@ -605,10 +593,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     ) {
       provider.clearModelCache?.();
       return { success: false, reason: 'superseded' };
-    }
-    if (models.length === 0) {
-      provider.clearModelCache?.();
-      throw new Error(`Provider ${record.providerId} returned no models`);
     }
     const persistedConfig = parseProviderConfig(savedConfig.configJson);
     const persistedDiscovered = persistedConfig.models ?? [];
