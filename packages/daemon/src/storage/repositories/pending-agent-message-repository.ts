@@ -243,6 +243,26 @@ export class PendingAgentMessageRepository {
     this.notify();
   }
 
+  markLateDeadLetter(id: string, sentinel: string): PendingAgentMessageRecord | null {
+    const now = Date.now();
+    const updated = this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET attempts = attempts + 1,
+				     last_attempt_at = ?,
+				     last_error = ?,
+				     status = CASE
+				       WHEN attempts + 1 >= max_attempts THEN 'failed'
+				       ELSE status
+				     END
+				 WHERE id = ? AND status = 'pending'
+				   AND (last_error IS NULL OR last_error <> ?)`
+      )
+      .run(now, sentinel, id, sentinel);
+    if (updated.changes > 0) this.notify();
+    return this.getById(id);
+  }
+
   deferExpiration(ids: string[], ttlMs = DEFAULT_PENDING_MESSAGE_TTL_MS): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');

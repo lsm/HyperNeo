@@ -12,9 +12,9 @@ export interface SpaceAgentPendingDrainDeps {
   repo: {
     listPendingForTarget(workflowRunId: string, targetName: string): PendingAgentMessageRecord[];
     listByRunAndStatus?(workflowRunId: string, status: string): PendingAgentMessageRecord[];
-    getById(id: string): { status: string; attempts?: number } | null | undefined;
+    getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
-    markAttemptFailed(id: string, error: string): unknown;
+    markLateDeadLetter(id: string, sentinel: string): unknown;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string, excludeIds?: string[]): unknown;
@@ -79,10 +79,7 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
       continue;
     }
     if (failedSeen) {
-      const current = ctx.deps.repo.getById(row.id);
-      if (current?.status === 'pending' && current.attempts === 0) {
-        ctx.deps.repo.markAttemptFailed(row.id, LATE_DEAD_LETTER_ERROR);
-      }
+      ctx.deps.repo.markLateDeadLetter(row.id, LATE_DEAD_LETTER_ERROR);
       settledIds.add(row.id);
       continue;
     }
