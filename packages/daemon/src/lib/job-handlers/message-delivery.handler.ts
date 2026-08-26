@@ -118,7 +118,10 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         job.claimToken
       );
       const result = await turn;
-      const route = routeDriveTurnOutcome(result);
+      const route = routeDriveTurnOutcome(result, {
+        parkCount: result.outcome === 'blocked' ? deps.jobQueue.getParkCount(job.id) : 0,
+        now: Date.now(),
+      });
       if ('deadLetter' in route) {
         throw new DeadLetterImmediatelyError(route.deadLetter);
       }
@@ -130,6 +133,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       }
       if (route.mutation === 'requeue' && route.retryAt !== undefined) {
         deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
+      } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
+        deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
       }
       return route.result;
     }

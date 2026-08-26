@@ -4,7 +4,12 @@ import type {
   FeedSteerOutcome,
   MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
-import { MAX_ACP_STEER_PARKS, MAX_STEER_PARKS } from '../../../../src/lib/agent/message-delivery';
+import {
+  MAX_ACP_STEER_PARKS,
+  MAX_STEER_PARKS,
+  MESSAGE_DELIVERY_PARK_MS,
+  RESUME_CHOICE_PARK_BUDGET,
+} from '../../../../src/lib/agent/message-delivery';
 import type { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import {
   createMessageDeliveryHandler,
@@ -283,17 +288,16 @@ describe('createMessageDeliveryHandler', () => {
       drive: DriveTurnOutcome;
       expected: Record<string, unknown>;
       requeue?: boolean;
-      requeueAt?: number;
+      requeueParked?: boolean;
       settle?: boolean;
       reclaimSkip?: string;
     }> = [
       { label: 'completed', drive: { outcome: 'completed' }, expected: { outcome: 'completed' } },
       {
-        label: 'blocked',
+        label: 'blocked parks via requeueParked with a future retry',
         drive: { outcome: 'blocked', retryAt: 5000 },
-        expected: { parked: 'sdk_resume_choice', retryAt: 5000 },
-        requeue: true,
-        requeueAt: 5000,
+        expected: { parked: 'sdk_resume_choice' },
+        requeueParked: true,
       },
       {
         label: 'recovery_pending',
@@ -321,11 +325,19 @@ describe('createMessageDeliveryHandler', () => {
       const { handler, session, jobQueue, metrics, job } = makeHarness();
       session.driveResult = row.drive;
       const result = await handler(job, {});
-      expect(result).toEqual(row.expected);
+      expect(result).toMatchObject(row.expected);
       expect(jobQueue.requeue).toHaveBeenCalledTimes(row.requeue ? 1 : 0);
-      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
-      if (row.requeueAt !== undefined) {
-        expect(jobQueue.requeue).toHaveBeenCalledWith('job-1', row.requeueAt, 'claim-1');
+      expect(jobQueue.requeueParked).toHaveBeenCalledTimes(row.requeueParked ? 1 : 0);
+      if (row.requeue) {
+        expect(jobQueue.requeue).toHaveBeenCalledWith(
+          'job-1',
+          (row.drive as { retryAt: number }).retryAt,
+          'claim-1'
+        );
+      }
+      if (row.requeueParked) {
+        expect(result.retryAt).toBeGreaterThan(Date.now());
+        expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
       }
       expect(session.settleCalls).toEqual(row.settle ? ['uuid-1'] : []);
       if (row.reclaimSkip) {
@@ -479,6 +491,34 @@ describe('createMessageDeliveryHandler', () => {
       );
       expect(jobQueue.requeueParked).not.toHaveBeenCalled();
     });
+
+    it('a blocked turn past RESUME_CHOICE_PARK_BUDGET dead-letters without requeueing', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      jobQueue.getParkCount.mockImplementation(() => RESUME_CHOICE_PARK_BUDGET);
+      await expect(handler(job, {})).rejects.toThrow('past its budget');
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(jobQueue.requeue).not.toHaveBeenCalled();
+    });
+
+    it('a blocked turn under the resume-choice budget parks via requeueParked', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(result.retryAt).toBeGreaterThan(Date.now());
+      expect(jobQueue.getParkCount).toHaveBeenCalledTimes(1);
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+      expect(jobQueue.requeue).not.toHaveBeenCalled();
+    });
+
+    it('non-blocked turn outcomes never read the park count', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'recovery_pending', retryAt: 9000 };
+      const result = await handler(job, {});
+      expect(result).toEqual({ parked: 'limit_recovery', retryAt: 9000 });
+      expect(jobQueue.getParkCount).not.toHaveBeenCalled();
+    });
   });
 
   describe('outcome-routing read laziness (A3a)', () => {
@@ -534,16 +574,21 @@ describe('createMessageDeliveryHandler', () => {
       expect(steer.session.feedCalls).toBe(1);
     });
 
-    it('turn blocked requeues plain while steer park parks via requeueParked', async () => {
+    it('turn blocked and steer park both park, each through their own budget', async () => {
       const turn = makeHarness();
       turn.session.driveResult = { outcome: 'blocked', retryAt: 1111 };
       const steer = makeHarness({}, STEER_PAYLOAD);
       steer.session.feedResult = { outcome: 'park' };
       const turnResult = await turn.handler(turn.job, {});
       const steerResult = await steer.handler(steer.job, {});
-      expect(turnResult).toEqual({ parked: 'sdk_resume_choice', retryAt: 1111 });
-      expect(turn.jobQueue.requeue).toHaveBeenCalledWith('job-1', 1111, 'claim-1');
-      expect(turn.jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(turnResult).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(turnResult.retryAt).toBeGreaterThan(Date.now());
+      expect(turn.jobQueue.requeueParked).toHaveBeenCalledWith(
+        'job-1',
+        turnResult.retryAt,
+        'claim-1'
+      );
+      expect(turn.jobQueue.requeue).not.toHaveBeenCalled();
       expect(steerResult).toMatchObject({ parked: 'turn_blocked' });
       expect(steer.jobQueue.requeueParked).toHaveBeenCalledWith(
         'job-1',

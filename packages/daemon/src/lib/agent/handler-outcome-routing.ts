@@ -5,6 +5,8 @@ import {
   MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
+  RESUME_CHOICE_PARK_BUDGET,
+  resumeChoiceParkDelayMs,
 } from './message-delivery.ts';
 
 export type HandlerJobResult =
@@ -33,13 +35,23 @@ export type HandlerOutcomeRoute =
       result: HandlerJobResult;
     };
 
-export function routeDriveTurnOutcome(result: DriveTurnOutcome): HandlerOutcomeRoute {
+export const RESUME_CHOICE_DEAD_LETTER_REASON =
+  'Turn parked on sdk_resume_choice past its budget — answer the resume prompt or resend';
+
+export function routeDriveTurnOutcome(
+  result: DriveTurnOutcome,
+  args: { parkCount: number; now: number }
+): HandlerOutcomeRoute {
   if (result.outcome === 'blocked') {
+    if (args.parkCount >= RESUME_CHOICE_PARK_BUDGET) {
+      return { deadLetter: RESUME_CHOICE_DEAD_LETTER_REASON };
+    }
+    const retryAt = args.now + resumeChoiceParkDelayMs(args.parkCount);
     return {
-      mutation: 'requeue',
-      retryAt: result.retryAt,
+      mutation: 'requeueParked',
+      retryAt,
       settleSkipped: false,
-      result: { parked: 'sdk_resume_choice', retryAt: result.retryAt },
+      result: { parked: 'sdk_resume_choice', retryAt },
     };
   }
   if (result.outcome === 'recovery_pending') {
