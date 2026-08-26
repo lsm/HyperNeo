@@ -1,9 +1,10 @@
 import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SDKAssistantMessage, SDKMessage } from '@hyperneo/shared/sdk';
 import { isToolUseBlock } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { type IdleOwnerScope, isIdleWaiterAdmitted } from './idle-waiter-admission-pipeline.ts';
 
 type StreamingPhase = 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 
@@ -19,6 +20,7 @@ export class ProcessingStateManager {
     {
       resolve: () => void;
       gen?: number;
+      owner?: IdleOwnerScope;
       fireEnd: () => void;
       resolveOnce: () => void;
       endOnce: () => void;
@@ -28,6 +30,8 @@ export class ProcessingStateManager {
   private idleCallbackInFlight = false;
   private terminalIdleTransitions = 0;
   private pendingTerminalIdleTransitions = 0;
+  private queryOwnerGeneration = 0;
+  private turnOwnerToken = 0;
 
   constructor(
     private sessionId: string,
@@ -41,9 +45,25 @@ export class ProcessingStateManager {
     this.onIdleCallback = callback;
   }
 
+  private getCurrentIdleOwner(): IdleOwnerScope {
+    return { queryGeneration: this.queryOwnerGeneration, turnToken: this.turnOwnerToken };
+  }
+
+  private admittedIdleWaiters(transitionOwner?: IdleOwnerScope) {
+    const currentOwner = this.getCurrentIdleOwner();
+    return [...this.idleWaiters.values()].filter((w) =>
+      isIdleWaiterAdmitted({
+        waiterOwner: w.owner,
+        transitionOwner,
+        currentOwner,
+      })
+    );
+  }
+
   waitForIdleTransition(
     episodeGen?: number,
-    onEnd?: () => void
+    onEnd?: () => void,
+    owner?: IdleOwnerScope
   ): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
@@ -67,7 +87,7 @@ export class ProcessingStateManager {
       fireEnd();
       resolveOnce();
     };
-    this.idleWaiters.set(id, { resolve, gen: episodeGen, fireEnd, resolveOnce, endOnce });
+    this.idleWaiters.set(id, { resolve, gen: episodeGen, owner, fireEnd, resolveOnce, endOnce });
     return {
       promise,
       cancel: () => {
@@ -76,17 +96,18 @@ export class ProcessingStateManager {
     };
   }
 
-  releaseIdleWaiters(episodeGen?: number): void {
+  releaseIdleWaiters(episodeGen?: number, owner?: IdleOwnerScope): void {
+    const admitted = new Set(this.admittedIdleWaiters(owner));
     const matching = [...this.idleWaiters.entries()].filter(
-      ([, w]) => episodeGen === undefined || w.gen === episodeGen
+      ([, w]) => (episodeGen === undefined || w.gen === episodeGen) && admitted.has(w)
     );
     for (const [, w] of matching) w.endOnce();
   }
 
-  beginTerminalIdle(): void {
+  beginTerminalIdle(owner?: IdleOwnerScope): void {
     this.terminalIdleTransitions += 1;
     this.pendingTerminalIdleTransitions += 1;
-    for (const waiter of this.idleWaiters.values()) waiter.fireEnd();
+    for (const waiter of this.admittedIdleWaiters(owner)) waiter.fireEnd();
   }
 
   restoreFromDatabase(): void {
@@ -148,6 +169,7 @@ export class ProcessingStateManager {
     suppressDeliveryWaiters?: boolean;
     suppressIdlePublish?: boolean;
     suppressIdleCallback?: boolean;
+    owner?: IdleOwnerScope;
   }): Promise<void> {
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
@@ -158,7 +180,7 @@ export class ProcessingStateManager {
       this.terminalIdleTransitions += 1;
     }
     if (!suppressDrain) {
-      for (const w of this.idleWaiters.values()) w.fireEnd();
+      for (const w of this.admittedIdleWaiters(opts?.owner)) w.fireEnd();
     }
     try {
       await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
@@ -174,8 +196,7 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        const waiters = [...this.idleWaiters.values()];
-        this.idleWaiters.clear();
+        const waiters = this.admittedIdleWaiters(opts?.owner);
         for (const w of waiters) w.endOnce();
       }
       if (ownsTerminalTransition) {
