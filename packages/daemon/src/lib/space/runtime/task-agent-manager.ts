@@ -853,6 +853,12 @@ export class TaskAgentManager {
           }
         );
       },
+      syncReuseLiveWorkspace: (task, space, execution, sessionId) =>
+        this.syncLiveSessionWorkspace(task, space, execution, sessionId).catch((err) => {
+          log.warn(
+            `TaskAgentManager: failed to sync live-session workspace for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }),
       raiseSpawnRejection: (freshTask, rejectedExecution, rejectedWorkflow) => {
         validateTaskAllowsSpawn(freshTask);
         assertExecutionValidAgainstWorkflow(rejectedExecution, rejectedWorkflow);
@@ -2361,6 +2367,32 @@ export class TaskAgentManager {
       return stored;
     }
     return undefined;
+  }
+
+  private async syncLiveSessionWorkspace(
+    task: SpaceTask,
+    space: Space,
+    execution: NodeExecution,
+    sessionId: string
+  ): Promise<void> {
+    const live = this.getSubSession(sessionId);
+    if (!live) return;
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath: this.getTaskWorktreePath(task.id),
+      hasWorktreeManager: false,
+      spaceWorkspacePath: resolveTaskWorkspace(space, task),
+    }).workspacePath;
+    if (!workspacePath || live.getSessionData().workspacePath === workspacePath) return;
+    live.updateMetadata({ workspacePath });
+    await this.reinjectNodeAgentMcpServer(live, {
+      taskId: task.id,
+      subSessionId: sessionId,
+      agentName: execution.agentName,
+      spaceId: space.id,
+      workflowRunId: execution.workflowRunId,
+      workspacePath,
+      workflowNodeId: execution.workflowNodeId,
+    });
   }
 
   getSubSession(subSessionId: string): AgentSession | undefined {
@@ -4809,23 +4841,6 @@ export class TaskAgentManager {
           `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
         );
       }
-      const reuseWorkspacePath = resolveSpawnWorkspace({
-        cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
-        hasWorktreeManager: false,
-        spaceWorkspacePath: resolveTaskWorkspace(space, task),
-      }).workspacePath;
-      if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
-        existing.updateMetadata({ workspacePath: reuseWorkspacePath });
-        await this.reinjectNodeAgentMcpServer(existing, {
-          taskId,
-          subSessionId: existingSessionId,
-          agentName: matchedSlot.name,
-          spaceId,
-          workflowRunId: task.workflowRunId ?? '',
-          workspacePath: reuseWorkspacePath,
-          workflowNodeId: matchedNodeId,
-        });
-      }
       await this.withSessionInjectLock(existing.session.id, async () => {
         const terminalStatus = task.workflowRunId
           ? this.resolveTerminalInjectionStatus(task.workflowRunId)
@@ -4836,6 +4851,23 @@ export class TaskAgentManager {
               `${existingSessionId} — task/run is terminal (${terminalStatus})`
           );
           return;
+        }
+        const reuseWorkspacePath = resolveSpawnWorkspace({
+          cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+          hasWorktreeManager: false,
+          spaceWorkspacePath: resolveTaskWorkspace(space, task),
+        }).workspacePath;
+        if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
+          existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+          await this.reinjectNodeAgentMcpServer(existing, {
+            taskId,
+            subSessionId: existingSessionId,
+            agentName: matchedSlot.name,
+            spaceId,
+            workflowRunId: task.workflowRunId ?? '',
+            workspacePath: reuseWorkspacePath,
+            workflowNodeId: matchedNodeId,
+          });
         }
         await this.injectMessageIntoSession(existing, kickoffMessage);
       });

@@ -68,6 +68,12 @@ export interface SpawnExecutionFlowDeps {
   releaseTaskSpawn(taskId: string): void;
   cancelSpawnedSession(sessionId: string): void;
   rebindLiveExecution(execution: NodeExecution, sessionId: string): 'won' | 'superseded';
+  syncReuseLiveWorkspace?(
+    task: SpaceTask,
+    space: Space,
+    execution: NodeExecution,
+    sessionId: string
+  ): void | Promise<void>;
   raiseSpawnRejection(
     freshTask: SpaceTask,
     execution: NodeExecution,
@@ -185,13 +191,19 @@ export function runSpawnExecutionFlow(
       s.effect({
         name: 'rebind-live-session',
         when: 'reuseLive',
-        reads: ['execution'],
+        reads: ['execution', 'freshTask', 'space'],
         writes: [],
-        run: (view) =>
-          deps.rebindLiveExecution(
+        run: async (view) => {
+          const sessionId = (view.reuseLive as { sessionId: string }).sessionId;
+          const rebind = deps.rebindLiveExecution(view.execution, sessionId);
+          await deps.syncReuseLiveWorkspace?.(
+            view.freshTask,
+            view.space,
             view.execution,
-            (view.reuseLive as { sessionId: string }).sessionId
-          ),
+            sessionId
+          );
+          return rebind;
+        },
       }),
       s.halt({
         name: 'return-live-session',

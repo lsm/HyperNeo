@@ -75,6 +75,8 @@ function fakeSession(id: string, processingStatus = 'idle'): AgentSession {
   return {
     session: { id },
     getProcessingState: () => ({ status: processingStatus }),
+    getSessionData: () => ({ id, workspacePath: '/tmp/ws' }),
+    updateMetadata: () => {},
   } as unknown as AgentSession;
 }
 

@@ -113,16 +113,20 @@ async function resolveWorktreePath(
           `resolveWorktreePath: run ${runId} has ${tasks.length} tasks — showing artifacts for task ${tasks[0].id} only. Pass taskId to target a specific task.`
         );
       }
-      const firstTaskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(
-        spaceId,
-        tasks[0].id
-      );
-      if (firstTaskWorktreePath) {
-        return firstTaskWorktreePath;
+      const firstTask = tasks[0];
+      fallbackTask =
+        firstTask.spaceId === spaceId && firstTask.workflowRunId === runId ? firstTask : null;
+      if (fallbackTask) {
+        const firstTaskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(
+          spaceId,
+          firstTask.id
+        );
+        if (firstTaskWorktreePath) {
+          return firstTaskWorktreePath;
+        }
       }
-      fallbackTask = tasks[0];
       log.warn(
-        `resolveWorktreePath: no worktree found for task ${tasks[0].id} in run ${runId}, falling back to the task or root workspace`
+        `resolveWorktreePath: no worktree found for task ${firstTask.id} in run ${runId}, falling back to the task or root workspace`
       );
     } else {
       log.warn(
