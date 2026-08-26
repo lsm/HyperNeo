@@ -320,21 +320,25 @@ export class PendingAgentMessageRepository {
     return this.getById(id);
   }
 
-  expireStale(runId: string | null = null): number {
+  expireStale(runId: string | null = null, excludeIds: string[] = []): number {
     const now = Date.now();
+    const excludePredicate =
+      excludeIds.length > 0 ? ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})` : '';
     const stmt =
       runId === null
         ? this.db.prepare(
             `UPDATE pending_agent_messages
 						 SET status = 'expired'
-						 WHERE status = 'pending' AND expires_at <= ?`
+						 WHERE status = 'pending' AND expires_at <= ?${excludePredicate}`
           )
         : this.db.prepare(
             `UPDATE pending_agent_messages
 						 SET status = 'expired'
-						 WHERE status = 'pending' AND expires_at <= ? AND workflow_run_id = ?`
+						 WHERE status = 'pending' AND expires_at <= ?${excludePredicate}
+						   AND workflow_run_id = ?`
           );
-    const result = runId === null ? stmt.run(now) : stmt.run(now, runId);
+    const result =
+      runId === null ? stmt.run(now, ...excludeIds) : stmt.run(now, ...excludeIds, runId);
     if (result.changes > 0) this.notify();
     return result.changes;
   }

@@ -26,17 +26,21 @@ export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 
 export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly waiters = new Set<{ cancel(): void }>();
 
   arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): void {
     const late = waitForDeliveryConsumption(sessionId, messageId);
+    this.waiters.add(late);
     const expiry = setTimeout(() => {
       late.cancel();
       this.timers.delete(expiry);
+      this.waiters.delete(late);
     }, LATE_SETTLE_HORIZON_MS);
     this.timers.add(expiry);
     void late.promise.then(() => {
       clearTimeout(expiry);
       this.timers.delete(expiry);
+      this.waiters.delete(late);
       try {
         onConsumed(sessionId);
       } catch (error) {
@@ -51,6 +55,8 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
   dispose(): void {
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
+    for (const waiter of this.waiters) waiter.cancel();
+    this.waiters.clear();
   }
 }
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';

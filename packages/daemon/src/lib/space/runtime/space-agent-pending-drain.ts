@@ -14,7 +14,7 @@ export interface SpaceAgentPendingDrainDeps {
     markDelivered(id: string, sessionId: string): void;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
-    expireStale(runId: string): unknown;
+    expireStale(runId: string, excludeIds?: string[]): unknown;
   };
   resolveReplySession(row: PendingAgentMessageRecord): string | null;
   probeDeliveryStatus(sessionId: string, messageId: string): string | undefined;
@@ -89,7 +89,7 @@ function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx
     runId: ctx.workflowRunId,
     excludeIds: ctx.activeDeliveryIds ?? [],
   });
-  ctx.deps.repo.expireStale(ctx.workflowRunId);
+  ctx.deps.repo.expireStale(ctx.workflowRunId, ctx.activeDeliveryIds ?? []);
   return ctx;
 }
 
@@ -153,7 +153,10 @@ export function collectActiveSpaceDeliveryIds(args: {
         ? [replyTo, args.spaceChatSessionId]
         : [args.spaceChatSessionId];
     if (
-      candidates.some((sessionId) => args.probeDeliveryStatus(sessionId, row.id) === 'enqueued')
+      candidates.some((sessionId) => {
+        const sendStatus = args.probeDeliveryStatus(sessionId, row.id);
+        return sendStatus === 'enqueued' || sendStatus === 'submitted';
+      })
     ) {
       activeIds.push(row.id);
     }

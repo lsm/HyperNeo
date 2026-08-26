@@ -1405,11 +1405,9 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
-    repo.enforceRetention({
-      runId: workflowRunId,
-      excludeIds: this.activeSpaceDeliveryIdsForRun(workflowRunId),
-    });
-    repo.expireStale(workflowRunId);
+    const activeDeliveryIds = this.activeSpaceDeliveryIdsForRun(workflowRunId);
+    repo.enforceRetention({ runId: workflowRunId, excludeIds: activeDeliveryIds });
+    repo.expireStale(workflowRunId, activeDeliveryIds);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     const workflowNodeName = execution
