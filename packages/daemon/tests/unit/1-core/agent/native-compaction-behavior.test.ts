@@ -604,6 +604,32 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(yieldedSpy).not.toHaveBeenCalled();
   });
 
+  it('delivery gate holds queued prompts until pending enforcement completes', async () => {
+    const queue = new MessageQueue();
+    queue.start();
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    queue.setDeliveryGate(gate);
+    await queue.enqueue('first prompt', false);
+
+    let yielded = false;
+    const consumer = (async () => {
+      for await (const entry of queue.messageGenerator('sess')) {
+        yielded = true;
+        entry.onSent();
+        break;
+      }
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(yielded).toBe(false);
+    releaseGate();
+    await consumer;
+    queue.stop();
+    expect(yielded).toBe(true);
+  });
+
   it('internal /compact is excluded from the query-runner retry-replay buffer (daemon query boundary)', async () => {
     const queue = new MessageQueue();
     queue.start();

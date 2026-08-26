@@ -207,6 +207,7 @@ export class ModelSwitchHandler {
       const nextProvider = newProviderInstance.id as Provider;
       const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
       const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
+      this.ctx.messageQueue.removePendingInternalCompactions();
 
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
@@ -251,7 +252,6 @@ export class ModelSwitchHandler {
       } else {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
-        this.ctx.messageQueue.removePendingInternalCompactions();
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
           session.metadata = {

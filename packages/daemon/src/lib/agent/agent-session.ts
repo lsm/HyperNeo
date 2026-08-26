@@ -524,6 +524,7 @@ export class AgentSession
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
       this.restoredBudgetEnforcement = this.enforceRestoredContextBudget();
+      this.messageQueue.setDeliveryGate(this.restoredBudgetEnforcement);
     }
     this.stateManager.restoreFromDatabase();
 
@@ -1231,7 +1232,9 @@ export class AgentSession
         : restored.totalCapacity > 0
           ? restored.totalCapacity
           : undefined;
-    const autoCompactPercent = modelInfo?.autoCompactPercent ?? restored.autoCompactPercent;
+    const autoCompactPercent = modelInfo
+      ? modelInfo.autoCompactPercent
+      : restored.autoCompactPercent;
     const decision = decideContextBudgetCompaction({
       totalUsed: restored.totalUsed,
       configuredWindow,
@@ -1268,7 +1271,7 @@ export class AgentSession
     if (!setMcpServers) return Promise.resolve();
 
     const effectiveMcpServers = this.optionsBuilder.getEffectiveMcpServers() ?? {};
-    return setMcpServers(effectiveMcpServers)
+    const enforcement = setMcpServers(effectiveMcpServers)
       .then(async (result) => {
         this.logger.info(
           `mcp.attach.live ${JSON.stringify({
@@ -1292,6 +1295,8 @@ export class AgentSession
             .join(', ')}]: ${error instanceof Error ? error.message : String(error)}`
         );
       });
+    this.messageQueue.setDeliveryGate(enforcement);
+    return enforcement;
   }
 
   private emitMcpAttachLog(action: 'merge' | 'detach' | 'replace', servers: string[]): void {

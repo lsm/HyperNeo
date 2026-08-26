@@ -38,6 +38,7 @@ export class MessageQueue {
   private waiters: Array<() => void> = [];
   private running: boolean = false;
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
+  private deliveryGate: Promise<void> | null = null;
 
   overrideTimeoutMsForTest(ms: number): void {
     this.timeoutMs = ms;
@@ -67,6 +68,22 @@ export class MessageQueue {
         !(queued.internal && typeof queued.content === 'string' && queued.content === '/compact')
     );
     return before - this.queue.length;
+  }
+
+  setDeliveryGate(gate: Promise<void>): void {
+    this.deliveryGate = gate;
+    void gate.then(
+      () => {
+        if (this.deliveryGate === gate) {
+          this.deliveryGate = null;
+        }
+      },
+      () => {
+        if (this.deliveryGate === gate) {
+          this.deliveryGate = null;
+        }
+      }
+    );
   }
 
   async enqueue(
@@ -328,6 +345,10 @@ export class MessageQueue {
 
       if (!queuedMessage) {
         break;
+      }
+
+      if (this.deliveryGate) {
+        await this.deliveryGate;
       }
 
       if (!this.claimed.has(queuedMessage)) {
