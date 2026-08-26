@@ -790,6 +790,36 @@ describe('SpaceAgentEditor', () => {
 });
 
 describe('SpaceAgentEditor model pool', () => {
+  it('defaults to single mode with no pool controls', () => {
+    const { getByTestId, queryByTestId } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+    expect(getByTestId('space-agent-model-select')).toBeTruthy();
+    expect(queryByTestId('agent-model-pool')).toBeNull();
+  });
+
+  it('opens in pool mode when the agent has a pool', () => {
+    const agent = makeAgent({
+      modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
+    });
+    const { getByTestId, queryByTestId } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+    expect(queryByTestId('space-agent-model-select')).toBeNull();
+    expect(getByTestId('agent-model-pool')).toBeTruthy();
+  });
+
+  it('seeds one empty entry when switching to pool mode', () => {
+    const { getByTestId, getAllByTestId } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    expect(getAllByTestId('pool-entry')).toHaveLength(1);
+  });
+
+  it('appends entries with the add button in pool mode', () => {
+    const { getByTestId, getAllByTestId } = render(<SpaceAgentEditor {...DEFAULT_PROPS} />);
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    expect(getAllByTestId('pool-entry')).toHaveLength(2);
+  });
+
   it('sends modelPool in create params when entries are configured', async () => {
     mockCreateAgent.mockResolvedValue({ id: 'new-agent', name: 'Fresh Agent' });
 
@@ -798,7 +828,7 @@ describe('SpaceAgentEditor model pool', () => {
     );
 
     fillName(getByPlaceholderText, 'Fresh Agent');
-    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
 
     const modelSelect = getByTestId('pool-entry-model-select') as HTMLSelectElement;
     fireEvent.change(modelSelect, { target: { value: 'claude-sonnet-4-6' } });
@@ -820,6 +850,59 @@ describe('SpaceAgentEditor model pool', () => {
             },
           ],
         })
+      );
+    });
+  });
+
+  it('switching to pool mode clears the single model on save', async () => {
+    const agent = makeAgent({ model: 'claude-haiku-4-5' });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({
+          modelPool: [
+            { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+          ],
+          model: null,
+          provider: null,
+        })
+      );
+    });
+  });
+
+  it('switching to single mode clears the pool on save', async () => {
+    const agent = makeAgent({
+      modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 }],
+    });
+    mockUpdateAgent.mockResolvedValue(agent);
+
+    const { getByTestId, getByRole } = render(
+      <SpaceAgentEditor {...DEFAULT_PROPS} agent={agent} />
+    );
+
+    fireEvent.click(getByTestId('agent-model-mode-single'));
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalledWith(
+        'agent-1',
+        expect.objectContaining({ model: 'claude-sonnet-4-6', modelPool: null })
       );
     });
   });
