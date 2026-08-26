@@ -10,9 +10,13 @@ is a thin data-access layer over that table:
 
 - `create` / `getById` / `listBySpace` (primary first, then oldest) / `getByPath(spaceId, path)` /
   `findOwnerByPath(path)` (across all spaces) / `updateLabel` / `delete(spaceId, id)` / `countBySpace`.
-- Constraint violations surface as thrown SQLite errors — callers distinguish duplicate-path
-  collisions from other failures with an `/UNIQUE constraint/i` check on the error message.
-  A second primary row for the same space trips the partial index and also throws.
+- Constraint violations surface as thrown SQLite errors with no reclassification. The two
+  `UNIQUE` rules in this table — `UNIQUE(space_id, path)` and the partial unique index on
+  `(space_id) WHERE is_primary = 1` — both surface as `UNIQUE constraint failed: ...` with
+  only the failing index name to tell them apart, so a bare `/UNIQUE constraint/i` check
+  cannot tell a duplicate-path collision from a second-primary attempt. Callers that need
+  to distinguish them should pre-check with `getByPath` / `getById` (or inspect the failing
+  index name in the SQLite error); the repository itself does not parse the message.
 
 ## Canonical path comparison
 

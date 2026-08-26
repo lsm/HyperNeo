@@ -42,7 +42,7 @@ export class SpaceWorkspaceRepository {
   listBySpace(spaceId: string): SpaceWorkspaceRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_workspaces WHERE space_id = ? ORDER BY is_primary DESC, created_at ASC`
+        `SELECT * FROM space_workspaces WHERE space_id = ? ORDER BY is_primary DESC, created_at ASC, id ASC`
       )
       .all(spaceId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToRecord(r));

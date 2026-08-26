@@ -79,6 +79,19 @@ describe('SpaceWorkspaceRepository', () => {
     expect(rows[0]!.id).toBe(primary.id);
   });
 
+  test('listBySpace breaks created_at ties on id so the order is stable', () => {
+    const first = repo.create({ spaceId: SPACE_A, path: '/repos/a' });
+    const second = repo.create({ spaceId: SPACE_A, path: '/repos/b' });
+    const third = repo.create({ spaceId: SPACE_A, path: '/repos/c' });
+    db.prepare(`UPDATE space_workspaces SET created_at = ? WHERE space_id = ?`).run(1000, SPACE_A);
+
+    const expected = [first.id, second.id, third.id].sort();
+    for (let i = 0; i < 3; i++) {
+      const rows = repo.listBySpace(SPACE_A);
+      expect(rows.map((r) => r.id)).toEqual(expected);
+    }
+  });
+
   test('getByPath matches exact stored strings within one space only', () => {
     const inA = repo.create({ spaceId: SPACE_A, path: '/repos/shared' });
     const inB = repo.create({ spaceId: SPACE_B, path: '/repos/shared' });
