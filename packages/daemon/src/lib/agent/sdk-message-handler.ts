@@ -61,11 +61,15 @@ import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
-function boundedDeliveryGate(gate: Promise<void>): Promise<void> {
+const DELIVERY_GATE_WINDOW_MS = 5000;
+
+function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
+  const windowMs =
+    deadlineAt === undefined ? DELIVERY_GATE_WINDOW_MS : Math.max(0, deadlineAt - Date.now());
   return Promise.race([
     gate,
     new Promise<void>((resolve) => {
-      const timer = setTimeout(() => resolve(), 5000);
+      const timer = setTimeout(() => resolve(), windowMs);
       if (typeof timer.unref === 'function') {
         timer.unref();
       }
@@ -1566,6 +1570,7 @@ export class SDKMessageHandler {
     const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
     if (!queryObject) return Promise.resolve();
     const fenceModel = session.config.model;
+    const gateDeadline = Date.now() + DELIVERY_GATE_WINDOW_MS;
     const fenceProvider = session.config.provider;
 
     const promise = (async () => {
@@ -1650,7 +1655,10 @@ export class SDKMessageHandler {
               this.ctx.clearPendingResumeAfterCompaction?.();
             });
         }
-        await boundedDeliveryGate(publishProjection.then(() => undefined));
+        await boundedDeliveryGate(
+          publishProjection.then(() => undefined),
+          gateDeadline
+        );
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
@@ -1671,7 +1679,12 @@ export class SDKMessageHandler {
       session.config.provider !== 'acp' &&
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(session.config.provider);
     if (reason !== 'event-tick' || enforcesBudget) {
-      this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(promise.catch(() => {})));
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          promise.catch(() => {}),
+          gateDeadline
+        )
+      );
     }
     return promise;
   }
