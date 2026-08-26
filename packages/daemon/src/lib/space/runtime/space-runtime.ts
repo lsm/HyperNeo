@@ -1947,10 +1947,12 @@ export class SpaceRuntime {
         return true;
       },
       markDeliveriesDelivered: (marks) => {
-        for (const mark of marks) {
-          store.markDeliveryDelivered(mark.eventId, mark.deliveryKey);
-          store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
-        }
+        this.config.db.transaction(() => {
+          for (const mark of marks) {
+            store.markDeliveryDelivered(mark.eventId, mark.deliveryKey);
+            store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
+          }
+        })();
       },
     };
     return runRenderPendingDigest(deps, {
