@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   clearConnectorRegistry,
@@ -92,21 +92,18 @@ const RATE_LIMIT_PROBE_OK = {
 };
 
 describe('resolveGithubConfigDir', () => {
-  test.skipIf(existsSync(join(homedir(), '.config', 'gh')))(
-    'resolves the Windows AppData gh config location',
-    () => {
-      const appData = join(
-        tmpdir(),
-        `gh-appdata-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      );
-      mkdirSync(join(appData, 'GitHub CLI'), { recursive: true });
-      try {
-        expect(resolveGithubConfigDir({ AppData: appData })).toBe(join(appData, 'GitHub CLI'));
-      } finally {
-        rmSync(appData, { recursive: true, force: true });
-      }
+  test('prefers the Windows AppData gh config location over the HOME default', () => {
+    const appData = join(
+      tmpdir(),
+      `gh-appdata-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(join(appData, 'GitHub CLI'), { recursive: true });
+    try {
+      expect(resolveGithubConfigDir({ AppData: appData })).toBe(join(appData, 'GitHub CLI'));
+    } finally {
+      rmSync(appData, { recursive: true, force: true });
     }
-  );
+  });
 });
 
 describe('pr_ready preset (coder→reviewer handoff gate)', () => {

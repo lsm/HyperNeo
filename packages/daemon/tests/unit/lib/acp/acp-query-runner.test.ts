@@ -1089,8 +1089,10 @@ describe('AcpQueryRunner', () => {
 
   test('uses an allowlisted environment for ACP terminal commands', async () => {
     const previousGithubToken = process.env.GITHUB_TOKEN;
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
     process.env.GITHUB_TOKEN = 'github-secret';
     process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-apikey-for-acp';
     const sessionPath = process.env.PATH ?? '/usr/bin:/bin';
     const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
@@ -1139,11 +1141,15 @@ describe('AcpQueryRunner', () => {
       expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
       expect(terminalEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect(constructorOptions[0].replaceEnv).toBe(true);
+      expect(constructorOptions[0].env?.ANTHROPIC_API_KEY).toBe('sk-ant-apikey-for-acp');
+      expect(terminalEnv.ANTHROPIC_API_KEY).toBeUndefined();
     } finally {
       releasePrompt();
       await ctx.queryPromise;
       if (previousGithubToken === undefined) delete process.env.GITHUB_TOKEN;
       else process.env.GITHUB_TOKEN = previousGithubToken;
+      if (previousApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousApiKey;
     }
   }, 20000);
 

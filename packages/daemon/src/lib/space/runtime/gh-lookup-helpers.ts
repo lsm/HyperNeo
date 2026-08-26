@@ -70,14 +70,14 @@ export function resolveGithubConfigDir(
     if (existsSync(xdgGhConfig)) return xdgGhConfig;
   }
 
-  const defaultGhConfig = join(homedir(), '.config', 'gh');
-  if (existsSync(defaultGhConfig)) return defaultGhConfig;
-
   const appData = envValue(source, 'AppData');
   if (appData) {
     const windowsGhConfig = join(appData, 'GitHub CLI');
     if (existsSync(windowsGhConfig)) return windowsGhConfig;
   }
+
+  const defaultGhConfig = join(homedir(), '.config', 'gh');
+  if (existsSync(defaultGhConfig)) return defaultGhConfig;
 
   return undefined;
 }

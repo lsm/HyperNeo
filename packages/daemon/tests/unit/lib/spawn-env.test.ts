@@ -107,6 +107,7 @@ describe('buildCommandEnv', () => {
     expect(env.https_proxy).toBe(SOURCE.https_proxy);
     expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
     expect(env.CURL_CA_BUNDLE).toBe(SOURCE.CURL_CA_BUNDLE);
+    expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 });
@@ -131,7 +132,10 @@ describe('buildGitCommandEnv', () => {
       GIT_CONFIG_VALUE_2: '/workspace',
     });
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
+    expect(env.GIT_SSL_CAPATH).toBeUndefined();
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
+    expect(env.GIT_CEILING_DIRECTORIES).toBe(SOURCE.GIT_CEILING_DIRECTORIES);
+    expect(env.GIT_DISCOVERY_ACROSS_FILESYSTEM).toBe(SOURCE.GIT_DISCOVERY_ACROSS_FILESYSTEM);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
@@ -265,6 +269,16 @@ describe('buildWorkflowConditionEnv', () => {
     expect(env.VSCODE_GIT_ASKPASS_NODE).toBeUndefined();
     expect(env.VSCODE_GIT_ASKPASS_MAIN).toBeUndefined();
     expect(env.VSCODE_GIT_IPC_HANDLE).toBeUndefined();
+  });
+
+  test('rejects inline container and cloud credential configuration', () => {
+    const env = buildWorkflowConditionEnv(
+      ['DOCKER_AUTH_CONFIG', 'DOCKER_CONFIG', 'MY_TOOL_FLAG'],
+      SOURCE
+    );
+    expect(env.DOCKER_AUTH_CONFIG).toBeUndefined();
+    expect(env.DOCKER_CONFIG).toBeUndefined();
+    expect(env.MY_TOOL_FLAG).toBe('1');
   });
 });
 
