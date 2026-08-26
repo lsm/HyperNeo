@@ -26,7 +26,9 @@ the business operation:
   `db.transaction(...)` body (insert, sequence allocation, replacement-edge writes,
   badge update, and — for `persistAndEnqueueDelivery` — the queue `enqueue`).
 - The post-commit stages run after the transaction commits and keep their existing
-  per-method error policy.
+  per-method error policy. `saveSDKMessage` uses one shared `try/catch` for its
+  notification and superseded-index-deletion operations, so a notification failure
+  also skips deletion as it does today.
 
 Per ADR 0004 (`docs/adr/0004-superpipe-pipelines.md`, current revision 2026-08-25),
 the `admit` stage is the **P1 pure sync transform** pattern (`pipe -> end`, no
@@ -266,7 +268,7 @@ const saveSdkMessage = superpipe(deps)('save-sdk-message')
   .pipe(snapshotMessage, 'message', 'ctx')        // + variant/sendStatus/origin
   .pipe(admitMessage, 'ctx', 'ctx')               // single stage: calls the plain decideMessageAdmission leaf
   .pipe(atomicWrite, 'ctx', 'ctx')                // existing db.transaction(...) body: insert, allocate consumed_seq for terminal results, replacement edges, search index, badge
-  .pipe(publishAdmissions, 'ctx', 'result');      // existing notifications/publications, post-commit, with the method's existing error policy
+  .pipe(publishAdmissions, 'ctx', 'result');      // one post-commit stage: notifySession then deleteSupersededIndex, shared try/catch
 ```
 
 Each save pipeline is a synchronous `.end` run executed AROUND the method's
@@ -276,8 +278,11 @@ badge update, and — for `persistAndEnqueueDelivery` — the queue `enqueue`,
 whatever the method currently performs inside its transaction — is ONE
 in-transaction stage, and the session notifications / superseded-index
 deletion / post-save side effects are POST-COMMIT stages that keep the
-method's existing error policy (caught-and-logged for `saveSDKMessage` and the
-outbox, uncaught for `saveUserMessage` and `saveHyperNeoActionMessage`).
+method's existing error policy. `saveSDKMessage` uses one shared `try/catch`
+post-commit stage that runs `notifySession` then `deleteSupersededIndex`;
+`persistAndEnqueueDelivery` uses one shared `try/catch` for
+`runPostSaveSideEffects`; `saveUserMessage` and `saveHyperNeoActionMessage`
+run their post-commit work uncaught.
 Today's `saveSDKMessage` COMMITS before notifying the session and deleting
 superseded-index entries, and failures there are only logged — moving them
 into the transaction would roll back or retry an otherwise successful insert.
@@ -306,8 +311,9 @@ blanket best-effort catch:
   inserted row id and `badgeUpdate`. The transaction body inserts and, if
   `isTerminal`, allocates and writes `consumed_seq`, then writes replacement
   edges, schedules the search index, and applies the badge update, all inside the
-  transaction; `notifySession` + `deleteSupersededIndex` are post-commit and
-  caught/logged at `:573-579`.
+  transaction; post-commit is one shared `try/catch` stage that runs
+  `notifySession` then `deleteSupersededIndex` and is caught/logged at
+  `:573-579`.
 - `saveUserMessage` → `save-user-message`: snapshot → `admit` → `atomic`
   (a new transaction-owning repository primitive `saveUserMessageWithAdmission`
   that wraps `withBusyRetry(() => db.transaction(() =>
@@ -332,8 +338,8 @@ blanket best-effort catch:
   transaction-owning repository primitive `saveHyperNeoActionMessageWithAdmission`
   that wraps the existing `:1707-1710` `db.transaction(...)` body and returns the
   inserted row id; it inserts and applies the badge update inside the
-  transaction) → `notifySessionsChanged` + `scheduleMessageSearchIndex`
-  (`:1711-1712`, post-commit, NOT caught).
+  transaction) → one post-commit stage that runs `notifySessionsChanged`
+  then `scheduleMessageSearchIndex` (`:1711-1712`, NOT caught).
 
 The method bodies reduce to snapshot → run (with `saveSDKMessage` keeping an
 outer `try/catch` boundary that returns `false` on failure). `decideMessageAdmission`
@@ -423,7 +429,10 @@ that stage's existing decision.
    its existing outer `try/catch` boundary so the runner exception still returns
    `false`; do not invoke the full runner inside the transaction, which would
    move notification / index side effects before commit and could roll back the
-   insert when they fail. `decideMessageAdmission` keeps its current plain body
+   insert when they fail. `saveSDKMessage`'s post-commit `publish` stage keeps
+   the shared `try/catch` around `notifySession` and `deleteSupersededIndex`,
+   preserving the current all-or-nothing catch boundary. `decideMessageAdmission`
+   keeps its current plain body
    and public signature; export each pipeline's runner (`runSaveSdkMessage` et
    al.) for stage-level assertions if the suites want them.
 
@@ -646,8 +655,9 @@ characterizes those dimensions).
   that wraps the existing `db.transaction(...)` body with `withBusyRetry`
   (this includes the INSERT, the `consumed_seq` UPDATE for terminal results, the
   replacement edges, the search index, and the badge update, all in the same
-  transaction) → post-commit notification / superseded-index-deletion stages
-  with local catch+log (review correction PR #2978: the current method COMMITS
+  transaction) → one post-commit `publish` stage that runs `notifySession` then
+  `deleteSupersededIndex` under the existing shared `try/catch`
+  catch+log (review correction PR #2978: the current method COMMITS
   before those operations and only logs their failures; running them
   in-transaction would roll back successful inserts); the method body keeps an
   outer `try/catch` boundary around `snapshot → run` so a write failure still
@@ -730,8 +740,8 @@ characterizes those dimensions).
   (`saveHyperNeoActionMessage`, call site `:1675`) only. Same composition as
   PR 2, but the `atomic` stage calls a new transaction-owning repository
   primitive `saveHyperNeoActionMessageWithAdmission` that wraps the existing
-  `db.transaction(...)` body. The post-commit stages are `notifySessionsChanged`
-  and `scheduleMessageSearchIndex` at `:1711-1712`; they are NOT caught, so a
+  `db.transaction(...)` body. The post-commit stage runs `notifySessionsChanged`
+  then `scheduleMessageSearchIndex` at `:1711-1712`; it is NOT caught, so a
   failure propagates to the caller while the insert remains committed
   (preserving the current `saveHyperNeoActionMessage` contract).
 - **Lands**: All repository save business paths and the outbox
