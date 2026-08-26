@@ -94,6 +94,13 @@ export function buildExecutionBaseSessionId(
   return `space:${spaceId}:task:${taskId}:exec:${executionId}`;
 }
 
+export function taskIdFromSubSessionIdentity(subSessionId: string): string | null {
+  const segments = subSessionId.split(':');
+  const taskIndex = segments.indexOf('task');
+  if (taskIndex === -1 || taskIndex + 1 >= segments.length) return null;
+  return segments[taskIndex + 1] || null;
+}
+
 export function findAvailableSessionId(
   baseId: string,
   isTaken: (sessionId: string) => boolean

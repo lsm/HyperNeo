@@ -150,6 +150,7 @@ import {
   findAvailableSessionId,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
+  taskIdFromSubSessionIdentity,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
@@ -854,11 +855,7 @@ export class TaskAgentManager {
         );
       },
       syncReuseLiveWorkspace: (task, space, execution, sessionId) =>
-        this.syncLiveSessionWorkspace(task, space, execution, sessionId).catch((err) => {
-          log.warn(
-            `TaskAgentManager: failed to sync live-session workspace for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }),
+        this.syncLiveSessionWorkspace(task, space, execution, sessionId),
       raiseSpawnRejection: (freshTask, rejectedExecution, rejectedWorkflow) => {
         validateTaskAllowsSpawn(freshTask);
         assertExecutionValidAgainstWorkflow(rejectedExecution, rejectedWorkflow);
@@ -2393,16 +2390,24 @@ export class TaskAgentManager {
         spaceWorkspacePath: resolveTaskWorkspace(space, task),
       }).workspacePath;
       if (!workspacePath || live.getSessionData().workspacePath === workspacePath) return;
+      const previousWorkspacePath = live.getSessionData().workspacePath;
       live.updateMetadata({ workspacePath });
-      await this.reinjectNodeAgentMcpServer(live, {
-        taskId: task.id,
-        subSessionId: sessionId,
-        agentName: execution.agentName,
-        spaceId: space.id,
-        workflowRunId: execution.workflowRunId,
-        workspacePath,
-        workflowNodeId: execution.workflowNodeId,
-      });
+      try {
+        await this.reinjectNodeAgentMcpServer(live, {
+          taskId: task.id,
+          subSessionId: sessionId,
+          agentName: execution.agentName,
+          spaceId: space.id,
+          workflowRunId: execution.workflowRunId,
+          workspacePath,
+          workflowNodeId: execution.workflowNodeId,
+        });
+      } catch (err) {
+        if (previousWorkspacePath !== null) {
+          live.updateMetadata({ workspacePath: previousWorkspacePath });
+        }
+        throw err;
+      }
     });
   }
 
@@ -3194,9 +3199,16 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(execution.workflowRunId);
-    const ownerId = subSessionId ? this.findParentTaskIdForSubSession(subSessionId) : null;
+    const ownerIds = [
+      taskIdFromSubSessionIdentity(subSessionId),
+      subSessionId ? this.findParentTaskIdForSubSession(subSessionId) : null,
+    ].filter((candidate): candidate is string => Boolean(candidate));
     const parentTask =
-      (ownerId ? tasks.find((candidate) => candidate.id === ownerId) : null) ?? tasks[0] ?? null;
+      ownerIds
+        .map((ownerId) => tasks.find((candidate) => candidate.id === ownerId))
+        .find((match) => match) ??
+      tasks[0] ??
+      null;
     if (!parentTask) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: no parent task found for workflowRunId=${execution.workflowRunId}`

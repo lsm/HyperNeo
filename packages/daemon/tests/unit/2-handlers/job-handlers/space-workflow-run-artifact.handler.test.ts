@@ -151,7 +151,7 @@ describe('space-workflow-run-artifact.handler', () => {
       const result = await handleSyncGateArtifacts({ runId: RUN_ID, taskId: TASK_ID }, deps);
 
       expect(result).toMatchObject({ ok: true });
-      const row = cacheRepo.get(RUN_ID, `${repoPath}:gateArtifacts`, TASK_ID);
+      const row = cacheRepo.get(RUN_ID, `${repoPath.length}:${repoPath}:gateArtifacts`, TASK_ID);
       expect(row?.status).toBe('ok');
       expect(row?.data).toMatchObject({ isGitRepo: true });
       const data = row?.data as { files: unknown[] };
@@ -174,7 +174,7 @@ describe('space-workflow-run-artifact.handler', () => {
         const result = await handleSyncGateArtifacts({ runId: RUN_ID }, deps);
         expect(result).toMatchObject({ ok: true, isGitRepo: false });
 
-        const row = cacheRepo.get(RUN_ID, `${nonGitDir}:gateArtifacts`);
+        const row = cacheRepo.get(RUN_ID, `${nonGitDir.length}:${nonGitDir}:gateArtifacts`);
         expect(row?.status).toBe('ok');
         expect(row?.data).toMatchObject({ isGitRepo: false });
       } finally {
@@ -213,7 +213,7 @@ describe('space-workflow-run-artifact.handler', () => {
       const result = await handleSyncCommits({ runId: RUN_ID }, deps);
       expect(result).toMatchObject({ ok: true });
 
-      const row = cacheRepo.get(RUN_ID, `${repoPath}:commits`);
+      const row = cacheRepo.get(RUN_ID, `${repoPath.length}:${repoPath}:commits`);
       expect(row?.status).toBe('ok');
       expect(row?.data).toMatchObject({ isGitRepo: true });
     });
@@ -223,7 +223,7 @@ describe('space-workflow-run-artifact.handler', () => {
       try {
         const { deps, cacheRepo } = makeDeps({ worktreePath: nonGitDir, db });
         await handleSyncCommits({ runId: RUN_ID }, deps);
-        const row = cacheRepo.get(RUN_ID, `${nonGitDir}:commits`);
+        const row = cacheRepo.get(RUN_ID, `${nonGitDir.length}:${nonGitDir}:commits`);
         expect(row?.data).toMatchObject({ isGitRepo: false });
       } finally {
         rmSync(nonGitDir, { recursive: true, force: true });
@@ -246,7 +246,7 @@ describe('space-workflow-run-artifact.handler', () => {
       const result = await handleSyncFileDiff({ runId: RUN_ID, filePath: 'README.md' }, deps);
       expect(result).toMatchObject({ ok: true });
 
-      const row = cacheRepo.get(RUN_ID, `${repoPath}:fileDiff:README.md`);
+      const row = cacheRepo.get(RUN_ID, `${repoPath.length}:${repoPath}:fileDiff:README.md`);
       expect(row?.status).toBe('ok');
       const data = row?.data as {
         diff: string;

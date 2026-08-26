@@ -178,7 +178,7 @@ export function commitFileDiffCacheKey(commitSha: string, filePath: string): str
 }
 
 export function worktreePathScopedCacheKey(worktreePath: string, baseKey: string): string {
-  return `${worktreePath}:${baseKey}`;
+  return `${worktreePath.length}:${worktreePath}:${baseKey}`;
 }
 
 export const FILE_DIFF_SIZE_LIMIT_BYTES = 100 * 1024;
