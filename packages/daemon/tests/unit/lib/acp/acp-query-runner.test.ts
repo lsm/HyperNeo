@@ -1090,13 +1090,17 @@ describe('AcpQueryRunner', () => {
     const previousGithubToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = 'github-secret';
     process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    const sessionPath = process.env.PATH ?? '/usr/bin:/bin';
     const { client, promptStarted, releasePrompt } = createHeldPromptClient();
     const { runner, ctx, constructorOptions } = createRunnerFixture({
       client,
       queryOptions: {
         cwd: '/tmp/acp-session',
         mcpServers: {},
-        env: { HTTPS_PROXY: 'http://session-proxy.example:8080' },
+        env: {
+          PATH: sessionPath,
+          HTTPS_PROXY: 'http://session-proxy.example:8080',
+        },
       },
     });
 
@@ -1129,7 +1133,7 @@ describe('AcpQueryRunner', () => {
         }
       }
 
-      expect(terminalEnv.PATH).toBe(process.env.PATH);
+      expect(terminalEnv.PATH).toBe(sessionPath);
       expect(terminalEnv.HTTPS_PROXY).toBe('http://session-proxy.example:8080');
       expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
       expect(terminalEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
