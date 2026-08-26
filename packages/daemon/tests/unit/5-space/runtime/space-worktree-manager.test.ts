@@ -541,6 +541,74 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     rmSync(linkedDir, { recursive: true, force: true });
   });
+
+  test('nested-directory spellings share one project dir and slug scope', async () => {
+    const nestedDir = join(secondaryDir, 'nested');
+    mkdirSync(nestedDir);
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-nested-a', 75);
+    const taskB = seedTask(db, spaceId, 'task-ws11-nested-b', 76);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Nested Title',
+      75,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(
+      spaceId,
+      taskB,
+      'Nested Title',
+      76,
+      undefined,
+      nestedDir
+    );
+
+    expect(b.path).toContain(getProjectShortKey(secondaryDir));
+    expect(b.slug).not.toBe(a.slug);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+  });
+
+  test('separate-git-dir repositories clean up via the recorded command cwd', async () => {
+    const sepRepoDir = join(
+      TMP_ROOT,
+      `seprepo-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    const sepGitDir = join(TMP_ROOT, `sepgit-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    execSync(
+      `git -c init.defaultBranch=main init --separate-git-dir="${sepGitDir}" "${sepRepoDir}"`,
+      {
+        stdio: 'pipe',
+      }
+    );
+    execSync('git config user.name "Test User"', { cwd: sepRepoDir });
+    execSync('git config user.email "test@example.com"', { cwd: sepRepoDir });
+    writeFileSync(join(sepRepoDir, 'README.md'), '# test\n');
+    execSync('git add .', { cwd: sepRepoDir });
+    execSync('git commit -m "initial commit"', { cwd: sepRepoDir });
+
+    const taskId = seedTask(db, spaceId, 'task-ws11-separate', 77);
+    const { slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Separate Git Dir',
+      77,
+      undefined,
+      sepRepoDir
+    );
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    const branches = execSync('git branch --list', { cwd: sepRepoDir }).toString();
+    expect(branches).not.toContain(`space/${slug}`);
+
+    rmSync(sepRepoDir, { recursive: true, force: true });
+    rmSync(sepGitDir, { recursive: true, force: true });
+  });
 });
 
 describe('removeTaskWorktree', () => {

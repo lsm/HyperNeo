@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
@@ -40,7 +40,7 @@ export class SpaceWorktreeManager {
         timeout: 30_000,
       }).trim();
       const commonDir =
-        commonDirRaw && !isAbsolute(commonDirRaw) ? resolve(topLevel, commonDirRaw) : commonDirRaw;
+        commonDirRaw && !isAbsolute(commonDirRaw) ? resolve(repoRoot, commonDirRaw) : commonDirRaw;
       const dirKey = commonDir ? dirname(commonDir) : topLevel;
       return { commandCwd: topLevel, dirKey };
     } catch {
@@ -71,6 +71,10 @@ export class SpaceWorktreeManager {
     if (!existsSync(worktreesDir)) {
       mkdirSync(worktreesDir, { recursive: true });
     }
+
+    try {
+      writeFileSync(join(worktreesDir, '..', '.hyperneo-repo-cwd'), repo.commandCwd);
+    } catch {}
 
     const existingSlugs = [
       ...this.worktreeRepo.listSlugs(spaceId),
@@ -172,7 +176,15 @@ export class SpaceWorktreeManager {
   }
 
   private resolveWorktreeRepoRoot(worktreePath: string, fallback: string): string {
-    const sentinel = join(dirname(dirname(worktreePath)), '.hyperneo-repo-root');
+    const projectDir = dirname(dirname(worktreePath));
+    const commandCwdSentinel = join(projectDir, '.hyperneo-repo-cwd');
+    if (existsSync(commandCwdSentinel)) {
+      try {
+        const stored = readFileSync(commandCwdSentinel, 'utf8').trim();
+        if (stored) return stored;
+      } catch {}
+    }
+    const sentinel = join(projectDir, '.hyperneo-repo-root');
     if (existsSync(sentinel)) {
       try {
         const stored = readFileSync(sentinel, 'utf8').trim();
