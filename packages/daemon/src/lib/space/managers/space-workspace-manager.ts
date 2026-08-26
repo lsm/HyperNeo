@@ -138,7 +138,6 @@ function registerInsertWorkspace(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCt
 const runRegisterWorkspace = (
   superpipe({
     hasError: (ctx: RegisterWorkspaceCtx) => ctx.error !== undefined,
-    hasVerdict: (ctx: RegisterWorkspaceCtx) => ctx.verdict !== undefined,
   })('workspace-registration') as PipelineAPI
 )
   .input(['ctx'])
@@ -146,8 +145,6 @@ const runRegisterWorkspace = (
   .pipe('!hasError', 'ctx')
   .pipe(registerBuildSnapshot, 'ctx', 'ctx')
   .pipe(registerRunValidationGates, 'ctx', 'ctx')
-  .pipe('!hasError', 'ctx')
-  .pipe('hasVerdict', 'ctx')
   .pipe(registerEnsureAccepted, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(registerInsertWorkspace, 'ctx', 'ctx')
@@ -202,13 +199,13 @@ function removeDeleteWorkspace(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
 
 const runRemoveWorkspace = (
   superpipe({
-    hasWorkspace: (ctx: RemoveWorkspaceCtx) => ctx.workspace !== undefined,
+    workspaceMissing: (ctx: RemoveWorkspaceCtx) => ctx.workspace === undefined,
     hasBlocked: (ctx: RemoveWorkspaceCtx) => ctx.blocked !== undefined,
   })('workspace-removal') as PipelineAPI
 )
   .input(['ctx'])
   .pipe(removeLoadWorkspace, 'ctx', 'ctx')
-  .pipe('hasWorkspace', 'ctx')
+  .pipe('!workspaceMissing', 'ctx')
   .pipe(removeGuardPrimary, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeGuardActiveSessions, 'ctx', 'ctx')
