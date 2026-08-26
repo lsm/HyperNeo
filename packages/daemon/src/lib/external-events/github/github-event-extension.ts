@@ -349,8 +349,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const willReenablePollingRows = this.repo
         .listWatchedRepos(params.spaceId)
         .some((repo) => repo.pollingEnabled);
+      const hasWebhookOnlyRows =
+        this.repo.listWebhookEnabledPollingDisabledRepos(params.spaceId).length > 0;
       this.repo.setRepoEnabled(params.spaceId, true);
-      if (willReenablePollingRows && this.getPollIntervalMs() > 0) {
+      if ((willReenablePollingRows || hasWebhookOnlyRows) && this.getPollIntervalMs() > 0) {
         await this.enablePollingCapability(context);
         this.ensurePollingActive();
       }
@@ -569,7 +571,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (Date.now() < this.rateLimitedUntil) {
         return { count, skipped: 'rate-limited' as const, retryAt: this.rateLimitedUntil };
       }
-      const polledRepos = this.repo.listPollingRepos(params.spaceId);
+      const polledRepos = [
+        ...this.repo.listPollingRepos(params.spaceId),
+        ...this.repo.listWebhookEnabledPollingDisabledRepos(params.spaceId),
+      ];
       const errorCount = polledRepos.filter(
         (r) => r.pollCursor?.lastPollError || r.pollCursor?.lastPartialPollError
       ).length;
@@ -1010,6 +1015,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (spaceConfig && !spaceConfig.enabled) continue;
       count += await this.pollWatchedRepo(repo, fetchImpl);
     }
+    for (const repo of this.repo.listWebhookEnabledPollingDisabledRepos()) {
+      if (Date.now() < this.rateLimitedUntil) break;
+      const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
+      if (spaceConfig && !spaceConfig.enabled) continue;
+      count += await this.pollWatchedRepoReactions(repo, fetchImpl);
+    }
     return count;
   }
 
@@ -1032,6 +1043,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     for (const repo of this.repo.listPollingRepos(spaceId)) {
       count += await this.pollWatchedRepo(repo, fetchImpl);
       if (Date.now() < this.rateLimitedUntil) break;
+    }
+    for (const repo of this.repo.listWebhookEnabledPollingDisabledRepos(spaceId)) {
+      if (Date.now() < this.rateLimitedUntil) break;
+      count += await this.pollWatchedRepoReactions(repo, fetchImpl);
     }
     return count;
   }
@@ -1125,7 +1140,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       });
     }
     if (this.stopped) return;
-    if (this.repo.listPollingRepos().length === 0) {
+    if (
+      this.repo.listPollingRepos().length === 0 &&
+      this.repo.listWebhookEnabledPollingDisabledRepos().length === 0
+    ) {
       if (this.pollTimer) {
         clearTimeout(this.pollTimer);
         this.pollTimer = null;
@@ -1645,7 +1663,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async disablePollingCapabilityIfUnused(
     context: ExternalEventExtensionContext
   ): Promise<void> {
-    if (this.repo.listAllPollingConfiguredRepos().length > 0) return;
+    if (
+      this.repo.listAllPollingConfiguredRepos().length > 0 ||
+      this.repo.listWebhookEnabledPollingDisabledRepos().length > 0
+    ) {
+      return;
+    }
     if (this.repo.countSpacesWithPollingIntent() > 0) return;
     const global = await context.config.getGlobalConfig(this.sourceId);
     if (global.capabilities.polling !== true) return;
@@ -1671,7 +1694,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private maybeStopPolling(): void {
     if (!this.pollTimer) return;
-    if (this.repo.listPollingRepos().length > 0) return;
+    if (
+      this.repo.listPollingRepos().length > 0 ||
+      this.repo.listWebhookEnabledPollingDisabledRepos().length > 0
+    ) {
+      return;
+    }
     clearTimeout(this.pollTimer);
     this.pollTimer = null;
   }
@@ -2240,6 +2268,231 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       this.pollCycleCredentialFingerprint = null;
       this.pollCycleAccessible = false;
     }
+  }
+
+  async pollWatchedRepoReactions(
+    watched: GitHubWatchedRepo,
+    fetchImpl: typeof fetch = fetch
+  ): Promise<number> {
+    this.pollCycleCredentialGeneration = this.credentialGeneration;
+    try {
+      return await this.pollWatchedRepoReactionsCore(watched, fetchImpl);
+    } catch (err) {
+      if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
+        this.repo.recordPollFailure(
+          watched.id,
+          err instanceof Error ? err.message : 'reaction poll failed',
+          this.pollCycleAccessible
+        );
+      }
+      throw err;
+    } finally {
+      this.pollCycleCredentialGeneration = null;
+      this.pollCycleCredentialFingerprint = null;
+      this.pollCycleAccessible = false;
+    }
+  }
+
+  private async pollWatchedRepoReactionsCore(
+    watched: GitHubWatchedRepo,
+    fetchImpl: typeof fetch = fetch
+  ): Promise<number> {
+    if (!this.context) return 0;
+    const cursor = watched.pollCursor ?? {};
+    const seenReactionIds = cursor.seenReactionIds ?? {};
+    const reactionEtags = cursor.reactionEtags ?? {};
+    let count = 0;
+    let reactionsFullyPolled = true;
+    let reactionPolledAt: number | null = null;
+    let partialScan = false;
+    let pollErrorMessage: string | null = null;
+    let latestRateLimit: GitHubRateLimitInfo | undefined;
+    const token = await this.resolveToken();
+    this.pollCycleCredentialFingerprint = credentialFingerprint(token);
+    const base = `${GITHUB_API_BASE}/repos/${gitHubRepoPath(watched.owner, watched.repo)}`;
+    const watermark = cursor.lastReactionPollAt ?? cursor.lastSeenAt ?? 0;
+
+    const prNumbers = this.repo.getActivePrNumbersForRepo(
+      watched.spaceId,
+      watched.owner,
+      watched.repo
+    );
+
+    for (const prNumber of prNumbers) {
+      if (partialScan) break;
+      if (!canPollReactions(latestRateLimit?.remaining)) {
+        reactionsFullyPolled = false;
+        partialScan = true;
+        break;
+      }
+      let reactionPage = 1;
+      let reactionScanComplete = false;
+      let reactionScanSinglePage = false;
+      let reactionNotModified = false;
+      let reactionPendingEtag: string | null = null;
+      while (true) {
+        const reactionQuery = new URLSearchParams({ per_page: '100' });
+        if (reactionPage > 1) reactionQuery.set('page', String(reactionPage));
+        const reactionHeaders = gitHubPollingHeaders(token);
+        if (reactionPage === 1 && reactionEtags[prNumber]) {
+          reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
+        }
+        let response: Response;
+        try {
+          response = await fetchImpl(
+            `${base}/issues/${prNumber}/reactions?${reactionQuery.toString()}`,
+            {
+              headers: reactionHeaders,
+              signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+            }
+          );
+        } catch (err) {
+          if (!pollErrorMessage) {
+            pollErrorMessage = err instanceof Error ? err.message : 'network request failed';
+          }
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        const reactionRateLimit = parseRateLimitHeaders(response);
+        latestRateLimit = mergeRateLimitInfo(latestRateLimit, reactionRateLimit);
+        if (response.status === 304) {
+          this.pollCycleAccessible = true;
+          if (reactionPage === 1) {
+            reactionNotModified = true;
+            reactionScanComplete = true;
+            reactionScanSinglePage = true;
+            reactionPolledAt = Date.now();
+          }
+          break;
+        }
+        if (reactionRateLimit.limited) {
+          if (
+            response.status === 429 &&
+            reactionRateLimit.remaining > 0 &&
+            !reactionRateLimit.retryAfter
+          ) {
+            this.applyRateLimit({
+              remaining: reactionRateLimit.remaining,
+              resetAt: Date.now() + RATE_LIMIT_MIN_BACKOFF_MS,
+              limited: true,
+              retryAfter: true,
+            });
+          } else {
+            this.applyRateLimit(reactionRateLimit);
+          }
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        if (!response.ok) {
+          const errorText = await response.text();
+          if ((response.status === 403 || response.status === 429) && isRateLimitError(errorText)) {
+            const secondaryDelayMs = reactionRateLimit.retryAfter
+              ? reactionRateLimit.resetAt - Date.now()
+              : RATE_LIMIT_MIN_BACKOFF_MS;
+            this.applyRateLimit({
+              remaining: reactionRateLimit.remaining,
+              resetAt: Date.now() + secondaryDelayMs,
+              limited: true,
+              retryAfter: true,
+            });
+            reactionsFullyPolled = false;
+            partialScan = true;
+            break;
+          }
+          if (response.status === 404) {
+            delete reactionEtags[prNumber];
+            reactionsFullyPolled = false;
+            continue;
+          }
+          if (!pollErrorMessage) {
+            pollErrorMessage =
+              errorText.trim().slice(0, 160) || `reactions HTTP ${response.status}`;
+          }
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        this.pollCycleAccessible = true;
+        if (reactionPage === 1) {
+          reactionPendingEtag = response.headers.get('ETag');
+        }
+        reactionPolledAt = Date.now();
+        const reactions = (await response.json()) as unknown[];
+        for (const reaction of reactions) {
+          if (!isPositiveReaction(reaction)) continue;
+          const reactionId = reactionIdFrom(reaction);
+          if (seenReactionIds[reactionId]) continue;
+          const event = normalizeGitHubReaction(watched, prNumber, reaction);
+          if (!event) continue;
+          if (watermark > 0 && event.occurredAt < watermark) {
+            seenReactionIds[reactionId] = true;
+            continue;
+          }
+          await this.publishEvent(watched.spaceId, event, this.context);
+          seenReactionIds[reactionId] = true;
+          count++;
+        }
+        if (reactions.length < 100) {
+          reactionScanComplete = true;
+          reactionScanSinglePage = reactionPage === 1;
+          break;
+        }
+        if (!canPollReactions(reactionRateLimit.remaining)) {
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        if (
+          Number.isFinite(reactionRateLimit.remaining) &&
+          reactionRateLimit.remaining < RATE_LIMIT_LOW_REMAINING_THRESHOLD
+        ) {
+          this.applyRateLimit(reactionRateLimit);
+          reactionsFullyPolled = false;
+          partialScan = true;
+          break;
+        }
+        reactionPage++;
+      }
+      if (!reactionNotModified) {
+        if (reactionScanComplete && reactionScanSinglePage && reactionPendingEtag) {
+          reactionEtags[prNumber] = reactionPendingEtag;
+        } else {
+          delete reactionEtags[prNumber];
+        }
+      }
+      if (partialScan) break;
+    }
+
+    const trackedPrSet = new Set(prNumbers);
+    for (const key of Object.keys(reactionEtags)) {
+      if (!trackedPrSet.has(Number(key))) delete reactionEtags[Number(key)];
+    }
+
+    const cursorPayload: PollCursor = {
+      ...cursor,
+      seenReactionIds,
+      reactionEtags,
+      lastReactionPollAt: reactionsFullyPolled
+        ? (reactionPolledAt ?? cursor.lastReactionPollAt ?? null)
+        : (cursor.lastReactionPollAt ?? null),
+      lastPartialPollError: partialScan
+        ? (pollErrorMessage ?? 'reaction poll incomplete')
+        : (cursor.lastPartialPollError ?? null),
+    };
+    this.repo.updatePollCursorJson(watched.id, cursorPayload);
+
+    if (latestRateLimit) {
+      if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
+        this.lastRateLimitInfo = mergeRateLimitInfo(this.lastRateLimitInfo, latestRateLimit);
+        if (Number.isFinite(latestRateLimit.remaining)) {
+          this.lastRateLimitObservedAt = Date.now();
+        }
+      }
+    }
+
+    return count;
   }
 
   private async pollWatchedRepoCore(

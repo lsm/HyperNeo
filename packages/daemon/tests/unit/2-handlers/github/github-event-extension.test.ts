@@ -10166,4 +10166,79 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await extension.stop();
     }
   });
+
+  test('webhook-only repository polls reactions for active PRs', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookEnabled: true,
+      pollingEnabled: false,
+      webhookSecret: 'secret',
+    });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('wf-1', 'space-1', 'Review', '', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs
+       (id, space_id, workflow_id, title, description, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'in_progress', ?, ?)`
+    ).run(
+      'run-1',
+      'space-1',
+      'wf-1',
+      'Review PR',
+      'https://github.com/acme/widgets/pull/7',
+      now,
+      now
+    );
+    db.prepare(
+      `INSERT INTO space_workflow_event_subscriptions
+       (id, space_id, workflow_run_id, task_id, node_id, agent_name, topic, topic_normalized,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'sub-1',
+      'space-1',
+      'run-1',
+      'task-1',
+      'node-1',
+      'reviewer',
+      'github/acme/widgets/pull_request/7.*',
+      'github/acme/widgets/pull_request/7.*',
+      now,
+      now
+    );
+
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/7/reactions')) {
+        return pollingResponse([createReactionRow({ id: 9001, content: '+1' })]);
+      }
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      const repo = extension.repo.listWebhookEnabledPollingDisabledRepos('space-1')[0];
+      expect(repo).toBeTruthy();
+      await extension.pollWatchedRepoReactions(repo, fetchImpl);
+      expect(calls.some((u) => u.includes('/issues/7/reactions?per_page=100'))).toBe(true);
+      const reaction = received.find((event) => event.payload.eventType === 'reaction');
+      expect(reaction?.topic).toBe('github/acme/widgets/pull_request/7.reaction_added');
+    } finally {
+      await extension.stop();
+    }
+  });
 });

@@ -585,7 +585,7 @@ export class GitHubEventExtensionRepository {
         `SELECT a.data
          FROM workflow_run_artifacts a
          JOIN space_workflow_runs r ON r.id = a.run_id
-         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress')
+         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress', 'blocked')
            AND a.artifact_type = ? AND a.artifact_key = ?`
       )
       .all(spaceId, 'link', 'pr') as Array<{ data: string }>;
@@ -609,7 +609,7 @@ export class GitHubEventExtensionRepository {
         `SELECT local_state
          FROM workflow_hook_state h
          JOIN space_workflow_runs r ON r.id = h.run_id
-         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress')`
+         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress', 'blocked')`
       )
       .all(spaceId) as Array<{ local_state: string }>;
     for (const { local_state } of hookRows) {
@@ -633,7 +633,7 @@ export class GitHubEventExtensionRepository {
         `SELECT s.topic
          FROM space_workflow_event_subscriptions s
          JOIN space_workflow_runs r ON r.id = s.workflow_run_id
-         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress')`
+         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress', 'blocked')`
       )
       .all(spaceId) as Array<{ topic: string }>;
     const topicPattern = new RegExp(
