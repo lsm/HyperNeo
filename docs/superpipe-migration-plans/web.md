@@ -448,7 +448,14 @@ anywhere in this plan.
   (codex round 24 — the resolved normalizer is a DECLARED ctx field), plus
   the terminal
   `liveSessions: NodeLiveSession[]`, `unstartedSlots: string[]`,
-  `outcome: NodeClickOutcome | null`. The `normalize` resolution is a
+  `outcome: NodeClickOutcome | null`. Codex round 25: TWO contexts keep the
+  boundary sound — the pipeline INPUT is the pre-normalization
+  `NodeClickInput = ResolveNodeClickArgs & { resolveLabel }` where
+  `normalizeSlotName` stays OPTIONAL, and the leading stage's output is the
+  RESOLVED context above; `stageResolveNormalizer` takes the input context
+  and returns the resolved ctx, so the wrapper never resolves the dependency
+  outside the composition, seeds a dummy, or passes an unsound object
+  through the mandated cast. The `normalize` resolution is a
   LEADING stage (codex round 21: `stageResolveNormalizer` stamps the
   resolved normalizer onto ctx — `args.normalizeSlotName ??
   normalizeSlotName` — and every later stage consumes `ctx.normalize`;
@@ -1579,7 +1586,11 @@ optional router phase 2. No per-site section is left uncovered.
   `normalize: (name: string) => string` stamped by a LEADING
   `stageResolveNormalizer`
   (`args.normalizeSlotName ?? normalizeSlotName`, codex rounds 21+24:
-  declared ctx field, consumed by every later stage) plus
+  declared ctx field, consumed by every later stage; codex round 25 — the
+  pipeline INPUT is `NodeClickInput = ResolveNodeClickArgs & { resolveLabel }`
+  with optional `normalizeSlotName`, and the leading stage RETURNS the
+  resolved ctx, keeping the boundary sound without wrapper-side resolution,
+  dummy seeds, or unsound casts) plus
   `liveSessions` / `unstartedSlots` / `outcome`; the
   `resolveLabel` port stays per-call;
   daemon `as PipelineAPI` cast idiom.
