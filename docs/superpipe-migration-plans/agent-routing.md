@@ -360,7 +360,7 @@ None of the agent routing sites require `stagedRun` because none perform durable
 
 ## Focused PR breakdown
 
-Review budget (owner's decomposition playbook): every slice carries a TWO-TIER budget — production Δ ≲100 lines (hard cap ~150 only for types-dominated additive cores; moved code is re-counted honestly) and test Δ ≲350 counted separately; 📌 pin slices have production Δ = 0; if a pin matrix outgrows the test budget, split it by dimension family, never by truncation. Each slice carries a phase label: 📌 **pins** (characterization/decision-table tests of current behavior), ➕ **additive core** (pure gates/pipelines landed UNWIRED from production), 🔧 **apply** (wire call sites — ONE arm/route/site per slice); no trailing cleanup slice is needed because dead-code deletion rides with each phase's final apply slice. Hard rule from the corrected designs: an additive core may sit unwired as a temporary landing state, but its apply slice wires the COMPLETE business operation — production is never wired to an admission-only, classifier-only, or arbitration-only pipeline whose effects stay imperative. Ordering follows the doc's "Suggested migration order" phases (1 + arbitration half of 2 → PRs 1–4; admission half of 2 → PRs 5–7; 3 → PRs 8–11; 4 → PRs 12–13; 5 → PRs 14–18; 6 → PRs 19–20), with pins before extraction and primitives before consumers. Site coverage: `planDeliveryRoleArbitration` → PRs 1–4; `resolveSteerAdmission` → PRs 5–7; `routeDriveTurnOutcome` → PRs 8–10; `routeFeedSteerOutcome` → PRs 8, 9, 11; `planInjectContextReset` and `planTurnEndFlushContextReset` → PRs 12–13; `decideProviderTerminalCategory` and `resolveTerminalMessageHint` → PR 14 (their logic never changes); `classifyQueryRetryRoute` and `resolveDecision` → PRs 15–18; `routeTurnEnd` → PRs 19–20. `resolveDeliveryRole` needs no slice: it stays the plain overload-preserved helper and its unchanged `message-ownership-gates.test.ts` is the contract PRs 2–4 must keep green. Sites whose current behavior is already pinned by existing parity suites (the context-reset planners, query-retry classifier precedence, the handler-outcome mappings, `routeTurnEnd` outputs) get pin slices only for boundary dimensions those suites do not already cover.
+Review budget (owner's decomposition playbook): every slice carries a TWO-TIER budget — production Δ ≲100 lines (hard cap ~150 only for types-dominated additive cores; moved code is re-counted honestly) and test Δ ≲350 counted separately; 📌 pin slices have production Δ = 0; if a pin matrix outgrows the test budget, split it by dimension family, never by truncation. Each slice carries a phase label: 📌 **pins** (characterization/decision-table tests of current behavior), ➕ **additive core** (pure gates/pipelines landed UNWIRED from production), 🔧 **apply** (wire call sites — ONE arm/route/site per slice); no trailing cleanup slice is needed because dead-code deletion rides with each phase's final apply slice. Hard rule from the corrected designs: an additive core may sit unwired as a temporary landing state, but its apply slice wires the COMPLETE business operation — production is never wired to an admission-only, classifier-only, or arbitration-only pipeline whose effects stay imperative. Ordering follows the doc's "Suggested migration order" phases (1 + arbitration half of 2 → PRs 1–4; admission half of 2 → PRs 5–7; 3 → PRs 8–11; 4 → PRs 12–13; 5 → PRs 14–18; 6 → PRs 19–21), with pins before extraction and primitives before consumers. Site coverage: `planDeliveryRoleArbitration` → PRs 1–4; `resolveSteerAdmission` → PRs 5–7; `routeDriveTurnOutcome` → PRs 8–10; `routeFeedSteerOutcome` → PRs 8, 9, 11; `planInjectContextReset` and `planTurnEndFlushContextReset` → PRs 12–13; `decideProviderTerminalCategory` and `resolveTerminalMessageHint` → PR 14 (their logic never changes); `classifyQueryRetryRoute` and `resolveDecision` → PRs 15–18; `routeTurnEnd` → PRs 19–21. `resolveDeliveryRole` needs no slice: it stays the plain overload-preserved helper and its unchanged `message-ownership-gates.test.ts` is the contract PRs 2–4 must keep green. Sites whose current behavior is already pinned by existing parity suites (the context-reset planners, query-retry classifier precedence, the handler-outcome mappings, `routeTurnEnd` outputs) get pin slices only for boundary dimensions those suites do not already cover.
 
 ### PR 1 — `test(agent): pin delivery-role arbitration decision table`
 
@@ -438,7 +438,7 @@ Review budget (owner's decomposition playbook): every slice carries a TWO-TIER b
 
 🔧 apply — prod Δ ≲150, test Δ ≲150
 
-- **Scope:** Wire the COMPLETE steer-feed operation at `AgentSession.feedDeliverySteer` (inside the existing `withSessionLock` block): one `feed-delivery-steer` pipeline whose stages are the PR 6 admission gates plus the queue admission, acknowledgment waiting, teardown revalidation, requeue, and metrics logic moved out of today's imperative body. Never an admission-only wiring — the effects are stages of the same pipeline, per the round-22 correction.
+- **Scope:** Wire the COMPLETE steer-feed operation at `AgentSession.feedDeliverySteer` as one `feed-delivery-steer` pipeline whose stages are the PR 6 admission gates plus the queue admission, acknowledgment waiting, teardown revalidation, requeue, and metrics logic moved out of today's imperative body. Review correction (PR #2980): keep the CURRENT lock boundary — the implementation deliberately exits `withSessionLock` at `agent-session.ts:2590` BEFORE awaiting the acknowledgment/query-end race, because holding the per-session mutex during that potentially long wait blocks every other session operation, including the teardown or retry activity needed to resolve the wait. So the pipeline runs admission + queue mutation UNDER the lock, RELEASES it (explicit lock-boundary stage or shell split at the same point the current code does), then runs the acknowledgment-wait, teardown-revalidation, requeue, and metrics stages outside it. Never an admission-only wiring — the effects are stages of the same pipeline, per the round-22 correction.
 - **Lands:** The whole steer-feed business path composes once; `resolveSteerAdmission` keeps its exported signature.
 - **Excludes:** `isSteerDeliveryValid`/`classifyAcknowledgedSteer`; queue-internals changes.
 - **Tests:** The PR 5 matrix end-to-end through the wired pipeline; wiring tests for the ack-waiting/requeue stages.
@@ -475,10 +475,10 @@ Review budget (owner's decomposition playbook): every slice carries a TWO-TIER b
 
 🔧 apply — prod Δ ≲80, test Δ ≲100
 
-- **Scope:** Wire arm 1 of 2: the drive-turn branch of `message-delivery.handler.ts` runs its COMPLETE pipeline — route stages plus the settlement/dead-letter/requeue effects as stages of the same operation (effects never left imperative).
-- **Lands:** The first `MESSAGE_DELIVERY` job branch composes once.
+- **Scope:** Wire arm 1 of 2: the drive-turn branch of `message-delivery.handler.ts` runs its COMPLETE pipeline — route stages plus the settlement/dead-letter/requeue effects as stages of the same operation (effects never left imperative). Review correction (PR #2980): the `turn_terminated` route carries `reclaimSkip: 'turn_terminated'` and the current handler records it via `metrics.recordReclaimSkip` BEFORE settlement (`message-delivery.handler.ts:124-128`) — that metric is a stage of this pipeline (fires on the `turn_terminated` route before settlement), not a shell side-effect, or the skip silently stops being reported.
+- **Lands:** The first `MESSAGE_DELIVERY` job branch composes once, reclaim-skip telemetry intact.
 - **Excludes:** The feed-steer arm (PR 11); any dead-letter policy change.
-- **Tests:** `drive-turn-outcome-gates.test.ts` end-to-end; `handler-outcome-routing.test.ts` parity.
+- **Tests:** `drive-turn-outcome-gates.test.ts` end-to-end; `handler-outcome-routing.test.ts` parity; keep the existing handler metric assertions passing against the wired pipeline.
 - **Depends on:** PR 9.
 
 ---
@@ -487,10 +487,10 @@ Review budget (owner's decomposition playbook): every slice carries a TWO-TIER b
 
 🔧 apply — prod Δ ≲80, test Δ ≲100
 
-- **Scope:** Wire arm 2 of 2: the feed-steer branch of `message-delivery.handler.ts` runs its COMPLETE pipeline (budget stages + dead-letter/settle/requeue stages). `MESSAGE_DELIVERY_PARK_MS` stays a module-level constant; the `MAX_ACP_STEER_PARKS` pre-check for `sendStatus === 'submitted'` is untouched.
-- **Lands:** Both `MESSAGE_DELIVERY` job branches are single pipelines; the phase-3 sites are fully migrated.
+- **Scope:** Wire arm 2 of 2: the feed-steer branch of `message-delivery.handler.ts` runs its COMPLETE pipeline (budget stages + dead-letter/settle/requeue stages). Review correction (PR #2980): the `promote` arm's `requeueAs(..., 'turn')` can lose the unique slot to another active turn — the current handler catches that unique-constraint failure, classifies via `routeSteerPromoteFallback`, and retries the mutation as `steer` (`message-delivery.handler.ts:165-186`); that collision classification and fallback mutation are STAGES of this pipeline (carried with their tests), or the input throws and requeues forever instead of staying queued as a steer. `MESSAGE_DELIVERY_PARK_MS` stays a module-level constant; the `MAX_ACP_STEER_PARKS` pre-check for `sendStatus === 'submitted'` is untouched.
+- **Lands:** Both `MESSAGE_DELIVERY` job branches are single pipelines; the phase-3 sites are fully migrated; promotion collisions still fall back to steer.
 - **Excludes:** `session.driveDeliveryTurn` and queue internals.
-- **Tests:** `feed-steer-outcome-gates.test.ts` end-to-end; parity unchanged.
+- **Tests:** `feed-steer-outcome-gates.test.ts` end-to-end; parity unchanged; collision rows — `requeueAs('turn')` unique-constraint failure → `routeSteerPromoteFallback` → retried as `steer` — asserted against the wired pipeline.
 - **Depends on:** PR 9, and lands after PR 10 (same file).
 
 ---
@@ -572,11 +572,12 @@ Review budget (owner's decomposition playbook): every slice carries a TWO-TIER b
 
 🔧 apply — prod Δ ≲100 (deletion-heavy), test Δ ≲150
 
-- **Scope:** Wire the COMPLETE operation in one site: `decideQueryRetry` invokes `routeQueryRetryRun` ONCE and returns `ctx.decision`; `classifyQueryRetryRoute` and private `resolveDecision` become thin wrappers over the same run; delete the 37-branch cascade and the `switch (route.action)`. `query-runner.ts` is unchanged — it already calls `decideQueryRetry`.
-- **Lands:** Phase-5 structural work done: one pipeline, one invocation per operation, on the hottest error path in the daemon, with behavior held fixed by the PR 14/15 pins.
+- **Scope:** Wire the COMPLETE async retry operation. Review correction (PR #2980): `query-runner.ts` does NOT simply call `decideQueryRetry` once — it calls it BEFORE awaiting `onRateLimitExhausted` (`query-runner.ts:1039`) and AGAIN after the callback supplies `accepted`/`declined` (`:1170-1183`), so wiring only `decideQueryRetry` leaves the operation split from the effect that determines its final decision and cannot be "one invocation". This slice composes the full flow as ONE direct mixed pipeline: classification gates → the `onRateLimitExhausted` callback as an AWAITED effect stage → finalizer gates (including the inline declined recompute over the amended env) → the recovery-state effects — replacing BOTH call sites and the 37-branch cascade / `switch (route.action)`. `classifyQueryRetryRoute`, private `resolveDecision`, and `decideQueryRetry` become thin delegates over the same run for the parity suite.
+- **Lands:** Phase-5 structural work done: one pipeline, one invocation per retry operation, on the hottest error path in the daemon, with behavior held fixed by the PR 14/15 pins.
 - **Excludes:** `error-manager.ts` behavior; terminal-leaf logic.
 - **Tests:** `query-retry-routing.test.ts` parity end-to-end (including the resnapped-env `skipFinalizerIdle` case); PR 15's declined-recompute contract must pass unchanged against the wired path.
 - **Depends on:** PR 17.
+- **Size guard:** prod Δ is dominated by honest MOVES of query-runner retry statements into stages; if the changed-line count exceeds the cap, split into an unwired async-core slice (handoff effect stage + finalizer wiring) followed by the query-runner rewiring — but never wire a partial operation or leave the second call site.
 
 ---
 
@@ -597,10 +598,22 @@ Review budget (owner's decomposition playbook): every slice carries a TWO-TIER b
 🔧 apply — prod Δ ≲80, test Δ ≲50
 
 - **Scope:** EXTEND `packages/daemon/src/lib/agent/turn-end-pipeline.ts`'s existing `decisionRun` gate list with the PR 19 gates in the current routing position, replacing the `applyTurnEndRoutingGate` delegation (no separate `sdk-turn-end-routing` runner; only `applyFinalGate` sets `decision`, so final usage/ack assembly still runs). Rewrite the exported `routeTurnEnd` as a thin wrapper over the extended pipeline with a `makePlan(flags)` null fallback for the parity suite.
-- **Lands:** Phase 6 done: the ONE SDK turn-end business path owns its routing; the pipeline API stays stable (test-only in this snapshot); `queryMode` threads through every `makePlan` call; effects (setIdle, timer cancel/rearm, queue replay) stay with the `AgentSession`/queue consumers of the plan.
+- **Lands:** The ONE SDK turn-end business path owns its routing; the pipeline API stays stable; `queryMode` threads through every `makePlan` call. Review correction (PR #2980): this slice alone does NOT complete phase 6 — as long as the pipeline is test-only, production still consumes a decision-only fragment; the production apply slice (PR 21) composes routing AND effects before the phase is done.
 - **Excludes:** Wiring `turn-end-pipeline.ts` into runtime.
 - **Tests:** `turn-end-routing.test.ts` parity through the wrapper; `turn-end-pipeline.test.ts` stays green.
 - **Depends on:** PR 19 (sequenced last per the migration order to reuse the gate conventions from PRs 1–19).
+
+---
+
+### PR 21 — `refactor(agent): wire the SDK turn-end pipeline into production with its effects`
+
+🔧 apply — prod Δ ≲150 (move-dominated), test Δ ≲150
+
+- **Scope:** Review correction (PR #2980): complete phase 6 by wiring the extended `turn-end-pipeline.ts` into the SDK turn-end runtime path — the turn-end effects (`setIdle`, timer cancel/rearm, queue replay) currently imperative in `AgentSession`/queue code become EFFECT STAGES of the same pipeline (or the whole path migrates together), so production never consumes a decision-only fragment. PRs 19–20's gates may exist test-only until this slice lands, but the phase is not done without it.
+- **Lands:** The complete SDK turn-end business path — routing gates AND turn-end effects — runs as one composed operation in production.
+- **Excludes:** `routeTurnEnd`'s parity wrapper (kept for the suite); turn-end-routing gate logic changes.
+- **Tests:** `turn-end-pipeline.test.ts` extended with effect-stage rows (idle transition, timer rearm, queue replay per plan arm); `turn-end-routing.test.ts` parity unchanged.
+- **Depends on:** PR 20.
 
 ## Open questions
 
