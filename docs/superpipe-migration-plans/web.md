@@ -507,7 +507,9 @@ anywhere in this plan.
   as stages of the same composition inside `batch()` — NOT a standalone
   classifier `decisionRun` whose result an imperative signal-write switch
   interprets. Scoped as phase 2 because it restructures the file's core;
-  the parsers alone deliver most of the value at near-zero risk.
+  the parser-matrix pins alone deliver most of the safety at near-zero
+  risk, while the parser CONVERSIONS land with phase 2 in the same change
+  (codex round 12 — see the migration steps).
 - **Input/output snapshot design.** Parser ctx: `{ path: string; decision:
   string | null }`; final gate decides `null` (no match) — same null-default
   caveat as task-banner, handled by `?? null` in the wrapper, no terminal
@@ -520,13 +522,15 @@ anywhere in this plan.
 - **Pure core design.** One gate per pattern, each owning its regex constant
   verbatim and deciding `match[1]`; order = current order. The classifier's
   gates reuse the same PATTERN CONSTANTS — NOT the `getXFromPath` helpers
-  (review correction, codex round 6: after PR 5 those helpers ARE
+  (review correction, codex round 6: once the PR 15 conversions land, those
+  helpers ARE
   `decisionRun` pipelines, and invoking them inside `apply-space-route`
   nests one pipeline inside another, splitting the single routing business
   path across pipeline boundaries — the same nested-runner correction the
   plan applies to per-model classifiers at the `useModelSwitcher` site;
   where dual-pattern logic is genuinely shared, extract an ordinary PURE
-  match helper that both the PR 5 pipelines and the phase-2 gates call);
+  match helper that both the exported parser wrappers and the phase-2
+  gates call);
   the legacy redirect writes
   are the pipeline's LEADING effect stages, before the match gates (review
   correction round 23 — effects in the composition, not a shell preamble).
@@ -559,18 +563,31 @@ anywhere in this plan.
      `overlay-history.test.ts` pin the parser matrix (every route shape,
      case sensitivity of session ids, task-id alternation
      `[a-fA-F0-9-]+|[a-z]-[1-9]\d*`). Add missing rows first.
-  2. Migrate `getSpaceIdFromPath` to `decisionRun('space-id-from-path',
-     [...16 gates])` — review correction (PR #2982): the current cascade and
-     this plan's own inventory list SIXTEEN patterns; one gate per pattern,
-     none omitted (following a 14-gate blueprint would return `null` for two
-     valid route forms). Wrapper returns `ctx.decision`.
+  2. Pin the parser matrix FIRST (every route shape; sixteen patterns in
+     `getSpaceIdFromPath`'s inventory — review correction PR #2982: one
+     row per pattern, none omitted; following a 14-row blueprint would
+     leave two valid route forms unpinned). Review correction (codex round
+     12): the decisionRun CONVERSIONS of `getSpaceIdFromPath` and its two
+     siblings land TOGETHER WITH the phase-2 pipeline in step 4 —
+     `applyPathToSignals` consumes all three at `router.ts:744-755`, so
+     migrating them while their consumer stays imperative nests three
+     runners inside the routing business path (and leaves that split
+     permanent whenever phase 2 is declined); if open question 3 declines
+     phase 2, the parsers STAY ordinary pure helpers and the pins are all
+     that lands.
   3. Optionally fold `getSpaceEvolveFromPath` / `getSpaceTasksTabFromPath`
      into the same gate style (small, independent).
   4. Phase 2 (separate PR): compose the complete `apply-space-route`
      pipeline — redirect effects, match gates, and per-arm signal-write
      stages — replacing the `applyPathToSignals` cascade in one change; the
      `batch()` write block becomes the pipeline's effect stages, not an
-     interpretation switch.
+     interpretation switch. This change ALSO performs the parser
+     conversions deferred from step 2 (codex round 12): the exported
+     `getSpaceIdFromPath` / `getSpaceEvolveFromPath` /
+     `getSpaceTasksTabFromPath` names remain, composed over the SAME gates
+     and pattern constants the pipeline uses — the pipeline calls the gates
+     directly, never the exported wrappers (round 6), so no runner nests
+     inside the routing path once the imperative consumer is gone.
 - **Tests.** Parser suites stay green unchanged; phase 2 adds a
   `classifySpaceRoute` decision-table test (path → union member, including
   `/` → spacesList and unknown → sessionFallback).
@@ -1044,9 +1061,14 @@ the committed dependency lands with step 2).
 4. **`user-error`** — same shape, order-sensitive arms.
 5. **`app-routing`** — first "real" consumer (signal effect caller); pure
    precedence.
-6. **`router` parsers** — `getSpaceIdFromPath` decisionRun (+ the two small
-   siblings). Phase 2 (`classifySpaceRoute` + `applyPathToSignals` rewrite)
-   is a separate later PR.
+6. **`router` parser matrix pins** — missing characterization rows for every
+   route shape. Codex round 12: the decisionRun conversions of
+   `getSpaceIdFromPath` and its two siblings land TOGETHER WITH the phase-2
+   `apply-space-route` rewrite (a later, conditional PR), not as a
+   standalone step — `applyPathToSignals` consumes them at
+   `router.ts:744-755`, and migrating them while their consumer stays
+   imperative nests three runners inside the routing business path; if
+   phase 2 is declined, the parsers stay ordinary pure helpers.
 7. **`status-actions`** — needs the fallback-rotation shim; first
    cadence-sensitive site (streaming ticks).
 8. **`parse-group-message`** — new characterization file first (only site
@@ -1101,7 +1123,8 @@ admission gates and effect stages together in ONE slice. `stagedRun` is
 never ported to web.
 
 Per-site coverage: PR 1 `task-banner`; PR 2 `session-load-error`; PR 3
-`user-error`; PR 4 `app-routing`; PR 5 router parsers; PR 6 `status-actions`;
+`user-error`; PR 4 `app-routing`; PR 5 router parser pins (the
+conversions land in PR 15, codex round 12); PR 6 `status-actions`;
 PR 7 `parse-group-message`; PR 8 `useModelSwitcher`; PR 9
 `resolveTargetSessionId`; PR 10 `node-click-resolver`; PR 11
 `shortenModelName`; PR 12 `getModelLabel`; PR 13+PR 14 `sendMessage`; PR 15
@@ -1221,30 +1244,33 @@ optional router phase 2. No per-site section is left uncovered.
   `src/lib/__tests__/app-routing.precedence.test.ts` (new).
 - **Depends on**: PR 1. Parallel-safe with PR 5.
 
-### PR 5 — `refactor(web): migrate router path parsers to decisionRun`
+### PR 5 — `test(web): pin the router path parser matrix`
 
-- **Phase**: 📌+🔧 — the missing matrix rows live in this slice, not a
-  preceding 📌.
+- **Phase**: 📌 pins — prod Δ = 0 (review correction, codex round 12: the
+  parser decisionRun conversions moved into PR 15).
 - **Scope**: `packages/web/src/lib/router.ts` — missing parser-matrix rows
-  FIRST (every route shape, session-id case sensitivity, task-id alternation
-  `[a-fA-F0-9-]+|[a-z]-[1-9]\d*`), then `getSpaceIdFromPath` as
-  `decisionRun('space-id-from-path', [...16 gates])` (review correction PR
-  #2982: sixteen patterns, one gate per pattern — the earlier 14-gate count
-  omitted two valid route forms), owning its regex constant verbatim, order = current order (agent-detail
-  before agent-list, task-view before task); wrapper returns `ctx.decision`
-  with the `?? null` default, no terminal gate; fold
-  `getSpaceEvolveFromPath` / `getSpaceTasksTabFromPath` into the same gate
-  style.
-- **Budget**: prod Δ ≈ 85; test Δ ≈ 120.
-- **Lands**: every router path parser is a pure decision cascade pinned by
-  the existing matrix; `getSpaceIdFromPath`'s contained blast radius (no
-  external production callers) is preserved.
-- **Excludes**: `applyPathToSignals`, `handlePopState`, and the legacy
-  redirect writes (phase 2 is PR 15, optional).
+  (every route shape, session-id case sensitivity, task-id alternation
+  `[a-fA-F0-9-]+|[a-z]-[1-9]\d*`; sixteen patterns in
+  `getSpaceIdFromPath`'s inventory, one row per pattern, none omitted —
+  review correction PR #2982) pinning the CURRENT ordinary helpers
+  verbatim. Codex round 12: `applyPathToSignals` consumes
+  `getSpaceIdFromPath` and its two siblings at `router.ts:744-755`, so
+  migrating those parsers while their consumer stays imperative nests
+  three runners inside the routing business path — the conversions land
+  TOGETHER WITH the phase-2 `apply-space-route` pipeline (PR 15); if open
+  question 3 declines phase 2, the parsers STAY ordinary pure helpers and
+  these pins are all that lands.
+- **Budget**: prod Δ = 0; test Δ ≈ 90.
+- **Lands**: the full parser matrix is pinned against the unchanged
+  helpers, so PR 15's conversions have their parity net ready before any
+  routing-spine change.
+- **Excludes**: any production change — the helpers, `applyPathToSignals`,
+  `handlePopState`, and the legacy redirect writes are all untouched.
 - **Tests**: `src/lib/__tests__/router.test.ts`,
   `router-space-slug.test.ts`, `router-lifecycle-recovery.test.ts`,
-  `overlay-history.test.ts` — green unchanged.
-- **Depends on**: PR 1. Parallel-safe with PR 4.
+  `overlay-history.test.ts` — green unchanged, plus the new rows.
+- **Depends on**: none — parallel-safe leaf (and with PR 4); the
+  conversions it feeds live in PR 15.
 
 ### PR 6 — `refactor(web): migrate getCurrentAction to decisionRun`
 
@@ -1531,7 +1557,8 @@ optional router phase 2. No per-site section is left uncovered.
   state, and `__hyperneoInAppHistoryDepth` survive exactly as
   `router.ts:715-735` writes them today (review correction, codex round 2:
   bare `history.replaceState` discards the depth key and desyncs
-  `navigateBack`) — then match gates reusing the PR 5 pattern constants
+  `navigateBack`) — then match gates reusing the pattern constants pinned
+  by PR 5
   in the current else-if order, then guarded per-arm signal-write stages —
   the whole run executes inside `batch()`. Review correction (PR #2982):
   the write stages operate through explicit write-PORT functions passed as
@@ -1545,7 +1572,14 @@ optional router phase 2. No per-site section is left uncovered.
   reapplies it after async store init; codex round 4: a runner returning
   its context or nothing silently nulls `initialSessionId` while
   signal-write tests still pass).
-  `handlePopState`'s overlay short-circuit stays untouched.
+  `handlePopState`'s overlay short-circuit stays untouched. This slice ALSO
+  performs the parser conversions deferred from PR 5 (codex round 12):
+  `getSpaceIdFromPath`, `getSpaceEvolveFromPath`, and
+  `getSpaceTasksTabFromPath` become decisionRun compositions over the SAME
+  gates and pattern constants this pipeline uses — the exported names and
+  signatures remain for their own callers, and the pipeline calls the gates
+  directly, never the exported wrappers (round 6), so no runner nests
+  inside the routing path once the imperative consumer is gone.
 - **Budget**: prod Δ likely ≈ 150+ on first authoring — the expected
   over-budget slice; the permitted split is ➕ (the pipeline module landed
   unwired with a route-union decision table: `/` → spacesList, unknown →
