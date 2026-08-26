@@ -9,6 +9,7 @@ import {
   buildSdkRuntimeEnv,
   buildWorkflowConditionEnv,
   isRestrictedEnvName,
+  lookupEnvValue,
   refreshStartupEnvBaseline,
   STARTUP_ENV_BASELINE,
 } from '../../../src/lib/spawn-env';
@@ -117,18 +118,21 @@ describe('buildDialogEnv', () => {
 });
 
 describe('buildGitCommandEnv', () => {
-  test('keeps safe git variables and excludes secret carriers, SSH/askpass, config selectors, and proxy inputs', () => {
+  test('keeps safe git variables and excludes secret carriers, SSH/askpass, auth config, and proxy inputs', () => {
     const env = buildGitCommandEnv({
       ...SOURCE,
       GIT_CONFIG_GLOBAL: '/tmp/gitconfig-global',
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_2: 'safe.directory',
+      GIT_CONFIG_VALUE_2: '/workspace',
     });
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
-    expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
-    expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
+    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
+    expect(env.GIT_CONFIG_VALUE_0).toBe('/workspace');
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
   });
@@ -136,9 +140,13 @@ describe('buildGitCommandEnv', () => {
 
 describe('buildGitSshEnv', () => {
   test('adds SSH, askpass, and TLS client inputs plus reindexed http.extraHeader config only', () => {
-    const env = buildGitSshEnv(SOURCE);
+    const env = buildGitSshEnv({ ...SOURCE, GIT_ASKPASS: '/usr/local/bin/git-askpass' });
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.GIT_ASKPASS).toBe('/usr/local/bin/git-askpass');
+    expect(env.VSCODE_GIT_ASKPASS_NODE).toBe(SOURCE.VSCODE_GIT_ASKPASS_NODE);
+    expect(env.VSCODE_GIT_ASKPASS_MAIN).toBe(SOURCE.VSCODE_GIT_ASKPASS_MAIN);
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
@@ -173,6 +181,9 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
+    expect(env.VSCODE_GIT_ASKPASS_NODE).toBe(SOURCE.VSCODE_GIT_ASKPASS_NODE);
+    expect(env.VSCODE_GIT_ASKPASS_MAIN).toBe(SOURCE.VSCODE_GIT_ASKPASS_MAIN);
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
   });
 
   test('carries git identity, SSH auth, and git command inputs but no other GIT_ inputs', () => {
@@ -231,6 +242,24 @@ describe('buildWorkflowConditionEnv', () => {
     expect(env.kubeconfig).toBeUndefined();
     expect(isRestrictedEnvName('gh_token')).toBe(true);
     expect(isRestrictedEnvName('MY_TOOL_FLAG')).toBe(false);
+  });
+});
+
+describe('lookupEnvValue', () => {
+  test('resolves case-variant keys case-insensitively on Windows only', () => {
+    const source: Record<string, string> = {
+      Path: 'C:\\Windows\\system32;C:\\Windows',
+      APPDATA: 'C:\\Users\\agent\\AppData\\Roaming',
+      anthropic_auth_token: 'sk-ant-oat-variant',
+    };
+    expect(lookupEnvValue(source, 'PATH', 'win32')).toBe(source.Path);
+    expect(lookupEnvValue(source, 'AppData', 'win32')).toBe(source.APPDATA);
+    expect(lookupEnvValue(source, 'ANTHROPIC_AUTH_TOKEN', 'win32')).toBe(
+      source.anthropic_auth_token
+    );
+    expect(lookupEnvValue(source, 'PATH', 'darwin')).toBeUndefined();
+    expect(lookupEnvValue(source, 'AppData', 'linux')).toBeUndefined();
+    expect(lookupEnvValue(source, 'Path', 'win32')).toBe(source.Path);
   });
 });
 

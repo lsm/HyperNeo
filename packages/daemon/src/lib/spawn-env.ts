@@ -85,6 +85,9 @@ const GIT_SSH_ENV_KEYS = [
   'GIT_SSH_VARIANT',
   'GIT_ASKPASS',
   'SSH_ASKPASS',
+  'VSCODE_GIT_ASKPASS_NODE',
+  'VSCODE_GIT_ASKPASS_MAIN',
+  'VSCODE_GIT_IPC_HANDLE',
   'GIT_SSL_CERT',
   'GIT_SSL_KEY',
 ] as const;
@@ -150,8 +153,22 @@ export function _setStartupEnvBaselineForTesting(source: EnvSource): void {
   STARTUP_ENV_BASELINE = captureBaseline(source);
 }
 
+export function lookupEnvValue(
+  source: EnvSource,
+  key: string,
+  platform: NodeJS.Platform = process.platform
+): string | undefined {
+  const value = source[key];
+  if (value !== undefined || platform !== 'win32') return value;
+  const normalized = key.toUpperCase();
+  for (const sourceKey of Object.keys(source)) {
+    if (sourceKey.toUpperCase() === normalized) return source[sourceKey];
+  }
+  return undefined;
+}
+
 function sourceValue(source: EnvSource, key: string): string | undefined {
-  return source[key];
+  return lookupEnvValue(source, key);
 }
 
 function pickKeys(keys: readonly string[], source: EnvSource): Record<string, string> {
@@ -205,7 +222,7 @@ export function buildGitCommandEnv(
   return {
     ...buildOsBaselineEnv(source),
     ...pickKeys(GIT_COMMAND_ENV_KEYS, source),
-    ...collectPermittedGitConfig(source),
+    ...collectPermittedGitConfig(source, LOCAL_GIT_CONFIG_PATTERN),
   };
 }
 
@@ -214,7 +231,7 @@ export function buildGitSshEnv(source: EnvSource = STARTUP_ENV_BASELINE): Record
     ...buildOsBaselineEnv(source),
     ...pickKeys(GIT_COMMAND_ENV_KEYS, source),
     ...pickKeys([...GIT_SSH_ENV_KEYS, ...PROXY_TLS_ENV_KEYS], source),
-    ...collectPermittedGitConfig(source),
+    ...collectPermittedGitConfig(source, PERMITTED_GIT_CONFIG_PATTERN),
   };
 }
 
@@ -233,7 +250,7 @@ export function buildSdkRuntimeEnv(
       ],
       source
     ),
-    ...collectPermittedGitConfig(source),
+    ...collectPermittedGitConfig(source, PERMITTED_GIT_CONFIG_PATTERN),
   };
 }
 
@@ -252,8 +269,9 @@ export function buildWorkflowConditionEnv(
 }
 
 const PERMITTED_GIT_CONFIG_PATTERN = /^(?:http(?:\..+)?\.extraHeader|safe\.directory)$/i;
+const LOCAL_GIT_CONFIG_PATTERN = /^safe\.directory$/i;
 
-function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
+function collectPermittedGitConfig(source: EnvSource, pattern: RegExp): Record<string, string> {
   const count = Number(sourceValue(source, 'GIT_CONFIG_COUNT'));
   if (!Number.isInteger(count) || count <= 0) return {};
   const keys: string[] = [];
@@ -262,7 +280,7 @@ function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
     const key = sourceValue(source, `GIT_CONFIG_KEY_${index}`);
     const value = sourceValue(source, `GIT_CONFIG_VALUE_${index}`);
     if (key === undefined || value === undefined) continue;
-    if (!PERMITTED_GIT_CONFIG_PATTERN.test(key)) continue;
+    if (!pattern.test(key)) continue;
     keys.push(key);
     values.push(value);
   }
