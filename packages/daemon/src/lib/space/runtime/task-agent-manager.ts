@@ -2399,24 +2399,28 @@ export class TaskAgentManager {
         (s) => [
           s.snapshot({
             name: 'load-current-task',
-            provides: ['currentTask'],
-            run: () => ({ currentTask: this.config.taskRepo.getTask(task.id) ?? task }),
-          }),
-          s.decide({
-            name: 'sync-gates',
-            reads: ['currentTask'],
-            branches: ['skip', 'perform'],
-            run: (view) => {
-              const currentTask = view.currentTask;
-              const terminalStatus = execution.workflowRunId
-                ? this.resolveTerminalInjectionStatus(execution.workflowRunId, currentTask.id)
-                : null;
-              const live = this.getSubSession(sessionId);
+            provides: ['currentTask', 'workspacePath'],
+            run: () => {
+              const currentTask = this.config.taskRepo.getTask(task.id) ?? task;
               const workspacePath = resolveSpawnWorkspace({
                 cachedTaskWorktreePath: this.getTaskWorktreePath(currentTask.id),
                 hasWorktreeManager: false,
                 spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
               }).workspacePath;
+              return { currentTask, workspacePath };
+            },
+          }),
+          s.decide({
+            name: 'sync-gates',
+            reads: ['currentTask', 'workspacePath'],
+            branches: ['skip', 'perform'],
+            run: (view) => {
+              const currentTask = view.currentTask;
+              const workspacePath = view.workspacePath!;
+              const terminalStatus = execution.workflowRunId
+                ? this.resolveTerminalInjectionStatus(execution.workflowRunId, currentTask.id)
+                : null;
+              const live = this.getSubSession(sessionId);
               let skipReason: string | null = null;
               if (terminalStatus) skipReason = `task/run is terminal (${terminalStatus})`;
               else if (!live) skipReason = 'session is no longer live';
