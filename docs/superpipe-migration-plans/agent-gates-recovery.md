@@ -550,7 +550,13 @@ none of these sites needs its compensation machinery.
   (review correction PR #2981: the shell does not retain per-block
   iteration; a whole message is one observation, so a later block's reset
   cannot race an earlier row's intervention and multiple errors aggregate);
-  the shell keeps only the injected `Date.now()`.
+  the shell injects a CLOCK FUNCTION, not a frozen timestamp — the
+  pipeline evaluates it per error row (`repeated-tool-error-guardrail.ts:102`)
+  and again when recording the intervention timestamp (`:127-131`; review
+  correction PR #2981: a single entry-time value freezes cooldown decisions
+  across an awaited earlier intervention — a later key whose cooldown
+  expires mid-observation counts today but would falsely take
+  `cooldown_reset`, and new cooldowns would start early).
   The evidence-emission and routing effect stages preserve today's
   stage-local failure isolation (`repeated-tool-error-guardrail.ts:134-152`):
   an evidence-emission throw is caught and logged while recovery routing
@@ -612,7 +618,8 @@ none of these sites needs its compensation machinery.
     windowMs: number;
     now: number;
     prevStreak: LoopStreakState | undefined;   // snapshot from the ledger
-    prevRing: BashFailureRing | undefined;     // snapshot from bashFailures
+    prevRing: BashFailureRing | undefined;     // looked up INSIDE the bash stage via the ring-map dep —
+                                               // the ring key depends on the argKey-derived fingerprint
     argKey: string | null;                     // stage output
     streak: LoopStreakState | null;            // stage output
     ring: BashFailureRingEvaluation | null;    // stage output
@@ -655,9 +662,16 @@ none of these sites needs its compensation machinery.
   loop-admission pipeline performs the state effects as guarded stages —
   the shell (`buildPreToolUseCallback`) shrinks to snapshot
   (`input.hook_event_name` → `ctx.eventName` for the leading event gate,
-  `state.ledger.get(scope)`, `state.bashFailures.get(ringKey)`; the ring
-  fingerprint is computed lazily only on the bash arm, `prevRing`
-  undefined for non-bash — the bash stages are guarded) and run. Inside the
+  `state.ledger.get(scope)`; review correction PR #2981: the ring entry is
+  NOT snapshotted in the shell — its key depends on the fingerprint
+  derived from `buildArgKey`, which runs as `applyArgKeyStage` INSIDE the
+  pipeline, exactly as the current hook derives the fingerprint before
+  reading the ring (`loop-detector-hook.ts:149-152`). The bash stage
+  performs the guarded `state.bashFailures.get(ringKey)` lookup itself via
+  the ring map passed as a dep, carrying the derived ring key forward for
+  the expiry cleanup; duplicating `buildArgKey` in the shell or supplying
+  an undefined `prevRing` would make the all-failures check miss real Bash
+  dead loops) and run. Inside the
   pipeline, after the decision gates: when the decision carries
   `resetLedger`, DELETE the scope from `state.ledger` (matching the current
   hook, which deletes the session's ledger entry for the
@@ -867,7 +881,7 @@ none of these sites needs its compensation machinery.
   `rate-limit-watchdog-gates.test.ts` + `rate-limit-watchdog.test.ts`.
 - **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error, record the
 hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
-`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
+`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification (cooldown resolution reading a FRESH clock per `:230`, with `ctx.retryCount` already overwritten by the per-episode reset stage — `:154-159` precedes the `:228` read today) → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
 - **input/output snapshot design.**
   ```ts
   interface RateLimitTripCtx {
@@ -885,7 +899,17 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
 - **pure core design.** Gates: 1) `applyBillingTerminalGate` (hint flag →
   `surface-billing`); 2) `applyCooldownResolutionStage` — transform: usable
   hinted reset (future, within horizon) → `cooldownFromReset`, else
-  `computeCooldown(errorMessage, retryCount, now)`; 3)
+  `computeCooldown(errorMessage, retryCount, now)`. Two freshness rules
+  (review correction PR #2981): the stage reads a FRESH clock (an injected
+  clock function evaluated there, or a `now`-refresh stage immediately
+  before it) — today `Date.now()` is taken AFTER the async prefix
+  (`rate-limit-watchdog.ts:230`), and an entry-time value can treat an
+  already-expired hinted reset as usable or misalign relative-reset
+  `retryAtMs` values with the armed timer; and the per-episode reset stage
+  OVERWRITES `ctx.retryCount` before this stage reads it (the `:154-159`
+  reset precedes the `:228` read today — an entry snapshot that survives
+  the reset makes a brand-new episode start on a later ladder rung or hit
+  `give-up`); 3)
   `applyGiveUpGate` — `!cooldown.freeWait && retryCount >= maxAutoRetries`
   → `give-up`; 4) `applyCooldownFinalGate` — decides `cooldown` with
   `charge: !freeWait`.
@@ -1684,7 +1708,8 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   precondition (`:74-76`), content
   classification with its `reset`/`ignore` arms (`:78-89`), then the
   error-row iteration with `triggered` aggregation (`:91-119`) — runs the
-  pipeline; the shell keeps ONLY the injected `Date.now()` (review
+  pipeline; the shell injects a CLOCK FUNCTION the pipeline evaluates per
+  error row and at the intervention-timestamp write (review
   correction PR #2981: scoping the pipeline to error rows only would drop
   the success-block reset arm, and retaining per-block shell iteration
   would leave aggregation and multi-error ordering outside the complete
