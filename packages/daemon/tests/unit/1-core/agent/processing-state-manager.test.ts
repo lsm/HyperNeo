@@ -706,6 +706,33 @@ describe('ProcessingStateManager', () => {
       expect(resolvedB).toBe(true);
       expect(manager.isTerminalIdlePending()).toBe(false);
     });
+
+    test('settling a retired fence is a no-op that spares the successor owner', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      const fenceA = manager.beginTerminalIdle(ownerA);
+      manager.cancelTerminalFence(fenceA);
+
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+      let idleCallbackOwner: string | undefined;
+      manager.setOnIdleCallback(async (owner) => {
+        idleCallbackOwner = owner ? `${owner.queryGeneration}:${owner.turnToken}` : 'none';
+      });
+      await manager.setProcessing('msg-b');
+
+      await manager.setIdle({ fence: fenceA });
+
+      expect(resolvedB).toBe(false);
+      expect(manager.getState().status).toBe('processing');
+      expect(idleCallbackOwner).toBeUndefined();
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+      waiterB.cancel();
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

@@ -221,9 +221,10 @@ export class ProcessingStateManager {
     let fenceOwner: IdleOwnerScope | undefined;
     if (opts?.fence) {
       const fenceIndex = this.pendingFenceOwners.indexOf(opts.fence);
-      if (fenceIndex >= 0) {
-        fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
+      if (fenceIndex < 0) {
+        return;
       }
+      fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
     }
     const consumesTerminalFence = fenceOwner !== undefined;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
