@@ -368,6 +368,21 @@ describe('SessionLifecycle', () => {
       );
     });
 
+    it('space session creation stores spaceId in session context alongside workspacePath', async () => {
+      await lifecycle.create({ spaceId: 'space-1', workspacePath: '/space/workspace' });
+
+      expect(createdSessions).toHaveLength(1);
+      expect(createdSessions[0]!.context).toEqual({ spaceId: 'space-1' });
+      expect(createdSessions[0]!.workspacePath).toBe('/space/workspace');
+    });
+
+    it('session without spaceId or lobbyId carries no space context reference', async () => {
+      await lifecycle.create({ workspacePath: '/plain/workspace' });
+
+      expect(createdSessions).toHaveLength(1);
+      expect(createdSessions[0]!.context).toBeUndefined();
+    });
+
     it('space_chat session without workspacePath throws', async () => {
       await expect(lifecycle.create({ sessionType: 'space_chat' })).rejects.toThrow(
         "Session type 'space_chat' requires explicit workspacePath"
