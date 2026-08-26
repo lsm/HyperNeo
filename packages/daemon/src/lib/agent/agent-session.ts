@@ -1317,7 +1317,9 @@ export class AgentSession
         );
       }
     }
-    if (receipt && this.pendingResumeAfterCompaction && !timedOut) {
+    if (timedOut || !this.pendingResumeAfterCompaction) {
+      await this.processInterruptSurvivorReceipt(queryObject, receipt);
+    } else {
       let resolveDeliveryGate: (() => void) | undefined;
       const deliveryGate = new Promise<void>((resolve) => {
         resolveDeliveryGate = resolve;
@@ -1331,8 +1333,6 @@ export class AgentSession
       } finally {
         resolveDeliveryGate?.();
       }
-    } else {
-      await this.processInterruptSurvivorReceipt(queryObject, receipt);
     }
     void interruptPromise.then(
       (lateReceipt) => {
@@ -1349,7 +1349,7 @@ export class AgentSession
         });
       },
       (error) => {
-        if (!this.pendingResumeAfterCompaction) return;
+        if (timedOut || !this.pendingResumeAfterCompaction) return;
         this.pendingResumeAfterCompaction = false;
         this.pendingMidTurnBudgetKey = undefined;
         this.logger.warn(

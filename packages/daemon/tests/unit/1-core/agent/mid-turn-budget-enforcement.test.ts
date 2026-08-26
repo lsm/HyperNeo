@@ -214,4 +214,47 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       durable: true,
     });
   }, 15_000);
+
+  it('enqueues compaction when the interrupt resolves without a receipt', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.setInterruptResult(async () => undefined);
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(harness.cancelMock).not.toHaveBeenCalled();
+    const compactCall = enqueueSpy.mock.calls.find((call) => call[1] === '/compact');
+    expect(compactCall).toBeDefined();
+    expect(compactCall?.[2]).toBe(true);
+    expect(compactCall?.[3]).toEqual({ durable: true, prepend: true });
+  });
+
+  it('keeps the pending resume armed when a timed-out interrupt later rejects', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.setInterruptResult(
+      () =>
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('interrupt failed late')), 5_150);
+        })
+    );
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    spyOn(session.lifecycleManager, 'restart').mockResolvedValue(undefined);
+
+    await session.midTurnContextBudgetCheck();
+    for (let i = 0; i < 50; i += 1) {
+      await tick(30);
+    }
+
+    session.resumePendingWorkAfterCompaction();
+    expect(enqueueSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('Continue the task'),
+      false,
+      { durable: true }
+    );
+  }, 15_000);
 });
