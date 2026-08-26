@@ -178,6 +178,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
 
     mockStateManager = {
       getState: mock(() => ({ status: 'idle' })),
+      getCurrentIdleOwner: mock(() => ({ queryGeneration: 0, turnToken: 0 })),
     } as unknown as ProcessingStateManager;
 
     mockErrorManager = {
@@ -394,6 +395,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
         setQueued: setQueuedSpy,
         getState: getStateSpy,
         isIdleOwnerCurrent: mock(() => true),
+        getCurrentIdleOwner: mock(() => ({ queryGeneration: 0, turnToken: 0 })),
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,

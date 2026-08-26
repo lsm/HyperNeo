@@ -403,7 +403,10 @@ export class SDKMessageHandler {
     }
   }
 
-  private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
+  private async acknowledgePersistedUserMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<boolean> {
     const { session, db } = this.ctx;
     if (message.type !== 'user' || !message.uuid) {
       return false;
@@ -411,19 +414,19 @@ export class SDKMessageHandler {
 
     const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid);
     if (enqueuedMessage) {
-      await this.consumePersistedUserMessage(enqueuedMessage, message);
+      await this.consumePersistedUserMessage(enqueuedMessage, message, invocationGeneration);
       return true;
     }
 
     const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid);
     if (deferredMessage) {
-      await this.consumePersistedUserMessage(deferredMessage, message);
+      await this.consumePersistedUserMessage(deferredMessage, message, invocationGeneration);
       return true;
     }
 
     const submittedMessage = db.getMessageByStatusAndUuid(session.id, 'submitted', message.uuid);
     if (submittedMessage) {
-      await this.consumePersistedUserMessage(submittedMessage, message);
+      await this.consumePersistedUserMessage(submittedMessage, message, invocationGeneration);
       return true;
     }
 
@@ -438,7 +441,8 @@ export class SDKMessageHandler {
 
   private async consumePersistedUserMessage(
     persistedMessage: PersistedUserMessage,
-    sdkReplayMessage: SDKMessage
+    sdkReplayMessage: SDKMessage,
+    invocationGeneration: number | null
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
@@ -452,6 +456,7 @@ export class SDKMessageHandler {
       messageIds: [persistedMessage.dbId],
       status: 'consumed',
     });
+    if (this.isInvocationStale(invocationGeneration)) return;
     this.acknowledgedPersistedUserThisTurn = true;
 
     messageHub.event(
@@ -822,7 +827,7 @@ export class SDKMessageHandler {
 
     if (
       !this.isInvocationStale(invocationGeneration) &&
-      (await this.acknowledgePersistedUserMessage(message))
+      (await this.acknowledgePersistedUserMessage(message, invocationGeneration))
     ) {
       this.maybeRefreshContextOnEvent(message);
       return;

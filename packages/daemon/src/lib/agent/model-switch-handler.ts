@@ -335,7 +335,7 @@ export class ModelSwitchHandler {
             );
             return { success: true, model: resolvedModel };
           }
-          await lifecycleManager.restart();
+          await lifecycleManager.restart({ idleOwner: stateManager.getCurrentIdleOwner() });
           if (clearAcpSessionId && previousAcpSessionId) {
             await this.disposePreviousAcpSession(
               previousAcpSessionId,

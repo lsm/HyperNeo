@@ -577,9 +577,10 @@ export class QueryLifecycleManager {
     await this.ctx.clearModelsCache();
     throwIfDeliveryAborted(signal);
 
+    const queueLiveBeforeStart = messageQueue.isRunning();
     await this.ctx.startStreamingQuery();
     throwIfDeliveryAborted(signal);
-    return 'started';
+    return queueLiveBeforeStart ? 'already-running' : 'started';
   }
 
   async startQueryAndEnqueue(
