@@ -975,7 +975,7 @@ export class AcpQueryRunner {
       }
 
       await this.runQuery(queryGeneration, true, recoveryState);
-      return false;
+      return true;
     }
 
     messageQueue.clear();
@@ -1012,11 +1012,16 @@ export class AcpQueryRunner {
       const limitAssessment = assessLimitError({ rawText: errorMessage });
       const rateLimitCooldownScheduled =
         limitAssessment.isLimit &&
-        !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
-          resetAtMs: limitAssessment.resetAtMs,
-          kind: limitAssessment.kind,
-          billingTerminal: limitAssessment.billingTerminal,
-        }));
+        !!(await this.ctx.onRateLimitExhausted?.(
+          errorMessage,
+          this._lastConsumedUserMessage,
+          {
+            resetAtMs: limitAssessment.resetAtMs,
+            kind: limitAssessment.kind,
+            billingTerminal: limitAssessment.billingTerminal,
+          },
+          queryGeneration
+        ));
       if (rateLimitCooldownScheduled) {
         recoveryState.rateLimitCooldownScheduled = true;
       }

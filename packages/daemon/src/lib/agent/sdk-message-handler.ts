@@ -994,7 +994,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKModelRefusalFallbackMessage(message)) {
-      await this.handleModelRefusalFallbackMessage(message);
+      await this.handleModelRefusalFallbackMessage(message, invocationGeneration);
     }
 
     if (isSDKModelRefusalNoFallbackMessage(message)) {
@@ -1204,6 +1204,7 @@ export class SDKMessageHandler {
     await internalEventBus.publish('session.errorClear', {
       sessionId: session.id,
     });
+    if (this.isInvocationStale(invocationGeneration)) return;
 
     if (confirmsArmedClear) {
       this.suppressIdleOnNextResult = false;
@@ -1412,9 +1413,13 @@ export class SDKMessageHandler {
     this.lastStampedThinkingTokensEstimate = 0;
   }
 
-  private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
+  private async handleModelRefusalFallbackMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
     if (!isSDKModelRefusalFallbackMessage(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) return;
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
@@ -1446,6 +1451,7 @@ export class SDKMessageHandler {
       );
       return;
     }
+    if (this.isInvocationStale(invocationGeneration)) return;
     if (!fallbackModel || session.config.model === fallbackModel) return;
     if (
       fallbackModelBeforeResolve !== fallbackModel ||

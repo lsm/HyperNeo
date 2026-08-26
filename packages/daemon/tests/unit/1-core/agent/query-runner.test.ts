@@ -2757,6 +2757,15 @@ describe('QueryRunner', () => {
       expect(ctx.queryPromise).toBeNull();
     });
 
+    it('passes the runner generation to the rate-limit handoff (B5e)', async () => {
+      const onRateLimitExhausted = mock(async (): Promise<boolean> => true);
+
+      await runTerminalFailure('429 Too Many Requests', { onRateLimitExhausted });
+
+      expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(onRateLimitExhausted.mock.calls[0][3]).toBe(1);
+    });
+
     it('passes the assessed limit payload to the handoff callback', async () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       const cases: Array<{ errorMessage: string; hint: LimitRetryHint }> = [
@@ -4725,7 +4734,8 @@ describe('QueryRunner', () => {
             resetAtMs: null,
             kind: 'usage_limit',
             billingTerminal: true,
-          }
+          },
+          1
         );
       });
     });

@@ -1772,6 +1772,28 @@ describe('AcpQueryRunner', () => {
     expect(ctx.stateManager.setIdle.mock.calls).toEqual([[{ suppressDeliveryWaiters: true }]]);
   });
 
+  test('a recursive retry that fenced-settled suppresses the outer finalizer idle (B5e)', async () => {
+    const firstClient = createMockClient();
+    firstClient.initialize.mockRejectedValue(new Error('TypeError: fetch failed'));
+    const secondClient = createMockClient();
+    secondClient.initialize.mockRejectedValue(new Error('401 Unauthorized'));
+    const clients = [firstClient, secondClient];
+    const { ctx } = createRunnerFixture({ client: firstClient });
+    (ctx.stateManager as unknown as { beginTerminalIdle: () => unknown }).beginTerminalIdle = mock(
+      () => ({ queryGeneration: 1, turnToken: 1 })
+    );
+    const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.stateManager.beginTerminalIdle).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.setIdle.mock.calls).toEqual([
+      [{ suppressDeliveryWaiters: true }],
+      [{ fence: { queryGeneration: 1, turnToken: 1 } }],
+    ]);
+  });
+
   test('starts terminal fence before awaiting ACP error publication', async () => {
     const client = createMockClient();
     client.initialize.mockRejectedValue(new Error('401 Unauthorized'));

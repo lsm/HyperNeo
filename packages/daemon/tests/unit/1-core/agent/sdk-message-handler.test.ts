@@ -793,6 +793,59 @@ describe('SDKMessageHandler', () => {
       ).toBe(true);
     });
 
+    it('a stale model_refusal_fallback does not switch the successor session model (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+      mockSession.config = { ...mockSession.config, model: 'successor-model' };
+
+      await handler.handleMessage(
+        {
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          trigger: 'refusal',
+          direction: 'retry',
+          original_model: 'old-model',
+          fallback_model: 'stale-fallback-model',
+          request_id: null,
+          content: 'fallback',
+          refused_user_message_uuid: null,
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(mockSession.config.model).toBe('successor-model');
+      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+    });
+
+    it('a result going stale during the errorClear publication skips the owner-carrying finishTurn (B5e)', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      const errorClearPublishSpy = mock(async (topic: string) => {
+        if (topic === 'session.errorClear') generation = 9;
+      });
+      mockInternalEventBus.publish = errorClearPublishSpy;
+
+      await handler.handleMessage(
+        {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'test-uuid',
+          usage: { input_tokens: 100, output_tokens: 50 },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage,
+        3
+      );
+
+      expect(setIdleSpy.mock.calls.length).toBeLessThanOrEqual(1);
+      expect(errorClearPublishSpy.mock.calls.map((call) => call[0] as string)).not.toContain(
+        'query.trigger'
+      );
+    });
+
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
       const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
         ({

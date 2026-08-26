@@ -366,7 +366,8 @@ export interface QueryRunnerContext {
   onRateLimitExhausted?: (
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
@@ -1180,7 +1181,8 @@ export class QueryRunner {
           const handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
             errorMessage,
             this._lastConsumedUserMessage,
-            retrySignal.rateLimitHint ?? undefined
+            retrySignal.rateLimitHint ?? undefined,
+            queryGeneration
           ));
           recoveryState.rateLimitCooldownScheduled = handoffAccepted;
           decision = decideQueryRetry({
