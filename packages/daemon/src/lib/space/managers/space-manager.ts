@@ -3,6 +3,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { SpaceWorkspaceRepository } from '../../../storage/repositories/space-workspace-repository.ts';
 import { Logger } from '../../logger.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
@@ -16,8 +17,11 @@ export class SpaceManager {
   private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpaceStoppedCallbacks: Array<(spaceId: string) => void> = [];
 
+  private workspaceRepo: SpaceWorkspaceRepository;
+
   constructor(private db: BunDatabase) {
     this.spaceRepo = new SpaceRepository(db);
+    this.workspaceRepo = new SpaceWorkspaceRepository(db);
   }
 
   onSpaceResumedRegister(cb: (spaceId: string) => void): () => void {
@@ -43,23 +47,47 @@ export class SpaceManager {
 
   async createSpace(params: CreateSpaceParams): Promise<Space> {
     const resolvedPath = await this.resolveAndValidatePath(params.workspacePath);
-
-    const existing = this.spaceRepo.getSpaceByPath(resolvedPath);
-    if (existing) {
-      throw new Error(
-        `A space already exists for workspace path: ${resolvedPath} (space id: ${existing.id})`
-      );
-    }
-
     const isGit = await this.isGitRepository(resolvedPath);
+
+    const space = this.db.transaction(() => {
+      const existing = this.spaceRepo.getSpaceByPath(resolvedPath);
+      if (existing) {
+        throw new Error(
+          `A space already exists for workspace path: ${resolvedPath} (space id: ${existing.id})`
+        );
+      }
+
+      const existingWorkspace = this.workspaceRepo.findOwnerByPath(resolvedPath);
+      if (existingWorkspace) {
+        throw new Error(
+          `Workspace path is already claimed by space ${existingWorkspace.spaceId}: ${resolvedPath}`
+        );
+      }
+
+      const existingSlugs = this.spaceRepo.getAllSlugs();
+      const slug = slugify(params.name, existingSlugs);
+
+      const newSpace = this.spaceRepo.createSpace({
+        ...params,
+        workspacePath: resolvedPath,
+        slug,
+      });
+
+      this.workspaceRepo.create({
+        spaceId: newSpace.id,
+        path: resolvedPath,
+        label: this.deriveLabel(resolvedPath),
+        isPrimary: true,
+      });
+
+      return newSpace;
+    })();
+
     if (!isGit) {
       log.warn(`workspace path is not a git repository: ${resolvedPath}`);
     }
 
-    const existingSlugs = this.spaceRepo.getAllSlugs();
-    const slug = slugify(params.name, existingSlugs);
-
-    return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath, slug });
+    return space;
   }
 
   async getSpace(id: string): Promise<Space | null> {
@@ -245,6 +273,13 @@ export class SpaceManager {
     }
 
     return updated;
+  }
+
+  private deriveLabel(workspacePath: string): string {
+    const trimmed = workspacePath.replace(/[\\/]+$/, '').trim();
+    if (trimmed.length === 0) return '';
+    const parts = trimmed.split(/[\\/]/);
+    return parts[parts.length - 1] ?? '';
   }
 
   private async resolveAndValidatePath(workspacePath: string): Promise<string> {

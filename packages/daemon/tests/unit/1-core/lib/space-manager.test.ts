@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceManager', () => {
@@ -112,6 +113,29 @@ describe('SpaceManager', () => {
       });
 
       expect(space.autonomyLevel).toBe(1);
+    });
+
+    it('persists a primary workspace row for the new space', async () => {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'Primary Row' });
+      const workspaceRepo = new SpaceWorkspaceRepository(db as any);
+      const workspaces = workspaceRepo.listBySpace(space.id);
+
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]!.path).toBe(space.workspacePath);
+      expect(workspaces[0]!.isPrimary).toBe(true);
+    });
+
+    it('throws if the workspace path is already a secondary workspace in another space', async () => {
+      const other = await manager.createSpace({ workspacePath: tmpDir, name: 'Other' });
+      const workspaceRepo = new SpaceWorkspaceRepository(db as any);
+      const rawSubDir = join(tmpDir, 'sub-workspace');
+      mkdirSync(rawSubDir);
+      const subDir = realpathSync(rawSubDir);
+      workspaceRepo.create({ spaceId: other.id, path: subDir });
+
+      await expect(
+        manager.createSpace({ workspacePath: subDir, name: 'Collision' })
+      ).rejects.toThrow('already claimed');
     });
   });
 
