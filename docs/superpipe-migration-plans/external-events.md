@@ -10,7 +10,7 @@ The target is **planning only**: no source code is changed by this document.
 
 | Site | Proposed combinator | Rationale |
 | --- | --- | --- |
-| `github/github-normalizer.ts` normalizer family | One raw superpipe ingest pipeline per business path (`ingest-github-webhook`, `ingest-github-polling-row`) with inline self-guarding dispatch stages | Dispatch and per-kind processing are stages of the single pipeline; projection (`project-external-event`) stays a separate per-space transform at the publish boundary. |
+| `github/github-normalizer.ts` normalizer family | One raw superpipe ingest pipeline for the webhook business path (`ingest-github-webhook`) with inline self-guarding dispatch stages; `normalizeGitHubPollingRow` stays a plain function | Dispatch and per-kind processing are stages of the single webhook pipeline; projection (`project-external-event`) stays a separate per-space transform at the publish boundary. The polling-row normalizer runs once per endpoint row (pages up to 100 — `github-event-extension.ts:2491-2499`), so a per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 Decision 8 excludes. |
 | `event-essence.ts:formatExternalEventEssence` | Raw superpipe transform | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
 | `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. |
 | `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called as a stage of the digest pipeline — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper (or direct stages) inside `build-external-event-digest-message`. |
@@ -84,12 +84,19 @@ Callers:
 
 #### Proposed combinator
 
-- Review correction: `normalizeGitHubWebhook` and `normalizeGitHubPollingRow`
-  each become ONE raw superpipe ingest pipeline (`ingest-github-webhook` /
-  `ingest-github-polling-row`); dispatch and per-kind processing are STAGES of
-  that pipeline (dispatch stage selects the kind; the per-kind stage template
-  follows), NOT separately-run `decisionRun` dispatchers plus per-kind
-  pipelines.
+- Review correction: `normalizeGitHubWebhook` becomes ONE raw superpipe ingest
+  pipeline (`ingest-github-webhook`); dispatch and per-kind processing are
+  STAGES of that pipeline (dispatch stage selects the kind; the per-kind stage
+  template follows), NOT separately-run `decisionRun` dispatchers plus
+  per-kind pipelines.
+- Review correction: `normalizeGitHubPollingRow` STAYS A PLAIN FUNCTION — it
+  runs once per endpoint row inside the polling loops
+  (`github-event-extension.ts:2491-2499`, pages up to 100 rows), so a pipeline
+  invocation per row is exactly the hot-inner-loop pattern ADR 0004 Decision 8
+  excludes; keeping it synchronous does not avoid that overhead. Its
+  endpoint-keyed dispatch is pinned by decision-table tests instead. If a
+  pipeline is ever wanted here, compose ONE pipeline around the batch polling
+  operation, never per row.
 - The per-kind stage template is the boxed-outcome transform described below
   (`(params) => NormalizedGitHubEvent | null` at the export boundary).
 - `toExternalEvent` becomes its own **raw superpipe transform**
@@ -105,7 +112,7 @@ interface GitHubWebhookDispatchCtx {
   eventType: string;
   deliveryId: string;
   payload: unknown;
-  base: WebhookBase | null; // shared repo/sender/occurredAt after a snapshot stage
+  base: WebhookBase | null; // shared repo/sender/deliveryId/rawPayload after a snapshot stage
   decision:
     | { action: 'ignore' }
     | { action: 'normalize'; kind: GitHubEventKind; input: unknown }
@@ -149,6 +156,8 @@ guards that reject set `outcome = { status: 'rejected' }` and `!isDone` halts.
 interface ToExternalEventCtx {
   spaceId: string;
   event: NormalizedGitHubEvent;
+  now: () => number;
+  newId: () => string;
   result: ExternalEvent | null;
 }
 ```
@@ -204,9 +213,14 @@ interface ToExternalEventCtx {
    makes `!isDone` halt before extraction/assembly. The pipeline ends with
    `.end('ctx')` and the shell unwraps `outcome.status === 'done' ? value : null`.
 
-4. **`normalizeGitHubPollingRow`** — same single-pipeline shape, with the
-   dispatch stages keyed on `endpointKey` (`issue_comments`, `review_comments`,
-   `pulls`, etc.) followed by the endpoint-specific transform stages inline.
+4. **`normalizeGitHubPollingRow`** — stays a plain function (review
+   correction: it runs once per endpoint row in the polling loops at
+   `github-event-extension.ts:2491-2499` with pages up to 100 rows; a per-row
+   pipeline invocation is the hot-inner-loop pattern ADR 0004 Decision 8
+   excludes). Its endpoint-keyed dispatch (`issue_comments`,
+   `review_comments`, `pulls`) is pinned by decision-table tests; if a pipeline
+   is ever wanted here, compose ONE around the batch polling operation, never
+   per row.
 
 5. **`toExternalEvent` stays a separate per-space projection pipeline at the
    publish boundary** (review correction: for a webhook watched by multiple
@@ -215,15 +229,19 @@ interface ToExternalEventCtx {
    inside `publishEvent` for EACH space — the ingest pipeline has no
    `spaceId`, so appending `assembleExternalEvent` to it either cannot
    construct the event or constructs one event reused with the wrong space
-   scope/UUID across all targets). The ingest pipelines
-   (`ingest-github-webhook` / `ingest-github-polling-row`) end at
-   `NormalizedGitHubEvent`; the projection stages form their own small raw
-   transform (`project-external-event`) covering:
+   scope/UUID across all targets). The webhook ingest pipeline
+   (`ingest-github-webhook`) ends at `NormalizedGitHubEvent`; the projection
+   stages form their own small raw transform (`project-external-event`)
+   covering:
    - `canonicalizeRepo`
    - `selectTopicParts` (uses `mapEventType`)
    - `buildPayload` (spreads `event.payload` into the record)
-   - `assembleExternalEvent` (generates `crypto.randomUUID()` in the final
-     stage — one fresh UUID per space)
+   - `assembleExternalEvent` (reads the id from the ctx's injected `newId` and
+     `ingestedAt` from the ctx's injected `now` in the final stage — one fresh
+     id per space, one ingestion timestamp; the exported shell wires the real
+     `crypto.randomUUID`/`Date.now`, tests inject fakes — review correction:
+     without these seams the projection's two nondeterminisms cannot be
+     pinned)
 
    The exported `toExternalEvent(spaceId, event)` wraps that transform and is
    what `publishEvent` calls per space.
@@ -250,7 +268,13 @@ export function toExternalEvent(
   spaceId: string,
   event: NormalizedGitHubEvent
 ): ExternalEvent {
-  return runToExternalEvent({ spaceId, event, result: null }).result!;
+  return runToExternalEvent({
+    spaceId,
+    event,
+    now: Date.now,
+    newId: () => crypto.randomUUID(),
+    result: null,
+  }).result!;
 }
 ```
 
@@ -276,28 +300,35 @@ The normalizer family has no DB/network writes.
    `merge_group`, `reaction`, `merge_conflict`). Include explicit rejection
    rows (e.g. `check_run` with `action !== 'completed'` must return `null`)
    so the boxed-outcome halt is pinned.
-2. Extract `WebhookBase`/`PollingBase` snapshot helpers and unit-test them.
+2. Extract the `WebhookBase` snapshot helper and unit-test it.
 3. Convert `normalizeGitHubWebhook` to the single `ingest-github-webhook`
    pipeline: dispatch decision stage first, then convert one per-kind
    transform block at a time into inline stages, keeping the old export as a
    thin wrapper over the pipeline.
-4. Convert `normalizeGitHubPollingRow` to the single
-   `ingest-github-polling-row` pipeline the same way.
+4. Leave `normalizeGitHubPollingRow` a plain function (review correction: it
+   is invoked once per endpoint row at `github-event-extension.ts:2491-2499`,
+   pages up to 100 rows — a per-row pipeline invocation is the hot-inner-loop
+   pattern ADR 0004 Decision 8 excludes; pin its endpoint dispatch with
+   decision-table rows instead).
 5. Convert `toExternalEvent` to its own `project-external-event` transform
    and keep the `publishEvent` per-space call site unchanged (projection
    stays at the publish boundary; it never joins the normalize-once ingest
    pipeline).
-6. Review correction — before deleting any old implementations, rewire the
-   DIRECT per-kind consumers: `github-event-extension.ts` invokes
-   `normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus` (~lines
-   825–834), `normalizeGitHubStatus` (~line 925), and the check-run,
-   merge-conflict, review, and reaction normalizers from polling loops. Each
-   per-kind export must remain callable (as a thin wrapper over its stage
-   group of the ingest pipeline) OR every direct consumer must be explicitly
-   rewired to the ingest pipeline in the same commit — otherwise those
-   webhook and polling event classes lose their normalization path. Then
-   delete the old bodies and rename the pipeline runners to the original
-   export names.
+6. Review correction (supersedes the former consumer-rewiring cleanup slices):
+   NO consumer-rewiring phase exists. The wiring slice swaps only
+   `normalizeGitHubWebhook`'s body for the pipeline shell, and the extension's
+   raw call site (`github-event-extension.ts:716`) already calls that export,
+   so it picks the pipeline up unchanged. The per-kind webhook exports stay
+   callable as thin wrappers over their stage groups. The enriched consumers
+   — `normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus`
+   (`github-event-extension.ts:825-834`), `normalizeGitHubStatus` (~line 925),
+   and the check-run (~line 2713), merge-conflict (~line 2855), review
+   (~line 2978), and reaction (~line 3098) calls from the polling loops —
+   supply derived inputs the raw runner never sees; they keep the per-kind
+   exports with their CURRENT signatures and plain bodies. The old
+   `normalizeGitHubWebhook` body is replaced by the shell in the wiring slice
+   itself and the per-kind bodies are consumed as they are inlined, so no
+   legacy-body deletion slice remains either.
 7. Update `github/index.ts` if any internal exports change; public export
    surface must remain the same.
 
@@ -1064,15 +1095,17 @@ dimension family, never by truncating a family's rows.
 Phase convention (stated on the first line of each slice): 📌 pins — prod
 Δ = 0; characterization/decision-table tests of CURRENT behavior. ➕ additive
 core — pure module/pipeline landed UNWIRED from production. 🔧 apply — wire
-call sites; ONE arm/route/site per slice. cleanup — small trailing slice.
+call sites; ONE arm/route/site per slice.
 Tiny slices may combine 📌+🔧. Every slice leaves the repo compiling with
 tests green when it lands, keeps its diff surgical (no drive-by import-block
 or formatting churn in files it touches), and folds in no unrelated fixes.
 Slice ordering follows the "Suggested migration order" phases above: pins land
-before extraction, plain helpers before the pipelines that consume them, and
-per-kind normalizer exports stay callable until the cleanup slice rewires
-their consumers. Parallel-safe leaves are noted explicitly and may proceed
-concurrently.
+before extraction and plain helpers before the pipelines that consume them.
+Per-kind normalizer exports stay callable throughout — the webhook ones as
+thin wrappers over their stage groups, the enriched/polling ones unchanged —
+and no cleanup slice rewires consumers (the wiring slice swaps only the raw
+dispatch export's body). Parallel-safe leaves are noted explicitly and may
+proceed concurrently.
 
 Every site in "Per-site detailed plans" is covered:
 
@@ -1083,7 +1116,7 @@ Every site in "Per-site detailed plans" is covered:
 - `event-essence.ts:formatExternalEventEssence` — PRs 6-8
 - `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` — PR 9
 - `github/github-event-extension.ts:validateRemoteHook` — PRs 10-11
-- `github/github-normalizer.ts` normalizer family — PRs 12-25
+- `github/github-normalizer.ts` normalizer family — PRs 12-22
 
 ### PR 1 — `test(external-events): pin direct-steer classification precedence`
 
@@ -1351,7 +1384,9 @@ rewrite is forbidden)
   before any ingest pipeline exists.
 - **Excludes**: any production change; other kind families (PR 13-15).
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: none. Parallel-safe with PR 1-12 and with PR 13-15.
+- **Depends on**: none. Sequenced before PR 13-15: all four pin slices extend
+  the SAME test file, so they land in family order 12 → 13 → 14 → 15 (PR 16
+  after all four); parallel-safe with PR 1-11.
 
 ---
 
@@ -1386,7 +1421,8 @@ rewrite is forbidden)
   `github-event-extension.ts` — is pinned.
 - **Excludes**: production changes; other families.
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: none. Parallel-safe with PR 12/14/16.
+- **Depends on**: PR 13 — PRs 12-15 extend the same test file and land in
+  family order 12 → 13 → 14 → 15.
 
 ---
 
@@ -1398,11 +1434,15 @@ rewrite is forbidden)
   `normalizeGitHubPollingRow` per `endpointKey` (`issue_comments`,
   `review_comments`, `pulls`), plus the polled kinds `normalizeGitHubReaction`
   and `normalizeGitHubMergeConflict` (both doc-named gap kinds).
-- **Lands**: endpoint dispatch and polled-kind outputs are pinned before the
-  polling ingest pipeline exists.
+- **Lands**: endpoint dispatch and polled-kind outputs are pinned.
+  `normalizeGitHubPollingRow` itself stays a plain function (review
+  correction: it runs once per endpoint row at
+  `github-event-extension.ts:2491-2499`, pages up to 100 rows — no per-row
+  pipeline).
 - **Excludes**: production changes; webhook families (PR 12-14).
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: none. Parallel-safe with PR 12-14.
+- **Depends on**: PR 14 — PRs 12-15 extend the same test file and land in
+  family order 12 → 13 → 14 → 15.
 
 ---
 
@@ -1413,12 +1453,11 @@ rewrite is forbidden)
 - **Scope**:
   `packages/daemon/src/lib/external-events/github/github-normalizer.ts` — add
   the `NormalizedOutcome` terminal, the `GitHubWebhookDispatchCtx`/`WebhookBase`
-  types (and the polling counterpart `PollingBase`), and extract the
-  `WebhookBase`/`PollingBase` snapshot helpers (shared
+  types, and extract the `WebhookBase` snapshot helper (shared
   repo/sender/`deliveryId`/`rawPayload` extraction ONLY — review correction PR #2979: no shared `occurredAt` exists; each kind selects different nested timestamps (check completion/update fields, comment timestamps, review submission timestamps, PR timestamps) so timestamp selection stays in each per-kind stage or digest chronology breaks) as pure
   functions. UNWIRED: no pipeline consumes them yet; no behavior change.
 - **Lands**: the shared scaffolding exists with snapshot-helper unit tests,
-  ready for both ingest pipelines.
+  ready for the webhook ingest pipeline.
 - **Excludes**: the ingest pipelines (PR 17+); edits to callers.
 - **Tests**: `github-normalizer.test.ts` — snapshot-helper unit tests.
 - **Depends on**: PR 12-15 (pins before extraction).
@@ -1450,23 +1489,26 @@ rewrite is forbidden)
 
 ---
 
-### PR 18 — `refactor(external-events): inline check/status transforms in webhook ingest`
+### PR 18 — `refactor(external-events): inline check transforms in webhook ingest`
 
 ➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
 
-- **Scope**: same file — convert the check/status family (`check_run`,
-  `check_suite`, `status`) from delegated exports into inline boxed-outcome
-  stages inside `ingest-github-webhook` (`guardRequiredShape` → `!isDone` →
+- **Scope**: same file — convert the check family (`check_run`, `check_suite`)
+  from delegated exports into inline boxed-outcome stages inside
+  `ingest-github-webhook` (`guardRequiredShape` → `!isDone` →
   `extractPrimaryFields` → `!isDone` → `extractPayload` →
   `assembleNormalizedEvent`); guards that reject set
   `outcome = { status: 'rejected' }`; the per-kind exports stay callable as
   thin wrappers over their stage groups. Stages stay synchronous (no
   `endAsync`) and never mutate `payload`. Review correction (PR #2979):
-  these stages replace only the RAW WEBHOOK-EVENT arm — the enriched
-  handler-side `normalizeGitHubStatus` / deployment normalizers
-  (`github-event-extension.ts:825-934`, fed derived inputs by their own
-  handlers) are NOT what these stages replace; they stay plain logic behind
-  wrappers per PR 25. Still UNWIRED.
+  `status` has NO raw webhook-event arm at all — `handleWebhook` routes
+  `status` deliveries to `handleStatusWebhook` before
+  `normalizeGitHubWebhook` is ever called
+  (`github-event-extension.ts:703-705`), and neither the current dispatch nor
+  this plan's stage list has a status arm — so there is no `status` stage to
+  inline; the enriched handler-side `normalizeGitHubStatus`
+  (`github-event-extension.ts:925`, fed derived inputs) stays plain logic
+  with its CURRENT signature. Still UNWIRED.
 - **Lands**: the CI kinds run as pipeline stages with first-class rejection
   halts, verified against the PR 12 pins.
 - **Excludes**: other families (PR 19-20); wiring (PR 21).
@@ -1486,8 +1528,11 @@ rewrite is forbidden)
 - **Scope**: same file — inline the review/comment/PR family
   (`pull_request_review`, review comment, review thread, issue-comment-on-PR,
   `pull_request`, `merge_group`) into `ingest-github-webhook` using the same
-  boxed-outcome template; per-kind exports stay callable wrappers. Still
-  UNWIRED.
+  boxed-outcome template; per-kind exports stay callable wrappers (this
+  family's transforms are inline in the current `normalizeGitHubWebhook` body
+  except `normalizeGitHubMergeGroup`; the POLLED `normalizeGitHubReview` —
+  `github-event-extension.ts:2978` — is an enriched consumer, stays plain
+  with its CURRENT signature, and is NOT inlined here). Still UNWIRED.
 - **Lands**: the review/comment/PR kinds run as stages, verified against the
   PR 13 pins.
 - **Excludes**: other families; wiring (PR 21).
@@ -1498,20 +1543,25 @@ rewrite is forbidden)
 
 ---
 
-### PR 20 — `refactor(external-events): inline deployment/config transforms in webhook ingest`
+### PR 20 — `refactor(external-events): inline branch-protection transform in webhook ingest`
 
 ➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
 
-- **Scope**: same file — inline the deployment/config family (`deployment`,
-  `deployment_status`, `branch_protection_rule` with its branch-aware
-  `repo/<branch>.<action>` resource) into `ingest-github-webhook`; per-kind
-  exports stay callable wrappers. Same raw-webhook-arm scoping as PR 18
-  (review correction PR #2979: the enriched handler-side deployment/status
-  normalizers stay plain logic behind wrappers — PR 25). Still UNWIRED.
-- **Lands**: the deployment/config webhook-event kinds run as stages,
+- **Scope**: same file — inline `branch_protection_rule` (with its
+  branch-aware `repo/<branch>.<action>` resource) into
+  `ingest-github-webhook`; the per-kind export stays a callable wrapper.
+  Review correction (PR #2979): `deployment`/`deployment_status` have NO raw
+  webhook-event arms — `handleWebhook` routes those deliveries to
+  `handleDeploymentWebhook` before `normalizeGitHubWebhook` is ever called
+  (`github-event-extension.ts:707-714`) — so there are no deployment stages
+  to inline; the enriched handler-side
+  `normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus`
+  (`github-event-extension.ts:825-834`, fed derived inputs) stay plain logic
+  with their CURRENT signatures. Still UNWIRED.
+- **Lands**: the branch-protection webhook-event kind runs as a stage,
   verified against the PR 14 pins; every raw webhook-event kind is now
   inline.
-- **Excludes**: wiring (PR 21); the polling pipeline (PR 22).
+- **Excludes**: wiring (PR 21).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
   family, including the branch-protection resource shape.
 - **Depends on**: PR 17, PR 14.
@@ -1531,141 +1581,51 @@ rewrite is forbidden)
   stage group.
 - **Lands**: webhook normalization (dispatch + per-kind transforms as stages
   of one pipeline) is live; the full parity suite is green unchanged.
-- **Excludes**: `normalizeGitHubPollingRow` (PR 22-23); `toExternalEvent`
-  (PR 24); deleting wrappers or rewiring direct consumers (PR 25).
+- **Excludes**: `normalizeGitHubPollingRow` (stays plain — hot per-row loop);
+  `toExternalEvent` (PR 22); any edit to `github-event-extension.ts` (the raw
+  call site at line 716 already calls this export and picks the pipeline up
+  unchanged; re-run the `github/index.ts` export-surface check unchanged).
 - **Tests**: `github-normalizer.test.ts` and
   `github-normalizer-pipeline.test.ts`, unchanged and green.
 - **Depends on**: PR 18, PR 19, PR 20.
 
 ---
 
-### PR 22 — `refactor(external-events): add github polling ingest pipeline unwired`
+### PR 22 — `refactor(external-events): project external events per space via superpipe transform`
 
-➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
-
-- **Scope**: same file — add the `ingest-github-polling-row` pipeline:
-  the `PollingBase` snapshot (PR 16) and dispatch stages keyed on
-  `endpointKey` — ENDPOINT-ROW KINDS ONLY (`issue_comments`,
-  `review_comments`, `pulls`, and the other rows `normalizeGitHubPollingRow`
-  actually receives; review correction PR #2979: the polled check-run,
-  status, deployment, deployment-status, merge-conflict, review, and
-  reaction normalizers are invoked from SEPARATE handlers and polling loops
-  with derived inputs — asynchronously resolved `prNumber`s,
-  `prScopedDedupe`, computed conflict state and sequence — that the raw
-  `(watched, row, endpointKey)` runner never sees; as stages of this runner
-  they would be unreachable or lose their required enrichment, so they stay
-  SHARED PLAIN LOGIC behind their existing wrappers per PR 25's rule, never
-  stages of the polling pipeline). Endpoint-specific transform stages inline
-  under the same boxed-outcome template. UNWIRED:
-  `normalizeGitHubPollingRow` keeps its old body; per-kind exports stay
-  callable.
-- **Lands**: the polling ingest pipeline exists with endpoint dispatch-order
-  and rejection-halt tests, verified against the PR 15 pins; production
-  behavior unchanged.
-- **Excludes**: wiring (PR 23); consumer rewiring (PR 25).
-- **Tests**: extend `github-normalizer-pipeline.test.ts` with endpoint
-  dispatch-order and rejection-halt rows; `github-normalizer.test.ts` parity
-  rows stay green.
-- **Depends on**: PR 16, PR 15, PR 21 (same-file sequencing after the webhook
-  pattern is live).
-- **Size guard**: if all endpoints exceed the prod tier, split by endpoint
-  family (comment endpoints vs `pulls` vs remaining kinds) before opening.
-
----
-
-### PR 23 — `refactor(external-events): route polling normalization through ingest pipeline`
-
-🔧 apply — prod Δ ≲30, test Δ ≲0 (pins stay green)
-
-- **Scope**: same file — the body of `normalizeGitHubPollingRow` becomes the
-  thin shell over `ingest-github-polling-row`. ONE site wired; the polling
-  loops in `github-event-extension.ts` are untouched and the per-kind exports
-  they call remain callable wrappers.
-- **Lands**: both GitHub ingest paths (webhook and polling row) are single
-  pipelines; the parity suites are green unchanged.
-- **Excludes**: `toExternalEvent` (PR 24); deleting wrappers or rewiring
-  direct consumers (PR 25).
-- **Tests**: `github-normalizer.test.ts` and
-  `github-normalizer-pipeline.test.ts`, unchanged and green.
-- **Depends on**: PR 22.
-
----
-
-### PR 24 — `refactor(external-events): project external events per space via superpipe transform`
-
-🔧 apply — prod Δ ≲110 (types-dominated transform + one-line shell), test Δ ≲0
+🔧 apply — prod Δ ≲110 (types-dominated transform + one-line shell), test Δ ≲60
 
 - **Scope**: same file — add the `project-external-event` raw transform
   covering `canonicalizeRepo`, `selectTopicParts` (`mapEventType` stays a
   lookup-table helper), `buildPayload`, and `assembleExternalEvent`
-  (`crypto.randomUUID()` AND `ingestedAt` via `Date.now()` only in the final
-  stage — one fresh UUID per space, one ingestion timestamp; review
-  correction PR #2979 — pin both with an injected clock so the migration
-  cannot omit `ingestedAt` or substitute `occurredAt`),
+  (`newId()` AND `now()` from the ctx's INJECTED seams only in the final
+  stage — one fresh id per space, one ingestion timestamp; review correction
+  PR #2979: `ToExternalEventCtx` carries `now`/`newId` and the exported
+  shell wires the real `Date.now`/`crypto.randomUUID`, so the migration can
+  neither omit `ingestedAt` nor substitute `occurredAt` unnoticed — the pins
+  below fail if it does),
   and wire the exported `toExternalEvent(spaceId, event)` to wrap it. ONE
   site wired; the `publishEvent` per-space call site is unchanged; the ingest
-  pipelines still end at `NormalizedGitHubEvent` — projection stages never
-  append to them. The transform is small enough to land wired rather than as
+  pipeline still ends at `NormalizedGitHubEvent` — projection stages never
+  append to it. The transform is small enough to land wired rather than as
   a separate additive slice.
 - **Lands**: the normalize-once / project-per-space boundary is explicit; each
   watched space gets its own event id.
-- **Excludes**: optional `id` injection for tests (open question 6);
-  `publishEvent` logic; consumer rewiring (PR 25).
+- **Excludes**: `publishEvent` logic; global `crypto`/`Date` mocking (the ctx
+  seam replaces it — open question 6 is resolved by this slice).
 - **Tests**:
   `packages/daemon/tests/unit/2-handlers/github/external-event-essence-contract.test.ts`
-  — end-to-end `toExternalEvent` round trips, green.
-- **Depends on**: PR 21, PR 23 (`NormalizedGitHubEvent` stable; same-file
+  — end-to-end `toExternalEvent` round trips, green, PLUS pin rows for the
+  projection's nondeterminism (review correction PR #2979: the existing
+  round-trip rows only copy `event.id`/`event.ingestedAt` into fixtures or
+  persist whatever was produced — they never detect a reused id or an
+  `occurredAt` substitution): inject a fixed `now` and assert `ingestedAt`
+  equals it while differing from `occurredAt`; inject a deterministic
+  `newId` and assert each per-space projection carries its own fresh id.
+- **Depends on**: PR 21 (`NormalizedGitHubEvent` stable; same-file
   sequencing).
 
 ---
-
-### PR 25 — `refactor(external-events): rewire per-kind normalizer consumers and drop legacy bodies`
-
-cleanup A (rewiring) — prod Δ ≲150 (move-heavy, at the cap), test Δ ≲0
-
-- **Scope**:
-  `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
-  — rewire only the RAW webhook/polling-row dispatch paths to the ingest
-  pipelines. (Review correction PR #2979: the former ≲200-line slice is
-  SPLIT at the plan's own budget — this slice rewires consumers only; the
-  legacy-body deletion is cleanup B, the next PR.) Review correction (PR #2979): the DIRECT per-kind consumers
-  (`normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus` ~lines
-  825-834 with asynchronously resolved `prNumber`s, `normalizeGitHubStatus`
-  ~line 925, and the check-run (prNumber + `prScopedDedupe`), merge-conflict
-  (computed conflict state and sequence), review, and reaction normalizers
-  invoked from the polling loops) supply ENRICHED inputs the raw
-  webhook/polling-row runners do not accept — they keep the per-kind exports
-  with their CURRENT signatures, reimplemented as thin wrappers over the
-  shared per-kind transform logic (not over the raw runners). In
-  `github-normalizer.ts`, mark the superseded raw-input bodies for deletion
-  (they are DELETED in cleanup B, the next PR — never in the same review
-  surface); `github/index.ts` keeps the public export surface unchanged.
-- **Lands**: one composition boundary per business path; enriched per-kind
-  consumers keep their exact contracts while delegating to shared
-  transforms, per the site's review correction.
-- **Excludes**: behavior changes to webhook/polling processing;
-  `validateRemoteHook` (already landed in PR 11).
-- **Tests**: the full `github-normalizer.test.ts`,
-  `external-event-essence-contract.test.ts`, and
-  `github-normalizer-pipeline.test.ts` suites, plus
-  `github-event-extension` integration coverage for the deployment, status,
-  check-run, merge-conflict, review, and reaction event classes.
-- **Depends on**: PR 11 (same-file sequencing), PR 21, PR 23, PR 24.
-
----
-
-### PR 26 — `refactor(external-events): drop superseded raw-input normalizer bodies`
-
-cleanup B (deletion) — prod Δ net-negative (deletions only), test Δ ≲0
-
-- **Scope**: `github-normalizer.ts` — delete the raw-input bodies superseded
-  by PR 25's rewiring (review correction PR #2979: split from the rewiring
-  slice so each stays inside the plan's review budget); re-run the export
-  surface check on `github/index.ts`.
-- **Lands**: no duplicate raw-input normalization paths remain.
-- **Excludes**: any behavior change; `validateRemoteHook`.
-- **Tests**: the full normalizer/essence/pipeline suites stay green.
-- **Depends on**: PR 25.
 
 ## Open questions
 
@@ -1696,7 +1656,8 @@ cleanup B (deletion) — prod Δ net-negative (deletions only), test Δ ≲0
    testing, or test it through `checkWebhook`/`reconcileSharedHook` integration
    only?
 
-6. **`toExternalEvent` UUID**: The function is non-deterministic because of
-   `crypto.randomUUID()`. Should the pipeline accept an optional `id` input so
-   tests can avoid mocking `crypto`, or should `randomUUID` remain an internal
-   stage effect?
+6. ~~**`toExternalEvent` UUID**~~ Resolved by review (PR #2979):
+   `ToExternalEventCtx` carries injected `now`/`newId` seams; the exported
+   shell wires the real `Date.now`/`crypto.randomUUID`, and tests pin
+   `ingestedAt` ≠ `occurredAt` plus per-space fresh ids via the seams — no
+   global `crypto` mocking needed.
