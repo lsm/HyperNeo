@@ -5,6 +5,7 @@ import type {
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
 import { Logger } from './logger.js';
+import { buildSdkRuntimeEnv, STARTUP_ENV_BASELINE } from './spawn-env.ts';
 import { initializeProviders, waitForOptionalProviderRegistration } from './providers/factory.js';
 import { providerSessionConfigForSession } from './providers/session-config.js';
 import { selectTitleGenerationModel } from './title-model-selection.js';
@@ -855,7 +856,7 @@ export class ProviderService {
 }
 
 export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.ProcessEnv {
-  return { ...process.env, ...providerEnvVars };
+  return { ...buildSdkRuntimeEnv(), ...providerEnvVars } as NodeJS.ProcessEnv;
 }
 
 const PROVIDER_SERVICE_KEY = Symbol.for('hyperneo:providerServiceInstance');
@@ -901,8 +902,8 @@ export function getUserConfiguredAnthropicEnv(): Record<string, string> {
     ['ANTHROPIC_DEFAULT_SONNET_MODEL', userConfiguredDefaultSonnetModel],
     ['ANTHROPIC_DEFAULT_HAIKU_MODEL', userConfiguredDefaultHaikuModel],
     ['ANTHROPIC_DEFAULT_OPUS_MODEL', userConfiguredDefaultOpusModel],
-    ['ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN],
-    ['CLAUDE_CODE_OAUTH_TOKEN', process.env.CLAUDE_CODE_OAUTH_TOKEN],
+    ['ANTHROPIC_AUTH_TOKEN', STARTUP_ENV_BASELINE.ANTHROPIC_AUTH_TOKEN],
+    ['CLAUDE_CODE_OAUTH_TOKEN', STARTUP_ENV_BASELINE.CLAUDE_CODE_OAUTH_TOKEN],
   ];
   for (const [key, value] of entries) {
     if (value !== undefined) snapshot[key] = value;

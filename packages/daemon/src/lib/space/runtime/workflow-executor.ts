@@ -1,14 +1,6 @@
-import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
-
-type WorkflowConditionType = 'always' | 'human' | 'condition' | 'task_result';
-
-interface WorkflowCondition {
-  type: WorkflowConditionType;
-  expression?: string;
-  description?: string;
-  timeoutMs?: number;
-}
+import { buildWorkflowConditionEnv } from '../../spawn-env.ts';
 
 export interface ConditionContext {
   workspacePath: string;
@@ -24,15 +16,17 @@ export interface ConditionResult {
 export type CommandRunner = (
   args: string[],
   cwd: string,
-  timeoutMs: number
+  timeoutMs: number,
+  env?: Record<string, string>
 ) => Promise<{ exitCode: number | null; timedOut?: boolean; stderr?: string }>;
 
 const DEFAULT_CONDITION_TIMEOUT_MS = 60_000;
 const MAX_CONDITION_TIMEOUT_MS = 300_000;
 
-const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
+const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs, env) => {
   const proc = spawnProcess(args, {
     cwd,
+    env: env ?? buildWorkflowConditionEnv(undefined),
     stdout: 'ignore',
     stderr: 'pipe',
   });
@@ -92,7 +86,8 @@ export class WorkflowExecutor {
         return this.runConditionExpression(
           condition.expression,
           context.workspacePath,
-          condition.timeoutMs
+          condition.timeoutMs,
+          condition.allowedEnv
         );
       }
 
@@ -128,14 +123,16 @@ export class WorkflowExecutor {
   private async runConditionExpression(
     expression: string,
     cwd: string,
-    timeoutMs?: number
+    timeoutMs?: number,
+    allowedEnv?: string[]
   ): Promise<ConditionResult> {
     const effectiveTimeout = resolveTimeout(timeoutMs);
     const args = ['sh', '-c', expression.trim()];
+    const env = buildWorkflowConditionEnv(allowedEnv);
 
     let result: { exitCode: number | null; timedOut?: boolean; stderr?: string };
     try {
-      result = await this.commandRunner(args, cwd, effectiveTimeout);
+      result = await this.commandRunner(args, cwd, effectiveTimeout, env);
     } catch (err) {
       return {
         passed: false,

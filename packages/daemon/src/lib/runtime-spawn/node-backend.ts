@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { Readable } from 'node:stream';
+import { buildOsBaselineEnv } from '../spawn-env.ts';
 import type { SpawnFn, SpawnOptions, SpawnProcess, SpawnSignal } from './types.ts';
 
 function toWebStream(stream: Readable | null): ReadableStream<Uint8Array> | null {
@@ -36,7 +37,7 @@ export function createNodeSpawn(): SpawnFn {
   return (args: string[], options?: SpawnOptions): SpawnProcess => {
     const child = spawn(args[0], args.slice(1), {
       cwd: options?.cwd,
-      env: options?.env,
+      env: options?.env ?? buildOsBaselineEnv(),
       stdio: ['ignore', options?.stdout ?? 'pipe', options?.stderr ?? 'pipe'],
       detached: options?.detached ?? false,
     });

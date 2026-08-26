@@ -5,6 +5,7 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts'
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { Logger } from '../../logger.ts';
 import { slugify, validateSlug } from '../slug.ts';
+import { buildGitCommandEnv } from '../../spawn-env.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
 
 const execAsync = promisify(exec);
@@ -272,7 +273,7 @@ export class SpaceManager {
 
   private async isGitRepository(dirPath: string): Promise<boolean> {
     try {
-      await execAsync('git rev-parse --git-dir', { cwd: dirPath });
+      await execAsync('git rev-parse --git-dir', { cwd: dirPath, env: buildGitCommandEnv() });
       return true;
     } catch {
       return false;

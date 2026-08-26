@@ -1,3 +1,4 @@
+import { buildOsBaselineEnv } from '../spawn-env.ts';
 import type { SpawnFn, SpawnOptions, SpawnProcess } from './types.ts';
 
 interface BunSubprocess {
@@ -14,5 +15,9 @@ declare const Bun: {
 };
 
 export function createBunSpawn(): SpawnFn {
-  return (args: string[], options?: SpawnOptions): SpawnProcess => Bun.spawn(args, options ?? {});
+  return (args: string[], options?: SpawnOptions): SpawnProcess =>
+    Bun.spawn(args, {
+      ...options,
+      env: options?.env ?? buildOsBaselineEnv(),
+    });
 }

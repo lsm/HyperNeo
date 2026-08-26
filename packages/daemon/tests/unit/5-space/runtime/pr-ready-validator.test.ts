@@ -3,6 +3,7 @@ import { createPrReadyValidator } from '../../../../src/lib/space/runtime/built-
 import type { SpawnFn, SpawnProcess } from '../../../../src/lib/runtime-spawn';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../src/lib/space/runtime/rate-limit-detector';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 function streamFromString(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -295,29 +296,21 @@ describe('pr-ready validator', () => {
       ],
       calls
     );
-    const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
-    const previousClaudeToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    const previousGhToken = process.env.GH_TOKEN;
-    const previousGhRepo = process.env.GH_REPO;
-    const previousGhConfigDir = process.env.GH_CONFIG_DIR;
-    const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
-    const previousAppData = process.env.AppData;
-    const previousHttpsProxy = process.env.HTTPS_PROXY;
-    const previousHttpsProxyLower = process.env.https_proxy;
-    const previousNoProxy = process.env.NO_PROXY;
-    const previousSslCertFile = process.env.SSL_CERT_FILE;
-    const previousGitSslCaInfo = process.env.GIT_SSL_CAINFO;
-    process.env.ANTHROPIC_API_KEY = 'anthropic-secret';
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'claude-secret';
-    process.env.GH_TOKEN = 'github-secret';
-    process.env.GH_REPO = 'acme/corp';
-    process.env.GH_CONFIG_DIR = '/tmp/gh-config';
-    process.env.XDG_CONFIG_HOME = '/tmp/xdg-config';
-    process.env.AppData = 'C:\\Users\\alice\\AppData\\Roaming';
-    process.env.https_proxy = 'http://proxy.example:8080';
-    process.env.NO_PROXY = 'localhost,127.0.0.1';
-    process.env.SSL_CERT_FILE = '/tmp/corp-ca.pem';
-    process.env.GIT_SSL_CAINFO = '/tmp/git-ca.pem';
+    const previousBaselineSource: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaselineSource,
+      ANTHROPIC_API_KEY: 'anthropic-secret',
+      CLAUDE_CODE_OAUTH_TOKEN: 'claude-secret',
+      GH_TOKEN: 'github-secret',
+      GH_REPO: 'acme/corp',
+      GH_CONFIG_DIR: '/tmp/gh-config',
+      XDG_CONFIG_HOME: '/tmp/xdg-config',
+      AppData: 'C:\\Users\\alice\\AppData\\Roaming',
+      https_proxy: 'http://proxy.example:8080',
+      NO_PROXY: 'localhost,127.0.0.1',
+      SSL_CERT_FILE: '/tmp/corp-ca.pem',
+      GIT_SSL_CAINFO: '/tmp/git-ca.pem',
+    });
     try {
       const validator = createPrReadyValidator(spawn);
       const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
@@ -335,30 +328,7 @@ describe('pr-ready validator', () => {
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     } finally {
-      if (previousAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-      else process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
-      if (previousClaudeToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-      else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousClaudeToken;
-      if (previousGhToken === undefined) delete process.env.GH_TOKEN;
-      else process.env.GH_TOKEN = previousGhToken;
-      if (previousGhRepo === undefined) delete process.env.GH_REPO;
-      else process.env.GH_REPO = previousGhRepo;
-      if (previousGhConfigDir === undefined) delete process.env.GH_CONFIG_DIR;
-      else process.env.GH_CONFIG_DIR = previousGhConfigDir;
-      if (previousXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
-      if (previousAppData === undefined) delete process.env.AppData;
-      else process.env.AppData = previousAppData;
-      if (previousHttpsProxy === undefined) delete process.env.HTTPS_PROXY;
-      else process.env.HTTPS_PROXY = previousHttpsProxy;
-      if (previousHttpsProxyLower === undefined) delete process.env.https_proxy;
-      else process.env.https_proxy = previousHttpsProxyLower;
-      if (previousNoProxy === undefined) delete process.env.NO_PROXY;
-      else process.env.NO_PROXY = previousNoProxy;
-      if (previousSslCertFile === undefined) delete process.env.SSL_CERT_FILE;
-      else process.env.SSL_CERT_FILE = previousSslCertFile;
-      if (previousGitSslCaInfo === undefined) delete process.env.GIT_SSL_CAINFO;
-      else process.env.GIT_SSL_CAINFO = previousGitSslCaInfo;
+      _setStartupEnvBaselineForTesting(previousBaselineSource);
     }
   });
 

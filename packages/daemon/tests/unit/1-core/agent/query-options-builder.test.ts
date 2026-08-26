@@ -27,6 +27,10 @@ import { SkillRepository } from '../../../../src/storage/repositories/skill-repo
 import { createTables } from '../../../../src/storage/schema';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
+import {
+  STARTUP_ENV_BASELINE,
+  _setStartupEnvBaselineForTesting,
+} from '../../../../src/lib/spawn-env';
 
 describe('QueryOptionsBuilder', () => {
   let builder: QueryOptionsBuilder;
@@ -851,7 +855,32 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('always hands the SDK spawn an explicit sanitized env (verification row for nodeSpawn)', async () => {
+      const options = await builder.build();
+      expect(options.env).toBeDefined();
+      expect(options.env?.PATH).toBe(STARTUP_ENV_BASELINE.PATH);
+    });
+
+    it('excludes ambient secrets injected after the startup baseline was captured', async () => {
+      const previous = process.env.SPAWN_ENV_AMBIENT_SECRET;
+      process.env.SPAWN_ENV_AMBIENT_SECRET = 'post-startup-secret';
+      try {
+        const options = await builder.build();
+        expect(options.env?.SPAWN_ENV_AMBIENT_SECRET).toBeUndefined();
+      } finally {
+        if (previous === undefined) delete process.env.SPAWN_ENV_AMBIENT_SECRET;
+        else process.env.SPAWN_ENV_AMBIENT_SECRET = previous;
+      }
+    });
+
     it('should filter provider env overrides so provider cleanup owns the SDK env', async () => {
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '180000',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'startup-subagent',
+        ENABLE_TOOL_SEARCH: 'startup',
+      });
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: {
           CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
@@ -879,20 +908,36 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
       expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('session-subagent');
       expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
+      _setStartupEnvBaselineForTesting(process.env);
     });
 
     it('should preserve env-only Anthropic auth tokens for native provider', async () => {
-      const previousAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
-      process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-env-only-token';
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-oat-env-only-token',
+      });
       try {
         const options = await builder.build();
         expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-env-only-token');
       } finally {
-        if (previousAuthToken === undefined) {
-          delete process.env.ANTHROPIC_AUTH_TOKEN;
-        } else {
-          process.env.ANTHROPIC_AUTH_TOKEN = previousAuthToken;
-        }
+        _setStartupEnvBaselineForTesting(previousBaseline);
+      }
+    });
+
+    it('should retain startup subagent and tool-search configuration for native provider', async () => {
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        CLAUDE_CODE_SUBAGENT_MODEL: 'startup-subagent',
+        ENABLE_TOOL_SEARCH: 'true',
+      });
+      try {
+        const options = await builder.build();
+        expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('startup-subagent');
+        expect(options.env?.ENABLE_TOOL_SEARCH).toBe('true');
+      } finally {
+        _setStartupEnvBaselineForTesting(previousBaseline);
       }
     });
 
@@ -919,6 +964,52 @@ describe('QueryOptionsBuilder', () => {
           KEEP_SESSION: 'session',
         });
         expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+      }
+    );
+
+    it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
+      'should strip ambient subagent and tool-search settings for bridge providers',
+      async () => {
+        const previousBaseline: Record<string, string | undefined> = { ...process.env };
+        _setStartupEnvBaselineForTesting({
+          ...previousBaseline,
+          CLAUDE_CODE_SUBAGENT_MODEL: 'ambient-subagent',
+          ENABLE_TOOL_SEARCH: 'ambient',
+        });
+        mockSession.config.provider = 'anthropic-codex';
+        mockSession.config.model = 'gpt-5.3-codex';
+
+        try {
+          const options = await builder.build();
+          expect(options.env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL');
+          expect(options.env).not.toHaveProperty('ENABLE_TOOL_SEARCH');
+        } finally {
+          _setStartupEnvBaselineForTesting(previousBaseline);
+        }
+      }
+    );
+
+    it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
+      'should not forward ambient Anthropic credentials to ACP commands',
+      async () => {
+        const previousBaseline: Record<string, string | undefined> = { ...process.env };
+        _setStartupEnvBaselineForTesting({
+          ...previousBaseline,
+          ANTHROPIC_API_KEY: 'ambient-api-key',
+          ANTHROPIC_AUTH_TOKEN: 'ambient-auth-token',
+          CLAUDE_CODE_OAUTH_TOKEN: 'ambient-oauth-token',
+          ANTHROPIC_BASE_URL: 'https://acme.example',
+        });
+        mockSession.config.provider = 'acp';
+
+        try {
+          const options = await builder.build();
+          expect(options.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+          expect(options.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
+          expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+        } finally {
+          _setStartupEnvBaselineForTesting(previousBaseline);
+        }
       }
     );
 

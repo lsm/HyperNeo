@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CredentialStoreStatus } from '@hyperneo/shared/state-types';
 import { Logger } from '../logger.ts';
+import { buildOsBaselineEnv } from '../spawn-env.ts';
 
 const DEFAULT_SERVICE_PREFIX = 'neokai.provider';
 const ENCRYPTION_KEY_ENV = 'HYPERNEO_PROVIDER_CREDENTIAL_KEY';
@@ -35,7 +36,7 @@ function execFileAsync(
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let child: ReturnType<typeof execFile> | undefined;
-    child = execFile(cmd, args, (err, stdout, stderr) => {
+    child = execFile(cmd, args, { env: buildOsBaselineEnv() }, (err, stdout, stderr) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -91,16 +92,11 @@ export class KeychainCredentialStore implements CredentialStore {
   async set(service: string, account: string, data: string): Promise<void> {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const child = spawn('security', [
-        'add-generic-password',
-        '-U',
-        '-s',
-        service,
-        '-a',
-        account,
-        '-p',
-        data,
-      ]);
+      const child = spawn(
+        'security',
+        ['add-generic-password', '-U', '-s', service, '-a', account, '-p', data],
+        { env: buildOsBaselineEnv() }
+      );
 
       let stderr = '';
       child.stderr.on('data', (chunk: Buffer) => {
@@ -413,7 +409,10 @@ export function buildDefaultUnlockers(
 
 async function tryUnlockKeychainViaGUI(timeoutMs: number = 30_000): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const child = spawn('security', ['unlock-keychain'], { stdio: 'ignore' });
+    const child = spawn('security', ['unlock-keychain'], {
+      stdio: 'ignore',
+      env: buildOsBaselineEnv(),
+    });
     let settled = false;
     const finish = (ok: boolean) => {
       if (settled) return;

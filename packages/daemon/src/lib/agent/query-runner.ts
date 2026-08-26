@@ -237,8 +237,6 @@ export function refreshQueryEnvFromProcess(
     }
     if (providerManagedEnvVars.has(key)) {
       refreshedEnv[key] = value;
-    } else if (!(key in refreshedEnv)) {
-      refreshedEnv[key] = value;
     }
   }
   return refreshedEnv;

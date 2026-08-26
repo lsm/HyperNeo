@@ -1,5 +1,3 @@
-import { KimiProvider } from '../providers/kimi-provider.js';
-import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -27,30 +25,39 @@ import {
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
-import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
 } from '../model-service.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
+import {
+  AMBIENT_AUTH_ENV_KEYS,
+  buildSdkRuntimeEnv,
+  envValue,
+  STARTUP_ENV_BASELINE,
+} from '../spawn-env.ts';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
@@ -58,14 +65,13 @@ import {
 import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -868,29 +874,29 @@ CRITICAL RULES:
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
     const processProviderEnvVars = new Set(providerEnvVars);
-    processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
-    processProviderEnvVars.add('ENABLE_TOOL_SEARCH');
 
-    const excludedEnvVars = new Set(['PORT', 'HYPERNEO_PORT', 'NEOKAI_PORT']);
-    const mergedEnv: Record<string, string> = Object.fromEntries(
-      Object.entries(process.env).filter(
-        (entry): entry is [string, string] =>
-          entry[1] !== undefined &&
-          !excludedEnvVars.has(entry[0]) &&
-          !processProviderEnvVars.has(entry[0])
-      )
-    );
+    const mergedEnv: Record<string, string> = buildSdkRuntimeEnv();
+    for (const key of processProviderEnvVars) {
+      delete mergedEnv[key];
+    }
 
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
-      const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+      const authToken = envValue(STARTUP_ENV_BASELINE, 'ANTHROPIC_AUTH_TOKEN');
       if (authToken?.startsWith('sk-ant-oat')) {
         mergedEnv.ANTHROPIC_AUTH_TOKEN = authToken;
       }
-      const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      const oauthToken = envValue(STARTUP_ENV_BASELINE, 'CLAUDE_CODE_OAUTH_TOKEN');
       if (oauthToken) {
         mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
       }
+      const apiKey = envValue(STARTUP_ENV_BASELINE, 'ANTHROPIC_API_KEY');
+      if (apiKey) {
+        mergedEnv.ANTHROPIC_API_KEY = apiKey;
+      }
     } else {
+      delete mergedEnv.CLAUDE_CODE_SUBAGENT_MODEL;
+      delete mergedEnv.ENABLE_TOOL_SEARCH;
+      const isAcpProvider = this.ctx.session.config.provider === 'acp';
       const providerVars = [
         'ANTHROPIC_BASE_URL',
         'ANTHROPIC_API_KEY',
@@ -901,6 +907,7 @@ CRITICAL RULES:
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'API_TIMEOUT_MS',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+        'CLAUDE_CODE_OAUTH_TOKEN',
       ];
       for (const key of NON_ANTHROPIC_PREFIX_PROVIDER_VARS) {
         const value = sessionProviderEnvVars[key];
@@ -909,7 +916,8 @@ CRITICAL RULES:
         }
       }
       for (const key of providerVars) {
-        const value = process.env[key];
+        if (isAcpProvider && AMBIENT_AUTH_ENV_KEYS.has(key)) continue;
+        const value = envValue(STARTUP_ENV_BASELINE, key);
         if (value !== undefined && value !== '') {
           mergedEnv[key] = value;
         }
@@ -929,19 +937,6 @@ CRITICAL RULES:
         if (value !== undefined && !providerEnvVars.has(key)) {
           mergedEnv[key] = value;
         }
-      }
-    }
-
-    const proxyEnvVars = [
-      'HTTPS_PROXY',
-      'HTTP_PROXY',
-      'NODE_USE_ENV_PROXY',
-      'NODE_EXTRA_CA_CERTS',
-    ] as const;
-    for (const key of proxyEnvVars) {
-      const value = process.env[key];
-      if (value !== undefined) {
-        mergedEnv[key] = value;
       }
     }
 

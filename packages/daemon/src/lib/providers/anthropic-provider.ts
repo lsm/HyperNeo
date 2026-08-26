@@ -13,6 +13,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { providerEnvCoordinator } from './provider-env-enrollment.ts';
+import { buildSdkRuntimeEnv, envValue } from '../spawn-env.ts';
 
 const CANONICAL_SDK_IDS = new Set(['default', 'sonnet', 'opus', 'haiku', 'fable', 'sonnet[1m]']);
 
@@ -85,11 +86,13 @@ export class AnthropicProvider implements Provider {
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
   private readonly capturedAnthropicBaseUrl: string | undefined;
+  private readonly env: NodeJS.ProcessEnv;
 
   constructor(
-    private readonly env: NodeJS.ProcessEnv = process.env,
+    env: NodeJS.ProcessEnv = process.env,
     private readonly modelCacheKey: string = 'anthropic-global'
   ) {
+    this.env = Object.freeze({ ...env });
     this.capturedAnthropicBaseUrl = env.ANTHROPIC_BASE_URL;
   }
 
@@ -113,9 +116,9 @@ export class AnthropicProvider implements Provider {
 
   getApiKey(): string | undefined {
     return (
-      this.env.ANTHROPIC_API_KEY ||
-      this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      this.env.ANTHROPIC_AUTH_TOKEN ||
+      envValue(this.env, 'ANTHROPIC_API_KEY') ||
+      envValue(this.env, 'CLAUDE_CODE_OAUTH_TOKEN') ||
+      envValue(this.env, 'ANTHROPIC_AUTH_TOKEN') ||
       (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined) ||
       (this.credentials?.type === 'oauth' ? this.credentials.accessToken : undefined)
     );
@@ -168,36 +171,41 @@ export class AnthropicProvider implements Provider {
 
   private async loadModelsFromSdk(timeout: number = 10000): Promise<ModelInfo[]> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const env = this.buildSdkConfig().envVars;
-    const restoreEnv = this.applyEnvVarsForSdk(env);
+
+    const tmpQuery = query({
+      prompt: '',
+      options: {
+        model: 'default',
+        cwd: process.cwd(),
+        maxTurns: 0,
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
+        env: this.buildModelDiscoveryEnv(),
+      },
+    });
 
     try {
-      const tmpQuery = query({
-        prompt: '',
-        options: {
-          model: 'default',
-          cwd: process.cwd(),
-          maxTurns: 0,
-          pathToClaudeCodeExecutable: resolveSDKCliPath(),
-          executable: isRunningUnderBun() ? 'bun' : undefined,
-          settings: withSdkTranscriptRetention(),
-        },
-      });
-
-      try {
-        const sdkModels = await Promise.race([
-          tmpQuery.supportedModels(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
-          ),
-        ]);
-        return this.convertSdkModels(sdkModels);
-      } finally {
-        tmpQuery.interrupt().catch(() => {});
-      }
+      const sdkModels = await Promise.race([
+        tmpQuery.supportedModels(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('SDK model load timeout')), timeout)
+        ),
+      ]);
+      return this.convertSdkModels(sdkModels);
     } finally {
-      restoreEnv();
+      tmpQuery.interrupt().catch(() => {});
     }
+  }
+
+  private buildModelDiscoveryEnv(): Record<string, string> {
+    const env = buildSdkRuntimeEnv();
+    if (this.capturedAnthropicBaseUrl !== undefined) {
+      env.ANTHROPIC_BASE_URL = this.capturedAnthropicBaseUrl;
+    } else {
+      delete env.ANTHROPIC_BASE_URL;
+    }
+    return { ...env, ...this.buildSdkConfig().envVars };
   }
 
   convertSdkModels(
@@ -321,14 +329,22 @@ export class AnthropicProvider implements Provider {
 
   buildSdkConfig(): ProviderSdkConfig {
     const envVars: Record<string, string> = {};
+    const apiKey = envValue(this.env, 'ANTHROPIC_API_KEY');
+    const oauthToken = envValue(this.env, 'CLAUDE_CODE_OAUTH_TOKEN');
+    const authToken = envValue(this.env, 'ANTHROPIC_AUTH_TOKEN');
     const hasEnvAuth =
-      !!this.env.ANTHROPIC_API_KEY ||
-      !!this.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      (!!this.env.ANTHROPIC_AUTH_TOKEN &&
-        !this.env.ANTHROPIC_AUTH_TOKEN.startsWith('anthropic-copilot-proxy:'));
-    if (!hasEnvAuth && this.credentials?.type === 'api_key') {
+      !!apiKey ||
+      !!oauthToken ||
+      (!!authToken && !authToken.startsWith('anthropic-copilot-proxy:'));
+    if (hasEnvAuth) {
+      if (apiKey) envVars.ANTHROPIC_API_KEY = apiKey;
+      if (oauthToken) envVars.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+      if (authToken && !authToken.startsWith('anthropic-copilot-proxy:')) {
+        envVars.ANTHROPIC_AUTH_TOKEN = authToken;
+      }
+    } else if (this.credentials?.type === 'api_key') {
       envVars.ANTHROPIC_API_KEY = this.credentials.apiKey;
-    } else if (!hasEnvAuth && this.credentials?.type === 'oauth' && this.credentials.accessToken) {
+    } else if (this.credentials?.type === 'oauth' && this.credentials.accessToken) {
       envVars.CLAUDE_CODE_OAUTH_TOKEN = this.credentials.accessToken;
     }
 
@@ -336,36 +352,6 @@ export class AnthropicProvider implements Provider {
       envVars,
       isAnthropicCompatible: true,
       apiVersion: 'v1',
-    };
-  }
-
-  private applyEnvVarsForSdk(envVars: Record<string, string>): () => void {
-    const originals = new Map<string, string | undefined>();
-
-    if (process.env.ANTHROPIC_BASE_URL !== undefined) {
-      if (process.env.ANTHROPIC_BASE_URL !== this.capturedAnthropicBaseUrl) {
-        originals.set('ANTHROPIC_BASE_URL', process.env.ANTHROPIC_BASE_URL);
-        delete process.env.ANTHROPIC_BASE_URL;
-      }
-    }
-    if (process.env.ANTHROPIC_AUTH_TOKEN?.startsWith('anthropic-copilot-proxy:')) {
-      originals.set('ANTHROPIC_AUTH_TOKEN', process.env.ANTHROPIC_AUTH_TOKEN);
-      delete process.env.ANTHROPIC_AUTH_TOKEN;
-    }
-
-    for (const [key, value] of Object.entries(envVars)) {
-      originals.set(key, process.env[key]);
-      process.env[key] = value;
-    }
-
-    return () => {
-      for (const [key, value] of originals) {
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
     };
   }
 

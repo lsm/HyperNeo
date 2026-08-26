@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Logger } from './logger.ts';
+import { buildOsBaselineEnv } from './spawn-env.ts';
 
 const execFileAsync = promisify(execFile);
 const logger = new Logger('ProcessWatchdog');
@@ -34,12 +35,14 @@ export async function listProcesses(): Promise<ProcessSnapshot[]> {
   if (usesBsdPsElapsedFormat()) {
     const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,etime=,command='], {
       maxBuffer: 1024 * 1024,
+      env: buildOsBaselineEnv(),
     });
     return parseProcessList(stdout, 'duration');
   }
 
   const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,pgid=,etimes=,command='], {
     maxBuffer: 1024 * 1024,
+    env: buildOsBaselineEnv(),
   });
   return parseProcessList(stdout, 'seconds');
 }

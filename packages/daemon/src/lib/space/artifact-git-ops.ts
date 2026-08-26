@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { buildGitCommandEnv } from '../spawn-env.ts';
 
 export const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 
@@ -35,7 +36,7 @@ export function execGit(
     execFile(
       'git',
       args,
-      { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024 },
+      { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, env: buildGitCommandEnv() },
       (err, stdout) => {
         if (err) reject(err);
         else resolve(stdout as string);

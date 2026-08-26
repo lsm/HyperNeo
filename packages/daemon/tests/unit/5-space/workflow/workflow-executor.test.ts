@@ -9,6 +9,10 @@ import type {
   ConditionContext,
 } from '../../../../src/lib/space/runtime/workflow-executor.ts';
 import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
+import {
+  STARTUP_ENV_BASELINE,
+  _setStartupEnvBaselineForTesting,
+} from '../../../../src/lib/spawn-env';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -245,6 +249,56 @@ describe('WorkflowExecutor', () => {
       );
       expect(result.passed).toBe(false);
       expect(result.reason).toContain('timed out');
+    });
+
+    test('runs expressions with a credential-free baseline env', async () => {
+      const { workflow, run } = createLinearWorkflow([
+        { id: STEP_A, name: 'Step A', agentId: AGENT_A },
+      ]);
+      const seen: Array<Record<string, string> | undefined> = [];
+      const runner: CommandRunner = async (_args, _cwd, _timeoutMs, env) => {
+        seen.push(env);
+        return { exitCode: 0 };
+      };
+      const executor = makeExecutor(workflow, run, runner);
+      const ctx: ConditionContext = { workspacePath: WORKSPACE };
+      const result = await executor.evaluateCondition(
+        { type: 'condition', expression: 'bun test' },
+        ctx
+      );
+      expect(result.passed).toBe(true);
+      expect(seen[0]?.PATH).toBe(STARTUP_ENV_BASELINE.PATH);
+      expect(seen[0]?.GH_TOKEN).toBeUndefined();
+      expect(seen[0]?.ANTHROPIC_API_KEY).toBeUndefined();
+    });
+
+    test('allowedEnv injects only non-restricted names from the immutable baseline', async () => {
+      const { workflow, run } = createLinearWorkflow([
+        { id: STEP_A, name: 'Step A', agentId: AGENT_A },
+      ]);
+      const previousBaseline: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previousBaseline,
+        MY_TOOL_FLAG: '1',
+        GH_TOKEN: 'gh-secret',
+      });
+      const seen: Array<Record<string, string> | undefined> = [];
+      const runner: CommandRunner = async (_args, _cwd, _timeoutMs, env) => {
+        seen.push(env);
+        return { exitCode: 0 };
+      };
+      const executor = makeExecutor(workflow, run, runner);
+      const ctx: ConditionContext = { workspacePath: WORKSPACE };
+      try {
+        await executor.evaluateCondition(
+          { type: 'condition', expression: 'bun test', allowedEnv: ['MY_TOOL_FLAG', 'GH_TOKEN'] },
+          ctx
+        );
+      } finally {
+        _setStartupEnvBaselineForTesting(previousBaseline);
+      }
+      expect(seen[0]?.MY_TOOL_FLAG).toBe('1');
+      expect(seen[0]?.GH_TOKEN).toBeUndefined();
     });
   });
 

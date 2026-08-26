@@ -3,6 +3,7 @@ import type { HookExecutorContext } from '../hook-executor.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 import { collectWithMaxBuffer, parseJsonStdout } from '../script-utils.ts';
 import { buildGitHubLookupEnv, fetchRateLimitResetEpoch } from '../gh-lookup-helpers.ts';
+import { startupEnvValue } from '../../../spawn-env.ts';
 import { parsePrUrl } from '../parse-pr-url.ts';
 import {
   computeRateLimitRetryMs,
@@ -271,9 +272,11 @@ async function inferGitHubHost(
   spawnImpl: SpawnFn,
   deadlineMs: number
 ): Promise<string | undefined> {
-  if (process.env.GH_HOST) return process.env.GH_HOST;
-  if (process.env.GH_REPO) {
-    const parts = process.env.GH_REPO.split('/');
+  const ghHost = startupEnvValue('GH_HOST');
+  if (ghHost) return ghHost;
+  const ghRepo = startupEnvValue('GH_REPO');
+  if (ghRepo) {
+    const parts = ghRepo.split('/');
     if (parts.length >= 3 && parts[0]) return parts[0];
   }
   const originUrl = await runTextCommand(

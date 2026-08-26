@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createNodeSpawn } from '../../../src/lib/runtime-spawn/node-backend';
 import { spawnProcess } from '../../../src/lib/runtime-spawn';
 import type { SpawnFn } from '../../../src/lib/runtime-spawn';
+import { _setStartupEnvBaselineForTesting } from '../../../src/lib/spawn-env';
 
 async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<string> {
   if (!stream) return '';
@@ -55,6 +56,25 @@ for (const [label, spawnImpl] of backends) {
       expect(lines[0]).toBe('seam-value');
       expect(lines[1]).toBe('/tmp');
       expect(exitCode).toBe(0);
+    });
+
+    test('omitted env falls back to the credential-free OS baseline', async () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previous,
+        HTTPS_PROXY: 'http://user:secret@proxy.corp.example:8080',
+      });
+      try {
+        const proc = spawnImpl(['sh', '-c', 'echo "${HTTPS_PROXY:-missing}"'], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const [stdout, exitCode] = await Promise.all([readStream(proc.stdout), proc.exited]);
+        expect(stdout.trim()).toBe('missing');
+        expect(exitCode).toBe(0);
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
     });
 
     test('kill terminates a running process with a non-zero exit', async () => {

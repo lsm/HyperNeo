@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   clearConnectorRegistry,
   createCodexApprovalValidator,
@@ -7,10 +10,14 @@ import {
   createReviewPostedValidator,
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
-import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
+import {
+  resolveGithubConfigDir,
+  runGhJson,
+} from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
 import type { SpawnFn, SpawnProcess } from '../../../../../src/lib/runtime-spawn';
 import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/script-utils';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
+import { _setStartupEnvBaselineForTesting } from '../../../../../src/lib/spawn-env';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';
 
@@ -83,6 +90,24 @@ const RATE_LIMIT_PROBE_OK = {
   stderr: '',
   exitCode: 0,
 };
+
+describe('resolveGithubConfigDir', () => {
+  test.skipIf(existsSync(join(homedir(), '.config', 'gh')))(
+    'resolves the Windows AppData gh config location',
+    () => {
+      const appData = join(
+        tmpdir(),
+        `gh-appdata-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
+      mkdirSync(join(appData, 'GitHub CLI'), { recursive: true });
+      try {
+        expect(resolveGithubConfigDir({ AppData: appData })).toBe(join(appData, 'GitHub CLI'));
+      } finally {
+        rmSync(appData, { recursive: true, force: true });
+      }
+    }
+  );
+});
 
 describe('pr_ready preset (coder→reviewer handoff gate)', () => {
   beforeEach(() => clearConnectorRegistry());
@@ -924,8 +949,8 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
 
   test('host allow-list: a pr_url matching GH_HOST (GitHub Enterprise) passes through', async () => {
     const ghesUrl = 'https://ghes.corp.example/acme/corp/pull/42';
-    const original = process.env.GH_HOST;
-    process.env.GH_HOST = 'ghes.corp.example';
+    const originalBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({ ...originalBaseline, GH_HOST: 'ghes.corp.example' });
     try {
       const validate = createReviewPostedValidator(
         reviewSpawn(
@@ -941,8 +966,7 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       const result = await validate(ctx({ prUrl: ghesUrl, workflowRunCreatedAt: START_MS }));
       expect(result.type).toBe('allow');
     } finally {
-      if (original === undefined) delete process.env.GH_HOST;
-      else process.env.GH_HOST = original;
+      _setStartupEnvBaselineForTesting(originalBaseline);
     }
   });
 

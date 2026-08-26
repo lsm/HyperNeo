@@ -47,12 +47,12 @@ describe('AnthropicProvider', () => {
   describe('isAvailable', () => {
     it('should return true when ANTHROPIC_API_KEY is set', () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
-      expect(provider.isAvailable()).toBe(true);
+      expect(new AnthropicProvider().isAvailable()).toBe(true);
     });
 
     it('should return true when CLAUDE_CODE_OAUTH_TOKEN is set', () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-token';
-      expect(provider.isAvailable()).toBe(true);
+      expect(new AnthropicProvider().isAvailable()).toBe(true);
     });
 
     it('should return false when no credentials are set', () => {
@@ -67,13 +67,13 @@ describe('AnthropicProvider', () => {
     it('should prefer ANTHROPIC_API_KEY over OAuth token', () => {
       process.env.ANTHROPIC_API_KEY = 'api-key';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
-      expect(provider.getApiKey()).toBe('api-key');
+      expect(new AnthropicProvider().getApiKey()).toBe('api-key');
     });
 
     it('should return OAuth token when API key not set', () => {
       delete process.env.ANTHROPIC_API_KEY;
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
-      expect(provider.getApiKey()).toBe('oauth-token');
+      expect(new AnthropicProvider().getApiKey()).toBe('oauth-token');
     });
 
     it('should return undefined when neither is set', () => {
@@ -82,6 +82,17 @@ describe('AnthropicProvider', () => {
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       expect(provider.getApiKey()).toBeUndefined();
     });
+
+    it.skipIf(process.platform !== 'win32')(
+      'should resolve casing-variant credentials from the captured snapshot on Windows',
+      () => {
+        const providerVariant = new AnthropicProvider({ Anthropic_Auth_Token: 'win-auth-token' });
+        expect(providerVariant.getApiKey()).toBe('win-auth-token');
+        expect(providerVariant.buildSdkConfig().envVars.ANTHROPIC_AUTH_TOKEN).toBe(
+          'win-auth-token'
+        );
+      }
+    );
   });
 
   describe('getModels without credentials', () => {
@@ -122,8 +133,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.ANTHROPIC_API_KEY);
+        query: (params: { options?: { env?: Record<string, string> } }) => {
+          seenEnv.push(params.options?.env?.ANTHROPIC_API_KEY);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -169,8 +180,8 @@ describe('AnthropicProvider', () => {
         disconnect(): void {}
       }
       mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-        query: () => {
-          seenEnv.push(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+        query: (params: { options?: { env?: Record<string, string> } }) => {
+          seenEnv.push(params.options?.env?.CLAUDE_CODE_OAUTH_TOKEN);
           return {
             interrupt: mock(async () => {}),
             supportedModels: mock(async () => [
@@ -257,8 +268,11 @@ describe('AnthropicProvider', () => {
   });
 
   describe('listRemoteModels', () => {
+    let provider: AnthropicProvider;
+
     beforeEach(() => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
+      provider = new AnthropicProvider();
     });
 
     const cachedModels = [
@@ -308,15 +322,18 @@ describe('AnthropicProvider', () => {
     });
 
     it('rejects cached and forced discovery when credentials are no longer available', async () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      const unauthenticated = new AnthropicProvider();
       const loadModels = spyOn(
-        provider as unknown as Record<string, unknown>,
+        unauthenticated as unknown as Record<string, unknown>,
         'loadModelsFromSdk' as never
       );
-      provider.setModelCache(cachedModels);
-      delete process.env.ANTHROPIC_API_KEY;
+      unauthenticated.setModelCache(cachedModels);
 
-      await expect(provider.listRemoteModels()).rejects.toThrow('not authenticated');
-      await expect(provider.listRemoteModels({ force: true })).rejects.toThrow('not authenticated');
+      await expect(unauthenticated.listRemoteModels()).rejects.toThrow('not authenticated');
+      await expect(unauthenticated.listRemoteModels({ force: true })).rejects.toThrow(
+        'not authenticated'
+      );
       expect(loadModels).not.toHaveBeenCalled();
     });
 
@@ -362,7 +379,7 @@ describe('AnthropicProvider', () => {
     it('reports plain credential presence when no failure is recorded', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
 
-      const status = await provider.getAuthStatus();
+      const status = await new AnthropicProvider().getAuthStatus();
 
       expect(status).toEqual({
         isAuthenticated: true,
@@ -386,7 +403,7 @@ describe('AnthropicProvider', () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
       recordProviderFailure('anthropic', new Error('SDK model load timeout'));
 
-      const status = await provider.getAuthStatus();
+      const status = await new AnthropicProvider().getAuthStatus();
 
       expect(status.isAuthenticated).toBe(true);
       expect(status.errorKind).toBe('transient');
@@ -439,7 +456,7 @@ describe('AnthropicProvider', () => {
       expect(config.apiVersion).toBe('v1');
     });
 
-    it('should skip stored API key injection when any Anthropic auth env var is set', () => {
+    it('should skip stored API key injection when construction-time Anthropic auth env is set', () => {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-token';
       const providerWithStoredKey = new AnthropicProvider();
       providerWithStoredKey.setCredentials({ type: 'api_key', apiKey: 'stored-key' });
@@ -447,6 +464,7 @@ describe('AnthropicProvider', () => {
       const config = providerWithStoredKey.buildSdkConfig('default');
 
       expect(config.envVars.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(config.envVars.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-token');
     });
   });
 

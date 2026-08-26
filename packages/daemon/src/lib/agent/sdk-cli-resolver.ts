@@ -18,6 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { getDataDir } from '../data-dir.ts';
+import { buildCommandEnv, buildOsBaselineEnv } from '../spawn-env.ts';
 
 const isVerbose = process.env.HYPERNEO_VERBOSE;
 // oxlint-disable-next-line no-console
@@ -206,6 +207,7 @@ function fetchNpmPackageMeta(
       encoding: 'utf-8',
       timeout: 15_000,
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: buildCommandEnv(),
     }).trim();
     const meta = JSON.parse(result);
     const tarballUrl = meta?.dist?.tarball;
@@ -228,6 +230,7 @@ function downloadTarball(url: string, destPath: string): string | undefined {
     execFileSync('curl', ['-sfL', '-o', destPath, url], {
       timeout: 120_000,
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: buildCommandEnv(),
     });
     if (existsSync(destPath)) return destPath;
     logWarn(`[sdk-cli-resolver] Download succeeded but file missing: ${destPath}`);
@@ -379,7 +382,11 @@ function findSystemRipgrep(): string | undefined {
     if (existsSync(p)) return p;
   }
   try {
-    const result = execSync('which rg', { encoding: 'utf-8', timeout: 2000 }).trim();
+    const result = execSync('which rg', {
+      encoding: 'utf-8',
+      timeout: 2000,
+      env: buildOsBaselineEnv(),
+    }).trim();
     if (result && existsSync(result)) return result;
   } catch {}
   return undefined;

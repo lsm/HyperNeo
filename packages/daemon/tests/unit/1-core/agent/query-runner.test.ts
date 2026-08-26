@@ -70,7 +70,12 @@ describe('QueryRunner', () => {
   let terminateTrackedAgentProcessesSpy: ReturnType<typeof mock>;
   let snapshotTrackedAgentProcessesSpy: ReturnType<typeof mock>;
 
+  let savedOuterApiKey: string | undefined;
+
   beforeEach(() => {
+    savedOuterApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
     mockSession = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -246,6 +251,11 @@ describe('QueryRunner', () => {
   function createRunner(overrides: Partial<QueryRunnerContext> = {}): QueryRunner {
     return new QueryRunner(createContext(overrides));
   }
+
+  afterEach(() => {
+    if (savedOuterApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedOuterApiKey;
+  });
 
   describe('constructor', () => {
     it('should create runner with dependencies', () => {
@@ -6220,10 +6230,10 @@ describe('QueryRunner environment variable handling', () => {
       ENABLE_TOOL_SEARCH: 'false',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
       KEEP_SESSION: 'session',
-      KEEP_PROCESS: 'process',
     });
     expect(env).not.toHaveProperty('PORT');
     expect(env).not.toHaveProperty('HYPERNEO_PORT');
+    expect(env).not.toHaveProperty('KEEP_PROCESS');
   });
 
   it('should preserve configured auto-compact env when provider does not refresh it', () => {
@@ -6365,7 +6375,7 @@ describe('QueryRunner environment variable handling', () => {
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.KEEP_SESSION).toBe('session');
-    expect(env.KEEP_PROCESS).toBe('process');
+    expect(env.KEEP_PROCESS).toBeUndefined();
   });
 });
 

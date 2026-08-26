@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
+import { buildDialogEnv } from '../spawn-env.ts';
 
 const log = new Logger('dialog-handlers');
 const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -68,6 +69,7 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
 
 async function runCommand(cmd: string, args: string[], timeoutMs?: number): Promise<string | null> {
   const proc = Bun.spawn([cmd, ...args], {
+    env: buildDialogEnv(),
     stdout: 'pipe',
     stderr: 'pipe',
   });
