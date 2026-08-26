@@ -992,6 +992,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     injectorOptions?: {
       onConsumed?: (settledSessionId: string) => void;
       lateSettlement?: import('../space/runtime/space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
   ): Promise<SpaceAgentInjectionOutcome> => {

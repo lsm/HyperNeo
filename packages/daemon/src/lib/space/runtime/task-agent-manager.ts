@@ -260,6 +260,7 @@ export interface TaskAgentManagerConfig {
     options?: {
       onConsumed?: (settledSessionId: string) => void;
       lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      onLateFailure?: () => void;
       disposeSignal?: AbortSignal;
     }
   ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;

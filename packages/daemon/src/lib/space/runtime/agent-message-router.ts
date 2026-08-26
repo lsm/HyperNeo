@@ -38,7 +38,11 @@ export interface AgentMessageRouterConfig {
     message: string,
     replyToSessionId?: string | null,
     explicitMessageId?: string,
-    options?: { onConsumed?: (settledSessionId: string) => void }
+    options?: {
+      onConsumed?: (settledSessionId: string) => void;
+      onLateFailure?: () => void;
+      disposeSignal?: AbortSignal;
+    }
   ) => Promise<SpaceAgentInjectionOutcome>;
   taskNumber?: number | null;
   pendingMessageRepo?: PendingAgentMessageRepository;

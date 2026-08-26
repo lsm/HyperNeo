@@ -129,6 +129,7 @@ export interface SpaceAgentDeliveryDeps {
     getState(): { status: string };
   };
   onConsumed?: (settledSessionId: string) => void;
+  onLateFailure?: () => void;
   lateSettlement?: SpaceAgentLateSettlementOwner;
   disposeSignal?: AbortSignal;
 }
@@ -220,6 +221,7 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
       sessionId,
       messageId,
       onConsumed: ctx.deps.onConsumed,
+      onFailed: ctx.deps.onLateFailure,
     });
     const armed = readSettledStatus(ctx);
     if (armed === 'consumed') {
