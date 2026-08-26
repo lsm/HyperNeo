@@ -105,18 +105,26 @@ Callers:
 
 #### Input/output snapshot design
 
-Dispatcher context:
+Unified ingest context (review correction: the dispatch selection and the
+boxed outcome live on ONE context — a separate `decision` union would not
+type-check against the inline per-kind stages, which read top-level
+`ctx.kind`/`ctx.input`/`ctx.outcome`, nor against the shell, which seeds
+`outcome`):
 
 ```ts
+type NormalizedOutcome =
+  | { status: 'running' }
+  | { status: 'rejected' }
+  | { status: 'done'; value: NormalizedGitHubEvent };
+
 interface GitHubWebhookDispatchCtx {
   eventType: string;
   deliveryId: string;
   payload: unknown;
   base: WebhookBase | null; // shared repo/sender/deliveryId/rawPayload after a snapshot stage
-  decision:
-    | { action: 'ignore' }
-    | { action: 'normalize'; kind: GitHubEventKind; input: unknown }
-    | null;
+  kind: GitHubEventKind | null;
+  input: unknown;
+  outcome: NormalizedOutcome;
 }
 
 interface WebhookBase {
@@ -129,19 +137,10 @@ interface WebhookBase {
 }
 ```
 
-Per-kind transform context (generic template):
-
-```ts
-type NormalizedOutcome =
-  | { status: 'running' }
-  | { status: 'rejected' }
-  | { status: 'done'; value: NormalizedGitHubEvent };
-
-interface NormalizeGitHubEventCtx<TInput> {
-  input: TInput;
-  outcome: NormalizedOutcome;
-}
-```
+Per-kind transform context: the SAME unified context — after the dispatch
+stage sets `kind`/`input`, each per-kind stage group treats it as
+`{ input: TInput; outcome: NormalizedOutcome }` (with `TInput` narrowed per
+kind); no second context type exists.
 
 A plain `result: T | null` with `isDone = result !== null` cannot express
 rejection: seeding with `null` and "rejecting" by assigning `null` leaves the
@@ -259,6 +258,8 @@ export function normalizeGitHubWebhook(
     deliveryId,
     payload,
     base: null,
+    kind: null,
+    input: null,
     outcome: { status: 'running' },
   });
   return outcome.status === 'done' ? outcome.value : null;
@@ -1452,8 +1453,10 @@ rewrite is forbidden)
 
 - **Scope**:
   `packages/daemon/src/lib/external-events/github/github-normalizer.ts` — add
-  the `NormalizedOutcome` terminal, the `GitHubWebhookDispatchCtx`/`WebhookBase`
-  types, and extract the `WebhookBase` snapshot helper (shared
+  the `NormalizedOutcome` terminal, the unified `GitHubWebhookDispatchCtx`
+  (dispatch selection `kind`/`input` AND the boxed `outcome` on ONE context)
+  and `WebhookBase` types, and extract the `WebhookBase` snapshot helper
+  (shared
   repo/sender/`deliveryId`/`rawPayload` extraction ONLY — review correction PR #2979: no shared `occurredAt` exists; each kind selects different nested timestamps (check completion/update fields, comment timestamps, review submission timestamps, PR timestamps) so timestamp selection stays in each per-kind stage or digest chronology breaks) as pure
   functions. UNWIRED: no pipeline consumes them yet; no behavior change.
 - **Lands**: the shared scaffolding exists with snapshot-helper unit tests,
@@ -1476,8 +1479,15 @@ rewrite is forbidden)
   `stagePullRequestReviewComment`, `stagePullRequestReviewThread`,
   `stagePullRequest`, `stageIgnoreUnknown` — first match wins, no separate
   `decisionRun` dispatcher). Per-kind transforms initially delegate to the
-  existing per-kind exports. UNWIRED: `normalizeGitHubWebhook` keeps its old
-  body.
+  existing per-kind exports WHERE SUCH EXPORTS EXIST (`check_run`,
+  `check_suite`, `branch_protection_rule`, `merge_group`); the five kinds
+  implemented only as inline branches of the current `normalizeGitHubWebhook`
+  body (`issue_comment`, `pull_request_review`,
+  `pull_request_review_comment`, `pull_request_review_thread`,
+  `pull_request` — `github-normalizer.ts:207-332`) are DISPATCH-ONLY
+  placeholders whose transform stages arrive with PR 19 (review correction:
+  no per-kind export exists for them to delegate to). UNWIRED:
+  `normalizeGitHubWebhook` keeps its old body.
 - **Lands**: dispatch precedence is independently testable while production
   behavior is unchanged.
 - **Excludes**: inline per-kind conversion (PR 18-20); wiring (PR 21).
