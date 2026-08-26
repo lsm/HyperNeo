@@ -679,6 +679,10 @@ characterizes those dimensions).
   "Suggested migration order" items.
 - **Tests**:
   - `sdk-message-save-admission-drift.test.ts`
+  - `sdk-message-badge.test.ts` (must confirm the `badgeUpdate.kind === 'delta'`
+    guard still controls the `notifySessionsChanged` call for SDK messages and
+    that `thinking_tokens` messages do not trigger it, per the save-site test at
+    `:103-112`)
   - `sdk-message-repository.test.ts` (must confirm the existing
     `false`-on-insert-failure contract and the post-commit swallowed-exception
     contract still pass)

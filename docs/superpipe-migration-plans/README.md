@@ -13,10 +13,12 @@ inventory; no source code is changed by these plans.
 | `space-runtime-tools-goals.md` | Space runtime staged flows, tools/RPC unification, goals | 18 |
 | `web.md` | Web routing/parsers/status helpers and `useSendMessage` | 13 |
 
-Each plan records the combinator fit (`decisionRun`, `stagedRun`, or raw
-superpipe transform — no new combinators), per-site input/output and pure-core
-designs, shell/effect wiring, tests, risks, migration order, and open
-questions. Sites deliberately excluded from migration (state machines, folds,
+Each plan records the named business-operation pipelines, per-site input/output
+and pure-core designs, shell/effect wiring, tests, risks, migration order, and
+open questions. A plan may note where an existing combinator (`decisionRun`,
+`stagedRun`) happens to fit, but it must not pre-classify the flow as
+"decision" versus "staged"; the required record is the complete business-path
+composition (CLAUDE.md / AGENTS.md). No new combinators are introduced. Sites deliberately excluded from migration (state machines, folds,
 hot per-row paths) are listed in the inventory artifact, not here.
 
 Each plan also ends with a **Focused PR breakdown**: the slicing of that area
