@@ -105,6 +105,12 @@ export class ContextFetcher {
     const providerId = modelMetadata?.provider;
     const responseModel = response.model ? normalizeModelId(response.model) : undefined;
     if (!providerId || !responseModel) return modelMetadata;
+    if (
+      SDK_GENERIC_MODEL_IDS.has(responseModel) &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDERS.has(providerId)
+    ) {
+      return modelMetadata;
+    }
 
     const responseMetadata = await getModelInfo(responseModel, 'global', providerId);
     return responseMetadata ?? modelMetadata;

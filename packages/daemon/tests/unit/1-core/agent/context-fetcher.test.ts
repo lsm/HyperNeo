@@ -1,7 +1,8 @@
-import { describe, it, expect, mock, spyOn } from 'bun:test';
+import { describe, it, expect, mock, spyOn, afterEach } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
+import { setModelsCache } from '../../../../src/lib/model-service';
 
 type SdkResponse = SDKControlGetContextUsageResponse;
 
@@ -895,6 +896,10 @@ describe('ContextFetcher.toContextInfo', () => {
 });
 
 describe('ContextFetcher.fetch', () => {
+  afterEach(() => {
+    setModelsCache(new Map());
+  });
+
   it('returns null when query is null', async () => {
     const fetcher = new ContextFetcher('test-session');
     const result = await fetcher.fetch(null);
@@ -952,6 +957,53 @@ describe('ContextFetcher.fetch', () => {
     const info = await fetcher.fetch(query);
 
     expect(info).toBeNull();
+  });
+
+  it('keeps the selected model metadata when the SDK reports a generic alias for a non-native provider', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'default',
+              name: 'Default',
+              provider: 'custom-endpoint:test',
+              contextWindow: 200000,
+              autoCompactPercent: 90,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const getContextUsage = mock(async () =>
+      baseResponse({
+        totalTokens: 90000,
+        maxTokens: 200000,
+        percentage: 45,
+        model: 'default',
+        autoCompactThreshold: 167000,
+        isAutoCompactEnabled: true,
+        categories: [
+          { name: 'Messages', tokens: 90000, color: 'blue' },
+          { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+          { name: 'Free space', tokens: 77000, color: 'gray-dim' },
+        ],
+      })
+    );
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('test-session');
+    const info = await fetcher.fetch(query, {
+      id: 'selected-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 50,
+    });
+
+    expect(info?.autoCompactThreshold).toBe(100000);
+    expect(info?.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
   });
 
   describe('capacity mismatch warning', () => {
