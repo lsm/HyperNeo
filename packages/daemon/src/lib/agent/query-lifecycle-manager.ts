@@ -271,7 +271,9 @@ export class QueryLifecycleManager {
         processExitedPromise,
         new Promise((resolve) => setTimeout(resolve, timeoutMs)),
       ]);
-      this.ctx.resetProcessExitedPromise();
+      if (this.ctx.processExitedPromise === processExitedPromise) {
+        this.ctx.resetProcessExitedPromise();
+      }
     }
 
     const staleTimer = this.ctx.startupTimeoutTimer;

@@ -795,14 +795,20 @@ export class AcpQueryRunner {
                   acpMessage as SDKMessage
                 );
 
-                await errorManager.handleError(
-                  session.id,
-                  error as Error,
-                  ErrorCategory.MESSAGE,
-                  'Error processing ACP message. The session has been reset.',
-                  processingState,
-                  { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' }
-                );
+                if (this.ctx.getQueryGeneration() !== queryGeneration) {
+                  logger.warn(
+                    'Skipping stale error publication: a replacement query owns the session.'
+                  );
+                } else {
+                  await errorManager.handleError(
+                    session.id,
+                    error as Error,
+                    ErrorCategory.MESSAGE,
+                    'Error processing ACP message. The session has been reset.',
+                    processingState,
+                    { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' }
+                  );
+                }
               }
             }
           }
@@ -892,6 +898,7 @@ export class AcpQueryRunner {
           !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
           stateManager.getState().status !== 'rate_limit_cooldown'
         ) {
+          this.ctx.messageHandler.retirePendingTerminalFence({ generation: queryGeneration });
           await stateManager.setIdle();
           void processExitSnapshot.then(() => {
             if (
@@ -957,6 +964,10 @@ export class AcpQueryRunner {
           : 'Auto-retrying ACP query after transient connection error (1 retry).'
       );
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        logger.warn('ACP retry abandoned after idle: a replacement query owns the session.');
+        return true;
+      }
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
         this.clearAcpSessionState();
@@ -985,6 +996,10 @@ export class AcpQueryRunner {
           new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
         ]);
         this.ctx.resetProcessExitedPromise();
+      }
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        logger.warn('ACP retry abandoned before recursion: a replacement query owns the session.');
+        return true;
       }
 
       await this.runQuery(queryGeneration, true, recoveryState);

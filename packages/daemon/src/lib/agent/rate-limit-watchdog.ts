@@ -102,6 +102,7 @@ export class RateLimitWatchdog {
   private billingPauseSurfaced = false;
   private retryCallbackInFlight = false;
   private retryCallbackInFlightOwner: number | null = null;
+  private fallbackAttemptSeq = 0;
 
   constructor(
     sessionId: string,
@@ -601,6 +602,7 @@ export class RateLimitWatchdog {
     }
 
     let ok = false;
+    const attemptId = ++this.fallbackAttemptSeq;
     this.retryCallbackInFlight = true;
     this.retryCallbackInFlightOwner = episodeGeneration;
     try {
@@ -617,12 +619,12 @@ export class RateLimitWatchdog {
       );
       ok = false;
     } finally {
-      if (this.retryCallbackInFlightOwner === episodeGeneration) {
+      if (this.fallbackAttemptSeq === attemptId) {
         this.retryCallbackInFlight = false;
-        this.retryCallbackInFlightOwner = null;
-      }
-      if (episodeGeneration === this.generation) {
         this.fallbackPending = false;
+      }
+      if (this.retryCallbackInFlightOwner === episodeGeneration) {
+        this.retryCallbackInFlightOwner = null;
       }
     }
 

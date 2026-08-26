@@ -962,14 +962,20 @@ export class QueryRunner {
             const processingState = stateManager.getState();
             await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
 
-            await errorManager.handleError(
-              session.id,
-              error as Error,
-              ErrorCategory.MESSAGE,
-              'Error processing SDK message. The session has been reset.',
-              processingState,
-              { messageType: (message as SDKMessage).type }
-            );
+            if (this.ctx.getQueryGeneration() !== queryGeneration) {
+              logger.warn(
+                'Skipping stale error publication: a replacement query owns the session.'
+              );
+            } else {
+              await errorManager.handleError(
+                session.id,
+                error as Error,
+                ErrorCategory.MESSAGE,
+                'Error processing SDK message. The session has been reset.',
+                processingState,
+                { messageType: (message as SDKMessage).type }
+              );
+            }
           }
         }
       }
@@ -1310,6 +1316,7 @@ export class QueryRunner {
           stateManager.getState().status !== 'rate_limit_cooldown' &&
           !(isAbortError && stateManager.getState().status === 'interrupted')
         ) {
+          this.ctx.messageHandler.retirePendingTerminalFence({ generation: queryGeneration });
           await stateManager.setIdle();
         }
 

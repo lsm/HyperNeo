@@ -905,6 +905,9 @@ export class SDKMessageHandler {
             limitError.userMessageUuid,
             invocationGeneration ?? undefined
           )) ?? false;
+        if (this.isInvocationStale(invocationGeneration)) {
+          return;
+        }
       }
       this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
       this.lastRateLimitInfo = null;

@@ -249,6 +249,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
       markMessageAccepted: mock(() => {}),
       markACPDeliveryFailed: mock(() => {}),
       consumedTerminalFenceFor: mock(() => false),
+      retirePendingTerminalFence: mock((_opts?: { generation?: number | null }) => {}),
     } as never,
     queryObject: null,
     queryPromise: null,

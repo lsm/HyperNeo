@@ -241,6 +241,7 @@ describe('QueryRunner', () => {
 
       messageHandler: {
         consumedTerminalFenceFor: mock(() => false),
+        retirePendingTerminalFence: mock((_opts?: { generation?: number | null }) => {}),
       } as unknown as QueryRunnerContext['messageHandler'],
 
       ...overrides,
@@ -3232,6 +3233,7 @@ describe('QueryRunner', () => {
 
         messageHandler: {
           consumedTerminalFenceFor: mock(() => false),
+          retirePendingTerminalFence: mock((_opts?: { generation?: number | null }) => {}),
         } as unknown as QueryRunnerContext['messageHandler'],
       };
       return {
