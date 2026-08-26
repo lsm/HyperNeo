@@ -1297,7 +1297,17 @@ export class AgentSession
             .join(', ')}]: ${error instanceof Error ? error.message : String(error)}`
         );
       });
-    this.messageQueue.setDeliveryGate(enforcement);
+    this.messageQueue.setDeliveryGate(
+      Promise.race([
+        enforcement,
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(() => resolve(), 5000);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ])
+    );
     return enforcement;
   }
 
