@@ -249,14 +249,21 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 **Gate setup and release protocol** (applies to every soft-gate row, and to the hard
 gate's hold lifecycle):
 
-- **Setup:** drain B's pending outcomes first — reconciling any completion racing the
-  pause, since the pause is itself a revision-changing mutation; then persist the hold
+- **Setup:** drain B's pending outcomes first — settling B's active task (its terminal
+  state reached or forced) before the final drain, and reconciling any completion
+  racing the pause, since the pause is itself a revision-changing mutation; an outcome
+  that still races the pause is resubmitted against the post-pause revision through the
+  documented stale-review resubmission path. Then persist the hold
   identity and intended ownership in **agent memory — before the pause mutation** (a
   crash between the pause and the write would leave B durably paused with no record of
   who may resume it; update or remove the record if the pause fails), with the
   human-readable condition mirrored in `nextSteps` for visibility (outcome reviews
   replace `nextSteps` wholesale, so a marker recorded only there is erased before
-  release revalidates it). Then pause — `pause_goal` only if B is active; an
+  release revalidates it). Operational state lives as **one keyed record per goal**
+  (holds and saved cadence values in a single payload), refreshed as a whole on every
+  change — separately keyed similar memories get merged or TTL-pruned by the
+  consolidation job, losing holds or making a deleted cadence unrecoverable. Then
+  pause — `pause_goal` only if B is active; an
   already-paused goal instead records the additional hold and marks that this sequence
   does **not** own the pause. Then cancel what
   the hold must stop: every active goal task for a judgment gate **or a hard gate**, and
