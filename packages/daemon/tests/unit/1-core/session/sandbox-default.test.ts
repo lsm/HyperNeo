@@ -176,7 +176,8 @@ describe('Sandbox Default Configuration', () => {
               enabled: true,
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -191,7 +192,8 @@ describe('Sandbox Default Configuration', () => {
               autoAllowBashIfSandboxed: true,
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -206,7 +208,8 @@ describe('Sandbox Default Configuration', () => {
               excludedCommands: expect.arrayContaining(['git']),
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -229,7 +232,8 @@ describe('Sandbox Default Configuration', () => {
               }),
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
   });
@@ -252,7 +256,8 @@ describe('Sandbox Default Configuration', () => {
               enabled: false,
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -277,7 +282,8 @@ describe('Sandbox Default Configuration', () => {
               excludedCommands: ['git', 'npm'],
             },
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -303,7 +309,8 @@ describe('Sandbox Default Configuration', () => {
               },
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
   });
@@ -336,7 +343,8 @@ describe('Sandbox Default Configuration', () => {
               }),
             }),
           }),
-        })
+        }),
+        expect.anything()
       );
     });
   });

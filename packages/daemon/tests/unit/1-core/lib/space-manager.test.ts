@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { execSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Session, Space } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { WorkspaceRemovalBlockedError } from '../../../../src/lib/space/managers/space-workspace-manager';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -103,6 +108,29 @@ describe('SpaceManager', () => {
 
       expect(found).not.toBeNull();
       expect(found!.id).toBe(space.id);
+    });
+
+    it('persists a primary workspace row for the new space', async () => {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'Primary Row' });
+      const workspaceRepo = new SpaceWorkspaceRepository(db as any);
+      const workspaces = workspaceRepo.listBySpace(space.id);
+
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0]!.path).toBe(space.workspacePath);
+      expect(workspaces[0]!.isPrimary).toBe(true);
+    });
+
+    it('throws if the workspace path is already a secondary workspace in another space', async () => {
+      const other = await manager.createSpace({ workspacePath: tmpDir, name: 'Other' });
+      const workspaceRepo = new SpaceWorkspaceRepository(db as any);
+      const rawSubDir = join(tmpDir, 'sub-workspace');
+      mkdirSync(rawSubDir);
+      const subDir = realpathSync(rawSubDir);
+      workspaceRepo.create({ spaceId: other.id, path: subDir });
+
+      await expect(
+        manager.createSpace({ workspacePath: subDir, name: 'Collision' })
+      ).rejects.toThrow('already claimed');
     });
 
     it('creates a space with autonomy level 1 (supervised)', async () => {
@@ -242,6 +270,81 @@ describe('SpaceManager', () => {
     it('throws for unknown space', async () => {
       await expect(manager.addSession('nonexistent', 's1')).rejects.toThrow('not found');
       await expect(manager.removeSession('nonexistent', 's1')).rejects.toThrow('not found');
+    });
+  });
+
+  describe('workspace delegation', () => {
+    function spaceSession(id: string, spaceId: string, workspacePath: string): Session {
+      return {
+        id,
+        title: id,
+        workspacePath,
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId },
+      } as unknown as Session;
+    }
+
+    async function spaceWithSecondaryWorkspace(name: string): Promise<{
+      space: Space;
+      repoPath: string;
+      recordId: string;
+    }> {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name });
+      const repoDir = mkdtempSync(join(tmpdir(), 'space-workspace-repo-'));
+      execSync('git init -q', { cwd: repoDir });
+      const repoPath = realpathSync(repoDir);
+      const record = await manager.registerWorkspace(space.id, repoPath, 'secondary');
+      return { space, repoPath, recordId: record.id };
+    }
+
+    it('blocks removal of the primary workspace', async () => {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'Primary Guard' });
+      const primary = manager.listWorkspaces(space.id).find((w) => w.isPrimary)!;
+
+      let blocked: unknown;
+      try {
+        manager.removeWorkspace(space.id, primary.id);
+      } catch (e) {
+        blocked = e;
+      }
+      expect(blocked).toBeInstanceOf(WorkspaceRemovalBlockedError);
+      expect((blocked as WorkspaceRemovalBlockedError).reason).toBe('primary');
+    });
+
+    it('holds removal guards end-to-end with real sessions', async () => {
+      const sessionRepo = new SessionRepository(db as any);
+      const { space, repoPath, recordId } = await spaceWithSecondaryWorkspace('Guarded');
+      expect(manager.listWorkspaces(space.id)).toHaveLength(2);
+
+      sessionRepo.createSession(spaceSession('sess-direct', space.id, repoPath));
+      sessionRepo.createSession({
+        ...spaceSession('sess-worktree', space.id, `${repoPath}-wt`),
+        worktree: {
+          isWorktree: true,
+          worktreePath: `${repoPath}-wt`,
+          mainRepoPath: repoPath,
+          branch: 'session/x',
+        },
+      });
+
+      let blocked: unknown;
+      try {
+        manager.removeWorkspace(space.id, recordId);
+      } catch (e) {
+        blocked = e;
+      }
+      expect(blocked).toBeInstanceOf(WorkspaceRemovalBlockedError);
+      expect((blocked as WorkspaceRemovalBlockedError).reason).toBe('active_sessions');
+
+      sessionRepo.archiveSession('sess-direct');
+      sessionRepo.updateSession('sess-worktree', { status: 'ended' });
+
+      expect(manager.removeWorkspace(space.id, recordId)).toBe(true);
+      expect(manager.listWorkspaces(space.id)).toHaveLength(1);
     });
   });
 

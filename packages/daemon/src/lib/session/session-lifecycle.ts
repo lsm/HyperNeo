@@ -249,7 +249,25 @@ export class SessionLifecycle {
           : undefined,
     };
 
-    this.db.createSession(session);
+    try {
+      this.db.createSession(session, { enforceWorkspaceOwnership: true });
+    } catch (error) {
+      if (
+        worktreeMetadata &&
+        error instanceof Error &&
+        error.message.includes('is not registered to space')
+      ) {
+        try {
+          await this.worktreeManager.removeWorktree(worktreeMetadata, true);
+        } catch (removeError) {
+          this.logger.error(
+            '[SessionLifecycle] Failed to remove orphan worktree after admission failure:',
+            removeError
+          );
+        }
+      }
+      throw error;
+    }
 
     const agentSession = this.createAgentSession(session);
     this.sessionCache.set(sessionId, agentSession);
@@ -399,6 +417,13 @@ export class SessionLifecycle {
     const normalizedPath = workspacePath.trim();
     if (!normalizedPath) {
       throw new Error('Workspace path cannot be empty');
+    }
+
+    const spaceId = session.context?.spaceId;
+    if (spaceId && !this.db.isWorkspaceRegisteredToSpace(spaceId, normalizedPath)) {
+      throw new Error(
+        `Workspace ${normalizedPath} is not registered to space ${spaceId}; setWorkspace blocked`
+      );
     }
 
     let worktreeMetadata: WorktreeMetadata | undefined;

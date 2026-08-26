@@ -1,8 +1,15 @@
 import { promises as fs } from 'node:fs';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import {
+  SpaceWorkspaceRepository,
+  type SpaceWorkspaceRecord,
+} from '../../../storage/repositories/space-workspace-repository.ts';
+import { SpaceWorkspaceManager } from './space-workspace-manager.ts';
 import { Logger } from '../../logger.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
@@ -10,14 +17,142 @@ import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shar
 const execAsync = promisify(exec);
 const log = new Logger('SpaceManager');
 
+function deriveLabel(workspacePath: string): string {
+  const trimmed = workspacePath.replace(/[\\/]+$/, '').trim();
+  if (trimmed.length === 0) return '';
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] ?? '';
+}
+
+interface CreateSpaceCtx {
+  db: BunDatabase;
+  spaceRepo: SpaceRepository;
+  workspaceRepo: SpaceWorkspaceRepository;
+  params: CreateSpaceParams;
+  resolvedPath?: string;
+  isGit?: boolean;
+  space?: Space;
+  error?: Error;
+}
+
+async function resolveAndValidatePath(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
+  let resolvedPath: string;
+  try {
+    resolvedPath = await fs.realpath(ctx.params.workspacePath);
+  } catch {
+    return {
+      ...ctx,
+      error: new Error(`Workspace path does not exist: ${ctx.params.workspacePath}`),
+    };
+  }
+
+  try {
+    const stat = await fs.stat(resolvedPath);
+    if (!stat.isDirectory()) {
+      return { ...ctx, error: new Error(`Workspace path is not a directory: ${resolvedPath}`) };
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('not a directory')) {
+      return { ...ctx, error: err };
+    }
+    return { ...ctx, error: new Error(`Cannot access workspace path: ${resolvedPath}`) };
+  }
+
+  return { ...ctx, resolvedPath };
+}
+
+async function classifyGit(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
+  try {
+    await execAsync('git rev-parse --git-dir', { cwd: ctx.resolvedPath });
+    return { ...ctx, isGit: true };
+  } catch {
+    return { ...ctx, isGit: false };
+  }
+}
+
+function createSpaceAtomic(ctx: CreateSpaceCtx): CreateSpaceCtx {
+  try {
+    const space = ctx.db.transaction(() => {
+      const existing = ctx.spaceRepo.getSpaceByPath(ctx.resolvedPath!);
+      if (existing) {
+        throw new Error(
+          `A space already exists for workspace path: ${ctx.resolvedPath} (space id: ${existing.id})`
+        );
+      }
+
+      const existingWorkspace = ctx.workspaceRepo.findOwnerByPath(ctx.resolvedPath!);
+      if (existingWorkspace) {
+        throw new Error(
+          `Workspace path is already claimed by space ${existingWorkspace.spaceId}: ${ctx.resolvedPath}`
+        );
+      }
+
+      const existingSlugs = ctx.spaceRepo.getAllSlugs();
+      const slug = slugify(ctx.params.name, existingSlugs);
+
+      const newSpace = ctx.spaceRepo.createSpace({
+        ...ctx.params,
+        workspacePath: ctx.resolvedPath!,
+        slug,
+      });
+
+      ctx.workspaceRepo.create({
+        spaceId: newSpace.id,
+        path: ctx.resolvedPath!,
+        label: deriveLabel(ctx.resolvedPath!),
+        isPrimary: true,
+      });
+
+      return newSpace;
+    })() as Space;
+    return { ...ctx, space };
+  } catch (err) {
+    return { ...ctx, error: err as Error };
+  }
+}
+
+function warnIfNotGit(ctx: CreateSpaceCtx): CreateSpaceCtx {
+  if (ctx.isGit === false) {
+    log.warn(`workspace path is not a git repository: ${ctx.resolvedPath}`);
+  }
+  return ctx;
+}
+
+const runCreateSpace = (
+  superpipe({
+    hasError: (ctx: CreateSpaceCtx) => ctx.error !== undefined,
+    hasResolvedPath: (ctx: CreateSpaceCtx) => ctx.resolvedPath !== undefined,
+    hasSpace: (ctx: CreateSpaceCtx) => ctx.space !== undefined,
+  })('space-creation') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(resolveAndValidatePath, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe('hasResolvedPath', 'ctx')
+  .pipe(classifyGit, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(createSpaceAtomic, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe('hasSpace', 'ctx')
+  .pipe(warnIfNotGit, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: CreateSpaceCtx) => Promise<CreateSpaceCtx>;
+
 export class SpaceManager {
   private spaceRepo: SpaceRepository;
+  private workspaceRepo: SpaceWorkspaceRepository;
+  private workspaceManager: SpaceWorkspaceManager;
   private onSpaceResumedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpaceStoppedCallbacks: Array<(spaceId: string) => void> = [];
 
   constructor(private db: BunDatabase) {
     this.spaceRepo = new SpaceRepository(db);
+    this.workspaceRepo = new SpaceWorkspaceRepository(db);
+    this.workspaceManager = new SpaceWorkspaceManager({
+      spaces: this.spaceRepo,
+      workspaces: this.workspaceRepo,
+      sessionReferences: new SessionRepository(db),
+    });
   }
 
   onSpaceResumedRegister(cb: (spaceId: string) => void): () => void {
@@ -42,24 +177,33 @@ export class SpaceManager {
   }
 
   async createSpace(params: CreateSpaceParams): Promise<Space> {
-    const resolvedPath = await this.resolveAndValidatePath(params.workspacePath);
+    const result = await runCreateSpace({
+      db: this.db,
+      spaceRepo: this.spaceRepo,
+      workspaceRepo: this.workspaceRepo,
+      params,
+    });
 
-    const existing = this.spaceRepo.getSpaceByPath(resolvedPath);
-    if (existing) {
-      throw new Error(
-        `A space already exists for workspace path: ${resolvedPath} (space id: ${existing.id})`
-      );
+    if (result.error) {
+      throw result.error;
     }
+    return result.space!;
+  }
 
-    const isGit = await this.isGitRepository(resolvedPath);
-    if (!isGit) {
-      log.warn(`workspace path is not a git repository: ${resolvedPath}`);
-    }
+  registerWorkspace(
+    spaceId: string,
+    rawPath: string,
+    label?: string
+  ): Promise<SpaceWorkspaceRecord> {
+    return this.workspaceManager.registerWorkspace(spaceId, rawPath, label);
+  }
 
-    const existingSlugs = this.spaceRepo.getAllSlugs();
-    const slug = slugify(params.name, existingSlugs);
+  removeWorkspace(spaceId: string, workspaceId: string): boolean {
+    return this.workspaceManager.removeWorkspace(spaceId, workspaceId);
+  }
 
-    return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath, slug });
+  listWorkspaces(spaceId: string): SpaceWorkspaceRecord[] {
+    return this.workspaceManager.listWorkspaces(spaceId);
   }
 
   async getSpace(id: string): Promise<Space | null> {
@@ -245,37 +389,5 @@ export class SpaceManager {
     }
 
     return updated;
-  }
-
-  private async resolveAndValidatePath(workspacePath: string): Promise<string> {
-    let realPath: string;
-    try {
-      realPath = await fs.realpath(workspacePath);
-    } catch {
-      throw new Error(`Workspace path does not exist: ${workspacePath}`);
-    }
-
-    try {
-      const stat = await fs.stat(realPath);
-      if (!stat.isDirectory()) {
-        throw new Error(`Workspace path is not a directory: ${realPath}`);
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('not a directory')) {
-        throw err;
-      }
-      throw new Error(`Cannot access workspace path: ${realPath}`);
-    }
-
-    return realPath;
-  }
-
-  private async isGitRepository(dirPath: string): Promise<boolean> {
-    try {
-      await execAsync('git rev-parse --git-dir', { cwd: dirPath });
-      return true;
-    } catch {
-      return false;
-    }
   }
 }
