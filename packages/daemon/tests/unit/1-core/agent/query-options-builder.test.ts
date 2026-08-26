@@ -965,7 +965,7 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
     });
 
-    it('should enable SDK auto-compaction for non-native providers with context windows', () => {
+    it('should pass the full context window for non-native providers (SDK derives its own threshold)', () => {
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
@@ -973,6 +973,47 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('ollama', 32_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 32_000,
+      });
+    });
+
+    it('should stretch the armed window for percents above the SDK default so the trigger lands on target', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 95)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 223_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 91)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 215_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 100)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 233_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 90)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 213_000,
+      });
+    });
+
+    it('should arm the SDK at the configured threshold plus the provider reserve for percents below the default', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 133_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 10)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 53_000,
+      });
+    });
+
+    it('should ignore the percent for kimi models and arm the real window', () => {
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 90)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 
@@ -1041,7 +1082,49 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('should enable SDK auto-compaction for OpenRouter models with their context window', async () => {
+    it('wires a PostToolUse hook that invokes the mid-turn context budget check', async () => {
+      registerOpenRouterProvider();
+      setModelsCache(new Map());
+      const budgetCheck = mock(() => {});
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'any-model';
+      const options = await new QueryOptionsBuilder({
+        ...mockContext,
+        midTurnContextBudgetCheck: budgetCheck,
+      }).build();
+
+      const postToolUse = options.hooks?.PostToolUse;
+      expect(postToolUse).toBeDefined();
+      expect(postToolUse!.length).toBeGreaterThan(0);
+
+      const hook = postToolUse![0]!.hooks[0]!;
+      await hook({ hook_event_name: 'PostToolUse' } as never, undefined, {
+        signal: new AbortController().signal,
+      });
+      expect(budgetCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('wires the mid-turn context budget check into PostToolUseFailure as well', async () => {
+      registerOpenRouterProvider();
+      setModelsCache(new Map());
+      const budgetCheck = mock(() => {});
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'any-model';
+      const options = await new QueryOptionsBuilder({
+        ...mockContext,
+        midTurnContextBudgetCheck: budgetCheck,
+      }).build();
+
+      const postToolUseFailure = options.hooks?.PostToolUseFailure;
+      expect(postToolUseFailure).toBeDefined();
+      const guardEntry = postToolUseFailure![0]!;
+      await guardEntry.hooks[0]!({ hook_event_name: 'PostToolUseFailure' } as never, undefined, {
+        signal: new AbortController().signal,
+      });
+      expect(budgetCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('should enable SDK auto-compaction for OpenRouter models with their full context window (percent enforcement lives in the daemon backstop)', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -1055,6 +1138,14 @@ describe('QueryOptionsBuilder', () => {
                 contextWindow: 1_000_000,
                 available: true,
               },
+              {
+                id: 'pct-model',
+                name: 'Percent Model',
+                provider: 'openrouter',
+                contextWindow: 1_000_000,
+                autoCompactPercent: 80,
+                available: true,
+              },
             ],
           ],
         ])
@@ -1065,6 +1156,13 @@ describe('QueryOptionsBuilder', () => {
       expect(options.settings).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
+      mockSession.config.model = 'pct-model';
+      const pctOptions = await builder.build();
+      expect(pctOptions.settings).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 833_000,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
