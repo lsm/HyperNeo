@@ -1,24 +1,31 @@
 import type { EventInterest } from '@hyperneo/shared';
 
 export interface ParsedPrUrl {
+  scheme: string;
   host: string;
   owner: string;
   repo: string;
   number: string;
 }
 
-const PR_URL_PATTERN = /https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)(?:[/?#]|$|\b)/;
+const PR_URL_PATTERN = /(https?):\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)(?:[/?#]|$|\b)/;
 
 export function buildPrUrl(parsed: ParsedPrUrl): string {
   const host = parsed.host.toLowerCase();
-  return `https://${host}/${parsed.owner}/${parsed.repo}/pull/${parsed.number}`;
+  return `${parsed.scheme}://${host}/${parsed.owner}/${parsed.repo}/pull/${parsed.number}`;
 }
 
 export function parsePrUrl(url: string): ParsedPrUrl | null {
   if (typeof url !== 'string' || url.length === 0) return null;
   const match = new RegExp(PR_URL_PATTERN.source, 'g').exec(url);
   if (!match) return null;
-  return { host: match[1]!, owner: match[2]!, repo: match[3]!, number: match[4]! };
+  return {
+    scheme: match[1]!,
+    host: match[2]!,
+    owner: match[3]!,
+    repo: match[4]!,
+    number: match[5]!,
+  };
 }
 
 export function buildPrEventTopicPattern(parsed: ParsedPrUrl): string {

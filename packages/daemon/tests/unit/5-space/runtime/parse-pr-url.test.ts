@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { EventInterest } from '@hyperneo/shared';
 import {
   buildPrEventTopicPattern,
+  buildPrUrl,
   parsePrUrl,
   resolveTopicFromInterest,
 } from '../../../../src/lib/space/runtime/parse-pr-url';
@@ -10,6 +11,7 @@ import { validateGlobPattern } from '../../../../src/lib/external-events/topic-v
 describe('parsePrUrl', () => {
   test('parses a canonical github.com PR URL', () => {
     expect(parsePrUrl('https://github.com/lsm/neokai/pull/42')).toEqual({
+      scheme: 'https',
       host: 'github.com',
       owner: 'lsm',
       repo: 'neokai',
@@ -19,12 +21,14 @@ describe('parsePrUrl', () => {
 
   test('parses a PR URL with trailing path suffix (/files, /commits, /reviews)', () => {
     expect(parsePrUrl('https://github.com/lsm/neokai/pull/42/files')).toEqual({
+      scheme: 'https',
       host: 'github.com',
       owner: 'lsm',
       repo: 'neokai',
       number: '42',
     });
     expect(parsePrUrl('https://github.com/lsm/neokai/pull/42/commits/abc')).toEqual({
+      scheme: 'https',
       host: 'github.com',
       owner: 'lsm',
       repo: 'neokai',
@@ -34,6 +38,7 @@ describe('parsePrUrl', () => {
 
   test('parses a GitHub Enterprise PR URL', () => {
     expect(parsePrUrl('https://github.example.com/team/repo/pull/99')).toEqual({
+      scheme: 'https',
       host: 'github.example.com',
       owner: 'team',
       repo: 'repo',
@@ -43,6 +48,7 @@ describe('parsePrUrl', () => {
 
   test('parses an http (non-TLS) PR URL', () => {
     expect(parsePrUrl('http://github.internal/team/repo/pull/7')).toEqual({
+      scheme: 'http',
       host: 'github.internal',
       owner: 'team',
       repo: 'repo',
@@ -61,6 +67,18 @@ describe('parsePrUrl', () => {
     expect(parsePrUrl('not a url')).toBeNull();
     expect(parsePrUrl('')).toBeNull();
     expect(parsePrUrl('https://github.com/lsm/neokai/pull/notanumber')).toBeNull();
+  });
+});
+
+describe('buildPrUrl', () => {
+  test('rebuilds the canonical PR URL preserving scheme', () => {
+    const parsed = parsePrUrl('http://github.internal/team/repo/pull/7')!;
+    expect(buildPrUrl(parsed)).toBe('http://github.internal/team/repo/pull/7');
+  });
+
+  test('rebuilds an https PR URL', () => {
+    const parsed = parsePrUrl('https://github.com/lsm/neokai/pull/42')!;
+    expect(buildPrUrl(parsed)).toBe('https://github.com/lsm/neokai/pull/42');
   });
 });
 
