@@ -21,7 +21,9 @@ describe('isPositiveReaction', () => {
   it('returns true for the tracked positive and engagement reaction content values', () => {
     expect(isPositiveReaction({ content: '+1' })).toBe(true);
     expect(isPositiveReaction({ content: 'thumbs_up' })).toBe(true);
+    expect(isPositiveReaction({ content: 'THUMBS_UP' })).toBe(true);
     expect(isPositiveReaction({ content: 'eyes' })).toBe(true);
+    expect(isPositiveReaction({ content: 'EYES' })).toBe(true);
   });
 
   it('returns false for the other GitHub reaction content values', () => {
@@ -41,7 +43,7 @@ describe('isPositiveReaction', () => {
   it('is an exact, case-sensitive match (whitespace/case variants are not positive)', () => {
     expect(isPositiveReaction({ content: '+1 ' })).toBe(false);
     expect(isPositiveReaction({ content: ' +1' })).toBe(false);
-    expect(isPositiveReaction({ content: 'THUMBS_UP' })).toBe(false);
+    expect(isPositiveReaction({ content: 'THUMBS_UP ' })).toBe(false);
     expect(isPositiveReaction({ content: 'Thumbs_Up' })).toBe(false);
   });
 
