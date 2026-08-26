@@ -1024,7 +1024,14 @@ anywhere in this plan.
   `enqueueAction` is sanitized, reported (`onError` + toast +
   `onSendComplete`), and stamped `false` by the arm's stage-level catch, so
   the `Promise<boolean>` contract holds on every arm now that the shell
-  catch is gone).
+  catch is gone). Codex round 20: the OFFLINE arm enqueues with
+  `executeImmediately: false` (matching the race arm's existing option) —
+  when the snapshot races a reconnection, `enqueueAction` would otherwise
+  execute the queued `hub.request` INLINE under the stage's await
+  (`outbound-queue.ts:24-34`) with NO timeout armed (this arm never arms
+  the `SendTimeoutHandle`), leaving `MessageInput` awaiting `onSend`
+  indefinitely after clearing the draft; deferred execution resolves the
+  await after queueing and the flush loop owns the eventual send.
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
   `rejectEmpty` on blank/`isSending && !allowQueueWhileProcessing`) →
   `gateSessionArchived` → `gateOffline` → `gateSend` (terminal — when the
@@ -1481,7 +1488,11 @@ optional router phase 2. No per-site section is left uncovered.
   `[1-9]\d{2,}b`, 100B+ only — `qwen2.5:latest`, `gpt-oss:120b` vs
   `gpt-oss:mini-cloud`), then ONE raw P1 transform pipeline `map-raw-models`
   (`stageClassifyFamily` → `stageInferProvider` → `stageAssemble` →
-  `stageSort`); `inferProviderFromModelId` RETAINED as an ORDINARY PURE
+  `stageSort`), ctx carrying the intermediate
+  `rows: Array<{ raw; family; provider? }>` contract (codex rounds 14+20:
+  `stageInferProvider` reads the computed family for
+  `PROVIDER_FROM_FAMILY` and `stageAssemble` consumes both — no
+  recomputation, no partial-result casts); `inferProviderFromModelId` RETAINED as an ORDINARY PURE
   HELPER with ordered rules intact (NOT a decisionRun — review correction);
   `classifyModelFamily` extracted as an ordinary pure helper (default
   `'sonnet'`, `/` → openrouter tail rule; NOT its own decisionRun); pipeline
@@ -1674,7 +1685,12 @@ optional router phase 2. No per-site section is left uncovered.
   never pre-bound to an early-captured hub and takes the hub it dispatches
   on as its first argument, codex rounds 3+4; `enqueue` ships the FULL
   queued executor — live hub read, `request`, `onMessageAccepted` forwarding
-  at execution time, codex round 6); the hook keeps
+  at execution time, codex round 6 — and RETURNS its promise, AWAITED by
+  the queue-arm stage whose own stage-level catch sanitizes, reports, and
+  stamps `false` on rejection, codex rounds 18+19); the ctx declares
+  `payload?: SendMessagePayload` seeded by `stageBuildPayload` and consumed
+  by both the direct request and the queued executor (codex rounds 15+20
+  — no rebuilding, no hook-state closure); the hook keeps
   per-invocation timer handles (the single shared ref is replaced —
   overlapping sends admitted via `allowQueueWhileProcessing: true` must not
   clobber each other's timers; `clearSendTimeout` clears all outstanding
@@ -1713,8 +1729,10 @@ optional router phase 2. No per-site section is left uncovered.
   plus the new pipeline-level admission decision-table test.
 - **Depends on**: PR 1, PR 3, PR 13 (PR 3 is now EXPLICIT — codex round 9:
   the send stage consumes its ordinary sanitization CORE —
-  `normalizeUserError`, the arm predicates, and `isInternalMessage` —
-  unchanged, NOT its decisionRun wrapper, codex round 8; without the
+  `normalizeUserError`, the arm predicates, `isInternalMessage`, AND the
+  round-17+20 helpers `classifyUserErrorArm` (the precedence) and
+  `armMessage` (the mapping) — unchanged, NOT its decisionRun wrapper,
+  codex round 8; without the
   declared edge the parallel-authoring rules could start this slice before
   those exports exist).
 
