@@ -365,8 +365,10 @@ gate's hold lifecycle):
   hold survives, reconciliation instead continues the deferred release path — restoring
   the saved cadence from its snapshot so B does not stay active without check-ins —
   and because goal resume is not an LH wake source and the cleared cadence cannot fire,
-  a **bounded durable reminder stays armed** while an external pause remains, so the
-  human resuming B is always followed by an observing wake —
+  a durable observation reminder **stays armed for the full lifetime of the external
+  pause** — bounded escalation to the human is layered on top of it, but re-arming never
+  terminates while the pause lasts, so the human resuming B is always followed by an
+  observing wake —
   otherwise B stays
   active under conditions the launcher still treats as unresolved while no gate can
   ever be created;
