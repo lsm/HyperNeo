@@ -613,6 +613,41 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('aborts the refined cooldown when the query generation moved during classification (B5e)', async () => {
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      let resolveClassification!: (value: {
+        resetAtMs: number | null;
+        kind: 'usage_limit' | null;
+        notALimit: boolean;
+      }) => void;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.classifyUnknownLimit = () =>
+        new Promise((resolve) => {
+          resolveClassification = () =>
+            resolve({ resetAtMs: resetAt, kind: 'usage_limit', notALimit: false });
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry(
+        'firewall throttled, no timestamps in body',
+        {
+          uuid: 'm1',
+          content: 'x',
+        },
+        undefined,
+        3
+      );
+      queryGeneration = 9;
+      resolveClassification({ resetAtMs: resetAt, kind: 'usage_limit', notALimit: false });
+      await flush();
+      await flush();
+
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      watchdog.cancel();
+    });
+
     it('does not re-arm when the LLM says the error is not a limit', async () => {
       const classify = mock(async () => ({
         resetAtMs: null,

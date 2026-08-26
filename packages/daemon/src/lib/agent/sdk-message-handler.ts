@@ -112,7 +112,6 @@ export class SDKMessageHandler {
   private pendingTerminalFence: IdleOwnerScope | null = null;
   private pendingTerminalFenceGeneration: number | null = null;
   private settledTerminalFenceGeneration: number | null = null;
-  private settledTerminalFenceTurnToken: number | null = null;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
   private lastSdkErrorTag: string | null = null;
   private clearAwaitingTrailingIdle: boolean = false;
@@ -814,7 +813,10 @@ export class SDKMessageHandler {
       this.lastSdkErrorTag = message.error;
     }
 
-    if (await this.acknowledgePersistedUserMessage(message)) {
+    if (
+      !this.isInvocationStale(invocationGeneration) &&
+      (await this.acknowledgePersistedUserMessage(message))
+    ) {
       this.maybeRefreshContextOnEvent(message);
       return;
     }
@@ -1312,16 +1314,11 @@ export class SDKMessageHandler {
     this.pendingTerminalFence = null;
     this.pendingTerminalFenceGeneration = null;
     this.settledTerminalFenceGeneration = slotGeneration;
-    this.settledTerminalFenceTurnToken = fence.turnToken;
     return fence;
   }
 
   consumedTerminalFenceFor(generation: number): boolean {
-    if (this.settledTerminalFenceGeneration !== generation) return false;
-    if (this.settledTerminalFenceTurnToken == null) return false;
-    return (
-      this.settledTerminalFenceTurnToken === this.ctx.stateManager.getCurrentIdleOwner().turnToken
-    );
+    return this.settledTerminalFenceGeneration === generation;
   }
 
   private isInvocationStale(invocationGeneration: number | null): boolean {

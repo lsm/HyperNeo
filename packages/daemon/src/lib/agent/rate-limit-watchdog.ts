@@ -276,7 +276,7 @@ export class RateLimitWatchdog {
       this.deps.classifyUnknownLimit &&
       entryGeneration === this.generation
     ) {
-      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge);
+      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge, queryGeneration);
     }
     return true;
   }
@@ -284,7 +284,8 @@ export class RateLimitWatchdog {
   private fireLlmRefinement(
     errorMessage: string,
     entryGeneration: number,
-    chargedLadder: boolean
+    chargedLadder: boolean,
+    queryGeneration?: number
   ): void {
     const classify = this.deps.classifyUnknownLimit;
     if (!classify) return;
@@ -320,7 +321,8 @@ export class RateLimitWatchdog {
             errorMessage,
             cooldownFromReset(resetMs, now),
             entryGeneration,
-            refund ? this.retryCount - 1 : this.retryCount
+            refund ? this.retryCount - 1 : this.retryCount,
+            queryGeneration
           );
           if (!armed) {
             rollbackHintAndKind();

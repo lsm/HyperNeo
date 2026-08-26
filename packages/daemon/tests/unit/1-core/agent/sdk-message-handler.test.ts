@@ -896,14 +896,11 @@ describe('SDKMessageHandler', () => {
       );
     });
 
-    it('consumedTerminalFenceFor is invalidated when the next delivery turn is admitted (B5e)', async () => {
-      let turnToken = 1;
+    it('consumedTerminalFenceFor stays scoped to the settled generation, not the live turn token (B5e)', async () => {
       (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
         () => 3
       );
-      (mockStateManager as unknown as { getCurrentIdleOwner: () => unknown }).getCurrentIdleOwner =
-        mock(() => ({ queryGeneration: 3, turnToken }));
-      beginTerminalIdleSpy.mockImplementation(() => ({ queryGeneration: 3, turnToken }));
+      beginTerminalIdleSpy.mockImplementation(() => ({ queryGeneration: 3, turnToken: 1 }));
 
       await handler.handleMessage(
         {
@@ -918,9 +915,27 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(handler.consumedTerminalFenceFor(3)).toBe(true);
+      expect(handler.consumedTerminalFenceFor(4)).toBe(false);
+    });
 
-      turnToken = 2;
-      expect(handler.consumedTerminalFenceFor(3)).toBe(false);
+    it('a stale user echo does not consume shared delivery acknowledgement state (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'user',
+          uuid: 'user-echo-uuid',
+          session_id: 'test-session-id',
+          parent_tool_use_id: null,
+          message: { role: 'user', content: [{ type: 'text', text: 'echo' }] },
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(getMessageByStatusAndUuidSpy).not.toHaveBeenCalled();
+      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
