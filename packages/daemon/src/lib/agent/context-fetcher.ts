@@ -104,7 +104,7 @@ export class ContextFetcher {
       return await Promise.race([
         pending,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('getContextUsage timed out')), 5000);
+          timer = setTimeout(() => reject(new Error('getContextUsage timed out')), 2000);
         }),
       ]);
     } finally {

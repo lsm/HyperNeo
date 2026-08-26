@@ -938,8 +938,14 @@ export class SDKMessageHandler {
       }
     }
 
+    let enforcedTurnEnd = false;
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
+        if (this.ctx.stateManager.getIsCompacting()) {
+          await this.ctx.stateManager.setCompacting(false);
+        }
+        await this.refreshContextUsage('turn-end');
+        enforcedTurnEnd = true;
         await stateManager.setIdle();
       }
     }
@@ -956,7 +962,9 @@ export class SDKMessageHandler {
       if (this.ctx.stateManager.getIsCompacting()) {
         await this.ctx.stateManager.setCompacting(false);
       }
-      await this.refreshContextUsage('turn-end');
+      if (!enforcedTurnEnd) {
+        await this.refreshContextUsage('turn-end');
+      }
     }
 
     if (isTopLevelResult && isSDKResultSuccess(message)) {
