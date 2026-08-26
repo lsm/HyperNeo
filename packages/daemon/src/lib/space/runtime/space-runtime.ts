@@ -159,6 +159,7 @@ import {
   classifySpawnFailure,
   hasDriveableExecution,
 } from './run-spawn-decisions.ts';
+import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
@@ -3196,8 +3197,8 @@ export class SpaceRuntime {
       space_id: spaceId,
       autonomyLevel: space?.autonomyLevel,
       autonomy_level: space?.autonomyLevel,
-      workspacePath: space?.workspacePath,
-      workspace_path: space?.workspacePath,
+      workspacePath: space ? resolveTaskWorkspace(space, approvedTask) : undefined,
+      workspace_path: space ? resolveTaskWorkspace(space, approvedTask) : undefined,
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
     let routeResult: PostApprovalRouteResult;

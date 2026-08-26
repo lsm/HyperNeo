@@ -87,13 +87,19 @@ async function resolveWorktreePath(
   spaceWorktreeManager: SpaceWorktreeManager,
   taskId?: string
 ): Promise<string | null> {
-  let fallbackTask: Pick<SpaceTask, 'workspacePath'> | null = null;
+  let fallbackTask: Pick<SpaceTask, 'workspacePath' | 'workflowRunId' | 'spaceId'> | null = null;
   if (taskId) {
     const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
     if (taskWorktreePath) {
       return taskWorktreePath;
     }
     fallbackTask = spaceTaskRepo.getTask(taskId);
+    if (
+      fallbackTask &&
+      (fallbackTask.workflowRunId !== runId || fallbackTask.spaceId !== spaceId)
+    ) {
+      fallbackTask = null;
+    }
     log.warn(
       `resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to the task or root workspace`
     );

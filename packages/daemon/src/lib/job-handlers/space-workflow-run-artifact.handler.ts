@@ -74,6 +74,9 @@ async function resolveWorktreeForJob(
     const worktreePath = await deps.spaceWorktreeManager.getTaskWorktreePath(run.spaceId, taskId);
     if (worktreePath) return { worktreePath, spaceId: run.spaceId };
     fallbackTask = deps.spaceTaskRepo.getTask(taskId);
+    if (fallbackTask && fallbackTask.workflowRunId !== runId) {
+      fallbackTask = null;
+    }
   } else {
     const tasks = deps.spaceTaskRepo.listByWorkflowRun(runId);
     if (tasks.length > 0) {
