@@ -366,9 +366,10 @@ gate's hold lifecycle):
   the saved cadence from its snapshot so B does not stay active without check-ins —
   and because goal resume is not an LH wake source and the cleared cadence cannot fire,
   a durable observation reminder **stays armed for the full lifetime of the external
-  pause** — bounded escalation to the human is layered on top of it, but re-arming never
-  terminates while the pause lasts, so the human resuming B is always followed by an
-  observing wake —
+  pause**, **armed before each pause-state inspection** (arm-then-inspect, as the
+  standalone loop below) — bounded escalation to the human is layered on top of it, but
+  re-arming never terminates while the pause lasts, so the human resuming B is always
+  followed by an observing wake —
   otherwise B stays
   active under conditions the launcher still treats as unresolved while no gate can
   ever be created;
@@ -413,8 +414,9 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   not inspect-then-arm: a launcher turn or daemon death between reading the task and
   re-arming would otherwise leave it terminal with no pending wake. A fired reminder is
   consumed by arming the replacement; when the inspection finds a terminal state the
-  new reminder simply expires harmlessly. Bounded — escalate to the human instead of
-  re-arming forever. Prefer
+  new reminder simply expires harmlessly. Re-arming continues until terminality —
+  bounded human escalation layers on top rather than replacing it, since a later
+  completion would otherwise go unwoken. Prefer
   the Forge shape when the goal has a scope: its goal link produces a real outcome wake.
 - **Forge-proposal gated task** (atomic, goal-linked): when the dependent goal has a
   linked Forge scope (`create_forge_scope_from_goal`), `create_forge_task_proposal` →
