@@ -225,6 +225,77 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(atNinety.breakdown['Free space']).toEqual({ tokens: 90000, percent: 45 });
   });
 
+  it('treats a non-positive SDK auto-compact threshold as unknown and arms the backstop', () => {
+    for (const autoCompactThreshold of [0, Number.NaN]) {
+      const response = baseResponse({
+        totalTokens: 90000,
+        maxTokens: 200000,
+        rawMaxTokens: 200000,
+        percentage: 45,
+        model: 'ce-model',
+        autoCompactThreshold,
+        isAutoCompactEnabled: true,
+        categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+      });
+
+      const info = ContextFetcher.toContextInfo(response, {
+        id: 'ce-model',
+        contextWindow: 200000,
+        provider: 'custom-endpoint:test',
+      });
+
+      expect(info.daemonBackstopActive).toBe(true);
+      expect(info.autoCompactThreshold).toBe(180000);
+    }
+  });
+
+  it('keeps the daemon backstop inactive when autoCompactPercent is 100', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 0,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 100,
+    });
+
+    expect(info.daemonBackstopActive).toBe(false);
+    expect(info.autoCompactThreshold).toBeFalsy();
+  });
+
+  it('preserves an earlier known SDK threshold above the default percent', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 180000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 95,
+    });
+
+    expect(info.daemonBackstopActive).toBe(false);
+    expect(info.autoCompactThreshold).toBe(180000);
+    expect(info.sdkAutoCompactThreshold).toBe(180000);
+  });
+
   it('recalculates free space against the armed window when metadata capacity differs from SDK capacity', () => {
     const response = baseResponse({
       totalTokens: 90000,
@@ -661,7 +732,8 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(262144);
     expect(info.totalUsed).toBe(90584);
     expect(info.breakdown['Reserved for Autocompact']).toBeUndefined();
-    expect(info.autoCompactThreshold).toBe(212144);
+    expect(info.autoCompactThreshold).toBe(235929);
+    expect(info.daemonBackstopActive).toBe(true);
 
     const nonFreeCategories = Object.entries(info.breakdown).filter(
       ([name]) => !name.toLowerCase().includes('free space')

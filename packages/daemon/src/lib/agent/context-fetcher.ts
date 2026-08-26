@@ -6,11 +6,7 @@ import type {
   ContextMessageBreakdown,
   ModelInfo,
 } from '@hyperneo/shared';
-import {
-  AUTO_COMPACT_PERCENT_DEFAULT,
-  AUTO_COMPACT_PERCENT_MAX,
-  resolveAutoCompactPercent,
-} from '@hyperneo/shared';
+import { AUTO_COMPACT_PERCENT_MAX, resolveAutoCompactPercent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
@@ -367,26 +363,36 @@ export class ContextFetcher {
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
       !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
     ) {
-      const resolvedAutoCompactPercent = resolveAutoCompactPercent(
-        modelMetadata?.autoCompactPercent
-      );
+      const effectivePercent = resolveAutoCompactPercent(modelMetadata?.autoCompactPercent);
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
-      const sdkThresholdKnown =
-        rawSdkAutoCompactThreshold === undefined
-          ? typeof autoCompactThreshold === 'number'
-          : rawSdkAutoCompactThreshold > 0;
+      const rawThresholdKnown =
+        typeof rawSdkAutoCompactThreshold === 'number' &&
+        Number.isFinite(rawSdkAutoCompactThreshold) &&
+        rawSdkAutoCompactThreshold > 0;
       if (
-        resolvedAutoCompactPercent < AUTO_COMPACT_PERCENT_MAX &&
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
         budgetThreshold <= capacity &&
-        (resolvedAutoCompactPercent > AUTO_COMPACT_PERCENT_DEFAULT ||
-          response.isAutoCompactEnabled === false ||
-          !sdkThresholdKnown ||
-          (autoCompactThreshold ?? 0) > budgetThreshold)
+        effectivePercent < AUTO_COMPACT_PERCENT_MAX &&
+        (response.isAutoCompactEnabled === false ||
+          !rawThresholdKnown ||
+          rawSdkAutoCompactThreshold > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;
         daemonBackstopActive = true;
+        const freeSpaceKey = Object.keys(breakdown).find((name) =>
+          name.toLowerCase().includes('free space')
+        );
+        if (freeSpaceKey) {
+          const nonFreeSpaceTokens = Object.entries(breakdown)
+            .filter(([name]) => !name.toLowerCase().includes('free space'))
+            .reduce((sum, [, data]) => sum + data.tokens, 0);
+          const correctedTokens = Math.max(0, autoCompactThreshold - nonFreeSpaceTokens);
+          breakdown[freeSpaceKey] = {
+            tokens: correctedTokens,
+            percent: capacity > 0 ? Math.round((correctedTokens / capacity) * 1000) / 10 : null,
+          };
+        }
       }
     }
 
