@@ -1,4 +1,3 @@
-import { useEffect } from 'preact/hooks';
 import type {
   CustomEndpointConfig,
   CustomEndpointModel,
@@ -6,15 +5,18 @@ import type {
   CustomEndpointType,
 } from '@hyperneo/shared';
 import {
-  DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
+  AUTO_COMPACT_PERCENT_MAX,
+  AUTO_COMPACT_PERCENT_MIN,
   CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS,
+  DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
 } from '@hyperneo/shared';
-import { Button } from '../ui/Button.tsx';
+import { useEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
+import { Button } from '../ui/Button.tsx';
 import {
   CUSTOM_ENDPOINT_PRESETS,
-  findPreset,
   type CustomEndpointPreset,
+  findPreset,
 } from './customEndpointPresets.ts';
 
 const TYPE_OPTIONS: Array<{ value: CustomEndpointType; label: string }> = [
@@ -146,6 +148,7 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
       'caching',
       'streamUsage',
       'maxContextTokens',
+      'autoCompactPercent',
       'chatTemplateKwargs',
     ];
     for (const k of keys) {
@@ -217,6 +220,16 @@ export function validateEditor(state: EditorState): string | null {
     const id = m.id.trim();
     if (!id) return 'Every model must have an id';
     if (seen.has(id)) return `Duplicate model id '${id}'`;
+    const pct = m.resolved.autoCompactPercent;
+    if (
+      pct !== undefined &&
+      (!Number.isFinite(pct) ||
+        !Number.isInteger(pct) ||
+        pct < AUTO_COMPACT_PERCENT_MIN ||
+        pct > AUTO_COMPACT_PERCENT_MAX)
+    ) {
+      return `Model '${id}': auto-compact percent must be between ${AUTO_COMPACT_PERCENT_MIN} and ${AUTO_COMPACT_PERCENT_MAX}`;
+    }
     seen.add(id);
   }
   if (state.defaultModelId.trim() && !seen.has(state.defaultModelId.trim()))
@@ -332,6 +345,23 @@ function ModelEditor({
             class="w-24 bg-dark-950 border border-dark-700 rounded px-1.5 py-0.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
           />
           tokens
+        </label>
+        <label class="flex items-center gap-1.5 text-gray-300 col-span-2">
+          Auto-compact:
+          <input
+            type="number"
+            min={AUTO_COMPACT_PERCENT_MIN}
+            max={AUTO_COMPACT_PERCENT_MAX}
+            step={5}
+            value={model.resolved.autoCompactPercent}
+            aria-label="Auto-compact percent"
+            onInput={(e) => {
+              const v = Number(e.currentTarget.value);
+              if (Number.isFinite(v)) updateCap('autoCompactPercent', v);
+            }}
+            class="w-14 bg-dark-950 border border-dark-700 rounded px-1.5 py-0.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+          />
+          %
         </label>
       </div>
     </div>

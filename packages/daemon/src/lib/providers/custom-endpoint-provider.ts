@@ -437,6 +437,7 @@ export class CustomEndpointProvider implements Provider {
       family: this.config.id,
       provider: this.id,
       contextWindow: caps.maxContextTokens,
+      autoCompactPercent: caps.autoCompactPercent,
       description: `Custom endpoint ${this.displayName}`,
       releaseDate: '',
       available: true,

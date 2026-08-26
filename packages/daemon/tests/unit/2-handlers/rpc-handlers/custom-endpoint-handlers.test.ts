@@ -179,6 +179,27 @@ describe('Custom Endpoint RPC handlers', () => {
       ).rejects.toThrow(/type 'bedrock' is invalid/);
     });
 
+    it('accepts an in-range autoCompactPercent and rejects out-of-range values', async () => {
+      const handler = hubData.handlers.get('customEndpoints.add')!;
+      const withPercent = (pct: number) => ({
+        endpoint: {
+          ...validEndpoint,
+          id: `pct-${pct}`,
+          models: validEndpoint.models.map((m) => ({
+            ...m,
+            capabilities: { ...m.capabilities, autoCompactPercent: pct },
+          })),
+        },
+      });
+      await handler(withPercent(10), {});
+      await handler(withPercent(50), {});
+      await handler(withPercent(90), {});
+      await handler(withPercent(100), {});
+      await expect(handler(withPercent(9), {})).rejects.toThrow(/autoCompactPercent/);
+      await expect(handler(withPercent(101), {})).rejects.toThrow(/autoCompactPercent/);
+      await expect(handler(withPercent(99.9), {})).rejects.toThrow(/autoCompactPercent/);
+    });
+
     it('accepts the three supported endpoint types', async () => {
       const handler = hubData.handlers.get('customEndpoints.add')!;
       await handler({ endpoint: { ...validEndpoint, id: 'a', type: 'openai-chat' } }, {});
