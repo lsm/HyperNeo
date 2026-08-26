@@ -507,8 +507,15 @@ anywhere in this plan.
   current else-if order exactly.
 - **Pure core design.** One gate per pattern, each owning its regex constant
   verbatim and deciding `match[1]`; order = current order. The classifier's
-  gates reuse the same pattern constants and the `getXFromPath` helpers where
-  they already encapsulate dual-pattern logic; the legacy redirect writes
+  gates reuse the same PATTERN CONSTANTS — NOT the `getXFromPath` helpers
+  (review correction, codex round 6: after PR 5 those helpers ARE
+  `decisionRun` pipelines, and invoking them inside `apply-space-route`
+  nests one pipeline inside another, splitting the single routing business
+  path across pipeline boundaries — the same nested-runner correction the
+  plan applies to per-model classifiers at the `useModelSwitcher` site;
+  where dual-pattern logic is genuinely shared, extract an ordinary PURE
+  match helper that both the PR 5 pipelines and the phase-2 gates call);
+  the legacy redirect writes
   are the pipeline's LEADING effect stages, before the match gates (review
   correction round 23 — effects in the composition, not a shell preamble).
   Review correction (codex round 2): the redirects do NOT perform bare
@@ -836,7 +843,16 @@ anywhere in this plan.
   it obtained; a payload-only port would have to be pre-bound to some hub
   (stale-hub race) or perform its own second lookup (another race). The
   `armTimeout`/`clearTimeout` ports are PER-CALL: each invocation owns its
-  timer handle (see the concurrency note in risks/caveats).
+  timer handle (see the concurrency note in risks/caveats). Review
+  correction (codex round 6): the `enqueue` port carries the FULL queued
+  executor, not a fire-and-forget label/payload tuple — at execution time
+  it performs its own live `getHubIfConnected` read, issues `request` on
+  that hub, and forwards the returned messageId to `onMessageAccepted`
+  (`useSendMessage.ts:67-81` and `111-115`, both queue arms); acceptance
+  reconciliation for QUEUED sends must survive the migration (a queued
+  message whose live update is missed otherwise never triggers
+  ChatContainer's visibility check and store refresh), and the queue tests
+  must EXECUTE the queued actions to assert it.
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
   `rejectEmpty` on blank/`isSending && !allowQueueWhileProcessing`) →
   `gateSessionArchived` → `gateOffline` → `gateSend` (terminal — when the
@@ -904,7 +920,9 @@ anywhere in this plan.
      correction, codex round 2: the override suite lives with the islands,
      not beside the hook tests) for: empty-content false,
      busy-unqueueable false, archived toast+false, offline enqueue+true,
-     race enqueue+`onSendComplete`+true, success path (`onSendStart` order,
+     race enqueue+`onSendComplete`+true — and for BOTH queue arms, EXECUTE
+     the queued action (live hub, request, `onMessageAccepted` with the
+     returned id — codex round 6), success path (`onSendStart` order,
   messageId callback, timeout cleared), failure path (sanitized message,
      `onSendComplete`, timeout cleared), timeout fire path, AND the
      late-completion paths (fake timers: a request RESOLVING after the timer
@@ -1336,7 +1354,11 @@ optional router phase 2. No per-site section is left uncovered.
   correction, codex round 2: full path — the override suite lives with the
   islands, not beside the hook tests): empty-content false,
   busy-unqueueable false, archived toast+false, offline enqueue+true, race
-  enqueue+`onSendComplete`+true, success ordering (`onSendStart` BEFORE the
+  enqueue+`onSendComplete`+true — and for BOTH queue arms, EXECUTE the
+  queued action and assert `onMessageAccepted` receives the returned
+  messageId (codex round 6: the queued closures at `useSendMessage.ts:67-81`
+  and `111-115` reconcile acceptance at execution time), success ordering
+  (`onSendStart` BEFORE the
   hub check, messageId callback, timeout cleared), failure path (sanitized
   message, `onSendComplete`, timeout cleared), timeout fire path, AND the
   late-completion paths (review corrections, codex rounds 2+3: fake timers —
@@ -1393,7 +1415,9 @@ optional router phase 2. No per-site section is left uncovered.
   functions) are
   injected fresh per call (`getHub` is the live hub lookup — `request` is
   never pre-bound to an early-captured hub and takes the hub it dispatches
-  on as its first argument, codex rounds 3+4); the hook keeps
+  on as its first argument, codex rounds 3+4; `enqueue` ships the FULL
+  queued executor — live hub read, `request`, `onMessageAccepted` forwarding
+  at execution time, codex round 6); the hook keeps
   per-invocation timer handles (the single shared ref is replaced —
   overlapping sends admitted via `allowQueueWhileProcessing: true` must not
   clobber each other's timers; `clearSendTimeout` clears all outstanding
