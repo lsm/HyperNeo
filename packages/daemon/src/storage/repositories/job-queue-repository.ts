@@ -300,9 +300,11 @@ export class JobQueueRepository {
   ): number {
     const reasonFilter =
       opts?.parkReason !== undefined ? `AND json_extract(payload, '$.__parkReason') = ?` : '';
+    const wakeReset =
+      opts?.parkReason !== undefined ? `, payload = json_set(payload, '$.__parkCount', 0)` : '';
     const stmt = this.db.prepare(
       `UPDATE job_queue
-          SET run_at = ?, started_at = NULL, heartbeat_at = NULL
+          SET run_at = ?, started_at = NULL, heartbeat_at = NULL${wakeReset}
         WHERE queue = ? AND status = 'pending'
           AND json_extract(payload, '$.sessionId') = ?
           AND run_at > ?

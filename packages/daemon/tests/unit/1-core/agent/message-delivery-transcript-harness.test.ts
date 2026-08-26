@@ -48,7 +48,13 @@ type DeliveryTranscriptEvent =
   | { op: 'db:recordTurnEnd'; sessionId: string; uuid: string }
   | { op: 'db:clearTurnEnd'; sessionId: string; uuid: string }
   | { op: 'job:requeue'; jobId: string; runAt: number; claimToken: string | null }
-  | { op: 'job:requeueParked'; jobId: string; runAt: number; claimToken: string | null }
+  | {
+      op: 'job:requeueParked';
+      jobId: string;
+      runAt: number;
+      claimToken: string | null;
+      reason?: string;
+    }
   | { op: 'job:requeueAs'; jobId: string; role: string; runAt: number; claimToken: string | null }
   | { op: 'job:isClaimCurrent'; jobId: string; result: boolean; claimToken: string | null }
   | { op: 'job:getParkCount'; jobId: string; result: number }
@@ -239,10 +245,17 @@ function instrumentDeliveryTranscript(
   jobRepo.requeueParked = (
     jobId: string,
     runAt: number,
-    claimToken?: string | null
+    claimToken?: string | null,
+    opts?: Parameters<JobQueueRepository['requeueParked']>[3]
   ): ReturnType<JobQueueRepository['requeueParked']> => {
-    transcript.push({ op: 'job:requeueParked', jobId, runAt, claimToken: claimToken ?? null });
-    return jobOriginals.requeueParked(jobId, runAt, claimToken);
+    transcript.push({
+      op: 'job:requeueParked',
+      jobId,
+      runAt,
+      claimToken: claimToken ?? null,
+      reason: opts?.reason,
+    });
+    return jobOriginals.requeueParked(jobId, runAt, claimToken, opts);
   };
   jobRepo.requeueAs = (
     jobId: string,
@@ -988,6 +1001,7 @@ describe('delivery transcript parity harness (A1a)', () => {
             jobId: job.id,
             runAt: expect.any(Number),
             claimToken: job.claimToken,
+            reason: 'sdk_resume_choice',
           },
         ]);
       } finally {

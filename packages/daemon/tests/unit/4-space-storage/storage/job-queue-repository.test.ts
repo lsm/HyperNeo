@@ -64,6 +64,28 @@ describe('JobQueueRepository', () => {
       expect(repository.getJob(cooldownJob.id)?.runAt).toBe(future);
     });
 
+    it('a reason-filtered wake also resets the park count for a fresh budget', () => {
+      const future = Date.now() + 600_000;
+      repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-a', messageUuid: 'u1' },
+        runAt: Date.now() - 1000,
+      });
+      const [job] = repository.dequeue('message_delivery', 1);
+      repository.requeueParked(job.id, future, job.claimToken, {
+        reason: 'sdk_resume_choice',
+      });
+      expect(repository.getParkCount(job.id)).toBe(1);
+      const changed = repository.rescheduleSessionDeliveries(
+        'message_delivery',
+        'sess-a',
+        Date.now(),
+        { parkReason: 'sdk_resume_choice' }
+      );
+      expect(changed).toBe(1);
+      expect(repository.getParkCount(job.id)).toBe(0);
+    });
+
     it('requeueParked without a reason clears any prior park reason stamp', () => {
       const future = Date.now() + 600_000;
       repository.enqueue({
