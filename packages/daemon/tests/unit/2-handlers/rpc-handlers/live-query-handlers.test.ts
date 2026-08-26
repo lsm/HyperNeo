@@ -3785,6 +3785,30 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).not.toContain('tie-gh');
       });
 
+      test('derives full-feed turn attribution by insertion order', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'b-user',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u-tf-user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a-assist', sessionId, now + 1000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+        });
+
+        backfillConversationTurns();
+        const sql = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.sql;
+        const rows = db.prepare(sql).all(taskId) as Record<string, unknown>[];
+        expect(rows.map((r) => r.id)).toEqual(['b-user', 'a-assist']);
+        const assist = rows.find((r) => r.id === 'a-assist');
+        expect(assist?.turnUserMessageId).toBe('b-user');
+      });
+
       test('keeps Write/Edit/TodoWrite tool rows even when the segment has assistant text (#2338)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

@@ -1979,7 +1979,7 @@ sdk_rows_numbered AS (
     r.*,
     ROW_NUMBER() OVER (
       PARTITION BY r.sessionId
-      ORDER BY r.createdAt ASC, r.id ASC
+      ORDER BY r.createdAt ASC, r.insOrder ASC
     ) AS rowPos
   FROM sdk_rows_raw r
 ),
