@@ -85,6 +85,8 @@ const SOURCE: Record<string, string> = {
   CONDA_PREFIX: '/Users/agent/miniconda3/envs/prod',
   CONDA_DEFAULT_ENV: 'prod',
   CLOUDSDK_CONFIG: '/Users/agent/.config/gcloud',
+  CC: 'clang',
+  CXX: 'clang++',
 };
 
 describe('buildOsBaselineEnv', () => {
@@ -96,6 +98,8 @@ describe('buildOsBaselineEnv', () => {
     expect(env.CI).toBe(SOURCE.CI);
     expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
     expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
+    expect(env.CC).toBe(SOURCE.CC);
+    expect(env.CXX).toBe(SOURCE.CXX);
     expect(env.windir).toBe(SOURCE.windir);
     expect(env.ProgramFiles).toBe(SOURCE.ProgramFiles);
     expect(env['ProgramFiles(x86)']).toBe(SOURCE['ProgramFiles(x86)']);
@@ -155,12 +159,12 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
     expect(env.GIT_CONFIG_NOSYSTEM).toBe(SOURCE.GIT_CONFIG_NOSYSTEM);
     expect(env.GIT_ATTR_NOSYSTEM).toBe(SOURCE.GIT_ATTR_NOSYSTEM);
+    expect(env.GIT_LFS_SKIP_SMUDGE).toBe(SOURCE.GIT_LFS_SKIP_SMUDGE);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
     expect(env.GIT_CONFIG_VALUE_0).toBe('/workspace');
-    expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
   });
 });

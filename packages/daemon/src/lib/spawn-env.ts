@@ -38,6 +38,8 @@ const OS_ENV_KEYS = [
   'JAVA_HOME',
   'windir',
   'NODE_ENV',
+  'CC',
+  'CXX',
 ] as const;
 
 const PROXY_TLS_ENV_KEYS = [
@@ -100,6 +102,7 @@ const GIT_COMMAND_ENV_KEYS = [
   'GIT_TERMINAL_PROMPT',
   'GIT_CONFIG_NOSYSTEM',
   'GIT_ATTR_NOSYSTEM',
+  'GIT_LFS_SKIP_SMUDGE',
 ] as const;
 
 const GIT_IDENTITY_ENV_KEYS = [
