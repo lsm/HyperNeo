@@ -146,11 +146,13 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 
 No `decisionRun`, no `stagedRun`, and no new `transformRun` combinator.
 
-Review correction (PR #2978): the named pipelines are the THREE COMPLETE SAVE
-OPERATIONS — `saveSDKMessage`, `saveUserMessageCore`, and
-`saveHyperNeoActionMessage` — each composing its admission derivation and its
-persist/sequence/publication effects as stages of one business path.
-`decideMessageAdmission` itself stays a PLAIN EXPORTED HELPER (a leaf
+Review correction (PR #2978): the named pipelines are the THREE COMPLETE
+REPOSITORY SAVE OPERATIONS — `saveSDKMessage`, `saveUserMessage`, and
+`saveHyperNeoActionMessage` — plus the outbox's `persistAndEnqueueDelivery`,
+which is another complete user-message save/delivery business path. Both user
+paths share `saveUserMessageCore` as a PLAIN IN-TRANSACTION HELPER (a leaf
+consumed by their `atomic` stages, and still called directly by `saveUserMessage`
+itself). `decideMessageAdmission` also stays a PLAIN EXPORTED HELPER (a leaf
 consumed by each save pipeline's admission stage, and directly by
 `sdk-message-badge.ts:planAdmissionBadgeUpdate` and the drift suite). A
 standalone admission-only pipeline invoked by imperative save shells would be
@@ -250,39 +252,54 @@ existing `db.transaction(...)` boundary (review correction PR #2978): the
 atomic write block — insert, sequence allocation, replacement-edge writes,
 whatever the method currently performs inside its transaction — is ONE
 in-transaction stage, and the session notifications / superseded-index
-deletion / post-save side effects are POST-COMMIT stages with a local
-`.catch(...)`. Today's `saveSDKMessage` COMMITS before notifying the session
-and deleting superseded-index entries, and failures there are only logged —
-moving them into the transaction would roll back or retry an otherwise
-successful insert. The transaction semantics are unchanged because the
-transaction body moves as a unit into one stage.
+deletion / post-save side effects are POST-COMMIT stages that keep the
+method's existing error policy (caught-and-logged for `saveSDKMessage` and the
+outbox, uncaught for `saveUserMessage` and `saveHyperNeoActionMessage`).
+Today's `saveSDKMessage` COMMITS before notifying the session and deleting
+superseded-index entries, and failures there are only logged — moving them
+into the transaction would roll back or retry an otherwise successful insert.
+The transaction semantics are unchanged because the transaction body moves as
+a unit into one stage.
 
 #### Shell/effect wiring
 
-Review correction (PR #2978): each save method's COMPLETE operation becomes
-one named pipeline — admission, persist, sequence allocation, and
+Review correction (PR #2978): each save/delivery method's COMPLETE operation
+becomes one named pipeline — admission, persist, sequence allocation, and
 notifications/publications are its stages, so no save path keeps an imperative
-shell interpreting a derivation helper:
+shell interpreting a derivation helper. The runner SURROUNDS the method's
+existing `db.transaction(...)` block (that block is ONE in-transaction stage)
+and runs post-commit stages AFTER the transaction commits. Post-commit error
+handling is per-operation, not a blanket best-effort catch:
 
-- `saveSDKMessage` → `save-sdk-message`: ONE `atomic-write` stage internally
-  runs the existing `db.transaction(...)` body; session notification and
-  superseded-index deletion are post-commit best-effort stages (local catch +
-  log — a publication failure must NOT fail the committed insert).
-- `saveUserMessageCore` → `save-user-message-core`: the pipeline boundary is
-  the OUTER persist/enqueue/post-commit flow that
-  `message-delivery-outbox.ts:60-91` composes (review correction PR #2978):
-  the transaction stage covers persist AND the queue `enqueue` (both are in
-  the transaction today), and `runPostSaveSideEffects` (`:84`, invoked only
-  after commit) is the post-commit stage. The outbox caller is rewired in
-  the SAME slice — converting only the transaction-free core would leave
-  publications outside the claimed complete pipeline, or announce a message
-  a later enqueue failure rolls back.
-- `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: same shape
-  as `save-sdk-message` inside its local transaction, publications
-  post-commit.
+- `saveSDKMessage` → `save-sdk-message`: the `atomic` stage runs the existing
+  `db.transaction(...)` body (`packages/daemon/src/storage/repositories/sdk-message-repository.ts:540-572`)
+  unchanged; session notification and superseded-index deletion are post-commit
+  best-effort stages (local catch + log — a publication failure must NOT fail
+  the committed insert, matching the current `saveSDKMessage` contract at
+  `:573-579`).
+- `saveUserMessage` → `save-user-message`: the `atomic` stage is the existing
+  `this.db.transaction(() => this.saveUserMessageCore(...))()` call
+  (`:960-962`); the shared `saveUserMessageCore` leaf performs the INSERT,
+  replacement edges, search-index scheduling, and badge update. `runPostSaveSideEffects`
+  (`:963`) is the post-commit stage and is NOT caught, so if it throws the
+  caller receives the error even though the insert is committed (matching the
+  current `saveUserMessage` contract).
+- `persistAndEnqueueDelivery` → `persist-and-enqueue-delivery`:
+  the `atomic` stage is the existing `db.transaction(...)` at
+  `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81`, containing
+  `saveUserMessageCore` followed by `jobQueue.enqueue` and the UNIQUE-conflict
+  fallback. `runPostSaveSideEffects` (`:84`) is the post-commit stage and is
+  wrapped by the existing empty `catch {}` at `:83-89`, so a publication failure
+  is ignored (matching the current outbox contract).
+- `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: the `atomic`
+  stage runs the existing `db.transaction(...)` body (`:1707-1710`);
+  `notifySessionsChanged` and `scheduleMessageSearchIndex` at `:1711-1712` are
+  post-commit stages that are NOT caught, so a failure there propagates to the
+  caller while the insert remains committed (matching the current
+  `saveHyperNeoActionMessage` contract).
 
-The method bodies reduce to snapshot → run; `decideMessageAdmission` remains
-the plain exported leaf the admission stages call.
+The method bodies reduce to snapshot → run; `decideMessageAdmission` and
+`saveUserMessageCore` remain the plain exported leaves the stages call.
 
 `planAdmissionBadgeUpdate` continues to receive the record and return a
 `BadgeUpdateInstruction`. `SendStatus` must remain exported from
@@ -291,8 +308,8 @@ the plain exported leaf the admission stages call.
 
 With the complete-save-path correction (PR #2978), the DB writes,
 `nextConsumedSeq` allocation, and notifications MOVE INTO each save pipeline
-as stages — post-commit publications as best-effort stages, per the boundary
-rules above — and they keep their exact current semantics: the
+as stages — post-commit stages keep their existing per-operation error policy,
+per the boundary rules above — and they keep their exact current semantics: the
 admission record stays decoupled from `consumed_seq` allocation (see the
 storage survey B2/B4 notes; allocation is its own stage, unchanged), and
 `isTerminal` remains only an admission flag feeding that stage's existing
@@ -333,12 +350,16 @@ decision.
    `MessageAdmissionVariant`, `MessageAdmissionOptions`,
    `NormalizedMessageAdmissionInput`).
 
-4. **Implement the save pipelines.** Compose one named pipeline per save
-   method (admission stage calling the unchanged `decideMessageAdmission`
+4. **Implement the save pipelines.** Compose one named pipeline per
+   business operation (admission stage calling the unchanged `decideMessageAdmission`
    leaf, followed by the method's existing persist/sequence/publication
-   effects as stages), and reduce each method body to snapshot → run inside
-   its existing transaction boundary. `decideMessageAdmission` keeps its
-   current plain body and public signature; export each pipeline's runner
+   effects as stages). The runner SURROUNDS the existing `db.transaction(...)`
+   block: reduce each method body to snapshot → run, with the transaction body
+   as ONE in-transaction stage and post-commit stages running AFTER the
+   transaction commits. Do not invoke the full runner inside the transaction;
+   doing so would move notification / index side effects before commit and
+   could roll back the insert when they fail. `decideMessageAdmission` keeps
+   its current plain body and public signature; export each pipeline's runner
    (`runSaveSdkMessage` et al.) for stage-level assertions if the suites want
    them.
 
@@ -347,6 +368,7 @@ decision.
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-save-admission-drift.test.ts`
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts`
+   - `packages/daemon/tests/unit/4-space-storage/storage/message-delivery-outbox.test.ts`
 
 6. **Optional microbenchmark.** Add or extend
    `packages/daemon/scripts/benchmark/decision-pipeline.ts` to measure BOTH
@@ -460,9 +482,11 @@ a slice further before opening it rather than growing a PR past budget
 mid-review; every slice leaves the repo compiling with tests green when it
 lands, and no slice folds in unrelated fixes. This plan decomposes
 into five slices: one pin dimension family, one complete save-path pipeline
-per save method (three), and a trailing benchmark (review correction PR
-#2978: the former identity/extraction pin slice was removed — the existing
-wrapper suite already characterizes those dimensions).
+per business operation (`saveSDKMessage`, the paired `saveUserMessage` /
+`persistAndEnqueueDelivery` user paths, and `saveHyperNeoActionMessage`), and
+a trailing benchmark (review correction PR #2978: the former
+identity/extraction pin slice was removed — the existing wrapper suite already
+characterizes those dimensions).
 
 ### PR 1 — `test(storage): pin admission-flag matrix for decideMessageAdmission`
 
@@ -512,7 +536,7 @@ wrapper suite already characterizes those dimensions).
   `decideMessageAdmission` keeps its plain body, two-argument signature, and
   every caller (`:974`, `:1678`, `sdk-message-badge.ts`); `bun run check`
   passes.
-- **Excludes**: The other two save paths (PRs 3–5); folding
+- **Excludes**: The other save paths (PRs 3–4); folding
   `normalizeMessageAdmissionInput` in (open question 1); any
   `transformRun`-style combinator; the benchmark extension (PR 5); later
   "Suggested migration order" items.
@@ -520,26 +544,42 @@ wrapper suite already characterizes those dimensions).
   `sdk-message-repository.test.ts`, and
   `sdk-message-repository-live-query.test.ts` re-run unchanged (pre-existing
   gates for this save path).
-- **Depends on**: PR 1, PR 2.
+- **Depends on**: PR 1.
 
-### PR 3 — `refactor(storage): compose the complete save-user-message-core pipeline`
+### PR 3 — `refactor(storage): compose the complete user-message save pipelines`
 
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
-- **Scope**: `sdk-message-repository.ts` (`saveUserMessageCore`, call site
-  `:974`) AND `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-91`.
-  Review correction (PR #2978): the pipeline boundary is the OUTER
-  persist/enqueue/post-commit flow the outbox composes — the transaction
-  stage covers persist AND queue enqueue (both are in the transaction
-  today), and `runPostSaveSideEffects` (`:84`, invoked only after commit) is
-  the post-commit stage; the outbox caller is REWIRED in this same slice
-  (leaving it untouched would split the path: publications outside the
-  claimed complete pipeline, or a message announced before a later enqueue
-  failure rolls the transaction back).
-- **Lands**: The user-message save path — persist, enqueue, and post-commit
-  side effects — runs as one complete pipeline.
-- **Excludes**: PR 4 (same repo file, sequenced).
-- **Tests**: The same three repository suites re-run unchanged.
+- **Scope**: `packages/daemon/src/storage/repositories/sdk-message-repository.ts`
+  (`saveUserMessage`, call site `:954` / `:960-962`, plus the shared
+  `saveUserMessageCore` leaf at `:967`) AND
+  `packages/daemon/src/lib/agent/message-delivery-outbox.ts:37-91`.
+  Review correction (PR #2978): there are TWO complete user-message
+  business-operation pipelines, both sharing `saveUserMessageCore` as an
+  in-transaction plain stage/helper (not a separately-run pipeline). `saveUserMessage`
+  is the direct repository method used by `query-mode-handler.ts:152`,
+  `message-persistence.ts:204,232`, and other callers; its runner surrounds the
+  existing `this.db.transaction(() => this.saveUserMessageCore(...))()` block
+  (`:960-962`) and the uncaught `runPostSaveSideEffects` call (`:963`).
+  `persistAndEnqueueDelivery` is the outbox's complete persist/enqueue/post-commit
+  flow at `:60-91`; its runner surrounds the existing `db.transaction(...)` block
+  that already calls `saveUserMessageCore` and `jobQueue.enqueue` with the
+  UNIQUE-conflict fallback, and the existing empty `catch {}` around
+  `runPostSaveSideEffects` at `:83-89`. The outbox caller is rewired in this same
+  slice.
+- **Lands**: Both user-message save/delivery paths run as complete named
+  pipelines; `saveUserMessageCore` and `decideMessageAdmission` remain plain
+  helpers; `bun run check` passes.
+- **Excludes**: `saveSDKMessage` (PR 2) and `saveHyperNeoActionMessage` (PR 4);
+  the benchmark (PR 5).
+- **Tests**:
+  - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-save-admission-drift.test.ts`
+  - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+  - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts`
+  - `packages/daemon/tests/unit/4-space-storage/storage/message-delivery-outbox.test.ts`
+    (review correction PR #2978: this suite pins the transactional
+    enqueue/rollback, UNIQUE-conflict-to-steer fallback, and post-commit
+    exception contract).
 - **Depends on**: PR 2 (same file; sequenced for same-file churn, not
   correctness).
 
@@ -547,12 +587,17 @@ wrapper suite already characterizes those dimensions).
 
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
-- **Scope**: `sdk-message-repository.ts` (`saveHyperNeoActionMessage`, call
-  site `:1678`) only. Same composition as PR 2 inside the method's local
-  transaction.
-- **Lands**: All three storage save business paths run as complete named
-  pipelines; `decideMessageAdmission` remains the plain shared leaf.
-- **Excludes**: PRs 2–4; the benchmark (PR 5).
+- **Scope**: `packages/daemon/src/storage/repositories/sdk-message-repository.ts`
+  (`saveHyperNeoActionMessage`, call site `:1675`) only. Same composition as
+  PR 2, but the post-commit stages are `notifySessionsChanged` and
+  `scheduleMessageSearchIndex` at `:1711-1712`; they are NOT caught, so a
+  failure propagates to the caller while the insert remains committed
+  (preserving the current `saveHyperNeoActionMessage` contract).
+- **Lands**: All repository save business paths and the outbox
+  `persistAndEnqueueDelivery` path run as complete named pipelines;
+  `decideMessageAdmission` and `saveUserMessageCore` remain the plain shared
+  leaves.
+- **Excludes**: PRs 2–3; the benchmark (PR 5).
 - **Tests**: The same three repository suites re-run unchanged.
 - **Depends on**: PR 3 (same file; sequenced).
 
