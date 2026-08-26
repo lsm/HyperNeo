@@ -2,8 +2,9 @@
 
 A space can register multiple workspace directories in `space_workspaces`; at most one row per
 space has `is_primary = 1` (enforced by the partial unique index `idx_space_workspaces_primary`),
-and `UNIQUE(space_id, path)` prevents registering the same path twice within one space. The same
-path may legitimately belong to different spaces.
+and `UNIQUE(space_id, path)` prevents registering the same path twice within one space. At the
+repository layer the same path may belong to different spaces; whether that is allowed is
+decided above it — registration validation (below) rejects cross-space claims.
 
 `SpaceWorkspaceRepository` (`packages/daemon/src/storage/repositories/space-workspace-repository.ts`)
 is a thin data-access layer over that table:

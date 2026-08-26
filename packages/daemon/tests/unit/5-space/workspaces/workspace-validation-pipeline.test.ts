@@ -215,6 +215,18 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict.nestingDirection).toBe('candidate_inside_existing');
     });
 
+    test('treats the filesystem root claim as containing any candidate', async () => {
+      const verdict = await validate({
+        snap: snapshot([registeredClaim(SPACE_A, '/')]),
+        rawPath: '/projects/repo',
+      });
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('ambiguous_nesting');
+      expect(verdict.nestingDirection).toBe('candidate_inside_existing');
+      expect(verdict.conflictPath).toBe('/');
+    });
+
     test('does not treat a shared path prefix as nesting', async () => {
       const verdict = await validate({
         snap: snapshot([registeredClaim(SPACE_A, '/repo')]),
@@ -264,8 +276,16 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict).toEqual({ accepted: true, canonicalPath: '/canonical/repo' });
     });
 
-    test('rejects an empty raw path as not found', async () => {
+    test('rejects an empty raw path without consulting the io adapter', async () => {
       const verdict = await validate({ rawPath: '' });
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('path_not_found');
+      expect(verdict.canonicalPath).toBeNull();
+    });
+
+    test('rejects a whitespace-only raw path', async () => {
+      const verdict = await validate({ rawPath: '   ' });
       expect(verdict.accepted).toBe(false);
       if (verdict.accepted) return;
       expect(verdict.reason).toBe('path_not_found');
@@ -281,8 +301,9 @@ describe('workspace-validation-pipeline', () => {
       await fs.writeFile(join(root, 'a-file'), 'x');
       execSync('git init -q', { cwd: root });
       await fs.mkdir(join(root, 'repo-inner-dir'));
-      execSync('git init -q', { cwd: join(root, 'sibling-repo') });
+      execSync('git init -q sibling-repo', { cwd: root });
       await fs.symlink(join(root, 'sibling-repo'), join(root, 'repo-link'));
+      execSync("git init -q 'space-dir '", { cwd: root });
     });
 
     afterAll(async () => {
@@ -347,6 +368,14 @@ describe('workspace-validation-pipeline', () => {
         rawPath: ioPath('repo-link'),
       });
       expect(verdict).toEqual({ accepted: true, canonicalPath: ioPath('sibling-repo') });
+    });
+
+    test('accepts a repository whose directory name ends in whitespace', async () => {
+      const verdict = await validate({
+        io: nodeWorkspaceValidationIo,
+        rawPath: join(root, 'space-dir '),
+      });
+      expect(verdict).toEqual({ accepted: true, canonicalPath: join(root, 'space-dir ') });
     });
 
     test('rejects a bare repository', async () => {

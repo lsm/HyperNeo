@@ -76,7 +76,7 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
   async isGitRepositoryRoot(path) {
     try {
       const { stdout } = await execAsync('git rev-parse --show-toplevel', { cwd: path });
-      const topLevel = stdout.trim();
+      const topLevel = stdout.replace(/\r?\n$/, '');
       if (topLevel === path) return true;
       const [topStat, pathStat] = await Promise.all([fs.stat(topLevel), fs.stat(path)]);
       return topStat.dev === pathStat.dev && topStat.ino === pathStat.ino;
@@ -86,7 +86,23 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
   },
 };
 
+function containsNestedPath(parent: string, child: string): boolean {
+  if (parent === '/') return child !== '/';
+  return child.startsWith(`${parent}/`);
+}
+
 async function canonicalizeCandidate(ctx: WorkspaceValidationCtx): Promise<WorkspaceValidationCtx> {
+  if (!ctx.rawPath.trim()) {
+    return {
+      ...ctx,
+      verdict: {
+        accepted: false,
+        reason: 'path_not_found',
+        message: `Workspace path does not exist: ${ctx.rawPath}`,
+        canonicalPath: null,
+      },
+    };
+  }
   try {
     return { ...ctx, canonicalPath: await ctx.io.realpath(ctx.rawPath) };
   } catch {
@@ -171,7 +187,7 @@ function ensureNoAmbiguousNesting(ctx: WorkspaceValidationCtx): WorkspaceValidat
   const canonicalPath = ctx.canonicalPath!;
   for (const claim of ctx.snapshot.claims) {
     if (claim.spaceId !== ctx.spaceId || claim.path === canonicalPath) continue;
-    if (claim.path.startsWith(`${canonicalPath}/`)) {
+    if (containsNestedPath(canonicalPath, claim.path)) {
       return {
         ...ctx,
         verdict: {
@@ -185,7 +201,7 @@ function ensureNoAmbiguousNesting(ctx: WorkspaceValidationCtx): WorkspaceValidat
         },
       };
     }
-    if (canonicalPath.startsWith(`${claim.path}/`)) {
+    if (containsNestedPath(claim.path, canonicalPath)) {
       return {
         ...ctx,
         verdict: {
