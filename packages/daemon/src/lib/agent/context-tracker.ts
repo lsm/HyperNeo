@@ -8,10 +8,13 @@ const SDK_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
 const KIMI_RESERVE_TOKENS = 45_000;
 
+export function autoCompactReserveTokens(providerId?: string): number {
+  return providerId === 'kimi' ? KIMI_RESERVE_TOKENS : SDK_AUTO_COMPACT_RESERVE_TOKENS;
+}
+
 export function reserveBasedThreshold(contextWindow: number, providerId?: string): number {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return 0;
-  const reserve = providerId === 'kimi' ? KIMI_RESERVE_TOKENS : SDK_AUTO_COMPACT_RESERVE_TOKENS;
-  return Math.max(1, contextWindow - reserve);
+  return Math.max(1, contextWindow - autoCompactReserveTokens(providerId));
 }
 
 export class ContextTracker {

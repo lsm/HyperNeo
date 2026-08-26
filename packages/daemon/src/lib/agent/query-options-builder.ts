@@ -58,6 +58,7 @@ import {
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
+import { autoCompactReserveTokens } from './context-tracker.js';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
@@ -225,13 +226,10 @@ export function buildProviderSettings(
   }
 
   const percent = resolveAutoCompactPercent(autoCompactPercent ?? undefined);
-  const scaled = Math.floor((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT);
   const autoCompactWindow =
-    percent >= AUTO_COMPACT_PERCENT_DEFAULT
-      ? percent > AUTO_COMPACT_PERCENT_DEFAULT
-        ? Math.ceil((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT)
-        : contextWindow
-      : Math.max(1, scaled);
+    percent === AUTO_COMPACT_PERCENT_DEFAULT
+      ? contextWindow
+      : Math.floor((contextWindow * percent) / 100) + autoCompactReserveTokens(providerId);
 
   return {
     autoCompactEnabled: true,

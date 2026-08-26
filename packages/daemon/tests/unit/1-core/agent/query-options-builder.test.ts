@@ -979,15 +979,15 @@ describe('QueryOptionsBuilder', () => {
     it('should stretch the armed window for percents above the SDK default so the trigger lands on target', () => {
       expect(buildProviderSettings('openrouter', 200_000, undefined, 95)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 211_112,
+        autoCompactWindow: 223_000,
       });
       expect(buildProviderSettings('openrouter', 200_000, undefined, 91)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 202_223,
+        autoCompactWindow: 215_000,
       });
       expect(buildProviderSettings('openrouter', 200_000, undefined, 100)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 222_223,
+        autoCompactWindow: 233_000,
       });
       expect(buildProviderSettings('openrouter', 200_000, undefined, 90)).toEqual({
         autoCompactEnabled: true,
@@ -995,10 +995,14 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    it('should arm the SDK at the configured threshold for percents below the default', () => {
+    it('should arm the SDK at the configured threshold plus the provider reserve for percents below the default', () => {
       expect(buildProviderSettings('openrouter', 200_000, undefined, 50)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 111_111,
+        autoCompactWindow: 133_000,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 176_072,
       });
     });
 
@@ -1147,7 +1151,7 @@ describe('QueryOptionsBuilder', () => {
       const pctOptions = await builder.build();
       expect(pctOptions.settings).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 888_888,
+        autoCompactWindow: 833_000,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
