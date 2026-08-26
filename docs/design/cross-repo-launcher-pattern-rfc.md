@@ -252,23 +252,32 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 gate's hold lifecycle):
 
 - **Setup:** drain B's pending outcomes first — reconciling any completion racing the
-  pause, since the pause is itself a revision-changing mutation; then `pause_goal`,
-  recording hold ownership in `nextSteps`; then cancel B's active goal task **and any
-  tracked gated task** (both gated shapes bypass the active-task pointer and ignore the
-  paused status), each with `cancel_workflow_run: true` when workflow-backed; then
-  dispose/consolidate every resulting outcome (one update-bearing review; bare-
-  acknowledge the rest). For the hard gate, drain once more immediately before creating
-  the gated shape — the setup cancellation itself produces outcomes.
+  pause, since the pause is itself a revision-changing mutation; then pause — `pause_goal`
+  only if B is active; an already-paused goal instead records the additional hold in
+  `nextSteps` and marks that this sequence does **not** own the pause; then cancel what
+  the hold must stop: every active goal task for a judgment gate, and for a durable
+  wait only dependency-sensitive ones (independent work may deliberately continue under
+  the wait) — plus, for either hold, any tracked gated task (both gated shapes bypass
+  the active-task pointer and ignore the paused status), each with
+  `cancel_workflow_run: true` when workflow-backed; then dispose/consolidate every
+  resulting outcome (one update-bearing review; bare-acknowledge the rest). For the
+  hard gate, drain once more immediately before creating the gated shape — the setup
+  cancellation itself produces outcomes.
 - **Release:** review any outcome produced while held (before resuming — the resume
-  bumps the revision); revalidate that no other recorded hold remains; resume only when
-  this sequence owns the pause or all other gates are cleared; re-trigger only when the
-  active-task pointer is confirmed empty; restore a retained cadence **only once the
-  goal is revalidated triggerable** — a cross-goal condition still unresolved keeps it
-  cleared, because a scheduled fire does not consult `nextSteps`.
-- **Terminal handling:** a successful **final** gated step records the standalone
-  task's ID and result into B's rolling state (`update_goal`) before completing the
-  goal; an unsuccessful Forge outcome is reviewed while B stays paused, before
-  rebinding, recreating, or otherwise mutating the goal.
+  bumps the revision); clear any retained cadence **before** `resume_goal` (resuming
+  reactivates the schedule against an empty pointer), restoring it only after the
+  explicitly triggered outcome is reviewed; revalidate that no other recorded hold
+  remains; resume only when this sequence owns the pause or all other gates are
+  cleared; re-trigger only when the active-task pointer is confirmed empty; a
+  cross-goal condition still unresolved keeps the cadence cleared, because a scheduled
+  fire does not consult `nextSteps`.
+- **Terminal handling:** a standalone gated task's terminal result is recorded into
+  B's rolling state (`update_goal`) at **every** terminal state — success or failure —
+  before resuming, completing, rebinding, or recreating (standalone tasks have no goal
+  link or outcome notification, so this record is the only trace); a successful
+  **final** step then completes goal B rather than resuming it; an unsuccessful Forge
+  outcome is reviewed while B stays paused, before rebinding, recreating, or otherwise
+  mutating the goal.
 
 The plain goal tools have **no atomic creation path**: `trigger_goal_task` accepts only
 `goal_id`, while `create_standalone_task` accepts `depends_on` but creates a task with
