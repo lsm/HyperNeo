@@ -348,6 +348,7 @@ export class GitHubEventExtensionRepository {
           .prepare(
             `SELECT * FROM space_github_watched_repos
              WHERE space_id = ? AND enabled = 1 AND webhook_enabled = 1 AND polling_enabled = 0
+               AND webhook_secret IS NOT NULL
              ORDER BY owner, repo`
           )
           .all(spaceId) as Record<string, unknown>[])
@@ -355,6 +356,7 @@ export class GitHubEventExtensionRepository {
           .prepare(
             `SELECT * FROM space_github_watched_repos
              WHERE enabled = 1 AND webhook_enabled = 1 AND polling_enabled = 0
+               AND webhook_secret IS NOT NULL
              ORDER BY space_id, owner, repo`
           )
           .all() as Record<string, unknown>[]);

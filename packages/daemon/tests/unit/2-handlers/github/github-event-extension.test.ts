@@ -9157,7 +9157,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     await extension.stop();
   });
 
-  test('space.github.watchRepo clears the global polling capability when the last polling row is turned off', async () => {
+  test('space.github.watchRepo keeps global polling capability when a polling row becomes a configured webhook-only row', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, undefined, { pollIntervalMs: 60_000 });
     const { clientHub, hub, ready } = setupHubPair();
@@ -9188,7 +9188,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         webhookSecret: 'manual-secret',
       });
 
-      expect((await configStore.getGlobalConfig('github')).capabilities.polling).toBe(false);
+      expect((await configStore.getGlobalConfig('github')).capabilities.polling).toBe(true);
     } finally {
       await extension.stop();
     }
@@ -10202,6 +10202,11 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       now,
       now
     );
+    db.prepare(
+      `INSERT INTO space_tasks
+       (id, space_id, task_number, title, description, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'open', ?, ?)`
+    ).run('task-1', 'space-1', 1, 'Review PR', '', now, now);
     db.prepare(
       `INSERT INTO space_workflow_event_subscriptions
        (id, space_id, workflow_run_id, task_id, node_id, agent_name, topic, topic_normalized,
