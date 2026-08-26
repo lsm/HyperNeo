@@ -195,16 +195,18 @@ export function runSpawnExecutionFlow(
         writes: [],
         run: async (view) => {
           const sessionId = (view.reuseLive as { sessionId: string }).sessionId;
-          const rebind = deps.rebindLiveExecution(view.execution, sessionId);
-          const freshTaskInRun = view.freshTask.workflowRunId === view.execution.workflowRunId;
-          if (rebind !== 'superseded' && freshTaskInRun) {
-            await deps.syncReuseLiveWorkspace?.(
-              view.freshTask,
-              view.space,
-              view.execution,
-              sessionId
+          if (view.freshTask.workflowRunId !== view.execution.workflowRunId) {
+            throw new Error(
+              `Task ${view.freshTask.id} is no longer attached to workflow run ${view.execution.workflowRunId}; refusing to reuse its live session`
             );
           }
+          const rebind = deps.rebindLiveExecution(view.execution, sessionId);
+          await deps.syncReuseLiveWorkspace?.(
+            view.freshTask,
+            view.space,
+            view.execution,
+            sessionId
+          );
           return rebind;
         },
       }),
