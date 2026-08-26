@@ -363,6 +363,47 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     expect(h.reservations).toEqual([]);
   });
 
+  test('reuse_live migrates the live session when the task workspace changed (perform branch)', async () => {
+    const h = makeSpawnFlowHarness({
+      execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
+    });
+    const state = { id: 'live-session', workspacePath: '/old/ws' as string | null };
+    const metadataUpdates: Array<Record<string, unknown>> = [];
+    const reinjections: Array<Record<string, unknown>> = [];
+    const live = {
+      session: { id: 'live-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      getSessionData: () => state,
+      updateMetadata: (u: Record<string, unknown>) => {
+        metadataUpdates.push(u);
+        if ('workspacePath' in u) state.workspacePath = u.workspacePath as string | null;
+      },
+    } as unknown as AgentSession;
+    const internal = h.tam as unknown as {
+      getSubSession: (id: string) => AgentSession | undefined;
+      reinjectNodeAgentMcpServer: (
+        session: AgentSession,
+        ctx: Record<string, unknown>
+      ) => Promise<void>;
+    };
+    (h.tam as unknown as { agentSessionIndex: Map<string, AgentSession> }).agentSessionIndex.set(
+      'live-session',
+      live
+    );
+    internal.getSubSession = (id) => (id === 'live-session' ? live : undefined);
+    internal.reinjectNodeAgentMcpServer = async (_session, ctx) => {
+      reinjections.push(ctx);
+    };
+
+    const result = await h.spawn();
+
+    expect(result).toBe('live-session');
+    expect(metadataUpdates).toEqual([{ workspacePath: '/tmp/ws' }]);
+    expect(reinjections).toHaveLength(1);
+    expect(reinjections[0]).toMatchObject({ workspacePath: '/tmp/ws' });
+    expect(state.workspacePath).toBe('/tmp/ws');
+  });
+
   test('reuse_live clears no reservation: a concurrent peer keeps its in-flight spawn guard', async () => {
     const h = makeSpawnFlowHarness({
       execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),

@@ -2435,7 +2435,8 @@ export class TaskAgentManager {
               else if (live.getSessionData().workspacePath === workspacePath) {
                 skipReason = 'workspace already matches';
               }
-              return { decision: { skipReason, perform: skipReason === null } };
+              const decision = { skipReason };
+              return skipReason ? { decision, skip: true } : { decision, perform: true };
             },
           }),
           s.halt({
