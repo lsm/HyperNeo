@@ -26,16 +26,26 @@ export class SpaceWorktreeManager {
     this.spaceRepo = new SpaceRepository(db);
   }
 
-  private canonicalizeRepoRoot(repoRoot: string): string {
+  private resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
     try {
       const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
         cwd: repoRoot,
         encoding: 'utf8',
         timeout: 30_000,
       }).trim();
-      if (topLevel) return topLevel;
-    } catch {}
-    return repoRoot;
+      if (!topLevel) throw new Error('empty toplevel');
+      const commonDirRaw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 30_000,
+      }).trim();
+      const commonDir =
+        commonDirRaw && !isAbsolute(commonDirRaw) ? resolve(topLevel, commonDirRaw) : commonDirRaw;
+      const dirKey = commonDir ? dirname(commonDir) : topLevel;
+      return { commandCwd: topLevel, dirKey };
+    } catch {
+      return { commandCwd: repoRoot, dirKey: repoRoot };
+    }
   }
 
   async createTaskWorktree(
@@ -50,19 +60,22 @@ export class SpaceWorktreeManager {
     if (!space) {
       throw new Error(`Space not found: ${spaceId}`);
     }
-    const gitRoot = this.canonicalizeRepoRoot(repoRoot ?? space.workspacePath);
+    const repo = this.resolveRepoRoot(repoRoot ?? space.workspacePath);
 
     const existing = this.worktreeRepo.getByTaskId(spaceId, taskId);
     if (existing) {
       return { path: existing.path, slug: existing.slug };
     }
 
-    const worktreesDir = getWorktreeBaseDir(gitRoot, (msg) => this.logger.warn(msg));
+    const worktreesDir = getWorktreeBaseDir(repo.dirKey, (msg) => this.logger.warn(msg));
     if (!existsSync(worktreesDir)) {
       mkdirSync(worktreesDir, { recursive: true });
     }
 
-    const existingSlugs = this.worktreeRepo.listSlugsUnderPath(`${worktreesDir}/`);
+    const existingSlugs = [
+      ...this.worktreeRepo.listSlugs(spaceId),
+      ...this.worktreeRepo.listSlugsUnderPath(`${worktreesDir}/`),
+    ];
     const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
 
     const worktreePath = join(worktreesDir, slug);
@@ -74,7 +87,7 @@ export class SpaceWorktreeManager {
       );
       try {
         execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
-          cwd: gitRoot,
+          cwd: repo.commandCwd,
           timeout: 30_000,
         });
       } catch {
@@ -84,21 +97,21 @@ export class SpaceWorktreeManager {
 
     try {
       execFileSync('git', ['worktree', 'prune'], {
-        cwd: gitRoot,
+        cwd: repo.commandCwd,
         timeout: 30_000,
       });
     } catch {}
 
     try {
       const branches = execFileSync('git', ['branch', '--list', branchName], {
-        cwd: gitRoot,
+        cwd: repo.commandCwd,
         encoding: 'utf8',
         timeout: 30_000,
       });
       if (branches.trim().length > 0) {
         this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
         execFileSync('git', ['branch', '-D', branchName], {
-          cwd: gitRoot,
+          cwd: repo.commandCwd,
           timeout: 30_000,
         });
       }
@@ -116,7 +129,7 @@ export class SpaceWorktreeManager {
               'git',
               ['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD'],
               {
-                cwd: gitRoot,
+                cwd: repo.commandCwd,
                 timeout: 30_000,
                 stdio: 'pipe',
               }

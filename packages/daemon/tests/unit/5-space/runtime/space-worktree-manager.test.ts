@@ -475,6 +475,72 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     rmSync(aliasDir, { force: true });
   });
+
+  test('same-titled tasks in two repos of one space get distinct slugs', async () => {
+    const taskA = seedTask(db, spaceId, 'task-ws11-two-repos-a', 71);
+    const taskB = seedTask(db, spaceId, 'task-ws11-two-repos-b', 72);
+
+    const a = await manager.createTaskWorktree(spaceId, taskA, 'Union Title', 71);
+    const b = await manager.createTaskWorktree(
+      spaceId,
+      taskB,
+      'Union Title',
+      72,
+      undefined,
+      secondaryDir
+    );
+
+    expect(a.slug).not.toBe(b.slug);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+  });
+
+  test('linked-worktree spellings of one repo share one project dir and slug scope', async () => {
+    const linkedDir = join(TMP_ROOT, `linked-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    execSync(`git worktree add "${linkedDir}" -b tmp-linked HEAD`, {
+      cwd: secondaryDir,
+      stdio: 'pipe',
+    });
+
+    const otherSpaceId = `space-ws11-linked-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(
+      otherSpaceId,
+      realpathSync(linkedDir),
+      `Space ${otherSpaceId}`,
+      otherSpaceId,
+      Date.now(),
+      Date.now()
+    );
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-linked-a', 73);
+    const taskB = seedTask(db, otherSpaceId, 'task-ws11-linked-b', 74);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Linked Title',
+      73,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Linked Title', 74);
+
+    expect(a.path).toContain(getProjectShortKey(secondaryDir));
+    expect(b.path).toContain(getProjectShortKey(secondaryDir));
+    expect(b.slug).not.toBe(a.slug);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).toContain(`space/${a.slug}`);
+    expect(secondaryBranches).toContain(`space/${b.slug}`);
+
+    rmSync(linkedDir, { recursive: true, force: true });
+  });
 });
 
 describe('removeTaskWorktree', () => {
