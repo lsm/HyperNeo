@@ -1925,7 +1925,13 @@ export class SpaceRuntime {
       agentName: execution.agentName,
     };
     const task = this.config.taskRepo.getTask(target.taskId);
-    if (!task || task.status === 'stopped' || task.status === 'cancelled') return null;
+    if (
+      !task ||
+      task.status === 'stopped' ||
+      evaluateRequeueTaskLifecycle(task, { topic: '', source: '' }) !== null
+    ) {
+      return null;
+    }
     const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
     if (run && this.pausedSpaceIds.has(run.spaceId)) return null;
     const claimedRows: ExternalEventDeliveryRecord[] = [];
@@ -1933,6 +1939,17 @@ export class SpaceRuntime {
       if (claimedRows.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
       if (this.externalEventDeliveriesInFlight.has(row.deliveryKey)) continue;
       const record = store.getById(row.eventId);
+      if (
+        record &&
+        isQueuedExternalEventExpired(record.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
+      ) {
+        store.markDeliveryFailed(row.eventId, row.deliveryKey, {
+          terminal: true,
+          reason: 'ttl_expired',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(row.eventId);
+        continue;
+      }
       if (record && !this.isTargetStillSubscribed(target, record.event.topic)) {
         store.markDeliveryFailed(row.eventId, row.deliveryKey, {
           terminal: true,
