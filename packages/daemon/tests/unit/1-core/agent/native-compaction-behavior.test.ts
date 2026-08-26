@@ -303,6 +303,7 @@ function driveCompactionRefresh(opts: {
     enqueue: enqueueSpy,
     enqueueWithId: mock(async () => {}),
     clear: mock(() => {}),
+    setDeliveryGate: mock(() => {}),
   } as unknown as MessageQueue;
 
   const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;

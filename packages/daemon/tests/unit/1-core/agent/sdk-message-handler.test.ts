@@ -196,6 +196,7 @@ describe('SDKMessageHandler', () => {
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
+      setDeliveryGate: mock(() => {}),
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});
