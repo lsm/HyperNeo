@@ -4250,11 +4250,7 @@ export class TaskAgentManager {
       hasWorktreeManager: false,
       spaceWorkspacePath: space.workspacePath,
     }).workspacePath;
-    if (healWorkspacePath && agentSession.getSessionData().workspacePath !== healWorkspacePath) {
-      agentSession.updateMetadata({ workspacePath: healWorkspacePath });
-    }
-
-    await this.ensureRequiredMcpServersAttached(agentSession, {
+    const healCtx = {
       taskId: parentTask.id,
       subSessionId: sessionId,
       agentName: execution.agentName,
@@ -4262,6 +4258,14 @@ export class TaskAgentManager {
       workflowRunId: execution.workflowRunId,
       workspacePath: healWorkspacePath,
       workflowNodeId: execution.workflowNodeId,
+    };
+    if (healWorkspacePath && agentSession.getSessionData().workspacePath !== healWorkspacePath) {
+      agentSession.updateMetadata({ workspacePath: healWorkspacePath });
+      await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
+    }
+
+    await this.ensureRequiredMcpServersAttached(agentSession, {
+      ...healCtx,
       phase: 'rehydrate',
     });
   }

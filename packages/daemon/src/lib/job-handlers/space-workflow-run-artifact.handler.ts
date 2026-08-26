@@ -72,7 +72,10 @@ async function resolveWorktreeForJob(
   let fallbackTask: SpaceTask | null = null;
   if (taskId) {
     fallbackTask = deps.spaceTaskRepo.getTask(taskId);
-    if (fallbackTask && fallbackTask.workflowRunId !== runId) {
+    if (
+      fallbackTask &&
+      (fallbackTask.workflowRunId !== runId || fallbackTask.spaceId !== run.spaceId)
+    ) {
       fallbackTask = null;
     }
     if (fallbackTask) {
