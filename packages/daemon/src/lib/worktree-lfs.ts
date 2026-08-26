@@ -4,10 +4,12 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
-const LFS_EXT_LINE_PATTERN = /^ext-(\d)-\S+ sha256:[0-9a-f]{64}$/;
+const LFS_EXT_LINE_PATTERN = /^ext-(\d)-\w[\w.-]* sha256:[0-9a-f]{64}$/;
 const LFS_PROBE_TIMEOUT_MS = 60_000;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+
+const LFS_CANDIDATE_MAX_BYTES = 65_536;
 
 export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 
@@ -78,6 +80,14 @@ export async function indexContainsLfsPointer(
     throw err;
   }
   for (const rel of candidates.split('\0').filter(Boolean)) {
+    const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', `:./${rel}`], {
+      cwd,
+      encoding: 'utf8',
+      timeout: LFS_PROBE_TIMEOUT_MS,
+      env,
+      maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+    });
+    if (Number(sizeOut.trim()) > LFS_CANDIDATE_MAX_BYTES) continue;
     const { stdout } = await execFileAsync('git', ['show', `:./${rel}`], {
       cwd,
       encoding: 'utf8',

@@ -48,6 +48,10 @@ function stubGrepCandidate(blobContent: string): void {
       callback(null, { stdout: 'asset.bin\0', stderr: '' });
       return;
     }
+    if (file === 'git' && args[0] === 'cat-file') {
+      callback(null, { stdout: `${blobContent.length}\n`, stderr: '' });
+      return;
+    }
     if (file === 'git' && args[0] === 'show') {
       callback(null, { stdout: blobContent, stderr: '' });
       return;
@@ -96,6 +100,41 @@ describe('indexContainsLfsPointer', () => {
       `${LFS_SIGNATURE}\next-10-counter sha256:${'b'.repeat(64)}\n${POINTER_OID}\nsize 1234\n`
     );
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
+  test('rejects punctuation-only extension names', async () => {
+    stubGrepCandidate(
+      `${LFS_SIGNATURE}\next-1--- sha256:${'b'.repeat(64)}\n${POINTER_OID}\nsize 1234\n`
+    );
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
+  });
+
+  test('skips oversized candidate blobs before reading them', async () => {
+    stubGitProbes((file, args, callback) => {
+      if (file === 'git' && args[0] === 'grep') {
+        callback(null, { stdout: 'huge.bin\0asset.bin\0', stderr: '' });
+        return;
+      }
+      if (file === 'git' && args[0] === 'cat-file') {
+        const size = args[2] === ':./huge.bin' ? '99999999' : '40';
+        callback(null, { stdout: size, stderr: '' });
+        return;
+      }
+      if (file === 'git' && args[0] === 'show') {
+        if (args[1] === ':./asset.bin') {
+          callback(null, { stdout: `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`, stderr: '' });
+          return;
+        }
+        callback(new Error('oversized blob must not be read'), { stdout: '', stderr: '' });
+        return;
+      }
+      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+        stdout: '',
+        stderr: '',
+      });
+    });
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+    expect(gitCalls.some((call) => call[1] === 'show' && call[2] === ':./huge.bin')).toBe(false);
   });
 
   test('accepts CRLF-delimited pointer blobs', async () => {
@@ -200,6 +239,10 @@ describe('indexContainsLfsPointer', () => {
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
         callback(null, { stdout: '2:fixture\0', stderr: '' });
+        return;
+      }
+      if (file === 'git' && args[0] === 'cat-file') {
+        callback(null, { stdout: `${(LFS_SIGNATURE.length + 20).toString()}\n`, stderr: '' });
         return;
       }
       if (file === 'git' && args[0] === 'show') {

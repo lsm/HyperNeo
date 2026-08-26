@@ -2239,6 +2239,8 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
       USERPROFILE: 'C:\\Users\\agent',
       AppData: 'C:\\Users\\agent\\AppData\\Roaming',
       LOCALAPPDATA: 'C:\\Users\\agent\\AppData\\Local',
+      HOMEDRIVE: 'C:',
+      HOMEPATH: '\\Users\\agent',
       LC_ALL: 'en_US.UTF-8',
       LC_CTYPE: 'en_US.UTF-8',
     });
@@ -2251,7 +2253,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
           kind: 'script',
           interpreter: 'bash',
           source:
-            'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${SystemRoot:-missing}|${TEMP:-missing}|${USERPROFILE:-missing}|${AppData:-missing}|${LOCALAPPDATA:-missing}|${LC_ALL:-missing}|${LC_CTYPE:-missing}\\" }"',
+            'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${SystemRoot:-missing}|${TEMP:-missing}|${USERPROFILE:-missing}|${AppData:-missing}|${LOCALAPPDATA:-missing}|${HOMEDRIVE:-missing}|${HOMEPATH:-missing}|${LC_ALL:-missing}|${LC_CTYPE:-missing}\\" }"',
         },
       }),
       {
@@ -2274,7 +2276,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
 
     expect(result.result.type).toBe('allow');
     expect(result.result.message).toBe(
-      'C:\\Windows|C:\\Users\\agent\\AppData\\Local\\Temp|C:\\Users\\agent|C:\\Users\\agent\\AppData\\Roaming|C:\\Users\\agent\\AppData\\Local|en_US.UTF-8|en_US.UTF-8'
+      'C:\\Windows|C:\\Users\\agent\\AppData\\Local\\Temp|C:\\Users\\agent|C:\\Users\\agent\\AppData\\Roaming|C:\\Users\\agent\\AppData\\Local|C:|\\Users\\agent|en_US.UTF-8|en_US.UTF-8'
     );
   });
 

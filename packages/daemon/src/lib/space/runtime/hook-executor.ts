@@ -103,6 +103,8 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'USERPROFILE',
   'AppData',
   'LOCALAPPDATA',
+  'HOMEDRIVE',
+  'HOMEPATH',
   'SystemRoot',
   'SystemDrive',
   'ComSpec',
