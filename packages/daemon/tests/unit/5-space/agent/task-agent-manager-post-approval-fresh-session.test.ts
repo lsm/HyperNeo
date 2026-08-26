@@ -561,14 +561,18 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     (tam.config as unknown as Record<string, unknown>).worktreeManager = {
       getTaskWorktreePathSync: () => null,
     };
-
-    await tam.spawnPostApprovalSubSession({
-      task: {
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => ({
         id: TASK_ID,
         spaceId: SPACE_ID,
         workflowRunId: RUN_ID,
+        title: 'Task 850',
         workspacePath: '/task/override',
-      } as unknown as SpaceTask,
+      }),
+    };
+
+    await tam.spawnPostApprovalSubSession({
+      task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
       workflow: minimalWorkflow(),
       targetAgent: REVIEWER_AGENT,
       kickoffMessage: 'merge the PR',
@@ -576,6 +580,28 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
 
     const init = fromInitSpy.mock.calls[0][0] as unknown as Record<string, unknown>;
     expect(init.workspacePath).toBe('/task/override');
+  });
+
+  test('fresh post-approval spawn rejects when the task moved to another workflow run', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => ({
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: 'run-other',
+        title: 'Task 850',
+      }),
+    };
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
+        workflow: minimalWorkflow(),
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow('moved to workflow run');
   });
 
   test('persisted worktree still wins over task.workspacePath', async () => {

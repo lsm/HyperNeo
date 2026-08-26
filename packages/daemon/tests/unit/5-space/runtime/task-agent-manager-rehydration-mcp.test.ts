@@ -456,4 +456,24 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.metadataUpdates).toEqual([]);
     expect(fake.state.session.workspacePath).toBe('/old/workspace');
   });
+
+  test('mcpSelfHeal resolves the heal workspace from the owner reloaded under the lock (WS10)', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.workspacePath = '/old/workspace';
+    const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
+    repo.getTask = () => ({
+      id: TASK_ID,
+      spaceId: SPACE_ID,
+      workflowRunId: RUN_ID,
+      status: 'in_progress',
+      title: 'Rehydrate MCP task',
+      workspacePath: '/task/heal-late',
+    });
+
+    await tam.mcpSelfHeal(fake.agentSession, ['node-agent']);
+
+    expect(fake.state.metadataUpdates).toContainEqual({ workspacePath: '/task/heal-late' });
+    expect(fake.state.session.workspacePath).toBe('/task/heal-late');
+  });
 });

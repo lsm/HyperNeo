@@ -4411,47 +4411,73 @@ export class TaskAgentManager {
       });
     }
 
-    const healWorkspacePath = resolveSpawnWorkspace({
-      cachedTaskWorktreePath:
-        this.getTaskWorktreePath(parentTask.id) ??
-        explicitTaskWorkspace(parentTask) ??
-        agentSession.getSessionData().workspacePath ??
-        undefined,
-      hasWorktreeManager: false,
-      spaceWorkspacePath: space.workspacePath,
-    }).workspacePath;
-    const healCtx = {
-      taskId: parentTask.id,
-      subSessionId: sessionId,
-      agentName: execution.agentName,
-      spaceId: parentTask.spaceId,
-      workflowRunId: execution.workflowRunId,
-      workspacePath: healWorkspacePath,
-      workflowNodeId: execution.workflowNodeId,
-    };
-    if (healWorkspacePath && agentSession.getSessionData().workspacePath !== healWorkspacePath) {
-      await this.withSessionInjectLock(sessionId, async () => {
-        const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
-        agentSession.updateMetadata({ workspacePath: healWorkspacePath });
-        try {
-          await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
-        } catch (err) {
-          if (previousHealWorkspacePath !== undefined) {
-            agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
-          }
-          throw err;
-        }
-        await this.ensureRequiredMcpServersAttached(agentSession, {
-          ...healCtx,
-          phase: 'rehydrate',
-        });
-      });
-    } else {
-      await this.ensureRequiredMcpServersAttached(agentSession, {
-        ...healCtx,
-        phase: 'rehydrate',
-      });
-    }
+    await this.withSessionInjectLock(sessionId, async () => {
+      interface SelfHealWorkspaceState {
+        sessionId: string;
+        currentTask: SpaceTask;
+        healWorkspacePath: string | null;
+      }
+      const outcome = await stagedRun<SelfHealWorkspaceState>(
+        'self-heal-workspace',
+        (s) => [
+          s.snapshot({
+            name: 'resolve-heal-workspace',
+            provides: ['currentTask', 'healWorkspacePath'],
+            run: () => {
+              const currentTask = this.config.taskRepo.getTask(parentTask.id) ?? parentTask;
+              const healWorkspacePath = resolveSpawnWorkspace({
+                cachedTaskWorktreePath:
+                  this.getTaskWorktreePath(currentTask.id) ??
+                  explicitTaskWorkspace(currentTask) ??
+                  agentSession.getSessionData().workspacePath ??
+                  undefined,
+                hasWorktreeManager: false,
+                spaceWorkspacePath: space.workspacePath,
+              }).workspacePath;
+              return { currentTask, healWorkspacePath };
+            },
+          }),
+          s.effect({
+            name: 'heal-workspace',
+            reads: ['currentTask', 'healWorkspacePath'],
+            writes: [],
+            run: async (view) => {
+              const healWorkspacePath = view.healWorkspacePath!;
+              const healCtx = {
+                taskId: view.currentTask.id,
+                subSessionId: sessionId,
+                agentName: execution.agentName,
+                spaceId: view.currentTask.spaceId,
+                workflowRunId: execution.workflowRunId,
+                workspacePath: healWorkspacePath,
+                workflowNodeId: execution.workflowNodeId,
+              };
+              if (
+                healWorkspacePath &&
+                agentSession.getSessionData().workspacePath !== healWorkspacePath
+              ) {
+                const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
+                agentSession.updateMetadata({ workspacePath: healWorkspacePath });
+                try {
+                  await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
+                } catch (err) {
+                  if (previousHealWorkspacePath !== undefined) {
+                    agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
+                  }
+                  throw err;
+                }
+              }
+              await this.ensureRequiredMcpServersAttached(agentSession, {
+                ...healCtx,
+                phase: 'rehydrate',
+              });
+            },
+          }),
+        ],
+        { input: ['sessionId'] }
+      )({ sessionId });
+      if (outcome.status === 'error') throw outcome.error;
+    });
   }
 
   async ensureRequiredMcpServersAttached(
@@ -5046,10 +5072,16 @@ export class TaskAgentManager {
     const workflowRunId = task.workflowRunId;
     const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
 
+    const freshTask = this.config.taskRepo.getTask(taskId) ?? task;
+    if (freshTask.workflowRunId !== task.workflowRunId) {
+      throw new Error(
+        `spawnPostApprovalSubSession: task ${taskId} moved to workflow run ${freshTask.workflowRunId ?? 'detached'} before creating a fresh session`
+      );
+    }
     const workspacePath = resolveSpawnWorkspace({
       cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
       hasWorktreeManager: false,
-      spaceWorkspacePath: resolveTaskWorkspace(space, task),
+      spaceWorkspacePath: resolveTaskWorkspace(space, freshTask),
     }).workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
