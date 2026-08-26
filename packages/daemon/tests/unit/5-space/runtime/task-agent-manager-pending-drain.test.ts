@@ -63,6 +63,7 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
     recordDeliveryAttempt: (id: string, error: string | null) =>
       repo.recordDeliveryAttempt(id, error),
     recordDeliveryError: (id: string, error: string | null) => repo.recordDeliveryError(id, error),
+    markFailed: (id: string, error: string) => repo.markFailed(id, error),
     clearLateDeadLetter: (id: string) => repo.clearLateDeadLetter(id),
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);
@@ -929,9 +930,9 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
     const failed = h.spyRepo.repo.getById(failingRow.id);
-    expect(failed?.status).toBe('pending');
-    expect(failed?.attempts).toBe(1);
-    expect(failed?.lastError).toBe('injector down');
+    expect(failed?.status).toBe('failed');
+    expect(failed?.attempts).toBe(5);
+    expect(failed?.lastError).toBe('space-agent delivery attempts exhausted (5)');
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
   });
 });

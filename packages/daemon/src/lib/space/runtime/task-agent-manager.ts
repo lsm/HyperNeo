@@ -1525,6 +1525,58 @@ export class TaskAgentManager {
         this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
       onSettled: (row, deliveredSessionId) =>
         this.emitPendingDelivered(row.id, deliveredSessionId, row),
+      watchActiveDelivery: (row) => {
+        const replyToSession = this.resolveSpaceAgentReplySession(row);
+        const candidates =
+          replyToSession && replyToSession !== spaceChatSessionId
+            ? [replyToSession, spaceChatSessionId]
+            : [spaceChatSessionId];
+        const probe = (sessionId: string) =>
+          this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
+          [];
+        let done = false;
+        const stopWatchers = () => {
+          done = true;
+          for (const handle of handles) handle.cancel();
+        };
+        const settleFrom = (settledSessionId: string) => {
+          if (done) return;
+          done = true;
+          stopWatchers();
+          if (repo.getById(row.id)?.status !== 'pending') return;
+          repo.markDelivered(row.id, settledSessionId);
+          this.emitPendingDelivered(row.id, settledSessionId, row);
+        };
+        const scheduleReconciliation = () => {
+          void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+        };
+        const onWatcherFailed = () => {
+          if (done) return;
+          done = true;
+          stopWatchers();
+          scheduleReconciliation();
+        };
+        for (const sessionId of candidates) {
+          handles.push(
+            this.lateSettlements.arm({
+              sessionId,
+              messageId: row.id,
+              onConsumed: (settledSessionId) => {
+                settleFrom(settledSessionId);
+                scheduleReconciliation();
+              },
+              onFailed: onWatcherFailed,
+            })
+          );
+        }
+        for (const sessionId of candidates) {
+          if (probe(sessionId) === 'consumed') {
+            settleFrom(sessionId);
+            return;
+          }
+        }
+      },
       deliverRow: async (row) => {
         await this.deliverSpaceAgentPendingRow({
           repo,
@@ -1589,11 +1641,10 @@ export class TaskAgentManager {
         return;
       }
       repo.deferExpiration([row.id]);
-      if ((repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
+      if (outcome.state === 'failed' && (repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
         repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
       }
       if (outcome.state === 'failed') {
-        repo.recordDeliveryError(row.id, outcome.error);
         scheduleReconciliation();
         log.warn(
           `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
@@ -1608,8 +1659,11 @@ export class TaskAgentManager {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       repo.recordDeliveryError(row.id, errMsg);
-      if ((repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
-        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
+      const latest = repo.getById(row.id);
+      if ((latest?.attempts ?? 0) >= (latest?.maxAttempts ?? Infinity)) {
+        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${latest?.maxAttempts})`);
+      } else {
+        scheduleReconciliation();
       }
       log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
     }
