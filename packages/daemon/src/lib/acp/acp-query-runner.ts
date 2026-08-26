@@ -27,7 +27,11 @@ import type { McpServerConfig, SDKMessage, SDKUserMessage } from '@hyperneo/shar
 import { ErrorCategory } from '../error-manager.ts';
 import { updateProviderModelsInCache } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.ts';
-import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service.ts';
+import {
+  getProviderService,
+  getUserConfiguredAnthropicEnv,
+  type ProviderService,
+} from '../provider-service.ts';
 import { AcpProvider } from '../providers/acp-provider.ts';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
@@ -47,6 +51,8 @@ import { AcpClient, type AcpClientOptions } from './acp-client.ts';
 import { buildAcpSafeEnv, getAcpCommandIdentityDigest, parseAcpCommand } from './acp-command.ts';
 import { getAcpProcessTreeOwner } from './acp-process-tree.ts';
 import { AcpQueryAdapter } from './acp-query-adapter.ts';
+import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
+import type { ProviderEnvLeaseToken } from '../providers/provider-env-coordinator.ts';
 import {
   isSafeFsSupported,
   readFileWithinWorkspace,
@@ -427,6 +433,16 @@ export class AcpQueryRunner {
     let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
+    let abortController: AbortController | null = null;
+    let acpMcpServers: AcpMcpServerConfig[] = [];
+    let cwd: string = process.cwd();
+    let instructionBlocks: AcpContentBlock[] = [];
+    let prependInstructionsToNextPrompt = false;
+    let startupHandshakeActive = true;
+    let command: string;
+    let args: string[];
+    let startupTimeoutMs: number;
+    let startStartupTimer: (hasFirstMessage: () => boolean) => void = () => {};
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -438,212 +454,248 @@ export class AcpQueryRunner {
       if (!provider) {
         throw new Error("Provider 'acp' is not registered.");
       }
-      if (provider.isAvailable && !(await provider.isAvailable())) {
-        const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
-        const errorMsg = authStatus?.error || 'Please configure credentials.';
-        const authError = new Error(
-          `Provider ${provider.displayName} is not available. ${errorMsg}`
-        );
-        await errorManager.handleError(
-          session.id,
-          authError,
-          ErrorCategory.PROVIDER_AUTH_ERROR,
-          `Provider ${provider.displayName} is not available. Please configure credentials to continue.`,
-          stateManager.getState(),
-          { providerId: provider.id, providerName: provider.displayName }
-        );
-        throw authError;
-      }
 
-      if (session.workspacePath) {
-        const fs = await import('fs/promises');
-        await fs.mkdir(session.workspacePath, { recursive: true });
-      }
-
-      const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback();
-      optionsBuilder.setCanUseTool(canUseTool);
-      let queryOptions = await optionsBuilder.build();
-      queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
-
-      const acpCommand =
-        provider instanceof AcpProvider
-          ? provider.getAcpCommand()
-          : process.env.HYPERNEO_ACP_COMMAND;
-      if (!acpCommand) {
-        throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
-      }
-      const { command, args } = parseAcpCommand(acpCommand);
-      const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
-      const storedIdentity = session.metadata?.acpCommandIdentity;
-      if (storedIdentity !== commandIdentity) {
-        if (session.acpSessionId && storedIdentity !== undefined) {
-          session.acpSessionId = undefined;
-          session.metadata = {
-            ...session.metadata,
-            acpInstructionsSent: undefined,
-            acpContextUsageEstimate: undefined,
-          };
-        }
-        session.metadata = {
-          ...session.metadata,
-          acpCommandIdentity: commandIdentity,
-        };
-        this.pendingAcpIdentityMetadata = true;
-      }
-      const preCleanupAuth = {
-        ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
-        CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-      };
-      const providerService = getProviderService();
-      this.ctx.originalEnvVars = providerService.applyEnvVarsToProcessForSession({
-        ...session,
-        config: { ...session.config, provider: 'acp' },
-      });
-
-      proxyBridge = new AcpMcpProxyBridge(
-        (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
-      );
-      if (proxyBridge.tools.length > 0) {
-        await proxyBridge.start();
-      }
-      const acpMcpServers = convertMcpServersForAcp(
-        queryOptions.mcpServers,
-        (message) => logger.warn(message),
-        proxyBridge
-      );
-      const workspace = getAcpWorkspacePath(session, queryOptions);
-      const cwd = workspace ?? process.cwd();
-      const startupTimeoutMs = getStartupTimeoutMs();
       assertActiveAcpStartup();
-      const abortController = new AbortController();
-      this.ctx.queryAbortController = abortController;
-      runAbortController = abortController;
-      const instructionBlocks = acpInstructionBlocks(queryOptions);
-      const hasInstructionBlocks = instructionBlocks.length > 0;
-      const hasPriorAcpTurn = (session.metadata?.messageCount ?? 0) > 0;
-      let prependInstructionsToNextPrompt =
-        hasInstructionBlocks &&
-        !(session.acpSessionId && (session.metadata?.acpInstructionsSent || hasPriorAcpTurn));
-      let startupHandshakeActive = true;
-      let restoredMessageEnqueuedHandler = false;
-      const previousOnMessageEnqueued = messageQueue.onMessageEnqueued;
+      client = await providerEnvCoordinator.runWithLease(
+        'acp.query',
+        async (_leaseToken: ProviderEnvLeaseToken) => {
+          assertActiveAcpStartup();
+          let providerService: ProviderService | undefined;
 
-      const startStartupTimer = (hasFirstMessage: () => boolean) => {
-        this.clearStartupTimer();
-        startupTimeoutReached = false;
-        queryStartTime = Date.now();
-        this.ctx.startupTimeoutTimer = setTimeout(() => {
-          if (!hasFirstMessage()) {
-            startupTimeoutReached = true;
-            const elapsed = Date.now() - queryStartTime;
-            logger.error(
-              `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
-                `Command: ${command}, workspace: ${cwd} ` +
-                `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
-            );
-            abortController.abort();
-            try {
-              client?.cancel();
-              if (client?.canCloseSession()) {
-                client.closeSession().catch(() => {});
+          try {
+            if (provider.isAvailable && !(await provider.isAvailable())) {
+              assertActiveAcpStartup();
+              const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
+              assertActiveAcpStartup();
+              const errorMsg = authStatus?.error || 'Please configure credentials.';
+              const authError = new Error(
+                `Provider ${provider.displayName} is not available. ${errorMsg}`
+              );
+              await errorManager.handleError(
+                session.id,
+                authError,
+                ErrorCategory.PROVIDER_AUTH_ERROR,
+                `Provider ${provider.displayName} is not available. Please configure credentials to continue.`,
+                stateManager.getState(),
+                { providerId: provider.id, providerName: provider.displayName }
+              );
+              throw authError;
+            }
+            assertActiveAcpStartup();
+
+            if (session.workspacePath) {
+              const fs = await import('fs/promises');
+              await fs.mkdir(session.workspacePath, { recursive: true });
+            }
+            assertActiveAcpStartup();
+
+            const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback();
+            optionsBuilder.setCanUseTool(canUseTool);
+            let queryOptions = await optionsBuilder.build();
+            assertActiveAcpStartup();
+            queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
+            assertActiveAcpStartup();
+
+            const acpCommand =
+              provider instanceof AcpProvider
+                ? provider.getAcpCommand()
+                : process.env.HYPERNEO_ACP_COMMAND;
+            if (!acpCommand) {
+              throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
+            }
+            ({ command, args } = parseAcpCommand(acpCommand));
+            const commandIdentity = getAcpCommandIdentityDigest(acpCommand);
+            const storedIdentity = session.metadata?.acpCommandIdentity;
+            if (storedIdentity !== commandIdentity) {
+              if (session.acpSessionId && storedIdentity !== undefined) {
+                session.acpSessionId = undefined;
+                session.metadata = {
+                  ...session.metadata,
+                  acpInstructionsSent: undefined,
+                  acpContextUsageEstimate: undefined,
+                };
               }
-            } catch {}
-            this.ctx.queryObject?.close();
-            client?.close();
-          }
-        }, startupTimeoutMs);
-      };
-
-      const onMessageEnqueued = (messageId: string, queuedAt: number) => {
-        previousOnMessageEnqueued?.(messageId, queuedAt);
-        if (!startupHandshakeActive || this.ctx.startupTimeoutTimer) return;
-        startStartupTimer(() => false);
-      };
-
-      restoreMessageEnqueuedHandler = () => {
-        if (restoredMessageEnqueuedHandler) return;
-        restoredMessageEnqueuedHandler = true;
-        if (messageQueue.onMessageEnqueued === onMessageEnqueued) {
-          messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
-        }
-      };
-      messageQueue.onMessageEnqueued = onMessageEnqueued;
-
-      const acpEnv = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
-        refreshAutoCompactWindow: true,
-        omitProviderManaged: true,
-        omitProviderManagedPreserveAuth: true,
-      });
-      const userEnv = getUserConfiguredAnthropicEnv();
-      for (const [key, value] of Object.entries(userEnv)) {
-        if (key === 'ANTHROPIC_AUTH_TOKEN' && !value.startsWith('sk-ant-oat')) continue;
-        acpEnv[key] = value;
-      }
-      if (preCleanupAuth.ANTHROPIC_AUTH_TOKEN?.startsWith('sk-ant-oat')) {
-        acpEnv.ANTHROPIC_AUTH_TOKEN = preCleanupAuth.ANTHROPIC_AUTH_TOKEN;
-      }
-      if (preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN) {
-        acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
-      }
-
-      const processTreeOwner = await getAcpProcessTreeOwner();
-      const hostCallbacks = workspace
-        ? (() => {
-            const manager = new AcpTerminalManager(
-              buildAcpSafeEnv(acpEnv),
-              workspace,
-              processTreeOwner
-            );
-            terminalManager = manager;
-            return {
-              onTerminalCreate: async (params: AcpTerminalCreateParams) => {
-                const normalized = normalizeAcpTerminalCreate(params);
-                if (abortController.signal.aborted) {
-                  throw new Error('ACP terminal command cancelled');
-                }
-                return manager.create(normalized);
-              },
-              onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
-              onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
-                manager.waitForExit(params),
-              onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
-              onTerminalRelease: (params: AcpTerminalReleaseParams) => manager.release(params),
-              ...(isSafeFsSupported()
-                ? {
-                    onFsRead: (params: AcpFsReadParams) => this.handleFsRead(params, workspace),
-                    onFsWrite: (params: AcpFsWriteParams) =>
-                      this.handleFsWrite(params, workspace, abortController.signal),
-                  }
-                : {}),
+              session.metadata = {
+                ...session.metadata,
+                acpCommandIdentity: commandIdentity,
+              };
+              this.pendingAcpIdentityMetadata = true;
+            }
+            const preCleanupAuth = {
+              ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+              CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
             };
-          })()
-        : {};
-      assertActiveAcpStartup();
-      client = this.createAcpClient({
-        command,
-        args,
-        cwd,
-        env: acpEnv as Record<string, string> | undefined,
-        replaceEnv: true,
-        processTreeOwner,
-        onProcessSpawn: (proc) =>
-          this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
-        onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-        onPermissionRequest: allowAcpPermissionRequest,
-        ...hostCallbacks,
-      });
+            providerService = getProviderService();
+            this.ctx.originalEnvVars = providerService.applyEnvVarsToProcessForSession({
+              ...session,
+              config: { ...session.config, provider: 'acp' },
+            });
+
+            proxyBridge = new AcpMcpProxyBridge(
+              (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
+            );
+            if (proxyBridge.tools.length > 0) {
+              await proxyBridge.start();
+            }
+            assertActiveAcpStartup();
+            acpMcpServers = convertMcpServersForAcp(
+              queryOptions.mcpServers,
+              (message) => logger.warn(message),
+              proxyBridge
+            );
+            const workspace = getAcpWorkspacePath(session, queryOptions);
+            cwd = workspace ?? process.cwd();
+            startupTimeoutMs = getStartupTimeoutMs();
+            assertActiveAcpStartup();
+            abortController = new AbortController();
+            this.ctx.queryAbortController = abortController;
+            runAbortController = abortController;
+            instructionBlocks = acpInstructionBlocks(queryOptions);
+            const hasInstructionBlocks = instructionBlocks.length > 0;
+            const hasPriorAcpTurn = (session.metadata?.messageCount ?? 0) > 0;
+            prependInstructionsToNextPrompt =
+              hasInstructionBlocks &&
+              !(session.acpSessionId && (session.metadata?.acpInstructionsSent || hasPriorAcpTurn));
+            let restoredMessageEnqueuedHandler = false;
+            const previousOnMessageEnqueued = messageQueue.onMessageEnqueued;
+
+            startStartupTimer = (hasFirstMessage: () => boolean) => {
+              this.clearStartupTimer();
+              startupTimeoutReached = false;
+              queryStartTime = Date.now();
+              this.ctx.startupTimeoutTimer = setTimeout(() => {
+                if (!hasFirstMessage()) {
+                  startupTimeoutReached = true;
+                  const elapsed = Date.now() - queryStartTime;
+                  logger.error(
+                    `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
+                      `Command: ${command}, workspace: ${cwd} ` +
+                      `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
+                  );
+                  abortController?.abort();
+                  try {
+                    client?.cancel();
+                    if (client?.canCloseSession()) {
+                      client.closeSession().catch(() => {});
+                    }
+                  } catch {}
+                  this.ctx.queryObject?.close();
+                  client?.close();
+                }
+              }, startupTimeoutMs);
+            };
+
+            const onMessageEnqueued = (messageId: string, queuedAt: number) => {
+              previousOnMessageEnqueued?.(messageId, queuedAt);
+              if (!startupHandshakeActive || this.ctx.startupTimeoutTimer) return;
+              startStartupTimer(() => false);
+            };
+
+            restoreMessageEnqueuedHandler = () => {
+              if (restoredMessageEnqueuedHandler) return;
+              restoredMessageEnqueuedHandler = true;
+              if (messageQueue.onMessageEnqueued === onMessageEnqueued) {
+                messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
+              }
+            };
+            messageQueue.onMessageEnqueued = onMessageEnqueued;
+
+            const acpEnv = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+              refreshAutoCompactWindow: true,
+              omitProviderManaged: true,
+              omitProviderManagedPreserveAuth: true,
+            });
+            const userEnv = getUserConfiguredAnthropicEnv();
+            for (const [key, value] of Object.entries(userEnv)) {
+              if (key === 'ANTHROPIC_AUTH_TOKEN' && !value.startsWith('sk-ant-oat')) continue;
+              acpEnv[key] = value;
+            }
+            if (preCleanupAuth.ANTHROPIC_AUTH_TOKEN?.startsWith('sk-ant-oat')) {
+              acpEnv.ANTHROPIC_AUTH_TOKEN = preCleanupAuth.ANTHROPIC_AUTH_TOKEN;
+            }
+            if (preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN) {
+              acpEnv.CLAUDE_CODE_OAUTH_TOKEN = preCleanupAuth.CLAUDE_CODE_OAUTH_TOKEN;
+            }
+
+            const processTreeOwner = await getAcpProcessTreeOwner();
+            assertActiveAcpStartup();
+            const hostCallbacks = workspace
+              ? (() => {
+                  const manager = new AcpTerminalManager(
+                    buildAcpSafeEnv(acpEnv),
+                    workspace,
+                    processTreeOwner
+                  );
+                  terminalManager = manager;
+                  return {
+                    onTerminalCreate: async (params: AcpTerminalCreateParams) => {
+                      const normalized = normalizeAcpTerminalCreate(params);
+                      if (abortController!.signal.aborted) {
+                        throw new Error('ACP terminal command cancelled');
+                      }
+                      return manager.create(normalized);
+                    },
+                    onTerminalOutput: (params: AcpTerminalOutputParams) => manager.output(params),
+                    onTerminalWaitForExit: (params: AcpTerminalWaitForExitParams) =>
+                      manager.waitForExit(params),
+                    onTerminalKill: (params: AcpTerminalKillParams) => manager.kill(params),
+                    onTerminalRelease: (params: AcpTerminalReleaseParams) =>
+                      manager.release(params),
+                    ...(isSafeFsSupported()
+                      ? {
+                          onFsRead: (params: AcpFsReadParams) =>
+                            this.handleFsRead(params, workspace),
+                          onFsWrite: (params: AcpFsWriteParams) =>
+                            this.handleFsWrite(params, workspace, abortController!.signal),
+                        }
+                      : {}),
+                  };
+                })()
+              : {};
+            assertActiveAcpStartup();
+            client = this.createAcpClient({
+              command,
+              args,
+              cwd,
+              env: acpEnv as Record<string, string> | undefined,
+              replaceEnv: true,
+              processTreeOwner,
+              onProcessSpawn: (proc) =>
+                this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
+              onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
+              onPermissionRequest: allowAcpPermissionRequest,
+              ...hostCallbacks,
+            });
+            assertActiveAcpStartup();
+
+            if (messageQueue.size() > 0) {
+              startStartupTimer(() => false);
+            }
+
+            if (!client) {
+              throw new Error('ACP client not created during setup');
+            }
+            return client;
+          } finally {
+            const originalEnvVars = this.ctx.originalEnvVars;
+            if (providerService && Object.keys(originalEnvVars).length > 0) {
+              providerService.restoreEnvVars(originalEnvVars);
+              this.ctx.originalEnvVars = {};
+            }
+          }
+        }
+      );
+
+      const activeClient = client;
+      const acpClient = activeClient;
       assertActiveAcpStartup();
 
-      if (messageQueue.size() > 0) {
-        startStartupTimer(() => false);
-      }
-
-      await client.initialize();
-      await client.authenticate();
+      await acpClient.initialize();
+      await acpClient.authenticate();
       assertActiveAcpStartup();
       const existingAcpSessionId = session.acpSessionId;
       if (existingAcpSessionId) {
-        if (!client.canLoadSession()) {
+        if (!acpClient.canLoadSession()) {
           throw new Error(
             `ACP agent cannot resume existing ACP session ${existingAcpSessionId}: ` +
               'agent does not advertise session load/resume capability. ' +
@@ -652,12 +704,12 @@ export class AcpQueryRunner {
         }
 
         try {
-          const result = await client.loadSession(existingAcpSessionId, cwd, acpMcpServers);
+          const result = await acpClient.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           this.persistAcpSessionId(result.sessionId);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         } catch (loadError) {
           try {
-            const result = await client.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
+            const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             this.persistAcpSessionId(result.sessionId);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           } catch (resumeError) {
@@ -673,14 +725,14 @@ export class AcpQueryRunner {
           }
         }
       } else {
-        const result = await client.createSession(cwd, acpMcpServers);
+        const result = await acpClient.createSession(cwd, acpMcpServers);
         this.persistAcpSessionId(result.sessionId);
         this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         createdAcpSessionDuringRun = true;
       }
-      await this.applyStoredAcpModel(client);
-      await this.applyStoredAcpThinkingLevel(client);
-      this.updateAcpModelCache(client.getConfigOptions());
+      await this.applyStoredAcpModel(acpClient);
+      await this.applyStoredAcpThinkingLevel(acpClient);
+      this.updateAcpModelCache(acpClient.getConfigOptions());
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
@@ -693,7 +745,7 @@ export class AcpQueryRunner {
       for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
         suppressPreYieldCallback: true,
       })) {
-        if (abortController.signal.aborted) break;
+        if (abortController!.signal.aborted) break;
         if (this.ctx.isLimitRecoveryPending?.()) {
           logger.info(
             'ACP prompt loop: limit recovery engaged; requeueing prompt until the retry.'
@@ -714,7 +766,7 @@ export class AcpQueryRunner {
           };
         }
 
-        await this.applyStoredAcpThinkingLevel(client);
+        await this.applyStoredAcpThinkingLevel(acpClient);
 
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
@@ -723,7 +775,7 @@ export class AcpQueryRunner {
         prependInstructionsToNextPrompt = false;
         let submitted = false;
         let accepted = false;
-        const adapter = new AcpQueryAdapter(client, promptContent, {
+        const adapter = new AcpQueryAdapter(acpClient, promptContent, {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
           onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
@@ -752,7 +804,7 @@ export class AcpQueryRunner {
         try {
           for await (const acpMessage of this.createAbortableQuery(
             adapter,
-            abortController.signal
+            abortController!.signal
           )) {
             if (startupTimeoutReached && messageCount === 0) {
               throw new Error('ACP startup timeout - query aborted');
@@ -816,7 +868,7 @@ export class AcpQueryRunner {
         !runAbortController?.signal.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
-      terminalManager?.dispose();
+      (terminalManager as AcpTerminalManager | null)?.dispose();
       terminalManager = null;
       const effectiveError =
         startupTimeoutReached && !this.ctx.firstMessageReceived
@@ -837,8 +889,8 @@ export class AcpQueryRunner {
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
-      terminalManager?.dispose();
-      await proxyBridge?.close();
+      (terminalManager as AcpTerminalManager | null)?.dispose();
+      await (proxyBridge as AcpMcpProxyBridge | null)?.close();
       proxyBridge = null;
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 

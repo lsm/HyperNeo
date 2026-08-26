@@ -90,7 +90,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
 
   const autoCompactThreshold = contextUsage?.autoCompactThreshold ?? 0;
   const showAutoCompactBuffer =
-    contextUsage?.isAutoCompactEnabled === true &&
+    (contextUsage?.isAutoCompactEnabled === true || contextUsage?.daemonBackstopActive === true) &&
     autoCompactThreshold > 0 &&
     autoCompactThreshold < contextCapacity &&
     contextCapacity > 0;
