@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
 describe('MessageQueue', () => {
   let queue: MessageQueue;
@@ -354,6 +354,61 @@ describe('MessageQueue', () => {
 
       queue.clear();
       await expect(messagePromise).resolves.toBeUndefined();
+    });
+
+    it('hasOutstandingInternalCompaction tracks internal /compact entries across queue, claim, and yield', async () => {
+      queue.start();
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+
+      const firstFailure = queue.enqueue('/compact', true).catch((error: Error) => error);
+      const secondFailure = queue.enqueue('/compact', true).catch((error: Error) => error);
+      expect(queue.hasOutstandingInternalCompaction()).toBe(true);
+      expect(queue.removePendingInternalCompactions()).toBe(2);
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+
+      const yielded = queue.enqueue('/compact', true);
+      const generator = queue.messageGenerator(testSessionId);
+      await generator.next();
+      expect(queue.hasOutstandingInternalCompaction()).toBe(true);
+      queue.clear();
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+      await expect(yielded).resolves.toBeDefined();
+      expect((await firstFailure).message).toBe('compaction superseded by model switch');
+      expect((await secondFailure).message).toBe('compaction superseded by model switch');
+    });
+
+    it('keeps consuming after the queue empties while a delivery gate is pending', async () => {
+      queue.start();
+
+      let releaseGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      queue.setDeliveryGate(gate);
+
+      let release: ((error: Error) => void) | undefined;
+      const compacted = queue.enqueue('/compact', true).catch((error: Error) => {
+        release?.(error);
+        throw error;
+      });
+      const superseded = new Promise<Error>((resolve) => {
+        release = resolve;
+      });
+      const generator = queue.messageGenerator(testSessionId);
+      const pending = generator.next();
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      queue.removePendingInternalCompactions();
+      releaseGate();
+
+      const followUp = queue.enqueue('Follow-up');
+      const result = await pending;
+      expect(result.done).toBe(false);
+      expect(result.value.message.message.content[0].text).toBe('Follow-up');
+      result.value.onSent();
+      await followUp;
+      expect((await superseded).message).toBe('compaction superseded by model switch');
+      await expect(compacted).rejects.toThrow('compaction superseded by model switch');
     });
 
     it('rejects when onMessageYielded throws and does not count the message as yielded', async () => {

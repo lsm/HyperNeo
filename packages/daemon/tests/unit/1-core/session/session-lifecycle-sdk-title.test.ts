@@ -410,44 +410,13 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     await generateTitleWithSdkForTest('glm', 'glm-5.1');
 
     expect(lastTitleQueryOptions?.model).toBe('default');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
     const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
-  });
-
-  it('restores the applied provider env before invoking the SDK query', async () => {
-    const events: string[] = [];
-    mockTitleProviderService.applyEnvVarsToProcessForProvider = mock(async () => {
-      events.push('apply');
-      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-5-turbo';
-      return { ANTHROPIC_DEFAULT_HAIKU_MODEL: undefined };
-    });
-    mockTitleProviderService.restoreEnvVars = mock((original) => {
-      events.push(`restore:${Object.keys(original).length}`);
-      for (const [key, value] of Object.entries(original)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    });
-    config.titleGenerationQueryForTesting = (params) => {
-      const opts = params.options ?? {};
-      if ('thinking' in opts) {
-        lastTitleQueryOptions = opts;
-        events.push(`query:${process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? 'restored'}`);
-      }
-      return makeQueryMock(mockSdkMessages);
-    };
-
-    const title = await generateTitleWithSdkForTest('glm', 'glm-5.1');
-
-    expect(title).toBe('My Generated Title');
-    expect(events).toEqual(['apply', 'restore:1', 'query:restored', 'restore:0']);
-    const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
-    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
   });
 
   it('should extract title from text blocks', async () => {

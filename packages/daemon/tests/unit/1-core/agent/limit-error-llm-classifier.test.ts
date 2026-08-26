@@ -389,51 +389,6 @@ describe('LimitErrorLlmClassifier', () => {
     expect(seenProviders).toEqual(['glm']);
   });
 
-  it('restores the applied provider env before invoking the SDK query', async () => {
-    const events: string[] = [];
-    let lastQueryEnv: Record<string, string | undefined> | undefined;
-    const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');
-    deps.providerService = {
-      ...deps.providerService,
-      applyEnvVarsToProcessForProvider: async () => {
-        events.push('apply');
-        process.env.ANTHROPIC_BASE_URL = 'https://relay.example';
-        return { ANTHROPIC_BASE_URL: undefined };
-      },
-      getEnvVarsForModel: async () => ({ ANTHROPIC_BASE_URL: 'https://relay.example' }),
-      restoreEnvVars: (original: Record<string, string | undefined>) => {
-        events.push(`restore:${Object.keys(original).length}`);
-        for (const [key, value] of Object.entries(original)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
-      },
-    };
-    deps.queryForTesting = ((params: {
-      options?: { env?: Record<string, string | undefined> };
-    }) => {
-      events.push(`query:${process.env.ANTHROPIC_BASE_URL ?? 'restored'}`);
-      lastQueryEnv = params.options?.env;
-      return (async function* () {
-        yield {
-          type: 'assistant',
-          message: {
-            content: [
-              { type: 'text', text: '{"is_limit":true,"kind":"rate_limit","reset_at":null}' },
-            ],
-          },
-        };
-      })();
-    }) as LimitErrorLlmClassifierDeps['queryForTesting'];
-
-    const classifier = new LimitErrorLlmClassifier('s1', deps);
-    const assessment = await classifier.classify('relay routing wall');
-
-    expect(assessment?.kind).toBe('rate_limit');
-    expect(events).toEqual(['apply', 'restore:1', 'query:restored', 'restore:0']);
-    expect(lastQueryEnv?.ANTHROPIC_BASE_URL).toBe('https://relay.example');
-  });
-
   it('frees the queue when provider env application stalls past the deadline', async () => {
     const seenRestores: unknown[] = [];
     const { deps } = createDeps('{"is_limit":true,"kind":"rate_limit","reset_at":null}');

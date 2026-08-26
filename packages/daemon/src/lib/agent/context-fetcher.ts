@@ -1,14 +1,16 @@
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
-import type { QueryLike } from './query-like.ts';
 import type {
-  ContextInfo,
-  ContextCategoryBreakdown,
-  ContextMessageBreakdown,
   ContextAPIUsage,
+  ContextCategoryBreakdown,
+  ContextInfo,
+  ContextMessageBreakdown,
   ModelInfo,
 } from '@hyperneo/shared';
+import { AUTO_COMPACT_PERCENT_DEFAULT, resolveAutoCompactPercent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
+import { scaledAutoCompactWindow } from './context-budget-decision.ts';
+import type { QueryLike } from './query-like.ts';
 import {
   buildProviderSettings,
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
@@ -23,8 +25,8 @@ type ContextMetadata =
       | 'sdkModelIds'
       | 'contextWindow'
       | 'preferContextWindowMetadata'
-      | 'provider'
       | 'autoCompactPercent'
+      | 'provider'
     >
   | null
   | undefined;
@@ -69,6 +71,8 @@ function resolveDisplayModel(
 export class ContextFetcher {
   private logger: Logger;
 
+  private inFlightUsage: Promise<SDKControlGetContextUsageResponse> | null = null;
+
   constructor(private sessionId: string) {
     this.logger = new Logger(`ContextFetcher ${sessionId}`);
   }
@@ -80,9 +84,12 @@ export class ContextFetcher {
     modelMetadata?: ContextMetadata
   ): Promise<ContextInfo | null> {
     if (!query?.getContextUsage) return null;
+    if (this.inFlightUsage) return null;
 
+    const request = query.getContextUsage();
+    this.inFlightUsage = request;
     try {
-      const response = await query.getContextUsage();
+      const response = await ContextFetcher.withUsageTimeout(request);
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
         response,
         modelMetadata
@@ -95,6 +102,24 @@ export class ContextFetcher {
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
+    } finally {
+      if (this.inFlightUsage === request) {
+        this.inFlightUsage = null;
+      }
+    }
+  }
+
+  private static async withUsageTimeout<T>(pending: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('getContextUsage timed out')), 2000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -293,7 +318,8 @@ export class ContextFetcher {
       capacity > 0
         ? Math.min(100, Math.max(0, Math.round((response.totalTokens / capacity) * 100)))
         : Math.max(0, Math.round(response.percentage));
-    let autoCompactThreshold = response.autoCompactThreshold;
+    const rawSdkAutoCompactThreshold = response.autoCompactThreshold;
+    let autoCompactThreshold = rawSdkAutoCompactThreshold;
     if (
       typeof autoCompactReservedTokens === 'number' &&
       autoCompactReservedTokens > 0 &&
@@ -309,6 +335,28 @@ export class ContextFetcher {
       Math.abs(autoCompactThreshold - Math.floor(response.maxTokens * 0.9)) <= 1
     ) {
       autoCompactThreshold = Math.floor(capacity * 0.9);
+    }
+    const enforcementProvider = modelMetadata?.provider;
+    let daemonBackstopActive = false;
+    if (
+      enforcementProvider &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
+      !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
+    ) {
+      const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
+      if (
+        budgetThreshold !== undefined &&
+        budgetThreshold > 0 &&
+        budgetThreshold <= capacity &&
+        (resolveAutoCompactPercent(modelMetadata?.autoCompactPercent) >
+          AUTO_COMPACT_PERCENT_DEFAULT ||
+          response.isAutoCompactEnabled === false ||
+          typeof autoCompactThreshold !== 'number' ||
+          autoCompactThreshold > budgetThreshold)
+      ) {
+        autoCompactThreshold = budgetThreshold;
+        daemonBackstopActive = true;
+      }
     }
 
     const resolvedModel = resolveDisplayModel(
@@ -326,6 +374,9 @@ export class ContextFetcher {
       breakdown,
       apiUsage,
       autoCompactThreshold,
+      sdkAutoCompactThreshold: rawSdkAutoCompactThreshold,
+      autoCompactPercent: modelMetadata?.autoCompactPercent,
+      daemonBackstopActive,
       isAutoCompactEnabled: response.isAutoCompactEnabled,
       messageBreakdown,
       lastUpdated: Date.now(),

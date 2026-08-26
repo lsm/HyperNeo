@@ -949,7 +949,7 @@ export class SpaceRuntimeService {
         },
       },
     });
-    this.attachLongTermAgentMcpServers(
+    await this.attachLongTermAgentMcpServers(
       session,
       space,
       agent.displayName,
@@ -1057,7 +1057,14 @@ export class SpaceRuntimeService {
       await session.resetQuery({ restartQuery: true });
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
-      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agentId);
+      await this.attachLongTermAgentMcpServers(
+        session,
+        space,
+        agent.name,
+        sessionId,
+        agent,
+        agentId
+      );
     }
     return session;
   }
@@ -1096,7 +1103,7 @@ export class SpaceRuntimeService {
       persistedAgent?.name ??
       'Space Agent';
     const agentHandleAliases = longHorizonAgent ? [`@${longHorizonAgent.handle}`] : undefined;
-    this.attachLongTermAgentMcpServers(
+    await this.attachLongTermAgentMcpServers(
       agentSession,
       space,
       agentName,
@@ -1120,7 +1127,7 @@ export class SpaceRuntimeService {
 
   private attachLongTermAgentMcpServers(
     session: {
-      mergeRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void;
+      mergeRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): Promise<void>;
     },
     space: Space,
     agentName: string,
@@ -1128,7 +1135,7 @@ export class SpaceRuntimeService {
     agent: SpaceWorkerAgent | null,
     agentId: string | null,
     agentHandleAliases?: string[]
-  ): void {
+  ): Promise<void> {
     const mcpServers: Record<string, McpServerConfig> = {
       'space-agent-tools': this.buildLongTermAgentMcpServer(
         space,
@@ -1156,7 +1163,7 @@ export class SpaceRuntimeService {
       this.longTermAgentDbQueryServers.set(sessionId, dbQueryServer);
       mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
-    session.mergeRuntimeMcpServers(mcpServers);
+    return session.mergeRuntimeMcpServers(mcpServers);
   }
 
   private missingLongTermAgentMcpServers(session: { getSessionData(): Session }): boolean {
@@ -1862,7 +1869,7 @@ export class SpaceRuntimeService {
       additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
 
-    agentSession.mergeRuntimeMcpServers(additional);
+    await agentSession.mergeRuntimeMcpServers(additional);
 
     agentSession.onMissingMemberSpaceMcpServers = async (_sessionId, missing) => {
       log.warn(

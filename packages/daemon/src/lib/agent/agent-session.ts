@@ -25,8 +25,7 @@ import type {
   SkillEnablementOverride,
   SystemPromptConfig,
 } from '@hyperneo/shared';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -134,17 +133,22 @@ import {
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
-import { resolveModelAlias } from '../model-service.ts';
-import { getProviderRegistry } from '../providers/factory.js';
+import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
+import { getProviderRegistry } from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
+import {
+  contextBudgetThreshold,
+  decideContextBudgetCompaction,
+} from './context-budget-decision.ts';
+import { ContextFetcher } from './context-fetcher.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
-  runDeliveryTurnAdmission,
   type DeliveryTurnAdmissionDeps,
+  runDeliveryTurnAdmission,
 } from './delivery-turn-admission-pipeline.ts';
 import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
@@ -157,12 +161,12 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
   classifyReclaimTermination,
   type DriveTurnOutcome,
   deliverMessage,
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
@@ -177,32 +181,40 @@ import {
   withSessionLock,
   withSessionResetCoordination,
 } from './message-delivery.ts';
+import { deliveryMetrics } from './message-delivery-metrics.ts';
 import {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
 } from './message-delivery-pipeline.ts';
-import { deliveryMetrics } from './message-delivery-metrics.ts';
 import { MessageQueue } from './message-queue.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
+import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
+
+const MID_TURN_USAGE_TIMEOUT_MS = 2_500;
+const MID_TURN_INTERRUPT_TIMEOUT_MS = 5_000;
+
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryAttemptRegistry } from './query-attempt-token.ts';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
+import {
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
+  QueryOptionsBuilder,
+  type QueryOptionsBuilderContext,
+} from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
   QueryRunner,
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from './query-runner.ts';
-import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
+import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   SDKMessageHandler,
@@ -217,9 +229,9 @@ import {
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
+  resolveTaskNotificationRequery,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-  resolveTaskNotificationRequery,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
@@ -518,6 +530,10 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
+      this.restoredBudgetEnforcement = this.enforceRestoredContextBudget().catch((error) => {
+        this.logger.warn('restored context budget enforcement failed:', error);
+      });
+      this.messageQueue.setDeliveryGate(this.boundedEnforcement(this.restoredBudgetEnforcement));
     }
     this.stateManager.restoreFromDatabase();
 
@@ -750,9 +766,11 @@ export class AgentSession
     if (restoredState.status === 'waiting_for_input') return;
     this.initialPendingReplayScheduled = true;
     queueMicrotask(() => {
-      this.replayPendingMessagesForImmediateMode().catch((error) => {
-        this.logger.warn('Failed to replay pending messages after startup:', error);
-      });
+      this.restoredBudgetEnforcement
+        .then(() => this.replayPendingMessagesForImmediateMode())
+        .catch((error) => {
+          this.logger.warn('Failed to replay pending messages after startup:', error);
+        });
     });
   }
 
@@ -834,6 +852,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.clearPendingResumeAfterCompaction();
     this.messageHandler.cancelSuppressedResultWait();
     const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
     if (
@@ -1152,20 +1171,20 @@ export class AgentSession
     await this.sessionConfigHandler.updateConfig(configUpdates);
   }
 
-  replaceAllRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
+  replaceAllRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): Promise<void> {
     this.session.config = {
       ...this.session.config,
       mcpServers,
     };
     this.emitMcpAttachLog('replace', Object.keys(mcpServers));
-    this.syncRuntimeMcpServersToActiveQuery('replace', Object.keys(mcpServers));
+    return this.syncRuntimeMcpServersToActiveQuery('replace', Object.keys(mcpServers));
   }
 
   setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
     this.replaceAllRuntimeMcpServers(mcpServers);
   }
 
-  mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): void {
+  mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): Promise<void> {
     const existing = this.session.config?.mcpServers ?? {};
     this.session.config = {
       ...this.session.config,
@@ -1175,12 +1194,12 @@ export class AgentSession
       },
     };
     this.emitMcpAttachLog('merge', Object.keys(additional));
-    this.syncRuntimeMcpServersToActiveQuery('merge', Object.keys(additional));
+    return this.syncRuntimeMcpServersToActiveQuery('merge', Object.keys(additional));
   }
 
-  detachRuntimeMcpServer(name: string): void {
+  detachRuntimeMcpServer(name: string): Promise<void> {
     const existing = this.session.config?.mcpServers;
-    if (!existing || !(name in existing)) return;
+    if (!existing || !(name in existing)) return Promise.resolve();
     const updated = { ...existing };
     delete updated[name];
     this.session.config = {
@@ -1188,33 +1207,440 @@ export class AgentSession
       mcpServers: updated,
     };
     this.emitMcpAttachLog('detach', [name]);
-    this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
+    return this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
   }
 
-  reconcileEffectiveMcpServers(): void {
+  reconcileEffectiveMcpServers(): Promise<void> {
     if (this.session.config.provider === 'acp') {
       this.logger.info(
         `mcp.reconcile skipped: provider 'acp' does not support live MCP updates; ` +
           `changes apply on next query recreation (session ${this.session.id})`
       );
+      return Promise.resolve();
+    }
+    return this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
+  }
+
+  private restoredBudgetEnforcement: Promise<void> = Promise.resolve();
+  private pendingResumeAfterCompaction = false;
+  private midTurnBudgetCheckInFlight = false;
+  private midTurnRecheckPending = false;
+  private contextBudgetFetcher: ContextFetcher | null = null;
+
+  async midTurnContextBudgetCheck(): Promise<void> {
+    if (this.midTurnBudgetCheckInFlight) {
+      this.midTurnRecheckPending = true;
       return;
     }
-    this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
+    this.midTurnBudgetCheckInFlight = true;
+    try {
+      await this.runMidTurnContextBudgetCheck();
+      while (this.midTurnRecheckPending) {
+        this.midTurnRecheckPending = false;
+        await this.runMidTurnContextBudgetCheck();
+      }
+    } finally {
+      this.midTurnBudgetCheckInFlight = false;
+    }
+  }
+
+  private async runMidTurnContextBudgetCheck(): Promise<void> {
+    if (this.pendingResumeAfterCompaction) return;
+    const providerId = this.session.config.provider;
+    if (!providerId || providerId === 'acp') {
+      return;
+    }
+    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+      return;
+    }
+    const queryObject = this.queryObject;
+    if (!queryObject?.interrupt) return;
+    const info = await this.refreshMidTurnContextInfo(queryObject);
+    if (!info || info.totalUsed <= 0) return;
+    const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
+    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
+    const compactionQueued = this.messageQueue.hasOutstandingInternalCompaction();
+    const decision = decideContextBudgetCompaction({
+      totalUsed: info.totalUsed,
+      configuredWindow,
+      autoCompactPercent: info.autoCompactPercent,
+      sdkAutoCompactEnabled: info.isAutoCompactEnabled,
+      sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
+      cooldownActive: this.contextTracker.isCoolingDown(budgetKey) && !compactionQueued,
+      compactingActive: this.stateManager.getIsCompacting(),
+    });
+    if (decision.action !== 'compact') {
+      return;
+    }
+    this.pendingResumeAfterCompaction = true;
+    this.messageQueue.clearNonCompactionSentSinceBoundary();
+    this.logger.info(
+      `Daemon mid-turn context-budget interrupt for session ${this.session.id} ` +
+        `(provider=${providerId}, ${info.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
+    );
+    const interruptPromise = Promise.resolve().then(() => queryObject.interrupt());
+    let receipt: { still_queued?: string[] } | undefined;
+    let timedOut = false;
+    try {
+      receipt = (await Promise.race([
+        interruptPromise,
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error('mid-turn context-budget interrupt not acknowledged in time'));
+          }, MID_TURN_INTERRUPT_TIMEOUT_MS);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ])) as { still_queued?: string[] } | undefined;
+    } catch (error) {
+      if (timedOut) {
+        this.logger.warn(
+          `mid-turn context-budget interrupt for session ${this.session.id} is slow to ` +
+            `acknowledge; retaining post-compaction resume state`
+        );
+      } else {
+        this.pendingResumeAfterCompaction = false;
+        this.logger.warn(
+          `mid-turn context-budget interrupt failed for session ${this.session.id}:`,
+          error
+        );
+      }
+    }
+    await this.processInterruptSurvivorReceipt(queryObject, receipt);
+    void interruptPromise.then(
+      (lateReceipt) => {
+        if (!timedOut || !this.pendingResumeAfterCompaction) return;
+        void this.processInterruptSurvivorReceipt(
+          queryObject,
+          lateReceipt as { still_queued?: string[] } | undefined
+        ).catch((error) => {
+          this.logger.warn(
+            `late survivor cancellation after a slow mid-turn interrupt failed for ` +
+              `session ${this.session.id}:`,
+            error
+          );
+        });
+      },
+      (error) => {
+        if (!this.pendingResumeAfterCompaction) return;
+        this.pendingResumeAfterCompaction = false;
+        this.logger.warn(
+          `late mid-turn context-budget interrupt failure for session ${this.session.id}:`,
+          error
+        );
+      }
+    );
+  }
+
+  private async processInterruptSurvivorReceipt(
+    queryObject: QueryLike,
+    receipt: { still_queued?: string[] } | undefined
+  ): Promise<void> {
+    const survivors = receipt?.still_queued ?? [];
+    if (survivors.length === 0) return;
+    if (this.queryObject !== queryObject) return;
+    if (typeof queryObject.cancelAsyncMessage !== 'function') return;
+    let unconfirmedSurvivor = false;
+    for (const uuid of survivors) {
+      try {
+        const cancelled = await Promise.race([
+          Promise.resolve(queryObject.cancelAsyncMessage(uuid)),
+          new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => resolve(false), MID_TURN_INTERRUPT_TIMEOUT_MS);
+            if (typeof timer.unref === 'function') {
+              timer.unref();
+            }
+          }),
+        ]);
+        if (!cancelled) {
+          unconfirmedSurvivor = true;
+          this.logger.warn(
+            `cancel_async_message did not confirm cancellation of ${uuid} for ` +
+              `session ${this.session.id}; restarting the query so the survivor cannot ` +
+              `run ahead of the pending compaction`
+          );
+          break;
+        }
+        const content = this.messageQueue.getSentPromptContent(uuid);
+        if (content !== undefined) {
+          this.messageQueue.forgetSentPrompt(uuid);
+          void this.messageQueue
+            .enqueueWithId(uuid, content, false, { durable: true })
+            .catch((error) => {
+              this.logger.warn(
+                `requeue of cancelled survivor ${uuid} failed for session ${this.session.id}:`,
+                error
+              );
+            });
+          this.logger.info(
+            `requeued cancelled survivor ${uuid} for session ${this.session.id} ` +
+              `to run after the pending compaction`
+          );
+        }
+      } catch (error) {
+        unconfirmedSurvivor = true;
+        this.logger.warn(
+          `cancel_async_message failed for ${uuid} on session ${this.session.id}:`,
+          error
+        );
+        break;
+      }
+    }
+    if (unconfirmedSurvivor) {
+      await this.finishSurvivorTeardownWithRestart();
+    }
+  }
+
+  private async finishSurvivorTeardownWithRestart(): Promise<void> {
+    if (!this.lifecycleManager) return;
+    const restart = this.lifecycleManager.restart().catch((error) => {
+      this.logger.warn(
+        `query restart after unconfirmed survivor cancellation failed for ` +
+          `session ${this.session.id}:`,
+        error
+      );
+    });
+    await Promise.race([
+      restart,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, MID_TURN_INTERRUPT_TIMEOUT_MS);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+  }
+
+  private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {
+    const fenceModel = this.session.config.model;
+    const fenceProvider = this.session.config.provider;
+    const stale = this.contextTracker.getContextInfo();
+    try {
+      const modelInfo = await getSessionModelInfo(this.session);
+      if (
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      const fetched = await Promise.race([
+        this.getBudgetFetcher().fetch(queryObject, modelInfo),
+        new Promise<undefined>((resolve) => {
+          const timer = setTimeout(() => resolve(undefined), MID_TURN_USAGE_TIMEOUT_MS);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      if (fetched) {
+        if (
+          this.queryObject !== queryObject ||
+          this.session.config.model !== fenceModel ||
+          this.session.config.provider !== fenceProvider
+        ) {
+          return null;
+        }
+        this.contextTracker.updateWithDetailedBreakdown(fetched);
+        return fetched;
+      }
+      if (
+        this.queryObject !== queryObject ||
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      return stale;
+    } catch (error) {
+      this.logger.warn(
+        `mid-turn context usage refresh failed for session ${this.session.id}:`,
+        error
+      );
+      if (
+        this.queryObject !== queryObject ||
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      return stale;
+    }
+  }
+
+  private getBudgetFetcher(): ContextFetcher {
+    if (!this.contextBudgetFetcher) {
+      this.contextBudgetFetcher = new ContextFetcher(this.session.id);
+    }
+    return this.contextBudgetFetcher;
+  }
+
+  resumePendingWorkAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
+    void this.messageQueue
+      .enqueue(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      )
+      .catch((error) => {
+        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
+      });
+  }
+
+  clearPendingResumeAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    this.logger.info(
+      `dropping pending post-compaction resume for session ${this.session.id} ` +
+        `(no daemon compaction was enqueued)`
+    );
+  }
+
+  async reevaluateContextBudgetAfterModelSwitch(opts?: {
+    supersededQueued?: boolean;
+  }): Promise<void> {
+    const enforcement = this.enforceRestoredContextBudget(opts).catch((error) => {
+      this.logger.warn('post-switch context budget evaluation failed:', error);
+    });
+    this.messageQueue.setDeliveryGate(this.boundedEnforcement(enforcement));
+    await enforcement;
+  }
+
+  private boundedEnforcement(promise: Promise<void>): Promise<void> {
+    return Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), 5000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+  }
+
+  private async enforceRestoredContextBudget(opts?: { supersededQueued?: boolean }): Promise<void> {
+    let enqueuedCompaction = false;
+    try {
+      const providerId = this.session.config.provider;
+      if (!providerId || providerId === 'acp') {
+        return;
+      }
+      if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+        return;
+      }
+      const restored = this.contextTracker.getContextInfo();
+      if (!restored || restored.totalUsed <= 0) {
+        return;
+      }
+      const sessionModel = this.session.config.model;
+      let modelInfo = await getSessionModelInfo(this.session);
+      if (!modelInfo) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 150);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        });
+        modelInfo = await getSessionModelInfo(this.session);
+      }
+      if (
+        this.session.config.model !== sessionModel ||
+        this.session.config.provider !== providerId
+      ) {
+        return;
+      }
+      const configuredWindow =
+        modelInfo?.contextWindow && modelInfo.contextWindow > 0
+          ? modelInfo.contextWindow
+          : restored.totalCapacity > 0
+            ? restored.totalCapacity
+            : undefined;
+      const autoCompactPercent = modelInfo
+        ? modelInfo.autoCompactPercent
+        : restored.autoCompactPercent;
+      const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, autoCompactPercent);
+      if (
+        this.stateManager.getIsCompacting() ||
+        this.messageQueue.hasInFlightInternalCompaction()
+      ) {
+        return;
+      }
+      const supersededQueued =
+        opts?.supersededQueued === true || this.messageQueue.removePendingInternalCompactions() > 0;
+      if (supersededQueued) {
+        this.contextTracker.clearCompactionCooldown();
+      }
+      const decision = decideContextBudgetCompaction({
+        totalUsed: restored.totalUsed,
+        configuredWindow,
+        autoCompactPercent,
+        sdkAutoCompactEnabled: restored.isAutoCompactEnabled,
+        sdkAutoCompactThreshold: restored.sdkAutoCompactThreshold,
+        cooldownActive: this.contextTracker.isCoolingDown(budgetKey),
+        compactingActive: this.stateManager.getIsCompacting(),
+      });
+      if (decision.action !== 'compact') {
+        if (supersededQueued && this.pendingResumeAfterCompaction) {
+          this.pendingResumeAfterCompaction = false;
+          void this.messageQueue
+            .enqueue(
+              'Context was compacted to stay within the configured window. Continue the task you were working on.',
+              false,
+              { durable: true }
+            )
+            .catch((error) => {
+              this.logger.warn(
+                `post-cancellation continuation enqueue failed for session ${this.session.id}:`,
+                error
+              );
+            });
+        }
+        return;
+      }
+      enqueuedCompaction = true;
+      this.contextTracker.markCompactionTriggered(budgetKey);
+      this.logger.info(
+        `Daemon context-budget compaction for restored session ${this.session.id} ` +
+          `(provider=${providerId}, reason=${decision.reason}, ` +
+          `${restored.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
+      );
+      void this.messageQueue
+        .enqueue('/compact', true, { durable: true, prepend: true })
+        .catch((error) => {
+          if (this.messageQueue.hasOutstandingInternalCompaction()) {
+            return;
+          }
+          this.logger.warn(
+            `restored compaction enqueue failed for session ${this.session.id}:`,
+            error
+          );
+          this.contextTracker.clearCompactionCooldown();
+          this.clearPendingResumeAfterCompaction();
+        });
+    } finally {
+      if (!enqueuedCompaction && !this.messageQueue.hasOutstandingInternalCompaction()) {
+        this.clearPendingResumeAfterCompaction();
+      }
+    }
   }
 
   private syncRuntimeMcpServersToActiveQuery(
     action: 'merge' | 'detach' | 'replace' | 'reconcile',
     servers: string[]
-  ): void {
+  ): Promise<void> {
     const queryObject = this.queryObject;
-    if (!queryObject) return;
+    if (!queryObject) return Promise.resolve();
 
     const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
-    if (!setMcpServers) return;
+    if (!setMcpServers) return Promise.resolve();
 
     const effectiveMcpServers = this.optionsBuilder.getEffectiveMcpServers() ?? {};
-    void setMcpServers(effectiveMcpServers)
-      .then((result) => {
+    const enforcement = setMcpServers(effectiveMcpServers)
+      .then(async (result) => {
         this.logger.info(
           `mcp.attach.live ${JSON.stringify({
             event: 'mcp.attach.live',
@@ -1227,6 +1653,7 @@ export class AgentSession
             errors: result.errors,
           })}`
         );
+        await this.messageHandler.refreshContextUsage('mcp-sync');
       })
       .catch((error) => {
         this.logger.warn(
@@ -1236,6 +1663,17 @@ export class AgentSession
             .join(', ')}]: ${error instanceof Error ? error.message : String(error)}`
         );
       });
+    const bounded = Promise.race([
+      enforcement,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), 5000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+    this.messageQueue.setDeliveryGate(bounded);
+    return bounded;
   }
 
   private emitMcpAttachLog(action: 'merge' | 'detach' | 'replace', servers: string[]): void {
@@ -2064,9 +2502,7 @@ export class AgentSession
     if (
       alreadyConsumed &&
       !this.rateLimitWatchdog.isRecoveryPending() &&
-      !!this.db
-        .getSDKMessageRepo()
-        ?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
+      this.db.getSDKMessageRepo()?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
     ) {
       this.logger.info(
         `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +

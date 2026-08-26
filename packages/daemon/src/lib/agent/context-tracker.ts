@@ -21,6 +21,7 @@ export class ContextTracker {
   private currentContextInfo: ContextInfo | null = null;
 
   private lastCompactionTriggerAt = 0;
+  private lastCompactionBudgetKey: number | undefined;
 
   constructor(
     private sessionId: string,
@@ -77,7 +78,24 @@ export class ContextTracker {
     return true;
   }
 
-  markCompactionTriggered(): void {
+  isCoolingDown(budgetKey?: number, cooldownMs = DEFAULT_COMPACTION_COOLDOWN_MS): boolean {
+    if (
+      this.lastCompactionBudgetKey !== undefined &&
+      budgetKey !== undefined &&
+      this.lastCompactionBudgetKey !== budgetKey
+    ) {
+      return false;
+    }
+    return Date.now() - this.lastCompactionTriggerAt < cooldownMs;
+  }
+
+  markCompactionTriggered(budgetKey?: number): void {
     this.lastCompactionTriggerAt = Date.now();
+    this.lastCompactionBudgetKey = budgetKey;
+  }
+
+  clearCompactionCooldown(): void {
+    this.lastCompactionTriggerAt = 0;
+    this.lastCompactionBudgetKey = undefined;
   }
 }

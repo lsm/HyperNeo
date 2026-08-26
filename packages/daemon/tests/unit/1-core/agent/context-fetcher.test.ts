@@ -1006,6 +1006,18 @@ describe('ContextFetcher.fetch', () => {
     expect(info?.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
   });
 
+  it('returns null when the SDK usage call never resolves', async () => {
+    const getContextUsage = mock(() => new Promise(() => {}));
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('test-session');
+    const startedAt = Date.now();
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(15000);
+  }, 20000);
+
   describe('capacity mismatch warning', () => {
     it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {
       const getContextUsage = mock(async () =>

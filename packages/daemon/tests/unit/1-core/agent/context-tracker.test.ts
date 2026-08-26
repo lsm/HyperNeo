@@ -241,6 +241,30 @@ describe('ContextTracker', () => {
     });
   });
 
+  describe('budget-keyed compaction cooldown', () => {
+    it('suppresses re-arming for the same budget within the cooldown', () => {
+      tracker.markCompactionTriggered(115_200);
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(true);
+    });
+
+    it('allows re-arming immediately when the active budget changed', () => {
+      tracker.markCompactionTriggered(900_000);
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(false);
+    });
+
+    it('a boundary mark without a budget key suppresses every budget', () => {
+      tracker.markCompactionTriggered();
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(true);
+      expect(tracker.isCoolingDown(900_000, 60_000)).toBe(true);
+    });
+
+    it('clearing the cooldown re-arms the backstop immediately', () => {
+      tracker.markCompactionTriggered(115_200);
+      tracker.clearCompactionCooldown();
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(false);
+    });
+  });
+
   describe('reserveBasedThreshold', () => {
     it('returns 0 for invalid context windows', () => {
       expect(reserveBasedThreshold(0)).toBe(0);

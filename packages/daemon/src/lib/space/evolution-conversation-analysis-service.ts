@@ -284,7 +284,7 @@ async function analyzeConversationWithModel(
 ): Promise<ConversationFrictionAnalysis> {
   const providerService = getProviderService();
   const { provider, modelId } = await resolveConversationFrictionModel(input, spaceRepo);
-  let originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
+  const originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
@@ -293,9 +293,6 @@ async function analyzeConversationWithModel(
       string | undefined
     >;
     const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
-    const mergedEnv = mergeProviderEnvVars(providerEnvVars);
-    providerService.restoreEnvVars(originalEnv);
-    originalEnv = {};
     const agentQuery = query({
       prompt: buildConversationFrictionPrompt(input),
       options: {
@@ -309,7 +306,7 @@ async function analyzeConversationWithModel(
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
-        env: mergedEnv,
+        env: mergeProviderEnvVars(providerEnvVars),
         thinking:
           provider === 'kimi'
             ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)

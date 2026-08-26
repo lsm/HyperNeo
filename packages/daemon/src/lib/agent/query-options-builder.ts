@@ -199,10 +199,6 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
 
 export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
 
-export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
-  return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
-}
-
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
