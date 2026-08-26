@@ -525,6 +525,9 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     ]);
     const taskRepo = cfg.config.taskRepo as Record<string, ReturnType<typeof mock>>;
     let cancelled = false;
+    taskRepo.getTask = mock(() =>
+      cancelled ? { id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID } : null
+    );
     taskRepo.listByWorkflowRunIncludingArchived = mock(() =>
       cancelled ? [{ id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID }] : []
     );

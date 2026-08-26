@@ -1246,12 +1246,6 @@ export class TaskAgentManager {
                   ? resolveTaskWorkspace(reuseSpace, parentTask)
                   : init.workspacePath,
               }).workspacePath;
-              if (
-                reuseWorkspacePath &&
-                existing.getSessionData().workspacePath !== reuseWorkspacePath
-              ) {
-                existing.updateMetadata({ workspacePath: reuseWorkspacePath });
-              }
               const reuseCtx = {
                 taskId,
                 subSessionId: existingSessionId,
@@ -1261,10 +1255,25 @@ export class TaskAgentManager {
                 workspacePath: reuseWorkspacePath,
                 workflowNodeId: memberInfo.nodeId,
               };
-              await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
-              await this.ensureRequiredMcpServersAttached(existing, {
-                ...reuseCtx,
-                phase: 'spawn',
+              await this.withSessionInjectLock(existingSessionId, async () => {
+                const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+                const workspaceChanged =
+                  !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
+                if (workspaceChanged) {
+                  existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+                }
+                try {
+                  await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
+                  await this.ensureRequiredMcpServersAttached(existing, {
+                    ...reuseCtx,
+                    phase: 'spawn',
+                  });
+                } catch (err) {
+                  if (workspaceChanged && previousReuseWorkspacePath !== null) {
+                    existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+                  }
+                  throw err;
+                }
               });
             }
 
@@ -1666,25 +1675,18 @@ export class TaskAgentManager {
   }
 
   private resolveTerminalInjectionStatus(workflowRunId: string, taskId?: string): string | null {
-    const guardTask =
-      this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
+    const isTerminal = (status?: string | null) =>
+      status === 'cancelled' || status === 'archived' || status === 'stopped';
     const guardRun = this.config.workflowRunRepo?.getRun?.(workflowRunId) ?? null;
-    const ownedTask = taskId ? (this.config.taskRepo.getTask?.(taskId) ?? null) : null;
-    if (
-      guardTask?.status === 'cancelled' ||
-      guardTask?.status === 'archived' ||
-      guardTask?.status === 'stopped' ||
-      guardRun?.status === 'cancelled' ||
-      ownedTask?.status === 'cancelled' ||
-      ownedTask?.status === 'archived' ||
-      ownedTask?.status === 'stopped'
-    ) {
-      return ownedTask?.status === 'cancelled' ||
-        ownedTask?.status === 'archived' ||
-        ownedTask?.status === 'stopped'
-        ? ownedTask.status
-        : (guardTask?.status ?? guardRun?.status ?? ownedTask?.status ?? 'terminal');
+    if (!taskId) {
+      const guardTask =
+        this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
+      if (isTerminal(guardTask?.status)) return guardTask!.status;
+    } else {
+      const ownedTask = this.config.taskRepo.getTask?.(taskId) ?? null;
+      if (isTerminal(ownedTask?.status)) return ownedTask!.status;
     }
+    if (guardRun?.status === 'cancelled') return 'cancelled';
     return null;
   }
 
