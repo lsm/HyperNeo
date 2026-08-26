@@ -368,7 +368,12 @@ none of these sites needs its compensation machinery.
   `message-delivery.ts:221-225` and `agent-session.ts:2875-2879` catch each
   `setQueuedIfIdle` rejection and keep processing later rows;
   `agent-session.ts:2896-2902` contains each settlement publication
-  rejection) — without stage-local catches, a transient failure would
+  rejection) AND keep the settlement publications as FIRE-AND-FORGET
+  `void publish(...).catch(...)` launches under the lock, exactly as today
+  (review correction PR #2981: an awaited publication stage would let a
+  slow or non-settling subscriber hold the session lock indefinitely,
+  blocking subsequent delivery and reconciliation work; the database
+  settlement itself stays inside the reducer and lock) — without stage-local catches, a transient failure would
   abort the pipeline, skip remaining re-enqueues or settlement, and reject
   reconciliation where it currently succeeds.
 - **step-by-step migration.** 1) Compose the TWO complete reconciliation
@@ -761,7 +766,10 @@ none of these sites needs its compensation machinery.
   classifier runners — `extractErrorPattern` and `buildTripMessage` stay
   plain helpers consumed by the ONE complete breaker-check pipeline
   (`ApiErrorCircuitBreaker.checkMessage`: message-type gate → rapid-fire
-  check → message-text extraction with its empty-text false-return gate
+  check — writing the advanced per-agent ring IMMEDIATELY,
+  `api-error-circuit-breaker.ts:56-62`, BEFORE the content exits, so
+  ordinary non-error messages still persist timestamps and the breaker can
+  trip on normal message loops; review correction PR #2981 → message-text extraction with its empty-text false-return gate
   (`extractMessageText(msg.message?.content)`,
   `api-error-circuit-breaker.ts:69-73` — review correction PR #2981: the
   pattern classifiers consume the FLATTENED string, not raw SDK block-array
@@ -799,7 +807,11 @@ none of these sites needs its compensation machinery.
   FIRST stage, BEFORE any timestamp mutation — `sdk-message-handler.ts:764`
   sends every SDK message through `checkMessage`, and without this gate
   assistant messages would enter rapid-fire accounting and trip falsely) →
-  rapid-fire check → message-text extraction with its empty-text
+  rapid-fire check — with the per-agent timestamp-ring write INSIDE this
+  stage (`:56-62`, before any content exit; review correction PR #2981:
+  moving it to occurrence recording after the exits would drop ordinary
+  non-error messages' timestamps and break rapid-fire tripping on normal
+  loops) → message-text extraction with its empty-text
   false-return gate (`extractMessageText(msg.message?.content)`,
   `api-error-circuit-breaker.ts:69-73` — the pattern classifiers consume
   the flattened string, not raw block-array content; review correction PR
@@ -819,7 +831,8 @@ none of these sites needs its compensation machinery.
   stays a SEPARATE entry-point operation (its own small pipeline or the
   existing method).
 - **step-by-step migration.** 1) Compose ONE complete breaker-check pipeline
-  (`ApiErrorCircuitBreaker.checkMessage`): rapid-fire check → message-text
+  (`ApiErrorCircuitBreaker.checkMessage`): rapid-fire check (per-agent ring
+  written here, `:56-62`, before the content exits) → message-text
   extraction and its empty-text exit (`:69-73`) → pattern
   classification → occurrence recording → `trip()` as its stages (cooldown
   release stays out of `checkMessage` entirely — see the wiring note above),
@@ -1284,7 +1297,9 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   synchronously dispatched notifications (`acp-client.ts:479-483`,
   `:283-287`; review correction PR #2981), and `messageGenerator`
   rechecking claim ownership before `claimed.delete`/`yielded.add`
-  (`:361-362`)) — while each
+  (`:361-362`), coupled to the status transition or restoring the row on
+  failure so a dropped claim never leaves a consumed-but-never-sent
+  prompt — reconciliation scans only `enqueued` rows)) — while each
   individual
   PUBLICATION promise keeps its today-style `.catch` containment AND
   fire-and-forget scheduling (await only the transactional
@@ -1882,7 +1897,8 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 - **scope.** `packages/daemon/src/lib/agent/api-error-circuit-breaker.ts`:
   the complete breaker-check pipeline, landed unwired — message-type gate
   (`msg.type !== 'user'`, `api-error-circuit-breaker.ts:49-51`, first —
-  review correction PR #2981) → rapid-fire check →
+  review correction PR #2981) → rapid-fire check (per-agent ring written
+  here, `:56-62`, before the content exits; review correction PR #2981) →
   message-text extraction with its empty-text false-return gate
   (`:69-73`, flattened-string input; review correction PR #2981) →
   pattern classification → occurrence recording (`recentErrors`,
@@ -2169,8 +2185,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   correction PR #2981: a `clear()`/`remove()` during the pending
   acknowledgment would otherwise resurrect an interrupted prompt into
   `yielded` and feed it to the SDK after its enqueue promise already
-  settled), and the suppressed-callback wrapper performs the equivalent
-  yielded-ownership check after ITS await;
+  settled). Because the transactional stage has ALREADY marked the row
+  `consumed` by then, the final ownership check must be COUPLED TO THE
+  STATUS TRANSITION — either the ownership/epoch verification rides inside
+  the atomic guarded transition from the start, or a failed check RESTORES
+  the row (review correction PR #2981: reconciliation scans only
+  `enqueued` rows, so suppressing the yield without restoring strands a
+  never-sent prompt as consumed) — and the suppressed-callback wrapper
+  performs the equivalent yielded-ownership check after ITS await;
   `QueryRunner.createMessageGeneratorWrapper` — which suppresses the queue
   callback and invokes `onMessageYielded` itself
   (`query-runner.ts:1704-1715`) — awaits or handles the rejection;
