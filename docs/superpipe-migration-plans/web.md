@@ -1089,7 +1089,13 @@ anywhere in this plan.
   current hook (`useSendMessage.ts:95-121`) — enqueue the queued action,
   `onSendComplete()`, CLEAR the armed timeout, then stamp a successful
   outcome — never a bare divert mid-sequence, or the send stays marked
-  in-flight and the armed timer later emits a false timeout error. Timeout
+  in-flight and the armed timer later emits a false timeout error. The
+  runner TERMINATES with `.endAsync('ctx')` (codex round 22: ADR 0004
+  reserves `.end` for fully synchronous paths and `.endAsync` for stages
+  that await, as `direct-steer-flush-pipeline.ts:306` demonstrates) and is
+  typed `(input) => Promise<SendMessageCtx>` — the awaiting
+  `stageSendRequest` must run under the async executor so the final
+  context/outcome is awaited, never through the sync `.end`. Timeout
   resource stays in the hook per ADR Decision 5 — the pipeline receives the
   per-call `SendTimeoutHandle` returned by `armTimeout` (codex rounds 3+14:
   timer AND inspectable `didTimeOut()` state per invocation, not one shared
@@ -1674,6 +1680,10 @@ optional router phase 2. No per-site section is left uncovered.
   `packages/web/src/hooks/useSendMessage.ts` — the complete direct mixed
   pipeline: admission gates `gateContentPresent` → `gateSessionArchived` →
   `gateOffline` → `gateSend`, then `stageBuildPayload` and the async
+  stages, terminated with `.endAsync('ctx')` and typed
+  `(input) => Promise<SendMessageCtx>` (codex round 22: `.end` is for fully
+  sync paths per ADR 0004 — the awaiting `stageSendRequest` must run under
+  the async executor);
   `stageSendRequest` (live `getHub()` re-read immediately after
   `onSendStart` + timeout arming; an empty hub runs the exact current
   completion sequence — enqueue, `onSendComplete`, CLEAR the armed timeout,
