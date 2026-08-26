@@ -31,6 +31,10 @@ const OS_ENV_KEYS = [
   'PATHEXT',
   'HOMEDRIVE',
   'HOMEPATH',
+  'CI',
+  'ProgramFiles',
+  'ProgramFiles(x86)',
+  'ProgramW6432',
 ] as const;
 
 const PROXY_TLS_ENV_KEYS = [
@@ -49,6 +53,9 @@ const PROXY_TLS_ENV_KEYS = [
   'CURL_CA_BUNDLE',
   'GIT_SSL_CAINFO',
   'GIT_SSL_CAPATH',
+  'GIT_SSL_VERSION',
+  'GIT_SSL_CIPHER_LIST',
+  'GIT_HTTP_PROXY_AUTHMETHOD',
 ] as const;
 
 const SDK_USER_CONFIG_ENV_KEYS = [

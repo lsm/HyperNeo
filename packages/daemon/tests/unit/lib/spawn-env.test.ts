@@ -89,6 +89,10 @@ describe('buildOsBaselineEnv', () => {
     expect(env.PATH).toBe(SOURCE.PATH);
     expect(env.HOME).toBe(SOURCE.HOME);
     expect(env.USERNAME).toBe(SOURCE.USERNAME);
+    expect(env.CI).toBe(SOURCE.CI);
+    expect(env.ProgramFiles).toBe(SOURCE.ProgramFiles);
+    expect(env['ProgramFiles(x86)']).toBe(SOURCE['ProgramFiles(x86)']);
+    expect(env.ProgramW6432).toBe(SOURCE.ProgramW6432);
     expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
     expect(env.LC_COLLATE).toBe(SOURCE.LC_COLLATE);
     expect(env.LC_NUMERIC).toBe(SOURCE.LC_NUMERIC);
@@ -108,6 +112,9 @@ describe('buildCommandEnv', () => {
     expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
     expect(env.CURL_CA_BUNDLE).toBe(SOURCE.CURL_CA_BUNDLE);
     expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
+    expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
+    expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
+    expect(env.GIT_HTTP_PROXY_AUTHMETHOD).toBe(SOURCE.GIT_HTTP_PROXY_AUTHMETHOD);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 });
