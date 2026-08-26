@@ -1698,6 +1698,25 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.isPending()).toBe(false);
     });
 
+    it('aborts a fired cooldown retry when the query generation moved after arming (B5e)', async () => {
+      let queryGeneration = 3;
+      const { deps, notifyResume } = createMockDeps({ chain: [] });
+      deps.getQueryGeneration = () => queryGeneration;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const retryCallback = mock(async (): Promise<boolean> => true);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      queryGeneration = 9;
+
+      await (
+        watchdog as unknown as { fireCooldownRetry: (m: string) => Promise<void> }
+      ).fireCooldownRetry('429');
+
+      expect(retryCallback).not.toHaveBeenCalled();
+      expect(notifyResume).not.toHaveBeenCalled();
+      watchdog.cancel();
+    });
+
     it('threads the captured episode generation into the retry callback', async () => {
       let receivedGen: number | undefined;
       const { deps } = createMockDeps({ chain: [] });

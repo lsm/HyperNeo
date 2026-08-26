@@ -1030,6 +1030,25 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('stale frames are dropped before persistence and broadcast (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+      const staleResult = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'stale-result-uuid',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(staleResult, 2);
+
+      expect(saveSDKMessageSpy).not.toHaveBeenCalledWith('test-session-id', staleResult);
+      expect(emitSpy.mock.calls.map((call) => call[0] as string)).not.toContain('session.updated');
+    });
+
     it('a stale model_refusal_no_fallback does not persist refusal rewind state (B5e)', async () => {
       (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
         () => 9

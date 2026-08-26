@@ -654,6 +654,24 @@ describe('ModelSwitchHandler', () => {
         expect(restartSpy).not.toHaveBeenCalled();
       });
 
+      it('rolls back the committed switch when the query moves during publication (B5e)', async () => {
+        let generation = 3;
+        publishSpy.mockImplementation(async () => {
+          generation = 9;
+          return {} as never;
+        });
+        handler = createHandler({
+          getQueryGeneration: () => generation,
+          queryPromise: Promise.resolve(),
+        });
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic', 3);
+
+        expect(result.success).toBe(false);
+        expect(mockSession.config.model).toBe('default');
+        expect(restartSpy).not.toHaveBeenCalled();
+      });
+
       it('rejects a curated-out model before mutating the session', async () => {
         getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
         handler = createHandler();

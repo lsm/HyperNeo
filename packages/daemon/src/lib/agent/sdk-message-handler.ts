@@ -743,8 +743,8 @@ export class SDKMessageHandler {
       return;
     }
 
-    if (isSDKConversationResetMessage(message) && !this.isInvocationStale(invocationGeneration)) {
-      if (session.metadata.titleSetBy !== 'user') {
+    if (isSDKConversationResetMessage(message)) {
+      if (!this.isInvocationStale(invocationGeneration) && session.metadata.titleSetBy !== 'user') {
         const metadata = { ...session.metadata, titleGenerated: false };
         session.metadata = metadata;
         db.updateSession(session.id, { metadata, title: 'New Session' });
@@ -862,6 +862,10 @@ export class SDKMessageHandler {
       .parent_tool_use_id;
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+
+    if (invocationStale) {
+      return;
+    }
 
     const deferredSuccessfully = this.withDbChangeBatch(() =>
       db.saveSDKMessage(session.id, message)

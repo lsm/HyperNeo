@@ -84,6 +84,7 @@ export interface QueryLifecycleManagerContext {
 export class QueryLifecycleManager {
   private logger: Logger;
   private timeoutDeliveryRetryCounts = new Map<string, number>();
+  private lastCeilingResetGeneration: number | null = null;
 
   constructor(private ctx: QueryLifecycleManagerContext) {
     this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
@@ -810,11 +811,12 @@ export class QueryLifecycleManager {
     } catch (error) {
       if (error instanceof IdleRestartSupersededError) {
         this.ctx.pendingRestartReason = reason;
+        const nextOwner = this.ctx.stateManager.getCurrentIdleOwner();
         if (rescheduleDepth < 8) {
-          this.armDeferredRestartRetry(
-            this.ctx.stateManager.getCurrentIdleOwner(),
-            rescheduleDepth + 1
-          );
+          this.armDeferredRestartRetry(nextOwner, rescheduleDepth + 1);
+        } else if (nextOwner.queryGeneration !== this.lastCeilingResetGeneration) {
+          this.lastCeilingResetGeneration = nextOwner.queryGeneration;
+          this.armDeferredRestartRetry(nextOwner, 0);
         }
       }
       return false;

@@ -81,6 +81,7 @@ export class RateLimitWatchdog {
   private retryCount = 0;
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private currentRetryAt: number | null = null;
+  private cooldownQueryGeneration: number | undefined = undefined;
   private lastUserMessage: { uuid: string; content: string | MessageContent[] } | null = null;
   private lastErrorMessage = '';
   private retryCallback: RateLimitRetryCallback | null = null;
@@ -420,6 +421,7 @@ export class RateLimitWatchdog {
     });
 
     this.cancelCooldownTimer();
+    this.cooldownQueryGeneration = queryGeneration;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
@@ -441,6 +443,16 @@ export class RateLimitWatchdog {
   }
 
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
+    if (
+      this.cooldownQueryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== this.cooldownQueryGeneration
+    ) {
+      this.logger.info(
+        'Cooldown retry aborted at fire time: the originating query was superseded.'
+      );
+      return;
+    }
     const entryGeneration = this.generation;
     this.retryCallbackInFlight = true;
     this.retryCallbackInFlightOwner = entryGeneration;
@@ -674,6 +686,7 @@ export class RateLimitWatchdog {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
       this.currentRetryAt = null;
+      this.cooldownQueryGeneration = undefined;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }
   }

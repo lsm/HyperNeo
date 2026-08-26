@@ -736,6 +736,7 @@ export class AcpQueryRunner {
           },
           onSubmitted: () => {
             if (submitted) return;
+            if (this.ctx.getQueryGeneration() !== queryGeneration) return;
             const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
             if (!persisted) {
               throw new Error('ACP prompt was revoked before submission');

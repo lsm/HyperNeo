@@ -226,6 +226,15 @@ export class ModelSwitchHandler {
       const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
       const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
 
+      if (querySuperseded()) {
+        logger.info('Model switch aborted before commit: the query was superseded.');
+        return {
+          success: false,
+          model: previousModel,
+          error: 'Model switch aborted: the originating query was superseded.',
+        };
+      }
+
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
@@ -304,7 +313,29 @@ export class ModelSwitchHandler {
           await this.ctx.queryObject.setModel(resolvedModel);
         } else {
           if (querySuperseded()) {
-            logger.info('Model switch restart aborted: the query was superseded.');
+            logger.info('Model switch superseded after commit; rolling back.');
+            session.config.model = previousModel;
+            session.config.provider = originalProvider;
+            session.acpSessionId = previousAcpSessionId;
+            session.sdkSessionId = previousSdkSessionId;
+            session.sdkOriginPath = previousSdkOriginPath;
+            session.metadata = previousMetadata;
+            db.updateSession(session.id, {
+              config: {
+                model: previousModel,
+                provider: originalProvider,
+              } as SessionConfig,
+              acpSessionId: previousAcpSessionId,
+              sdkSessionId: previousSdkSessionId,
+              sdkOriginPath: previousSdkOriginPath,
+              metadata: previousMetadata,
+            });
+            contextTracker.setModel(previousModel);
+            await internalEventBus.publish('session.updated', {
+              sessionId: session.id,
+              source: 'model-switch-rollback',
+              session: { config: session.config },
+            });
             return {
               success: false,
               model: previousModel,

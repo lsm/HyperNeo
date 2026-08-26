@@ -1506,6 +1506,33 @@ describe('QueryLifecycleManager', () => {
         manager.restart({ idleOwner: { queryGeneration: 7, turnToken: 1 } })
       ).rejects.toBeInstanceOf(IdleRestartSupersededError);
     });
+
+    test('the depth-ceiling branch re-arms once for a fresh successor generation (B5e)', async () => {
+      mockContext = createMockContext({
+        pendingRestartReason: 'settings.local.json',
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+        queryPromise: Promise.resolve(),
+      });
+      (mockContext.stateManager as unknown as { isIdleOwnerCurrent: unknown }).isIdleOwnerCurrent =
+        mock(() => false);
+      manager = new QueryLifecycleManager(mockContext);
+      let restartCalls = 0;
+      spyOn(manager, 'restart').mockImplementation(async () => {
+        restartCalls += 1;
+        throw new IdleRestartSupersededError();
+      });
+
+      await manager.executeDeferredRestartIfPending({ queryGeneration: 0, turnToken: 1 }, 8);
+      for (let i = 0; i < 40; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(restartCalls).toBeGreaterThan(1);
+      expect(mockContext.pendingRestartReason).toBe('settings.local.json');
+      expect(startStreamingCalled).toBe(false);
+    });
   });
 
   describe('executeDeferredRestartIfPending', () => {
