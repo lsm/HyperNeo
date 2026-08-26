@@ -2236,11 +2236,6 @@ sdk_rows AS (
       AND COALESCE(sm.send_status, 'consumed') NOT IN ('consumed', 'failed')
     )
     OR (
-      -- Unresolved hyperneo_action cards (sdk_resume_choice unblock controls)
-      -- must survive the recent-turn cutoff too: the downstream visible-window
-      -- pinning can only preserve rows that reach the joined CTE, and a blocked
-      -- agent keeps its card until resolved (#2900 review). Mirrors
-      -- hasUnresolvedHyperNeoAction's resolved=0 predicate.
       sm.message_type = 'hyperneo_action'
       AND COALESCE(
         CASE
@@ -2426,14 +2421,6 @@ tail_eligible AS (
   UNION
   SELECT id FROM hook_rows
 ),
--- A session is pinned only when it is actually working, decided by the SAME
--- candidate predicate as SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL: the
--- session's most-recent candidate row (assistant / result / operational
--- system rows incl. hooks) is non-terminal AND sits in the session's latest
--- conversation turn (#2901 review). Inferring activity from the newest
--- arbitrary row wrongly pinned an idle session's failed user delivery that
--- landed after its closing result — the active-turn query deliberately
--- ignores user-only failed turns, so the tail must too.
 session_candidates AS (
   SELECT
     j.id AS id,
@@ -2468,14 +2455,6 @@ active_sessions AS (
       LIMIT 1
     )
 ),
--- The pinned row is the newest tail-eligible row of each active session:
--- selectable rows, plus hook rows so a hook-only active turn (SessionStart /
--- Setup / PreToolUse hooks before the first assistant row) pins an actual row
--- of the working turn — its newest hook row, which the frontend renders as a
--- running-hook status turn — instead of the turn's user anchor or the
--- PREVIOUS turn's terminal result. Rows outside every selection branch (e.g.
--- a malformed trailing sdk_message) stay ineligible, so the tail cannot leak
--- a row the feed deliberately filters.
 active_session_tails AS (
   SELECT id
   FROM (
@@ -2496,22 +2475,8 @@ active_session_tails AS (
 selected_ids AS (
   SELECT id FROM base_selection
   UNION ALL
-  -- Session-tail rows of still-working sessions (see active_session_tails):
-  -- admits the newest hook row of a hook-only active turn so the thread can
-  -- render the working agent. Earlier hook rows stay roster-only.
   SELECT id FROM active_session_tails
 ),
--- Visible window: the newest N selected rows, oldest-first for rendering, with
--- rows whose UI state must survive regardless of age pinned OUTSIDE the limit
--- (#2900 review): the newest row of every still-working session (a quiet agent
--- mid-turn in a busy multi-agent task must not vanish from the thread; finished
--- sessions end on a terminal result, so they stay windowed and pinning stays
--- bounded), unresolved hyperneo_action cards (the task pane's resolution
--- controls), and user deliveries still in flight (queued/processing/retrying
--- badges, which sdk_rows deliberately admits beyond the turn cutoff).
--- The limit ranks ONLY ordinary rows (#2901 review): if pinned/tail rows were
--- ranked together, a burst of new-enough exempt rows would consume the window's
--- slots and silently evict the ordinary context the limit exists to show.
 ranked_rows AS (
   SELECT
     j.id AS id,
