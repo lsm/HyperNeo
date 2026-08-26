@@ -5,70 +5,136 @@ const execFileAsync = promisify(execFile);
 
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
 const LFS_EXT_LINE_PATTERN = /^ext-(\d)-(\w\S*) sha256:[0-9a-f]{64}$/;
+const LFS_OID_LINE_PATTERN = /^oid sha256:[0-9a-f]{64}$/;
+const LFS_SIZE_LINE_PATTERN = /^size ([+-]?)(\d+)\s*$/;
 const LFS_PROBE_TIMEOUT_MS = 60_000;
+const LFS_MAX_LINE_CHARS = 1_048_576;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
-const LFS_CANDIDATE_MAX_BYTES = 65_536;
-
 export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 
-function stripLeadingWhitespace(line: string): string {
-  return line.replace(/^\s+/, '');
+interface PointerScanState {
+  phase: 'head' | 'pre-oid' | 'post-oid' | 'done' | 'invalid';
+  seenSignificant: boolean;
+  pendingWhitespaceOnly: number;
+  namesByPriority: Map<number, string>;
+  current: string[];
+  currentChars: number;
 }
 
-function scanExtensionRun(
-  lines: string[],
-  start: number,
-  namesByPriority: Map<number, string>,
-  stripLeading: boolean
-): number | undefined {
-  let index = start;
-  while (index < lines.length) {
-    const candidate = stripLeading ? stripLeadingWhitespace(lines[index]) : lines[index];
-    const match = LFS_EXT_LINE_PATTERN.exec(candidate);
-    if (!match) break;
-    const priority = Number(match[1]);
-    const name = match[2];
-    const knownName = namesByPriority.get(priority);
-    if (knownName !== undefined) {
-      if (knownName !== name) return undefined;
-    } else {
-      namesByPriority.set(priority, name);
-    }
-    index++;
+function createPointerScanState(): PointerScanState {
+  return {
+    phase: 'head',
+    seenSignificant: false,
+    pendingWhitespaceOnly: 0,
+    namesByPriority: new Map(),
+    current: [],
+    currentChars: 0,
+  };
+}
+
+function recordExtension(state: PointerScanState, line: string): boolean {
+  const match = LFS_EXT_LINE_PATTERN.exec(line);
+  if (!match) return false;
+  const priority = Number(match[1]);
+  const name = match[2];
+  const knownName = state.namesByPriority.get(priority);
+  if (knownName !== undefined) {
+    if (knownName !== name) return false;
+  } else {
+    state.namesByPriority.set(priority, name);
   }
-  return index;
+  return true;
 }
 
-function isLfsPointerContent(content: string): boolean {
-  const allLines = content.replace(/\r\n/g, '\n').split('\n');
-  let start = 0;
-  while (start < allLines.length && allLines[start].trim() === '') start++;
-  let end = allLines.length;
-  while (end > start && allLines[end - 1].trim() === '') end--;
-  const lines = allLines.slice(start, end).filter((line) => line !== '');
-  if (lines.length === 0) return false;
-  const namesByPriority = new Map<number, string>();
-
-  const beforeVersion = scanExtensionRun(lines, 0, namesByPriority, true);
-  if (beforeVersion === undefined) return false;
-  if (stripLeadingWhitespace(lines[beforeVersion] ?? '') !== LFS_POINTER_SIGNATURE) return false;
-
-  const afterHeadExtensions = scanExtensionRun(lines, beforeVersion + 1, namesByPriority, false);
-  if (afterHeadExtensions === undefined) return false;
-  if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[afterHeadExtensions] ?? '')) return false;
-
-  const beforeSize = scanExtensionRun(lines, afterHeadExtensions + 1, namesByPriority, false);
-  if (beforeSize === undefined) return false;
-  const sizeRecord = /^size ([+-]?)(\d+)\s*$/.exec(lines[beforeSize] ?? '');
-  if (!sizeRecord) return false;
-  const digits = sizeRecord[2].replace(/^0+(?=\d)/, '');
-  if (digits.length > 19 || (digits.length === 19 && digits > '9223372036854775807')) {
+function scanPointerLine(state: PointerScanState, rawLine: string): boolean {
+  if (state.phase === 'invalid') return true;
+  if (rawLine === '') return false;
+  if (rawLine.trim() === '') {
+    if (!state.seenSignificant) return false;
+    state.pendingWhitespaceOnly++;
     return false;
   }
-  if (sizeRecord[1] === '-' && digits !== '0') return false;
-  return beforeSize + 1 === lines.length;
+  if (state.pendingWhitespaceOnly > 0) {
+    state.phase = 'invalid';
+    return true;
+  }
+  state.seenSignificant = true;
+  if (state.phase === 'head') {
+    const stripped = rawLine.replace(/^\s+/, '');
+    if (stripped === LFS_POINTER_SIGNATURE) {
+      state.phase = 'pre-oid';
+      return false;
+    }
+    if (!recordExtension(state, stripped)) {
+      state.phase = 'invalid';
+      return true;
+    }
+    return false;
+  }
+  if (state.phase === 'pre-oid') {
+    if (recordExtension(state, rawLine)) return false;
+    if (LFS_OID_LINE_PATTERN.test(rawLine)) {
+      state.phase = 'post-oid';
+      return false;
+    }
+    state.phase = 'invalid';
+    return true;
+  }
+  if (state.phase === 'post-oid') {
+    if (recordExtension(state, rawLine)) return false;
+    const sizeMatch = LFS_SIZE_LINE_PATTERN.exec(rawLine);
+    if (!sizeMatch) {
+      state.phase = 'invalid';
+      return true;
+    }
+    const digits = sizeMatch[2].replace(/^0+(?=\d)/, '');
+    if (digits.length > 19 || (digits.length === 19 && digits > '9223372036854775807')) {
+      state.phase = 'invalid';
+      return true;
+    }
+    if (sizeMatch[1] === '-' && digits !== '0') {
+      state.phase = 'invalid';
+      return true;
+    }
+    state.phase = 'done';
+    return false;
+  }
+  state.phase = 'invalid';
+  return true;
+}
+
+function feedPointerChunk(state: PointerScanState, chunk: Buffer): void {
+  if (state.phase === 'invalid') return;
+  let start = 0;
+  for (let index = 0; index < chunk.length; index++) {
+    if (chunk[index] !== 10) continue;
+    state.current.push(chunk.subarray(start, index).toString('utf8'));
+    const line = state.current.join('');
+    state.current = [];
+    state.currentChars = 0;
+    const invalid = scanPointerLine(state, line.endsWith('\r') ? line.slice(0, -1) : line);
+    if (invalid) return;
+    start = index + 1;
+  }
+  const remainder = chunk.subarray(start).toString('utf8');
+  if (remainder.length > 0) {
+    state.current.push(remainder);
+    state.currentChars += remainder.length;
+    if (state.currentChars > LFS_MAX_LINE_CHARS) {
+      state.phase = 'invalid';
+    }
+  }
+}
+
+function finishPointerScan(state: PointerScanState): boolean {
+  if (state.current.length > 0) {
+    const line = state.current.join('');
+    state.current = [];
+    scanPointerLine(state, line.endsWith('\r') ? line.slice(0, -1) : line);
+  }
+  return state.phase === 'done';
 }
 
 function nulSeparatedSegments(stdout: string | Buffer): Buffer[] {
@@ -149,6 +215,40 @@ function resolveCandidateOids(
   });
 }
 
+function validateBlobStream(
+  cwd: string,
+  env: Record<string, string>,
+  oid: string
+): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const child = spawn('git', ['cat-file', oid], { cwd, env });
+    const state = createPointerScanState();
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, LFS_PROBE_TIMEOUT_MS);
+    const settle = (value: boolean) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolvePromise(value);
+      }
+    };
+    child.on('error', () => settle(false));
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (settled || state.phase === 'invalid') return;
+      feedPointerChunk(state, chunk);
+    });
+    child.on('close', (code) => {
+      if (code !== 0 || state.phase === 'invalid') {
+        settle(false);
+        return;
+      }
+      settle(finishPointerScan(state));
+    });
+  });
+}
+
 export async function indexContainsLfsPointer(
   cwd: string,
   env: Record<string, string>
@@ -180,26 +280,7 @@ export async function indexContainsLfsPointer(
   for (const key of candidateKeys) {
     const oids = [...new Set(oidsByPath.get(key) ?? [])];
     for (const oid of oids) {
-      try {
-        const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', oid], {
-          cwd,
-          encoding: 'utf8',
-          timeout: LFS_PROBE_TIMEOUT_MS,
-          env,
-          maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-        });
-        if (Number(sizeOut.trim()) > LFS_CANDIDATE_MAX_BYTES) continue;
-        const { stdout } = await execFileAsync('git', ['show', oid], {
-          cwd,
-          encoding: 'utf8',
-          timeout: LFS_PROBE_TIMEOUT_MS,
-          env,
-          maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-        });
-        if (isLfsPointerContent(stdout)) return true;
-      } catch {
-        continue;
-      }
+      if (await validateBlobStream(cwd, env, oid)) return true;
     }
   }
   return false;

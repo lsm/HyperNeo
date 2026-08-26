@@ -64,19 +64,25 @@ function createFakeChild(): FakeChild {
   return child;
 }
 
-function stubLsFiles(
-  chunks: Buffer[],
-  options?: { exitCode?: number | null; error?: Error }
-): void {
-  childProcessMocks.spawn.mockImplementation(() => {
+interface SpawnPlan {
+  chunks?: Buffer[];
+  exitCode?: number | null;
+  error?: Error;
+}
+
+function planSpawn(plans: { lsFiles?: SpawnPlan; catFile?: SpawnPlan }): void {
+  childProcessMocks.spawn.mockImplementation((_file: string, args: string[]) => {
+    gitCalls.push([_file, ...args]);
+    const plan =
+      args[0] === 'ls-files' ? plans.lsFiles : args[0] === 'cat-file' ? plans.catFile : undefined;
     const child = createFakeChild();
     queueMicrotask(() => {
-      if (options?.error) {
-        child.emitError(options.error);
+      if (!plan || plan.error) {
+        child.emitError(plan?.error ?? new Error(`unexpected spawn: ${args.join(' ')}`));
         return;
       }
-      for (const chunk of chunks) child.emitData(chunk);
-      child.emitClose(options?.exitCode ?? 0);
+      for (const chunk of plan.chunks ?? []) child.emitData(chunk);
+      child.emitClose(plan.exitCode ?? 0);
     });
     return child;
   });
@@ -121,15 +127,7 @@ function stubGrepOnly(blobContent: string): void {
       callback(null, { stdout: binaryPaths('asset.bin'), stderr: '' });
       return;
     }
-    if (file === 'git' && args[0] === 'cat-file') {
-      callback(null, { stdout: `${blobContent.length}\n`, stderr: '' });
-      return;
-    }
-    if (file === 'git' && args[0] === 'show') {
-      callback(null, { stdout: blobContent, stderr: '' });
-      return;
-    }
-    callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+    callback(new Error(`unexpected execFile invocation: ${file} ${args.join(' ')}`), {
       stdout: '',
       stderr: '',
     });
@@ -137,7 +135,10 @@ function stubGrepOnly(blobContent: string): void {
 }
 
 function stubGrepCandidate(blobContent: string): void {
-  stubLsFiles([indexListing(['asset.bin', BLOB_OID])]);
+  planSpawn({
+    lsFiles: { chunks: [indexListing(['asset.bin', BLOB_OID])] },
+    catFile: { chunks: [Buffer.from(blobContent)] },
+  });
   stubGrepOnly(blobContent);
 }
 
@@ -226,34 +227,18 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
-  test('skips oversized candidates before reading them', async () => {
-    const hugeOid = 'e'.repeat(64);
-    stubLsFiles([indexListing(['huge.bin', hugeOid], ['asset.bin', BLOB_OID])]);
-    stubGitProbes((file, args, callback) => {
-      if (file === 'git' && args[0] === 'grep') {
-        callback(null, { stdout: binaryPaths('huge.bin', 'asset.bin'), stderr: '' });
-        return;
-      }
-      if (file === 'git' && args[0] === 'cat-file') {
-        const size = args[2] === hugeOid ? '99999999' : '40';
-        callback(null, { stdout: size, stderr: '' });
-        return;
-      }
-      if (file === 'git' && args[0] === 'show') {
-        if (args[1] === BLOB_OID) {
-          callback(null, { stdout: `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`, stderr: '' });
-          return;
-        }
-        callback(new Error('oversized blob must not be read'), { stdout: '', stderr: '' });
-        return;
-      }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
-        stdout: '',
-        stderr: '',
-      });
-    });
+  test('accepts repeated identical extension records with differing digests', async () => {
+    const repeat = `ext-1-x sha256:${'c'.repeat(64)}`;
+    stubGrepCandidate(
+      `${LFS_SIGNATURE}\next-1-x sha256:${'b'.repeat(64)}\n${repeat}\n${POINTER_OID}\nsize 12\n`
+    );
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
-    expect(gitCalls.some((call) => call[1] === 'show' && call[2] === hugeOid)).toBe(false);
+  });
+
+  test('validates pointers whose size record is zero-padded beyond the former blob cap', async () => {
+    const padded = `${LFS_SIGNATURE}\n${POINTER_OID}\nsize ${'0'.repeat(65_500)}7\n`;
+    stubGrepCandidate(padded);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
   test('accepts CRLF-delimited pointer blobs', async () => {
@@ -327,44 +312,38 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
+  test('streams candidate blobs across chunk boundaries', async () => {
+    const blob = `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`;
+    const mid = Math.floor(blob.length / 2);
+    planSpawn({
+      lsFiles: { chunks: [indexListing(['asset.bin', BLOB_OID])] },
+      catFile: { chunks: [Buffer.from(blob.slice(0, mid)), Buffer.from(blob.slice(mid))] },
+    });
+    stubGrepOnly(blob);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+  });
+
   test('resolves candidate paths containing non-UTF-8 bytes through the index', async () => {
     const rawOid = 'd'.repeat(64);
-    stubLsFiles([indexListing([Buffer.from([0x62, 0x61, 0x64, 0xff]), rawOid])]);
+    planSpawn({
+      lsFiles: { chunks: [indexListing([Buffer.from([0x62, 0x61, 0x64, 0xff]), rawOid])] },
+      catFile: { chunks: [Buffer.from(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`)] },
+    });
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
         const raw = Buffer.concat([Buffer.from([0x62, 0x61, 0x64, 0xff]), Buffer.from([0])]);
         callback(null, { stdout: raw, stderr: '' });
         return;
       }
-      if (file === 'git' && args[0] === 'cat-file') {
-        callback(null, { stdout: '40\n', stderr: '' });
-        return;
-      }
-      if (file === 'git' && args[0] === 'show') {
-        if (args[1] === rawOid) {
-          callback(null, { stdout: `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`, stderr: '' });
-          return;
-        }
-        callback(new Error('path bytes must not reach argv'), { stdout: '', stderr: '' });
-        return;
-      }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+      callback(new Error(`unexpected execFile invocation: ${file} ${args.join(' ')}`), {
         stdout: '',
         stderr: '',
       });
     });
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
     expect(gitCalls.some((call) => call.slice(1).some((arg) => arg.includes('�')))).toBe(false);
-    const showCall = gitCalls.find((call) => call[0] === 'git' && call[1] === 'show');
-    expect(showCall?.[2]).toBe(rawOid);
-  });
-
-  test('streams index listings across chunk boundaries without buffering them whole', async () => {
-    const listing = indexListing(['asset.bin', BLOB_OID]);
-    const splitAt = listing.indexOf(9) + 3;
-    stubLsFiles([listing.subarray(0, splitAt), listing.subarray(splitAt)]);
-    stubGrepOnly(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
-    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
+    const catFileCall = gitCalls.find((call) => call[1] === 'cat-file');
+    expect(catFileCall?.[2]).toBe(rawOid);
   });
 
   test('accepts extension records between oid and size', async () => {
@@ -378,18 +357,10 @@ describe('indexContainsLfsPointer', () => {
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
-  test('rejects duplicate extension priorities', async () => {
+  test('rejects duplicate extension priorities under different names', async () => {
     const dup = `ext-0-other sha256:${'c'.repeat(64)}`;
     stubGrepCandidate(`${LFS_SIGNATURE}\n${EXT_RECORD}\n${dup}\n${POINTER_OID}\nsize 1234\n`);
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
-  });
-
-  test('accepts repeated identical extension records with differing digests', async () => {
-    const repeat = `ext-1-x sha256:${'c'.repeat(64)}`;
-    stubGrepCandidate(
-      `${LFS_SIGNATURE}\next-1-x sha256:${'b'.repeat(64)}\n${repeat}\n${POINTER_OID}\nsize 12\n`
-    );
-    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
   });
 
   test('rejects leading-zero extension priorities', async () => {
@@ -417,44 +388,48 @@ describe('indexContainsLfsPointer', () => {
   test('reads index candidates by object id instead of path arguments', async () => {
     stubGrepCandidate(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
     await indexContainsLfsPointer('/repo', {});
-    const showCall = gitCalls.find((call) => call[0] === 'git' && call[1] === 'show');
-    expect(showCall?.[2]).toBe(BLOB_OID);
+    const catFileCall = gitCalls.find((call) => call[1] === 'cat-file');
+    expect(catFileCall?.[2]).toBe(BLOB_OID);
     expect(gitCalls.some((call) => call.some((arg) => arg.startsWith(':./')))).toBe(false);
   });
 
   test('matches stage-prefixed index entries by their literal path bytes', async () => {
-    stubLsFiles([indexListing(['2:fixture', BLOB_OID])]);
+    planSpawn({
+      lsFiles: { chunks: [indexListing(['2:fixture', BLOB_OID])] },
+      catFile: { chunks: [Buffer.from(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`)] },
+    });
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
         callback(null, { stdout: binaryPaths('2:fixture'), stderr: '' });
         return;
       }
-      if (file === 'git' && args[0] === 'cat-file') {
-        callback(null, { stdout: `${(LFS_SIGNATURE.length + 20).toString()}\n`, stderr: '' });
-        return;
-      }
-      if (file === 'git' && args[0] === 'show') {
-        callback(null, { stdout: `${LFS_SIGNATURE}\n${POINTER_OID}\nsize 7\n`, stderr: '' });
-        return;
-      }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+      callback(new Error(`unexpected execFile invocation: ${file} ${args.join(' ')}`), {
         stdout: '',
         stderr: '',
       });
     });
     await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(true);
-    const showCall = gitCalls.find((call) => call[0] === 'git' && call[1] === 'show');
-    expect(showCall?.[2]).toBe(BLOB_OID);
+    const catFileCall = gitCalls.find((call) => call[1] === 'cat-file');
+    expect(catFileCall?.[2]).toBe(BLOB_OID);
+  });
+
+  test('skips candidates whose blobs cannot be read', async () => {
+    planSpawn({
+      lsFiles: { chunks: [indexListing(['asset.bin', BLOB_OID])] },
+      catFile: { error: new Error('object unreadable') },
+    });
+    stubGrepOnly(`${LFS_SIGNATURE}\n${POINTER_OID}\nsize 1234\n`);
+    await expect(indexContainsLfsPointer('/repo', {})).resolves.toBe(false);
   });
 
   test('returns false when no indexed candidate matches the signature', async () => {
-    stubLsFiles([]);
+    planSpawn({ lsFiles: { chunks: [] }, catFile: { chunks: [] } });
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
         callback(Object.assign(new Error('exit 1'), { code: 1 }), { stdout: '', stderr: '' });
         return;
       }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+      callback(new Error(`unexpected execFile invocation: ${file} ${args.join(' ')}`), {
         stdout: '',
         stderr: '',
       });
@@ -463,7 +438,7 @@ describe('indexContainsLfsPointer', () => {
   });
 
   test('propagates probe failures other than empty grep results', async () => {
-    stubLsFiles([]);
+    planSpawn({ lsFiles: { chunks: [] }, catFile: { chunks: [] } });
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
         callback(Object.assign(new Error('index locked'), { code: 128 }), {
@@ -472,7 +447,7 @@ describe('indexContainsLfsPointer', () => {
         });
         return;
       }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+      callback(new Error(`unexpected execFile invocation: ${file} ${args.join(' ')}`), {
         stdout: '',
         stderr: '',
       });
@@ -481,13 +456,16 @@ describe('indexContainsLfsPointer', () => {
   });
 
   test('propagates index listing failures while candidates exist', async () => {
-    stubLsFiles([], { exitCode: 128 });
+    planSpawn({
+      lsFiles: { chunks: [], exitCode: 128 },
+      catFile: { chunks: [] },
+    });
     stubGitProbes((file, args, callback) => {
       if (file === 'git' && args[0] === 'grep') {
         callback(null, { stdout: binaryPaths('asset.bin'), stderr: '' });
         return;
       }
-      callback(new Error(`unexpected git invocation: ${file} ${args.join(' ')}`), {
+      callback(new Error(`unexpected execFile invocation: ${file} ${args.join(' ')}`), {
         stdout: '',
         stderr: '',
       });
