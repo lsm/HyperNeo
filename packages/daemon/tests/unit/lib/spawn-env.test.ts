@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   _setStartupEnvBaselineForTesting,
+  buildClassifierSdkEnv,
   buildCommandEnv,
   buildDialogEnv,
   buildGitCommandEnv,
@@ -88,6 +89,17 @@ describe('buildOsBaselineEnv', () => {
     expect(env.PATH).toBe(SOURCE.PATH);
     expect(env.HOME).toBe(SOURCE.HOME);
     expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
+    expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
+    expect(env.LC_COLLATE).toBe(SOURCE.LC_COLLATE);
+    expect(env.LC_NUMERIC).toBe(SOURCE.LC_NUMERIC);
+    expect(env.USERNAME).toBe(SOURCE.USERNAME);
+    expect(env.CI).toBe('true');
+    expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
+    expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
+    expect(env.WINDIR).toBe(SOURCE.WINDIR);
+    expect(env['ProgramFiles']).toBe(SOURCE['ProgramFiles']);
+    expect(env['ProgramFiles(x86)']).toBe(SOURCE['ProgramFiles(x86)']);
+    expect(env.ProgramW6432).toBe(SOURCE.ProgramW6432);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(env.GH_TOKEN).toBeUndefined();
@@ -102,6 +114,7 @@ describe('buildCommandEnv', () => {
     expect(env.https_proxy).toBe(SOURCE.https_proxy);
     expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
     expect(env.CURL_CA_BUNDLE).toBe(SOURCE.CURL_CA_BUNDLE);
+    expect(env.REQUESTS_CA_BUNDLE).toBe(SOURCE.REQUESTS_CA_BUNDLE);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 });
@@ -124,12 +137,18 @@ describe('buildGitCommandEnv', () => {
     });
     expect(env.GIT_SSL_CAINFO).toBe(SOURCE.GIT_SSL_CAINFO);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
+    expect(env.GIT_CEILING_DIRECTORIES).toBe(SOURCE.GIT_CEILING_DIRECTORIES);
+    expect(env.GIT_DISCOVERY_ACROSS_FILESYSTEM).toBe('1');
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
+    expect(env.GIT_ATTR_NOSYSTEM).toBe('1');
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBeUndefined();
     expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/gitconfig-global');
   });
 
   test('carries safe.directory entries but never extraHeader secrets into hook-capable commands', () => {
@@ -156,10 +175,19 @@ describe('buildGitSshEnv', () => {
     const env = buildGitSshEnv(SOURCE);
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
-    expect(env.GIT_SSL_CERT).toBe(SOURCE.GIT_SSL_CERT);
-    expect(env.GIT_SSL_KEY).toBe(SOURCE.GIT_SSL_KEY);
-    expect(env.GIT_ASKPASS).toBe(SOURCE.GIT_ASKPASS);
-    expect(env.SSH_ASKPASS).toBe(SOURCE.SSH_ASKPASS);
+    expect(env.VSCODE_GIT_ASKPASS_NODE).toBe(SOURCE.VSCODE_GIT_ASKPASS_NODE);
+    expect(env.VSCODE_GIT_ASKPASS_MAIN).toBe(SOURCE.VSCODE_GIT_ASKPASS_MAIN);
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
+    expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
+    expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
+    expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
+    expect(env.GIT_ALLOW_PROTOCOL).toBe('file:https');
+    expect(env.GIT_PROXY_COMMAND).toBe(SOURCE.GIT_PROXY_COMMAND);
+    expect(env.GIT_PROXY_SSL_CAINFO).toBe(SOURCE.GIT_PROXY_SSL_CAINFO);
+    expect(env.GIT_PROXY_SSL_CERT).toBe(SOURCE.GIT_PROXY_SSL_CERT);
+    expect(env.GIT_PROXY_SSL_KEY).toBe(SOURCE.GIT_PROXY_SSL_KEY);
+    expect(env.GIT_PROXY_SSL_CERT_PASSWORD_PROTECTED).toBe('1');
+    expect(env.GIT_HTTP_PROXY_AUTHMETHOD).toBe('basic');
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
@@ -167,21 +195,37 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_CONFIG_VALUE_1).toBeUndefined();
   });
 
-  test('reindexes safe.directory alongside http.extraHeader entries in the network env', () => {
+  test('drops the config block entirely when no http.extraHeader entry exists', () => {
     const env = buildGitSshEnv({
       ...SOURCE,
-      GIT_CONFIG_COUNT: '3',
-      GIT_CONFIG_KEY_0: 'safe.directory',
-      GIT_CONFIG_VALUE_0: '/mnt/trusted-repo',
-      GIT_CONFIG_KEY_1: 'http.extraheader',
-      GIT_CONFIG_VALUE_1: 'Authorization: Bearer repo-secret',
-      GIT_CONFIG_KEY_2: 'core.hooksPath',
-      GIT_CONFIG_VALUE_2: '/tmp/hooks',
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
     });
-    expect(env.GIT_CONFIG_COUNT).toBe('2');
-    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
-    expect(env.GIT_CONFIG_KEY_1).toBe('http.extraheader');
-    expect(env.GIT_CONFIG_KEY_2).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+  });
+
+  test('carries proxy inputs, TLS client-certificate metadata, and askpass activation inputs', () => {
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_SSL_CERT_TYPE: 'DER',
+      GIT_SSL_KEY_TYPE: 'ENGINE',
+      GIT_SSL_CERT_PASSWORD_PROTECTED: '1',
+      SSH_ASKPASS_REQUIRE: 'force',
+      SSH_ASKPASS: '/tmp/askpass.sh',
+      GIT_CONFIG_GLOBAL: '/tmp/gitconfig-global',
+    });
+    expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
+    expect(env.DISPLAY).toBe(SOURCE.DISPLAY);
+    expect(env.XAUTHORITY).toBe(SOURCE.XAUTHORITY);
+    expect(env.DBUS_SESSION_BUS_ADDRESS).toBe(SOURCE.DBUS_SESSION_BUS_ADDRESS);
+    expect(env.XDG_RUNTIME_DIR).toBe(SOURCE.XDG_RUNTIME_DIR);
+    expect(env.WAYLAND_DISPLAY).toBe(SOURCE.WAYLAND_DISPLAY);
+    expect(env.SSH_ASKPASS_REQUIRE).toBe('force');
+    expect(env.SSH_ASKPASS).toBe('/tmp/askpass.sh');
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/gitconfig-global');
+    expect(env.GIT_SSL_CERT_TYPE).toBe('DER');
+    expect(env.GIT_SSL_KEY_TYPE).toBe('ENGINE');
+    expect(env.GIT_SSL_CERT_PASSWORD_PROTECTED).toBe('1');
   });
 
   test('accepts URL-scoped http.<url>.extraHeader configuration keys', () => {
@@ -195,15 +239,6 @@ describe('buildGitSshEnv', () => {
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe(urlScoped);
     expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Bearer url-scoped-secret');
-  });
-
-  test('drops the config block entirely when no http.extraHeader entry exists', () => {
-    const env = buildGitSshEnv({
-      ...SOURCE,
-      GIT_CONFIG_KEY_0: 'core.hooksPath',
-    });
-    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
-    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
   });
 });
 
@@ -220,6 +255,8 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://router.corp.example');
     expect(env.API_TIMEOUT_MS).toBe('300000');
     expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/custom/claude-config');
+    expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('1');
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -242,12 +279,51 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.SSH_AGENT_PID).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
     expect(env.GIT_SSL_NO_VERIFY).toBe(SOURCE.GIT_SSL_NO_VERIFY);
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
+    expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
+    expect(env.GIT_EDITOR).toBe(SOURCE.GIT_EDITOR);
+    expect(env.EDITOR).toBe(SOURCE.EDITOR);
+    expect(env.VISUAL).toBe(SOURCE.VISUAL);
+    expect(env.GNUPGHOME).toBe(SOURCE.GNUPGHOME);
+    expect(env.GPG_TTY).toBe(SOURCE.GPG_TTY);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
     expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+  });
+
+  test('preserves safe.directory entries for agent git commands', () => {
+    const env = buildSdkRuntimeEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: '/mnt/trusted-repo',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
+    expect(env.GIT_CONFIG_VALUE_0).toBe('/mnt/trusted-repo');
+  });
+});
+
+describe('buildClassifierSdkEnv', () => {
+  test('carries proxy and SDK config inputs but no Git auth capabilities for one-turn classifiers', () => {
+    const env = buildClassifierSdkEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraHeader',
+      GIT_CONFIG_VALUE_0: 'Authorization: Bearer extra-secret',
+    });
+    expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
+    expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
+    expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.GIT_SSH_COMMAND).toBeUndefined();
+    expect(env.GIT_AUTHOR_NAME).toBeUndefined();
+    expect(env.EMAIL).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(JSON.stringify(env)).not.toContain('extra-secret');
   });
 });
 
