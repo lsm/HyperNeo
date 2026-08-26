@@ -37,13 +37,16 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
+import {
+  contextBudgetThreshold,
+  decideContextBudgetCompaction,
+} from './context-budget-decision.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
-import { reserveBasedThreshold } from './context-tracker.js';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -52,11 +55,27 @@ import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import {
   getBuiltFallbackIdentity,
-  shouldUseHyperNeoCompactFallback,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
 } from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
+
+const DELIVERY_GATE_WINDOW_MS = 5000;
+
+function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
+  const windowMs =
+    deadlineAt === undefined ? DELIVERY_GATE_WINDOW_MS : Math.max(0, deadlineAt - Date.now());
+  return Promise.race([
+    gate,
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => resolve(), windowMs);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+    }),
+  ]);
+}
 
 export type SuppressedResultOutcome = 'confirmed' | 'reset' | 'cancelled';
 
@@ -923,7 +942,11 @@ export class SDKMessageHandler {
         }
       }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
-      void this.refreshContextUsage('turn-end');
+      const compactingClear = this.ctx.stateManager.getIsCompacting()
+        ? this.ctx.stateManager.setCompacting(false)
+        : null;
+      await this.refreshContextUsage('turn-end');
+      await compactingClear;
       return;
     }
 
@@ -934,8 +957,15 @@ export class SDKMessageHandler {
       }
     }
 
+    let enforcedTurnEnd = false;
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
+        const compactingClear = this.ctx.stateManager.getIsCompacting()
+          ? this.ctx.stateManager.setCompacting(false)
+          : null;
+        await this.refreshContextUsage('turn-end');
+        enforcedTurnEnd = true;
+        await compactingClear;
         await stateManager.setIdle();
       }
     }
@@ -977,7 +1007,17 @@ export class SDKMessageHandler {
     }
 
     if (isSDKResultMessage(message)) {
-      void this.refreshContextUsage('turn-end');
+      const compactingClear =
+        isTopLevelResult && this.ctx.stateManager.getIsCompacting()
+          ? this.ctx.stateManager.setCompacting(false)
+          : null;
+      if (!enforcedTurnEnd) {
+        await this.refreshContextUsage('turn-end');
+      }
+      await compactingClear;
+    }
+
+    if (isSDKResultMessage(message)) {
       if (settlesArmedClearError) {
         this.clearIdleSuppression();
       }
@@ -1463,11 +1503,21 @@ export class SDKMessageHandler {
   }
 
   private async handleCompactBoundary(message: SDKMessage): Promise<void> {
-    const { stateManager } = this.ctx;
+    const { stateManager, contextTracker } = this.ctx;
 
     if (!isSDKCompactBoundary(message)) return;
 
     await stateManager.setCompacting(false);
+    const boundaryInfo = contextTracker.getContextInfo();
+    const boundaryCapacity =
+      boundaryInfo && boundaryInfo.totalCapacity > 0 ? boundaryInfo.totalCapacity : undefined;
+    contextTracker.markCompactionTriggered(
+      boundaryCapacity === undefined
+        ? undefined
+        : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
+    );
+    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+    this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
     void this.refreshContextUsage('compact-boundary');
   }
@@ -1479,62 +1529,161 @@ export class SDKMessageHandler {
     }
   }
 
+  private isContextRefreshStale(
+    queryObject: QueryLike,
+    model: string | undefined,
+    provider: string | undefined
+  ): boolean {
+    return (
+      this.ctx.queryObject !== queryObject ||
+      this.ctx.session.config.model !== model ||
+      this.ctx.session.config.provider !== provider
+    );
+  }
+
+  private isDaemonCompactionPending(): boolean {
+    const { session, messageQueue, stateManager } = this.ctx;
+    const providerId = session.config.provider;
+    if (!providerId || providerId === 'acp') return false;
+    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+    return messageQueue.hasOutstandingInternalCompaction() || stateManager.getIsCompacting();
+  }
+
   private refreshContextUsage(
-    reason: 'event-tick' | 'turn-end' | 'compact-boundary'
+    reason: 'event-tick' | 'turn-end' | 'compact-boundary',
+    deadlineAt?: number
   ): Promise<void> {
     this.eventsSinceContextRefresh = 0;
 
     if (this.pendingContextRefresh) {
+      if (reason === 'event-tick') {
+        return this.pendingContextRefresh;
+      }
+      const chainDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
+      const pending = this.pendingContextRefresh;
+      this.pendingContextRefresh = pending.then(() =>
+        this.refreshContextUsage(reason, chainDeadline)
+      );
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          this.pendingContextRefresh.catch(() => {}),
+          chainDeadline
+        )
+      );
       return this.pendingContextRefresh;
     }
 
     const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
     if (!queryObject) return Promise.resolve();
+    const fenceModel = session.config.model;
+    const gateDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
+    const fenceProvider = session.config.provider;
 
     const promise = (async () => {
       try {
         const modelInfo = await getSessionModelInfo(session);
+        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
           queryObject,
           modelInfo
         );
+        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
         if (!contextInfo) return;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
-        await internalEventBus.publish('context.updated', {
-          sessionId: session.id,
-          contextInfo,
-        });
+        const publishProjection = internalEventBus
+          .publish('context.updated', {
+            sessionId: session.id,
+            contextInfo,
+          })
+          .catch((error) => {
+            this.logger.warn(
+              `context.updated publication failed for session ${session.id}:`,
+              error
+            );
+          });
+        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
 
         const providerId = session.config.provider;
-        if (!providerId) {
+        if (
+          !providerId ||
+          providerId === 'acp' ||
+          NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
+        ) {
           return;
         }
-        const shouldUseFallback = shouldUseHyperNeoCompactFallback(providerId);
-        const actualContextWindow = modelInfo?.contextWindow;
-        if (shouldUseFallback && actualContextWindow && actualContextWindow > 0) {
-          const hyperNeoCompactThreshold = reserveBasedThreshold(actualContextWindow, providerId);
-          if (
-            contextInfo.totalUsed >= hyperNeoCompactThreshold &&
-            contextTracker.shouldCompactAt(hyperNeoCompactThreshold)
-          ) {
-            contextTracker.markCompactionTriggered();
-            this.logger.info(
-              `Triggering HyperNeo compaction fallback for session ${session.id} ` +
-                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${hyperNeoCompactThreshold} ` +
-                `of ${actualContextWindow} tokens)`
-            );
-            void this.ctx.messageQueue.enqueue('/compact', true).catch((error) => {
-              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-            });
-          }
+        const deadDeliveredCompaction =
+          reason === 'turn-end' &&
+          this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+          !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
+          !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
+          !this.ctx.stateManager.getIsCompacting();
+        if (deadDeliveredCompaction) {
+          this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+          contextTracker.clearCompactionCooldown();
+          this.logger.info(
+            `clearing stale compaction cooldown for session ${session.id} after a ` +
+              `delivered /compact ended without a compact boundary`
+          );
         }
+        const effectiveWindow =
+          contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
+        const effectivePercent = contextInfo.autoCompactPercent;
+        const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
+        if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
+          return;
+        }
+        const decision = decideContextBudgetCompaction({
+          totalUsed: contextInfo.totalUsed,
+          configuredWindow: effectiveWindow,
+          autoCompactPercent: effectivePercent,
+          sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
+          sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
+          cooldownActive: contextTracker.isCoolingDown(budgetKey),
+          compactingActive: this.ctx.stateManager.getIsCompacting(),
+        });
+        if (decision.action === 'compact') {
+          contextTracker.markCompactionTriggered(budgetKey);
+          this.logger.info(
+            `Daemon context-budget compaction for session ${session.id} ` +
+              `(provider=${providerId}, reason=${decision.reason}, ` +
+              `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
+          );
+          void this.ctx.messageQueue
+            .enqueue('/compact', true, { durable: true, prepend: true })
+            .catch((error) => {
+              if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
+                return;
+              }
+              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+              contextTracker.clearCompactionCooldown();
+            });
+        }
+        await boundedDeliveryGate(
+          publishProjection.then(() => undefined),
+          gateDeadline
+        );
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
         this.pendingContextRefresh = null;
+        if (reason === 'turn-end' && !this.isDaemonCompactionPending()) {
+          this.ctx.messageQueue.pruneSentPrompts();
+        }
       }
     })();
     this.pendingContextRefresh = promise;
+    const enforcesBudget =
+      !!session.config.provider &&
+      session.config.provider !== 'acp' &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(session.config.provider);
+    if (reason !== 'event-tick' || enforcesBudget) {
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          promise.catch(() => {}),
+          gateDeadline
+        )
+      );
+    }
     return promise;
   }
 }
