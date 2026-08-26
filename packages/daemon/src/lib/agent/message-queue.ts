@@ -1,7 +1,7 @@
-import type { UUID } from 'crypto';
 import type { MessageContent, ToolResultContent } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { generateUUID } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
 import { buildQueueTimeoutError, resolveQueueTimeout } from './message-queue-timeout-policy.ts';
 
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
@@ -425,24 +425,27 @@ export class MessageQueue {
   }
 
   private async waitForNextMessage(): Promise<QueuedMessage | null> {
-    while (this.running && this.queue.length === 0) {
-      await new Promise<void>((resolve) => {
-        this.waiters.push(resolve);
-      });
+    while (this.running) {
+      while (this.queue.length === 0) {
+        if (!this.running) return null;
+        await new Promise<void>((resolve) => {
+          this.waiters.push(resolve);
+        });
+        if (!this.running) return null;
+      }
+
+      while (this.deliveryGate) {
+        await this.deliveryGate.catch(() => {});
+      }
 
       if (!this.running) return null;
-    }
 
-    while (this.deliveryGate) {
-      await this.deliveryGate.catch(() => {});
+      const message = this.queue.shift();
+      if (message) {
+        this.claimed.add(message);
+        return message;
+      }
     }
-
-    if (!this.running) return null;
-
-    const message = this.queue.shift() || null;
-    if (message) {
-      this.claimed.add(message);
-    }
-    return message;
+    return null;
   }
 }

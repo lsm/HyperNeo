@@ -1,5 +1,3 @@
-import { KimiProvider } from '../providers/kimi-provider.js';
-import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -29,30 +27,35 @@ import {
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
-import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import {
+  decideFallbackModelCuration,
+} from './fallback-model-curation.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
 } from '../model-service.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
@@ -60,14 +63,13 @@ import {
 import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -990,21 +992,6 @@ CRITICAL RULES:
       hooks: [loopDetectorHooks.preToolUse],
     });
 
-    if (this.ctx.midTurnContextBudgetCheck) {
-      const budgetCheck = this.ctx.midTurnContextBudgetCheck.bind(this.ctx);
-      const postToolUse: NonNullable<Options['hooks']>['PostToolUse'] = [
-        {
-          hooks: [
-            async (): Promise<Record<string, never>> => {
-              budgetCheck();
-              return {};
-            },
-          ],
-        },
-      ];
-      hooks.PostToolUse = postToolUse;
-    }
-
     const guards = this.ctx.toolGuards;
     if (guards?.length) {
       const byMatcher = new Map<string, DeclarativeToolGuard[]>();
@@ -1045,9 +1032,19 @@ CRITICAL RULES:
       hooks.PreToolUse = preToolUse;
     }
 
-    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [
-      { hooks: [loopDetectorHooks.postToolUse] },
-    ];
+    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [];
+    if (this.ctx.midTurnContextBudgetCheck) {
+      const budgetCheck = this.ctx.midTurnContextBudgetCheck.bind(this.ctx);
+      postHooks.push({
+        hooks: [
+          async (): Promise<Record<string, never>> => {
+            budgetCheck();
+            return {};
+          },
+        ],
+      });
+    }
+    postHooks.push({ hooks: [loopDetectorHooks.postToolUse] });
     if (outputLimiterEnabled) {
       postHooks.push({ hooks: [createOutputLimiterPostHook(outputLimiterSettings)] });
     }

@@ -1,24 +1,24 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
+import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub, ModelInfo } from '@hyperneo/shared';
-import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
-import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
-import type { Database } from '../../../../src/storage/database';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type { Database } from '../../../../src/storage/database';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 class TranslatingMockProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -4104,7 +4104,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('enqueues /compact once when the budget is exceeded with an unknown SDK threshold', async () => {
@@ -4166,9 +4169,82 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(markCompactionTriggeredHandlerSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
         expect(getIsCompactingSpy).toHaveBeenCalled();
         expect(isCoolingDownSpy).toHaveBeenCalled();
+      });
+
+      it('clears the pending post-compaction resume when the turn-end decision is not a compaction', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 50_000 }],
+          totalTokens: 50_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 5,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          autoCompactThreshold: undefined,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).toHaveBeenCalledTimes(1);
       });
 
       it('does not enqueue /compact for a custom provider below its budget even when the SDK reports disabled auto-compact', async () => {
@@ -4229,7 +4305,10 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
@@ -4290,7 +4369,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact when model info is missing', async () => {
@@ -4397,7 +4479,10 @@ describe('SDKMessageHandler', () => {
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('enqueues /compact for China Kimi past the default budget (daemon backstop)', async () => {
@@ -4461,7 +4546,10 @@ describe('SDKMessageHandler', () => {
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
       it('enqueues /compact using the active fallback model window, not the primary model window', async () => {
         setModelsCache(
@@ -4528,7 +4616,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('uses the active fallback model percent even when the primary opted out', async () => {
@@ -4598,7 +4689,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('defaults an override-free fallback model to 90 percent even when the primary opted out', async () => {
@@ -4667,7 +4761,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('drops an over-budget refresh whose query was replaced before usage resolved', async () => {
@@ -4805,7 +4902,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('never enqueues the SDK /compact command for ACP sessions', async () => {
@@ -5035,7 +5135,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(2);
         expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('drops the compaction decision when the query is replaced during context publication', async () => {

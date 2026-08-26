@@ -402,7 +402,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('Codex-mini (128k) session near capacity does NOT enqueue /compact', async () => {
@@ -435,7 +438,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('Kimi K3 (1M) session near capacity now enqueues /compact exactly once (daemon backstop)', async () => {
@@ -471,7 +477,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
     expect(harness.enqueueSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -506,7 +515,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('splits across the Kimi/Codex model matrix near capacity (kimi backstops, codex native)', async () => {
@@ -559,7 +571,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
         expect(harness.enqueueSpy, `${c.provider}/${c.model}`).toHaveBeenCalledWith(
           '/compact',
           true,
-          { prepend: true }
+          { durable: true, prepend: true }
         );
         expect(
           harness.markCompactionTriggeredSpy,
@@ -723,7 +735,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
-    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('autoCompactPercent 100 opts a custom provider out of the daemon backstop', async () => {
@@ -756,7 +771,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('an active SDK compaction suppresses the backstop', async () => {
@@ -789,6 +807,9 @@ describe('N4: literal /compact never enters the transcript or provider request',
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, { prepend: true });
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 });

@@ -41,12 +41,12 @@ import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
+import {
+  contextBudgetThreshold,
+  decideContextBudgetCompaction,
+} from './context-budget-decision.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
-import {
-  decideContextBudgetCompaction,
-  contextBudgetThreshold,
-} from './context-budget-decision.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -96,6 +96,8 @@ export interface SDKMessageHandlerContext {
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
   resumePendingWorkAfterCompaction?(): void;
+
+  clearPendingResumeAfterCompaction?(): void;
 
   onResultLimitError?(
     errorText: string,
@@ -1555,6 +1557,7 @@ export class SDKMessageHandler {
     const fenceProvider = session.config.provider;
 
     const promise = (async () => {
+      let enqueuedCompaction = false;
       try {
         const modelInfo = await getSessionModelInfo(session);
         if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
@@ -1597,6 +1600,7 @@ export class SDKMessageHandler {
           compactingActive: this.ctx.stateManager.getIsCompacting(),
         });
         if (decision.action === 'compact') {
+          enqueuedCompaction = true;
           contextTracker.markCompactionTriggered(budgetKey);
           this.logger.info(
             `Daemon context-budget compaction for session ${session.id} ` +
@@ -1608,12 +1612,16 @@ export class SDKMessageHandler {
             .catch((error) => {
               this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
               contextTracker.clearCompactionCooldown();
+              this.ctx.clearPendingResumeAfterCompaction?.();
             });
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
         this.pendingContextRefresh = null;
+        if (reason === 'turn-end' && !enqueuedCompaction) {
+          this.ctx.clearPendingResumeAfterCompaction?.();
+        }
       }
     })();
     this.pendingContextRefresh = promise;

@@ -25,8 +25,7 @@ import type {
   SkillEnablementOverride,
   SystemPromptConfig,
 } from '@hyperneo/shared';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -135,12 +134,16 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
-import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
+import { getProviderRegistry } from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
+import {
+  contextBudgetThreshold,
+  decideContextBudgetCompaction,
+} from './context-budget-decision.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
   runDeliveryTurnAdmission,
@@ -157,12 +160,12 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
   classifyReclaimTermination,
   type DriveTurnOutcome,
   deliverMessage,
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
@@ -177,37 +180,36 @@ import {
   withSessionLock,
   withSessionResetCoordination,
 } from './message-delivery.ts';
+import { deliveryMetrics } from './message-delivery-metrics.ts';
 import {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
 } from './message-delivery-pipeline.ts';
-import { deliveryMetrics } from './message-delivery-metrics.ts';
 import { MessageQueue } from './message-queue.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
+import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryAttemptRegistry } from './query-attempt-token.ts';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
-import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.ts';
 import {
-  contextBudgetThreshold,
-  decideContextBudgetCompaction,
-} from './context-budget-decision.ts';
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
+  QueryOptionsBuilder,
+  type QueryOptionsBuilderContext,
+} from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
   QueryRunner,
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from './query-runner.ts';
-import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
+import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   SDKMessageHandler,
@@ -222,9 +224,9 @@ import {
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
+  resolveTaskNotificationRequery,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-  resolveTaskNotificationRequery,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
@@ -845,6 +847,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.clearPendingResumeAfterCompaction();
     this.messageHandler.cancelSuppressedResultWait();
     const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
     if (
@@ -1271,6 +1274,15 @@ export class AgentSession
       });
   }
 
+  clearPendingResumeAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    this.logger.info(
+      `dropping pending post-compaction resume for session ${this.session.id} ` +
+        `(no daemon compaction was enqueued)`
+    );
+  }
+
   async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
     const enforcement = this.enforceRestoredContextBudget().catch((error) => {
       this.logger.warn('post-switch context budget evaluation failed:', error);
@@ -1280,59 +1292,71 @@ export class AgentSession
   }
 
   private async enforceRestoredContextBudget(): Promise<void> {
-    const providerId = this.session.config.provider;
-    if (!providerId || providerId === 'acp') {
-      return;
-    }
-    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
-      return;
-    }
-    const restored = this.contextTracker.getContextInfo();
-    if (!restored || restored.totalUsed <= 0) {
-      return;
-    }
-    const sessionModel = this.session.config.model;
-    const modelInfo = await getSessionModelInfo(this.session);
-    if (this.session.config.model !== sessionModel || this.session.config.provider !== providerId) {
-      return;
-    }
-    const configuredWindow =
-      modelInfo?.contextWindow && modelInfo.contextWindow > 0
-        ? modelInfo.contextWindow
-        : restored.totalCapacity > 0
-          ? restored.totalCapacity
-          : undefined;
-    const autoCompactPercent = modelInfo
-      ? modelInfo.autoCompactPercent
-      : restored.autoCompactPercent;
-    const decision = decideContextBudgetCompaction({
-      totalUsed: restored.totalUsed,
-      configuredWindow,
-      autoCompactPercent,
-      sdkAutoCompactEnabled: restored.isAutoCompactEnabled,
-      sdkAutoCompactThreshold: restored.sdkAutoCompactThreshold,
-      cooldownActive: false,
-      compactingActive: false,
-    });
-    if (decision.action !== 'compact') {
-      return;
-    }
-    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, autoCompactPercent);
-    this.contextTracker.markCompactionTriggered(budgetKey);
-    this.logger.info(
-      `Daemon context-budget compaction for restored session ${this.session.id} ` +
-        `(provider=${providerId}, reason=${decision.reason}, ` +
-        `${restored.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
-    );
-    void this.messageQueue
-      .enqueue('/compact', true, { durable: true, prepend: true })
-      .catch((error) => {
-        this.logger.warn(
-          `restored compaction enqueue failed for session ${this.session.id}:`,
-          error
-        );
-        this.contextTracker.clearCompactionCooldown();
+    let enqueuedCompaction = false;
+    try {
+      const providerId = this.session.config.provider;
+      if (!providerId || providerId === 'acp') {
+        return;
+      }
+      if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+        return;
+      }
+      const restored = this.contextTracker.getContextInfo();
+      if (!restored || restored.totalUsed <= 0) {
+        return;
+      }
+      const sessionModel = this.session.config.model;
+      const modelInfo = await getSessionModelInfo(this.session);
+      if (
+        this.session.config.model !== sessionModel ||
+        this.session.config.provider !== providerId
+      ) {
+        return;
+      }
+      const configuredWindow =
+        modelInfo?.contextWindow && modelInfo.contextWindow > 0
+          ? modelInfo.contextWindow
+          : restored.totalCapacity > 0
+            ? restored.totalCapacity
+            : undefined;
+      const autoCompactPercent = modelInfo
+        ? modelInfo.autoCompactPercent
+        : restored.autoCompactPercent;
+      const decision = decideContextBudgetCompaction({
+        totalUsed: restored.totalUsed,
+        configuredWindow,
+        autoCompactPercent,
+        sdkAutoCompactEnabled: restored.isAutoCompactEnabled,
+        sdkAutoCompactThreshold: restored.sdkAutoCompactThreshold,
+        cooldownActive: false,
+        compactingActive: false,
       });
+      if (decision.action !== 'compact') {
+        return;
+      }
+      enqueuedCompaction = true;
+      const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, autoCompactPercent);
+      this.contextTracker.markCompactionTriggered(budgetKey);
+      this.logger.info(
+        `Daemon context-budget compaction for restored session ${this.session.id} ` +
+          `(provider=${providerId}, reason=${decision.reason}, ` +
+          `${restored.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
+      );
+      void this.messageQueue
+        .enqueue('/compact', true, { durable: true, prepend: true })
+        .catch((error) => {
+          this.logger.warn(
+            `restored compaction enqueue failed for session ${this.session.id}:`,
+            error
+          );
+          this.contextTracker.clearCompactionCooldown();
+          this.clearPendingResumeAfterCompaction();
+        });
+    } finally {
+      if (!enqueuedCompaction) {
+        this.clearPendingResumeAfterCompaction();
+      }
+    }
   }
 
   private syncRuntimeMcpServersToActiveQuery(
@@ -2210,9 +2234,7 @@ export class AgentSession
     if (
       alreadyConsumed &&
       !this.rateLimitWatchdog.isRecoveryPending() &&
-      !!this.db
-        .getSDKMessageRepo()
-        ?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
+      this.db.getSDKMessageRepo()?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
     ) {
       this.logger.info(
         `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +

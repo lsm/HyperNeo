@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
 describe('MessageQueue', () => {
   let queue: MessageQueue;
@@ -354,6 +354,32 @@ describe('MessageQueue', () => {
 
       queue.clear();
       await expect(messagePromise).resolves.toBeUndefined();
+    });
+
+    it('keeps consuming after the queue empties while a delivery gate is pending', async () => {
+      queue.start();
+
+      let releaseGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      queue.setDeliveryGate(gate);
+
+      const compacted = queue.enqueue('/compact', true).catch((error) => error);
+      const generator = queue.messageGenerator(testSessionId);
+      const pending = generator.next();
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      queue.removePendingInternalCompactions();
+      releaseGate();
+
+      const followUp = queue.enqueue('Follow-up');
+      const result = await pending;
+      expect(result.done).toBe(false);
+      expect(result.value.message.message.content[0].text).toBe('Follow-up');
+      result.value.onSent();
+      await followUp;
+      await expect(compacted).rejects.toThrow('compaction superseded by model switch');
     });
 
     it('rejects when onMessageYielded throws and does not count the message as yielded', async () => {
