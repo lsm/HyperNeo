@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
@@ -28,20 +28,21 @@ export class SpaceWorktreeManager {
 
   private resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
     try {
+      const cwdRoot = realpathSync(repoRoot);
       const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-        cwd: repoRoot,
+        cwd: cwdRoot,
         encoding: 'utf8',
         timeout: 30_000,
       }).trim();
       if (!topLevel) throw new Error('empty toplevel');
       const commonDirRaw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
-        cwd: repoRoot,
+        cwd: cwdRoot,
         encoding: 'utf8',
         timeout: 30_000,
       }).trim();
       const commonDir =
-        commonDirRaw && !isAbsolute(commonDirRaw) ? resolve(repoRoot, commonDirRaw) : commonDirRaw;
-      const dirKey = commonDir ? dirname(commonDir) : topLevel;
+        commonDirRaw && !isAbsolute(commonDirRaw) ? resolve(cwdRoot, commonDirRaw) : commonDirRaw;
+      const dirKey = commonDir || topLevel;
       return { commandCwd: topLevel, dirKey };
     } catch {
       return { commandCwd: repoRoot, dirKey: repoRoot };
@@ -181,7 +182,7 @@ export class SpaceWorktreeManager {
     if (existsSync(commandCwdSentinel)) {
       try {
         const stored = readFileSync(commandCwdSentinel, 'utf8').trim();
-        if (stored) return stored;
+        if (stored && existsSync(stored)) return stored;
       } catch {}
     }
     const sentinel = join(projectDir, '.hyperneo-repo-root');

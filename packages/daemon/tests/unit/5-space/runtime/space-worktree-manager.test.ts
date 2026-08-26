@@ -187,7 +187,7 @@ describe('createTaskWorktree', () => {
   test('recovers from stale directory left by a crashed previous run', async () => {
     const taskId = seedTask(db, spaceId, 'task-stale-dir', 99);
     const slug = worktreeSlug('Stale Dir Task', 99);
-    const shortKey = getProjectShortKey(repoDir);
+    const shortKey = getProjectShortKey(join(repoDir, '.git'));
     const expectedPath = join(testBaseDir, shortKey, 'worktrees', slug);
 
     mkdirSync(expectedPath, { recursive: true });
@@ -198,7 +198,7 @@ describe('createTaskWorktree', () => {
   });
 
   test('recovers stale branch via git worktree prune when branch is in a prunable worktree', async () => {
-    const shortKey = getProjectShortKey(repoDir);
+    const shortKey = getProjectShortKey(join(repoDir, '.git'));
     const stalePath = join(testBaseDir, shortKey, 'worktrees', 'prune-test-stale');
     mkdirSync(join(testBaseDir, shortKey, 'worktrees'), { recursive: true });
     execSync(`git worktree add "${stalePath}" -b space/prune-test HEAD`, { cwd: repoDir });
@@ -260,10 +260,15 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     );
 
     expect(defaultResult.path).toBe(
-      join(testBaseDir, getProjectShortKey(repoDir), 'worktrees', defaultResult.slug)
+      join(testBaseDir, getProjectShortKey(join(repoDir, '.git')), 'worktrees', defaultResult.slug)
     );
     expect(secondaryResult.path).toBe(
-      join(testBaseDir, getProjectShortKey(secondaryDir), 'worktrees', secondaryResult.slug)
+      join(
+        testBaseDir,
+        getProjectShortKey(join(secondaryDir, '.git')),
+        'worktrees',
+        secondaryResult.slug
+      )
     );
     expect(existsSync(defaultResult.path)).toBe(true);
     expect(existsSync(secondaryResult.path)).toBe(true);
@@ -319,7 +324,12 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
   test('stale directory recovery targets the repoRoot project dir', async () => {
     const taskId = seedTask(db, spaceId, 'task-ws11-stale-dir', 64);
     const slug = worktreeSlug('Stale Dir Secondary', 64);
-    const expectedPath = join(testBaseDir, getProjectShortKey(secondaryDir), 'worktrees', slug);
+    const expectedPath = join(
+      testBaseDir,
+      getProjectShortKey(join(secondaryDir, '.git')),
+      'worktrees',
+      slug
+    );
     mkdirSync(expectedPath, { recursive: true });
 
     const result = await manager.createTaskWorktree(
@@ -464,8 +474,8 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     );
 
     expect(b.slug).not.toBe(a.slug);
-    expect(a.path).toContain(getProjectShortKey(secondaryDir));
-    expect(b.path).toContain(getProjectShortKey(secondaryDir));
+    expect(a.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(b.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
     expect(existsSync(a.path)).toBe(true);
     expect(existsSync(b.path)).toBe(true);
 
@@ -529,8 +539,8 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     );
     const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Linked Title', 74);
 
-    expect(a.path).toContain(getProjectShortKey(secondaryDir));
-    expect(b.path).toContain(getProjectShortKey(secondaryDir));
+    expect(a.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(b.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
     expect(b.slug).not.toBe(a.slug);
     expect(existsSync(a.path)).toBe(true);
     expect(existsSync(b.path)).toBe(true);
@@ -566,7 +576,7 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
       nestedDir
     );
 
-    expect(b.path).toContain(getProjectShortKey(secondaryDir));
+    expect(b.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
     expect(b.slug).not.toBe(a.slug);
     expect(existsSync(a.path)).toBe(true);
     expect(existsSync(b.path)).toBe(true);
@@ -608,6 +618,36 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     rmSync(sepRepoDir, { recursive: true, force: true });
     rmSync(sepGitDir, { recursive: true, force: true });
+  });
+
+  test('cleanup falls back to the common repo when the recorded checkout cwd disappeared', async () => {
+    const linkedCwd = join(
+      TMP_ROOT,
+      `gonecwd-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    execSync(`git worktree add "${linkedCwd}" -b tmp-gone HEAD`, {
+      cwd: secondaryDir,
+      stdio: 'pipe',
+    });
+
+    const taskId = seedTask(db, spaceId, 'task-ws11-gone-cwd', 78);
+    const { slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Gone Cwd Task',
+      78,
+      undefined,
+      realpathSync(linkedCwd)
+    );
+
+    rmSync(linkedCwd, { recursive: true, force: true });
+    execSync('git worktree prune', { cwd: secondaryDir, stdio: 'pipe' });
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    const branches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(branches).not.toContain(`space/${slug}`);
   });
 });
 
