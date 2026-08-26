@@ -718,6 +718,37 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     otherSetup.db.close();
   });
+
+  test('a crashed creation between git add and the DB insert is adopted on retry', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-adopt', 82);
+    const first = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Crash Adopt Task',
+      82,
+      undefined,
+      secondaryDir
+    );
+
+    db.prepare('DELETE FROM space_worktrees WHERE space_id = ? AND task_id = ?').run(
+      spaceId,
+      taskId
+    );
+
+    const second = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Crash Adopt Task',
+      82,
+      undefined,
+      secondaryDir
+    );
+
+    expect(second.path).toBe(first.path);
+    expect(second.slug).toBe(first.slug);
+    expect(existsSync(second.path)).toBe(true);
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBe(second.path);
+  });
 });
 
 describe('removeTaskWorktree', () => {

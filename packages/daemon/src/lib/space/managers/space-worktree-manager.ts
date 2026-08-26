@@ -49,6 +49,12 @@ export class SpaceWorktreeManager {
     }
   }
 
+  private isLiveRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
+    return (
+      existsSync(join(worktreePath, '.git')) && this.isRegisteredWorktree(commandCwd, worktreePath)
+    );
+  }
+
   async createTaskWorktree(
     spaceId: string,
     taskId: string,
@@ -87,10 +93,16 @@ export class SpaceWorktreeManager {
     const branchName = `space/${slug}`;
 
     if (existsSync(worktreePath)) {
-      if (
-        existsSync(join(worktreePath, '.git')) &&
-        this.isRegisteredWorktree(repo.commandCwd, worktreePath)
-      ) {
+      if (this.isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
+        const claim = this.readWorktreeClaim(worktreePath);
+        const currentBranch = this.worktreeCurrentBranch(worktreePath);
+        if (claim?.spaceId === spaceId && claim.taskId === taskId && currentBranch === branchName) {
+          this.logger.warn(
+            `Adopting orphaned worktree at ${worktreePath} left by a crashed creation for task ${taskId}`
+          );
+          this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
+          return { path: worktreePath, slug };
+        }
         throw new Error(
           `Worktree path ${worktreePath} is already in use by a live registered worktree; refusing to recreate it for task ${taskId}`
         );
@@ -104,7 +116,9 @@ export class SpaceWorktreeManager {
           timeout: 30_000,
         });
       } catch {
-        rmSync(worktreePath, { recursive: true, force: true });
+        if (!this.isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
+          rmSync(worktreePath, { recursive: true, force: true });
+        }
       }
     }
 
@@ -166,7 +180,10 @@ export class SpaceWorktreeManager {
         }
       );
     } catch (err) {
-      if (existsSync(worktreePath)) {
+      if (
+        existsSync(worktreePath) &&
+        !this.isLiveRegisteredWorktree(repo.commandCwd, worktreePath)
+      ) {
         try {
           rmSync(worktreePath, { recursive: true, force: true });
         } catch {}
@@ -176,6 +193,7 @@ export class SpaceWorktreeManager {
       );
     }
 
+    this.writeWorktreeClaim(worktreePath, spaceId, taskId);
     this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
 
     this.logger.info(
@@ -217,6 +235,47 @@ export class SpaceWorktreeManager {
       } catch {}
     }
     return fallback;
+  }
+
+  private worktreeGitDir(worktreePath: string): string | null {
+    try {
+      const raw = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
+      const gitdir = raw.startsWith('gitdir:') ? raw.slice('gitdir:'.length).trim() : '';
+      if (!gitdir) return null;
+      return isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir);
+    } catch {
+      return null;
+    }
+  }
+
+  private writeWorktreeClaim(worktreePath: string, spaceId: string, taskId: string): void {
+    const gitdir = this.worktreeGitDir(worktreePath);
+    if (!gitdir) return;
+    try {
+      writeFileSync(join(gitdir, 'hyperneo-claim'), `${spaceId}\n${taskId}`);
+    } catch {}
+  }
+
+  private readWorktreeClaim(worktreePath: string): { spaceId: string; taskId: string } | null {
+    const gitdir = this.worktreeGitDir(worktreePath);
+    if (!gitdir) return null;
+    try {
+      const raw = readFileSync(join(gitdir, 'hyperneo-claim'), 'utf8').trim();
+      const [spaceId, taskId] = raw.split('\n');
+      if (spaceId && taskId) return { spaceId, taskId };
+    } catch {}
+    return null;
+  }
+
+  private worktreeCurrentBranch(worktreePath: string): string | null {
+    try {
+      return execFileSync('git', ['-C', worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+        encoding: 'utf8',
+        timeout: 30_000,
+      }).trim();
+    } catch {
+      return null;
+    }
   }
 
   private isRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
