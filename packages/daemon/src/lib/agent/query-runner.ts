@@ -1249,8 +1249,8 @@ export class QueryRunner {
         }
 
         if (!finalizer.skipCatchIdle) {
-          await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
           if (terminalFence) fencedTerminalSettleDone = true;
+          await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
           this.ctx.clearRunnerTerminalFence?.(queryGeneration);
         }
       }

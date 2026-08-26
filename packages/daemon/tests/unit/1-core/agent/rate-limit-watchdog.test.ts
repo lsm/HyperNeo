@@ -1196,6 +1196,31 @@ describe('RateLimitWatchdog', () => {
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
       expect(watchdog.isPending()).toBe(false);
     });
+
+    it('aborts the fallback switch if the query generation moved during resolution (B5e)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let resolveChain!: () => void;
+      const { deps, switchAndRetry } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+      });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.resolveChain = () =>
+        new Promise<FallbackModelEntry[]>((r) => {
+          resolveChain = () => r([A]);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveChain();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(switchAndRetry).not.toHaveBeenCalled();
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
   });
 
   describe('episode tracking across repeated 429', () => {
@@ -1468,6 +1493,28 @@ describe('RateLimitWatchdog', () => {
       resolveStateWrite();
       await pending;
       await flush();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('aborts the cooldown schedule if the query generation moved during resolution (B5e)', async () => {
+      let resolveChain!: () => void;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.resolveChain = () =>
+        new Promise<FallbackModelEntry[]>((r) => {
+          resolveChain = () => r([]);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveChain();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
       expect(notifyPause).not.toHaveBeenCalled();
       expect(watchdog.isPending()).toBe(false);
     });

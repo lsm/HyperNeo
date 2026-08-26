@@ -82,7 +82,8 @@ export interface SDKMessageHandlerContext {
   onResultLimitError?(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
@@ -796,7 +797,7 @@ export class SDKMessageHandler {
 
     await stateManager.detectPhaseFromMessage(message);
 
-    if (isSDKRateLimitEvent(message)) {
+    if (isSDKRateLimitEvent(message) && !this.isInvocationStale(invocationGeneration)) {
       const info = message.rate_limit_info;
       this.lastRateLimitInfo =
         info.status === 'rejected' || info.overageStatus === 'rejected' ? info : null;
@@ -805,7 +806,8 @@ export class SDKMessageHandler {
     if (
       isSDKAssistantMessage(message) &&
       message.error &&
-      (message.parent_tool_use_id === null || message.parent_tool_use_id === undefined)
+      (message.parent_tool_use_id === null || message.parent_tool_use_id === undefined) &&
+      !this.isInvocationStale(invocationGeneration)
     ) {
       this.lastSdkErrorTag = message.error;
     }
@@ -885,7 +887,8 @@ export class SDKMessageHandler {
           (await this.ctx.onResultLimitError?.(
             limitError.errorText,
             limitError.hint,
-            limitError.userMessageUuid
+            limitError.userMessageUuid,
+            invocationGeneration ?? undefined
           )) ?? false;
       }
       this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);

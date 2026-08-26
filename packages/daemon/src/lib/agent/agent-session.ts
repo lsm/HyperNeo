@@ -454,6 +454,7 @@ export class AgentSession
         provider: (this.session.config.provider as string | undefined) ?? 'anthropic',
         model: this.session.config.model ?? 'sonnet',
       }),
+      getQueryGeneration: () => this.getQueryGeneration(),
       resolveChain: async () => {
         const gs = this.settingsManager.getGlobalSettings();
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
@@ -1988,20 +1989,28 @@ export class AgentSession
   async onRateLimitExhausted(
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ): Promise<boolean> {
-    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
+    return this.rateLimitWatchdog.scheduleRetry(
+      errorMessage,
+      lastUserMessage,
+      hint,
+      queryGeneration
+    );
   }
 
   async onResultLimitError(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean> {
     return this.onRateLimitExhausted(
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
-      hint
+      hint,
+      queryGeneration
     );
   }
 

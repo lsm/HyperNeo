@@ -4655,6 +4655,27 @@ describe('SDKMessageHandler', () => {
       expect(hint.resetAtMs).toBe(resetsAtSeconds * 1000);
     });
 
+    it('a stale rejected rate_limit_event does not overwrite successor limit evidence (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+      const currentResetsAt = Math.floor((Date.now() + 60 * 60 * 1000) / 1000);
+      const staleResetsAt = currentResetsAt + 3600;
+
+      await handler.handleMessage(makeRateLimitEvent(currentResetsAt), 9);
+      await handler.handleMessage(makeRateLimitEvent(staleResetsAt), 2);
+      await handler.handleMessage(makeApiErrorResult(), 9);
+
+      expect(onResultLimitError).toHaveBeenCalledTimes(1);
+      const [, hint] = onResultLimitError.mock.calls[0] as [
+        string,
+        { resetAtMs?: number | null; kind?: string | null },
+      ];
+      expect(hint.resetAtMs).toBe(currentResetsAt * 1000);
+    });
+
     it('ignores genuine success results', async () => {
       const onResultLimitError = mock(async () => true);
       mockContext.onResultLimitError = onResultLimitError;

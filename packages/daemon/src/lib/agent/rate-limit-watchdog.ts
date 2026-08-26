@@ -61,6 +61,7 @@ export interface RateLimitWatchdogDeps {
     episodeGeneration: number
   ): Promise<boolean>;
   resolveModelId?(provider: string, model: string): Promise<string>;
+  getQueryGeneration?(): number;
   notifyPause?(payload: RateLimitPausePayload): void;
   notifyResume?(): void;
   classifyUnknownLimit?(rawText: string): Promise<LlmLimitAssessment | null>;
@@ -137,9 +138,14 @@ export class RateLimitWatchdog {
   async scheduleRetry(
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ): Promise<boolean> {
     const entryGeneration = this.generation;
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration;
 
     this.cancelCooldownTimer();
     this.lastErrorMessage = errorMessage;
@@ -203,7 +209,7 @@ export class RateLimitWatchdog {
       );
 
       if (sel.next) {
-        if (entryGeneration !== this.generation) {
+        if (entryGeneration !== this.generation || querySuperseded()) {
           this.logger.info(
             'Fallback resolution completed but episode was superseded; aborting switch.'
           );
@@ -243,15 +249,15 @@ export class RateLimitWatchdog {
       );
       return false;
     }
-    if (entryGeneration !== this.generation) {
+    if (trip.charge) {
+      this.retryCount++;
+    }
+
+    if (entryGeneration !== this.generation || querySuperseded()) {
       this.logger.info(
         'Cooldown resolution completed but episode was superseded; aborting schedule.'
       );
       return true;
-    }
-
-    if (trip.charge) {
-      this.retryCount++;
     }
 
     const armed = await this.scheduleCooldown(errorMessage, trip.decision, entryGeneration);

@@ -1053,7 +1053,11 @@ export class AcpQueryRunner {
           this.ctx.clearRunnerTerminalFence?.(queryGeneration);
           throw reportError;
         }
-        await stateManager.setIdle({ fence: terminalFence });
+        try {
+          await stateManager.setIdle({ fence: terminalFence });
+        } catch (settleError) {
+          logger.warn('ACP fenced terminal idle publication failed:', settleError);
+        }
         this.ctx.clearRunnerTerminalFence?.(queryGeneration);
         return true;
       }

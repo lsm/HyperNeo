@@ -34,6 +34,7 @@ export class ProcessingStateManager {
   private idleCallbackInFlight = false;
   private terminalIdleTransitions = 0;
   private pendingFenceOwners: IdleOwnerScope[] = [];
+  private inFlightFenceOwners: IdleOwnerScope[] = [];
   private suppressedFenceCarryTokens: number[] = [];
   private queryOwnerGeneration = 0;
   private turnOwnerToken = 0;
@@ -162,6 +163,12 @@ export class ProcessingStateManager {
     if (fenceIndex >= 0) {
       this.pendingFenceOwners.splice(fenceIndex, 1);
       this.terminalIdleTransitions -= 1;
+      return;
+    }
+    const inFlightIndex = this.inFlightFenceOwners.indexOf(fence);
+    if (inFlightIndex >= 0) {
+      this.inFlightFenceOwners.splice(inFlightIndex, 1);
+      this.terminalIdleTransitions -= 1;
     }
   }
 
@@ -235,6 +242,7 @@ export class ProcessingStateManager {
         return;
       }
       fenceOwner = this.pendingFenceOwners.splice(fenceIndex, 1)[0];
+      this.inFlightFenceOwners.push(fenceOwner);
     }
     const consumesTerminalFence = fenceOwner !== undefined;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
@@ -293,7 +301,15 @@ export class ProcessingStateManager {
         this.suppressedFenceCarryTokens = [];
       }
       if (ownsTerminalTransition) {
-        this.terminalIdleTransitions -= 1;
+        if (fenceOwner) {
+          const inFlightIndex = this.inFlightFenceOwners.indexOf(fenceOwner);
+          if (inFlightIndex >= 0) {
+            this.inFlightFenceOwners.splice(inFlightIndex, 1);
+            this.terminalIdleTransitions -= 1;
+          }
+        } else {
+          this.terminalIdleTransitions -= 1;
+        }
       }
     }
   }

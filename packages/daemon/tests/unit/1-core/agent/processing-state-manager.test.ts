@@ -745,6 +745,31 @@ describe('ProcessingStateManager', () => {
       expect(manager.hasSettledIdleOwner(ownerB)).toBe(false);
       expect(manager.hasSettledIdleOwner(ownerA)).toBe(true);
     });
+
+    test('a consumed fence stalled in its idle side effects stays cancellable', async () => {
+      let releaseCallback!: () => void;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+      const ownerA = manager.admitDeliveryTurn();
+      const fenceA = manager.beginTerminalIdle(ownerA);
+      expect(manager.isTerminalIdlePending()).toBe(true);
+
+      const settle = manager.setIdle({ fence: fenceA });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+
+      manager.cancelTerminalFence(fenceA);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+
+      releaseCallback();
+      await settle;
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

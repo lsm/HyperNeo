@@ -3043,6 +3043,34 @@ describe('QueryRunner', () => {
       expect(outcome).toBe('resolved');
       expect(route).toEqual(['begin', 'handle', 'idle', 'boundary']);
     });
+
+    it('keeps the finalizer idle suppressed when the fenced settle throws (B5e)', async () => {
+      const route: string[] = [];
+      beginTerminalIdleSpy.mockImplementation(() => {
+        route.push('begin');
+        return { queryGeneration: 1, turnToken: 1 };
+      });
+      handleErrorSpy.mockImplementation(async () => {
+        route.push('handle');
+      });
+      setIdleSpy.mockImplementation(async () => {
+        route.push('idle');
+        throw new Error('publication failed');
+      });
+
+      const { outcome } = await runTerminalFailure('terminal query failure', {
+        processExitedPromise: Promise.resolve(),
+        resetProcessExitedPromise: mock(function (this: {
+          processExitedPromise: Promise<void> | null;
+        }) {
+          this.processExitedPromise = null;
+          route.push('boundary');
+        }),
+      });
+
+      expect(outcome).toContain('publication failed');
+      expect(route).toEqual(['begin', 'handle', 'idle', 'boundary']);
+    });
   });
 
   describe('per-arm teardown-liturgy inventory', () => {
