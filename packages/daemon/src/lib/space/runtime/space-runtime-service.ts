@@ -1263,8 +1263,11 @@ export class SpaceRuntimeService {
     return this.runtime.registerSubscription(workflowRunId, taskId, nodeId, agentName, topic);
   }
 
-  renderPendingDigestForSession(sessionId: string): Promise<RenderPendingDigestOutcome | null> {
-    return this.runtime.renderPendingDigestForSession(sessionId);
+  renderPendingDigestForSession(
+    sessionId: string,
+    taskId?: string
+  ): Promise<RenderPendingDigestOutcome | null> {
+    return this.runtime.renderPendingDigestForSession(sessionId, taskId);
   }
 
   unregisterSubscription(

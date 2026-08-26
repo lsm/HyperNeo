@@ -7,6 +7,7 @@ import {
   foldDeferredExternalEventsAtFlush,
 } from '../external-events/deferred-event-digest.ts';
 import { isExternalEventDeliveryV2Enabled } from '../external-events/external-event-service.ts';
+import type { RenderPendingDigestOutcome } from '../space/runtime/render-pending-digest-pipeline.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
@@ -34,7 +35,10 @@ export interface QueryModeHandlerContext {
   };
   slotResetsContext?(): boolean;
   clearConversationContext?(): Promise<void>;
-  renderPendingDigest?(sessionId: string): Promise<unknown>;
+  renderPendingDigest?(
+    sessionId: string,
+    taskId?: string
+  ): Promise<RenderPendingDigestOutcome | null>;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -58,7 +62,17 @@ export class QueryModeHandler {
     const runFlush = async (): Promise<number> => {
       if (isExternalEventDeliveryV2Enabled()) {
         try {
-          await this.ctx.renderPendingDigest?.(session.id);
+          const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
+          if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} did not deliver ` +
+                `(action=${outcome.action}${
+                  outcome.action === 'failed'
+                    ? `, stage=${outcome.stage}`
+                    : `, reason=${outcome.reason}`
+                }) — flushing without the digest`
+            );
+          }
         } catch (error) {
           logger.warn(
             `turn-end digest pull failed for session ${session.id}: ` +

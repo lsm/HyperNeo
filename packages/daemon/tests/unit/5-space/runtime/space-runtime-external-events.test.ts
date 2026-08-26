@@ -6656,7 +6656,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     test('flag on: renders the pending queued set as one digest row and marks the ledger delivered', async () => {
-      const { run } = await startRunWithSubscription(
+      const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
       const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -6698,7 +6698,7 @@ describe('SpaceRuntime external event subscriptions', () => {
         '2026-01-01T00:00:00.000Z'
       );
 
-      const outcome = await runtime.renderPendingDigestForSession('session-digest-pull');
+      const outcome = await runtime.renderPendingDigestForSession('session-digest-pull', task.id);
       expect(outcome).toMatchObject({ action: 'delivered' });
 
       const rows = db
@@ -6721,7 +6721,9 @@ describe('SpaceRuntime external event subscriptions', () => {
         expect(eventStore.getById(event.id)?.state).toBe('delivered');
       }
 
-      expect(await runtime.renderPendingDigestForSession('session-digest-pull')).toBeNull();
+      expect(
+        await runtime.renderPendingDigestForSession('session-digest-pull', task.id)
+      ).toBeNull();
     });
 
     test('flag on: a session with no node execution is not a digest target', async () => {

@@ -8,6 +8,7 @@ import {
 } from '../../../../src/lib/agent/query-mode-handler';
 import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
+import type { RenderPendingDigestOutcome } from '../../../../src/lib/space/runtime/render-pending-digest-pipeline';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';
@@ -313,15 +314,14 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     let previousFlag: string | undefined;
     let pullCalls: string[];
     let pullError: Error | null;
+    let pullImpl: () => Promise<RenderPendingDigestOutcome>;
 
     beforeEach(() => {
       previousFlag = process.env[FLAG_ENV];
       process.env[FLAG_ENV] = '1';
       pullCalls = [];
       pullError = null;
-      handlerContext.renderPendingDigest = async (sessionId) => {
-        pullCalls.push(sessionId);
-        if (pullError) throw pullError;
+      pullImpl = async () => {
         deferredRows.push(
           deferredRow(
             'db-pulled-digest',
@@ -329,7 +329,20 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
             'External events while you were working (2 events, PR #2828):'
           )
         );
-        return { action: 'delivered' };
+        return {
+          action: 'delivered',
+          uuid: 'uuid-pulled-digest',
+          dbId: 'db-pulled-digest',
+          text: 'External events while you were working (2 events, PR #2828):',
+          eventIds: [],
+          deliveryKeys: [],
+          replayed: false,
+        };
+      };
+      handlerContext.renderPendingDigest = async (sessionId) => {
+        pullCalls.push(sessionId);
+        if (pullError) throw pullError;
+        return pullImpl();
       };
     });
 
@@ -373,6 +386,28 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
       expect(warnMessages.some((message) => String(message).includes('turn-end digest pull'))).toBe(
+        true
+      );
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('flag on: a failed digest-pull outcome logs and flushes without the digest', async () => {
+      pullImpl = async () => ({
+        action: 'failed',
+        stage: 'markDeliveries',
+        error: new Error('db locked'),
+      });
+      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(warnMessages.some((message) => String(message).includes('did not deliver'))).toBe(
         true
       );
       expect(enqueued).toHaveLength(1);

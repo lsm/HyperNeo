@@ -403,6 +403,14 @@ const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const SILENT_STALL_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
+const TURN_END_DIGEST_PENDING_ROW_CAP = 200;
+const DIGEST_REPLAY_LOOKUP_STATUSES = [
+  'deferred',
+  'enqueued',
+  'submitted',
+  'consumed',
+  'failed',
+] as const;
 const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
 const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
@@ -1892,7 +1900,8 @@ export class SpaceRuntime {
   }
 
   async renderPendingDigestForSession(
-    sessionId: string
+    sessionId: string,
+    taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
     const store = this.config.externalEventStore;
     if (!store) return null;
@@ -1902,20 +1911,29 @@ export class SpaceRuntime {
       store
         .listPendingDeliveries(execution.workflowRunId)
         .filter(
-          (row) => row.nodeId === execution.workflowNodeId && row.agentName === execution.agentName
-        );
+          (row) =>
+            row.nodeId === execution.workflowNodeId &&
+            row.agentName === execution.agentName &&
+            (taskId === undefined || row.taskId === taskId)
+        )
+        .slice(0, TURN_END_DIGEST_PENDING_ROW_CAP);
     const firstPending = pendingForTarget()[0];
     if (!firstPending) return null;
+    const targetTaskId = taskId ?? firstPending.taskId;
+    const task = this.config.taskRepo.getTask(targetTaskId);
+    if (!task || task.status === 'stopped' || task.status === 'cancelled') return null;
+    const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+    if (run && this.pausedSpaceIds.has(run.spaceId)) return null;
     const messages = this.getSdkMessageRepo();
     const deps: RenderPendingDigestDeps = {
       listPendingDeliveries: () => pendingForTarget(),
       getEventById: (eventId) => store.getById(eventId),
       saveDigestMessageIfAbsent: async (targetSessionId, message) => {
         const uuid = String(message.uuid);
-        const existing =
-          messages.getMessageByStatusAndUuid(targetSessionId, 'deferred', uuid) ??
-          messages.getMessageByStatusAndUuid(targetSessionId, 'enqueued', uuid);
-        if (existing) return { dbId: existing.dbId, replayed: true };
+        for (const status of DIGEST_REPLAY_LOOKUP_STATUSES) {
+          const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
+          if (existing) return { dbId: existing.dbId, replayed: true };
+        }
         const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
         return { dbId, replayed: false };
       },
@@ -1939,7 +1957,7 @@ export class SpaceRuntime {
       sessionId,
       target: {
         workflowRunId: execution.workflowRunId,
-        taskId: firstPending.taskId,
+        taskId: targetTaskId,
         nodeId: execution.workflowNodeId,
         agentName: execution.agentName,
       },
