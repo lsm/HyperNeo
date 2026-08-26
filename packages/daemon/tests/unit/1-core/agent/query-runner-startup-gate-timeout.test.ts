@@ -185,6 +185,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       } as unknown as AskUserQuestionHandler,
       messageHandler: {
         consumedTerminalFenceFor: () => false,
+        retirePendingTerminalFence: () => {},
       } as unknown as SDKMessageHandler,
 
       queryObject: null,

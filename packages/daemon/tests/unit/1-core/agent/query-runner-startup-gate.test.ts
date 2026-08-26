@@ -213,6 +213,7 @@ describe('QueryRunner startup gate', () => {
       } as unknown as AskUserQuestionHandler,
       messageHandler: {
         consumedTerminalFenceFor: () => false,
+        retirePendingTerminalFence: () => {},
       } as unknown as SDKMessageHandler,
 
       queryObject: null,
