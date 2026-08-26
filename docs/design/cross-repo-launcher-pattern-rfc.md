@@ -285,9 +285,12 @@ gate's hold lifecycle):
   key (so structurally similar per-goal records can merge and lose one goal's state)
   and its TTL prunes a long-lived hold record — so a consolidation-exempt store (or an
   explicit exemption transparently usable through existing memory tools) **with an
-  agent-facing read/write surface** is a **prerequisite enabler** of the launcher
-  template slice — without the surface the template cannot follow its own safety
-  protocol — tracked in §7/§8; closing the gated-task identity gap requires creation
+  agent-facing read/write surface scoped to the goal's authorized launcher owner or
+  coordinator, enforced in the tool handler rather than by convention** (these records
+  are safety-critical: another Space agent overwriting one could forge pause ownership,
+  delete the tracked gate, or lose gated work) is a **prerequisite enabler** of the
+  launcher template slice — without the surface the template cannot follow its own
+  safety protocol — tracked in §7/§8; closing the gated-task identity gap requires creation
   itself to be crash-safe for **both** shapes: `create_standalone_task` accepting an
   idempotency key or a combined create-and-record transaction, and the Forge path
   (`create_forge_task_proposal` → `create_task_from_forge_proposal`) either gaining the
@@ -301,8 +304,9 @@ gate's hold lifecycle):
   already-paused goal instead records the additional hold and marks that this sequence
   does **not** own the pause. Ownership transfers between launcher holds: when the
   owning hold resolves while other recorded launcher holds remain, it transfers pause
-  ownership to a surviving hold before deleting its own record — a sole remaining
-  deferred hard gate additionally takes ownership and creates its gated shape.
+  ownership to a surviving hold before deleting its own record — and a sole surviving
+  deferred hard gate takes ownership and recreates its gated shape whenever **any**
+  conflicting hold clears, whether or not the resolving hold owned the pause.
   Otherwise the first hold's release leaves B paused under an ownerless pause that no
   surviving hold may lift, or deadlocks a deferred gate behind a resolved hold. Then
   cancel what
@@ -343,9 +347,10 @@ gate's hold lifecycle):
   the launcher later observes such a goal active again it **reconciles**: the
   external-hold record is cleared as lifted-by-owner **and any surviving launcher hold
   immediately acquires the pause** — re-pausing on its own authority, taking ownership,
-  and creating a sole deferred hard gate when applicable — otherwise B stays active
-  under conditions the launcher still treats as unresolved while no gate can ever be
-  created;
+  re-running setup's cancellation/drain steps for anything another actor started in the
+  window, and creating a sole deferred hard gate when applicable — otherwise B stays
+  active under conditions the launcher still treats as unresolved while no gate can
+  ever be created;
   re-trigger only when the active-task pointer is confirmed empty (with a
   retained task's terminal outcome already reviewed per the release step above); a
   cross-goal condition still unresolved keeps the cadence cleared, because a scheduled
@@ -356,7 +361,12 @@ gate's hold lifecycle):
   link or outcome notification, so this record is the only trace); a successful
   **final** step then completes goal B rather than resuming it — resolving the
   hard-gate hold record in the operational store and discarding any saved cadence state
-  as part of completion, so a later reopened goal does not inherit a stale hold — for
+  as part of completion, so a later reopened goal does not inherit a stale hold.
+  Completion and cleanup span separate tool surfaces, so the store first records a
+  **completion intent** and reconciles it on either side of the status mutation (or the
+  surface provides a combined goal-and-store transaction): otherwise a restart between
+  them leaves a completed goal with a live hold or a paused goal whose hold was
+  prematurely removed, and a reopen before recovery re-pauses it — for
   the Forge shape
   only after that successful outcome is reviewed (completion is itself a
   revision-changing mutation; skipping the review leaves a bare acknowledgement that
@@ -399,13 +409,16 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   prerequisite task terminally fails and the doctrine re-triggers a fresh A task, the
   gated B task stays bound to the dead ID — a pre-start gated task is not even visibly
   blocked (it remains `open` but unschedulable, since only running dependents get
-  `dependency_failed`). Rebind B with `update_task(depends_on=…)` when B is still
-  `open`/`blocked` — and rewrite the persisted contract to match: B's `nextSteps`
+  `dependency_failed`). Rebind B with `update_task(depends_on=…)` only while B is
+  **pre-start** (`open`) — a `blocked` dependent whose workflow had already started (A
+  reached `done`, B started, then A regressed) reopens with its old workflow agents
+  still mutating repo B, so it is cancelled (`cancel_workflow_run: true`) and recreated
+  instead — and rewrite the persisted contract to match: B's `nextSteps`
   condition and its operational-store hold/gate record must name the replacement
   prerequisite ID, since recovery deriving the gate from stale text keeps B paused or
-  escalates after the replacement already succeeded — that path only reopens `blocked`
-  dependency-reason tasks, so a
-  **cascade-cancelled** B (A was cancelled) must instead be recreated. If the cancelled
+  escalates after the replacement already succeeded. A
+  **cascade-cancelled** B (A was cancelled) must also be recreated; that path only reopens `blocked`
+  dependency-reason tasks. If the cancelled
   gated task had **started**, dispose its outcome notification first (an active-work
   cancellation produces one; a pre-start cancellation produces none — the
   reportable-terminal predicate is administrative-terminal for `startedAt: null` — so
