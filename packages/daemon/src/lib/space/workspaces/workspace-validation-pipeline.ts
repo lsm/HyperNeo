@@ -86,7 +86,7 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
       const env = { ...process.env };
       for (const key of LOCAL_GIT_ENV_VARS) delete env[key];
       const { stdout } = await execAsync('git rev-parse --show-toplevel', { cwd: path, env });
-      const topLevel = stdout.replace(/\r?\n$/, '');
+      const topLevel = stdout.replace(/\n$/, '');
       if (topLevel === path) return true;
       const [topStat, pathStat] = await Promise.all([fs.stat(topLevel), fs.stat(path)]);
       return topStat.dev === pathStat.dev && topStat.ino === pathStat.ino;

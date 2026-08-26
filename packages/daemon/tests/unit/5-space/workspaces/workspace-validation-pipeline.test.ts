@@ -304,6 +304,9 @@ describe('workspace-validation-pipeline', () => {
       execSync('git init -q sibling-repo', { cwd: root });
       await fs.symlink(join(root, 'sibling-repo'), join(root, 'repo-link'));
       execSync("git init -q 'space-dir '", { cwd: root });
+      const crDir = join(root, 'cr-dir\r');
+      await fs.mkdir(crDir);
+      execSync('git init -q', { cwd: crDir });
     });
 
     afterAll(async () => {
@@ -376,6 +379,14 @@ describe('workspace-validation-pipeline', () => {
         rawPath: join(root, 'space-dir '),
       });
       expect(verdict).toEqual({ accepted: true, canonicalPath: join(root, 'space-dir ') });
+    });
+
+    test('accepts a repository whose directory name ends in a carriage return', async () => {
+      const verdict = await validate({
+        io: nodeWorkspaceValidationIo,
+        rawPath: join(root, 'cr-dir\r'),
+      });
+      expect(verdict).toEqual({ accepted: true, canonicalPath: join(root, 'cr-dir\r') });
     });
 
     test('rejects a bare repository', async () => {
