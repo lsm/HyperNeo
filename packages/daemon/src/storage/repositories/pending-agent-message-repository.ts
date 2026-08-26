@@ -263,6 +263,17 @@ export class PendingAgentMessageRepository {
     return this.getById(id);
   }
 
+  clearLateDeadLetter(id: string): void {
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET last_error = NULL
+				 WHERE id = ? AND last_error IS NOT NULL`
+      )
+      .run(id);
+    this.notify();
+  }
+
   deferExpiration(ids: string[], ttlMs = DEFAULT_PENDING_MESSAGE_TTL_MS): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');

@@ -1520,6 +1520,9 @@ export class TaskAgentManager {
       }
       const message = formatPendingRowForSpaceAgent(row);
       try {
+        if (row.attempts > 0 || row.lastError !== null) {
+          repo.clearLateDeadLetter(row.id);
+        }
         const replyTo = resolveReplySession(row);
         const deliveredSessionId = replyTo || spaceChatSessionId;
         const settleDelivered = (settledSessionId?: string): void => {
@@ -1547,8 +1550,10 @@ export class TaskAgentManager {
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
-        repo.markAttemptFailed(row.id, errMsg);
+        log.warn(
+          `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}; ` +
+            `the attempt is charged at the next drain's reconciliation`
+        );
       }
     }
   }

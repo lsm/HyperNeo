@@ -14,7 +14,9 @@ export interface SpaceAgentPendingDrainDeps {
     listByRunAndStatus?(workflowRunId: string, status: string): PendingAgentMessageRecord[];
     getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
+    markAttemptFailed(id: string, error: string): unknown;
     markLateDeadLetter(id: string, sentinel: string): unknown;
+    clearLateDeadLetter(id: string): void;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string, excludeIds?: string[]): unknown;

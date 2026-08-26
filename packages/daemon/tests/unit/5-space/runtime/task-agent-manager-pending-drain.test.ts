@@ -926,9 +926,14 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     const failed = h.spyRepo.repo.getById(failingRow.id);
     expect(failed?.status).toBe('pending');
-    expect(failed?.attempts).toBe(1);
-    expect(failed?.lastError).toBe('injector down');
+    expect(failed?.attempts).toBe(0);
+    expect(h.spyRepo.calls.some((call: string) => call === `attemptFailed:${failingRow.id}`)).toBe(
+      false
+    );
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+    expect(h.injector.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
 
