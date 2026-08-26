@@ -347,12 +347,13 @@ gate's hold lifecycle):
   task's own reviewed outcome counts as the restoration boundary **only when that task
   still occupies B's active-task pointer across resume** — once terminalization has
   cleared it, restoring on its review alone re-exposes the empty pointer to a scheduled
-  fire; mark this sequence's own hold record as **released** (tombstone) before
-  revalidating the rest — a live record would read as an unresolved overlapping gate —
-  and delete it only after `resume_goal` succeeds: deleting first leaves a crash window
-  where B is paused with nothing proving ownership, so the non-owner rule would forbid
-  the woken launcher from resuming; the tombstone path reconciles through the
-  active-goal check instead; revalidate that no other recorded hold
+  fire; handle this sequence's own hold record by ownership: an **owned** hold becomes
+  a **released tombstone** deleted only after `resume_goal` succeeds — deleting first
+  leaves a crash window where B is paused with nothing proving ownership, so the
+  non-owner rule would forbid the woken launcher from resuming; a **non-owned** hold
+  can never resume the goal, so its record is deleted at transfer or on observing the
+  external lift rather than held for a resume that cannot happen — in all cases no
+  stale record survives to read as an unresolved overlapping gate; revalidate that no other recorded hold
   remains; resume **only when this sequence owns the pause** — a pause owned by an
   unrecorded actor (a human or another tool) is never released by inference from an
   empty store; it lifts when its owner clears it or transfers ownership explicitly,
@@ -361,7 +362,9 @@ gate's hold lifecycle):
   external-hold record is cleared as lifted-by-owner **and any surviving launcher hold
   immediately acquires the pause** — re-pausing on its own authority, taking ownership,
   re-running setup's cancellation/drain steps for anything another actor started in the
-  window, and creating a sole deferred hard gate when applicable; when **no** launcher
+  window, and creating a sole deferred hard gate when applicable; if the inspection
+  finds B **terminal** (`completed` rather than resumed), reconciliation performs the
+  same crash-safe hold/cadence cleanup as launcher-driven completion; when **no** launcher
   hold survives, reconciliation instead continues the deferred release path — restoring
   the saved cadence from its snapshot so B does not stay active without check-ins —
   and because goal resume is not an LH wake source and the cleared cadence cannot fire,
@@ -428,7 +431,11 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   cancellation of A produces no outcome wake at all (the reportable-terminal predicate
   treats a `startedAt: null` cancellation as administrative), so with the pattern's
   no-cadence default the launcher learns of it only from its own reminder: arm one
-  whenever a pre-start gated prerequisite is at risk. When A's gated
+  whenever a pre-start gated prerequisite is at risk, and **re-arm before each
+  inspection for the prerequisite's entire pre-start lifetime** (arm-then-inspect),
+  stopping only once it starts or terminalizes — an administrative pre-start
+  cancellation produces no wake of its own, so without the loop B stays paused behind
+  a cancelled gate indefinitely. When A's gated
   prerequisite task terminally fails and the doctrine re-triggers a fresh A task, the
   gated B task stays bound to the dead ID — a pre-start gated task is not even visibly
   blocked (it remains `open` but unschedulable, since only running dependents get
@@ -440,8 +447,11 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   condition and its operational-store hold/gate record must name the replacement
   prerequisite ID, since recovery deriving the gate from stale text keeps B paused or
   escalates after the replacement already succeeded. A
-  **cascade-cancelled** B (A was cancelled) must also be recreated; that path only reopens `blocked`
-  dependency-reason tasks. If the cancelled
+  **cascade-cancelled** B (A was cancelled) must also be recreated — and note the
+  cancellation is not guaranteed to stop started work: `cancel_task`'s cascade only
+  recurses into `open` dependents and cancels only the requested task's run, so after
+  cancelling A the launcher inspects B and explicitly cancels any **started** gated
+  task with `cancel_workflow_run: true` before recreating it. If the cancelled
   gated task had **started**, dispose its outcome notification first (an active-work
   cancellation produces one; a pre-start cancellation produces none — the
   reportable-terminal predicate is administrative-terminal for `startedAt: null` — so
@@ -478,7 +488,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 | Daemon restart mid-loop | Unconsumed notifications persist in the terminal transaction and are recovered at startup; an **acknowledged** notification is terminal and never redelivered — so a restart inside a multi-call sequence (acknowledge-then-cancel, acknowledge-then-trigger) loses the wake with work half-done | Arm a durable reminder **before the first cross-goal mutation** of any multi-call sequence — setup (pause/cancel/create-gate) as well as acknowledge-then-act loops: a pre-start cancellation produces no notification at all, so a restart after it leaves B paused with no pending wake. An interrupted loop then still wakes the launcher to re-derive state from goals and tasks; do not treat any multi-tool sequence as transactionally restart-safe |
 | A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer — unless `autoTriggerNext` had a queued successor, which is auto-created and claimed inside the terminal transaction (§4 disables this; reconcile through the drift sequence if found) | **Dispose the failed outcome first** — acknowledge it with the retry reason as its goal-state update — and inspect and cancel any workflow run the blocked transition left executing (the terminal seam clears the pointer without stopping the run; the old agents would otherwise mutate repo A concurrently with the retry), disposing the resulting outcome — then re-trigger: claiming the replacement task bumps the revision, so a review attempted after the trigger is rejected `stale_revision`. Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). A retained check-in cadence follows the §6 rule — snapshotted to the keyed operational store (persisted before the clear) and cleared before triggering — and **stays cleared across the whole retry chain**, restored only after an outcome that will not be retried (the success, or exhaustion), since restoring between attempts exposes the empty pointer to a scheduled fire. On the exhaustion branch A's cadence is never restored. If retries are exhausted: (0) for a retained-cadence A, snapshot and clear the cadence first (persisting the snapshot before the clear), then persist an intended exhaustion hold **before** pausing and ensure A's goal is paused — confirming that intent requires provable attribution (a combined hold-and-pause transaction in the store surface, or a pause token from `pause_goal` identifying the caller), since a crash between pausing and confirming is indistinguishable from losing the race; without attribution the intent downgrades to an external non-owner hold when the goal was already paused by someone else; A's pointer is empty and a firing check-in would launch a third attempt beyond the limit; (1) likewise for B: snapshot/clear any restored cadence first, acquire B's **attributed pause** before settlement (settling an active B task while the goal is active lets the terminal transaction claim a queued successor; one created by a lost race is cancelled with its run), settle its active task, drain its existing outcomes (reconciling a racing completion; anything still racing uses the stale-review resubmission path), then persist the intended hold under the same rule (a hard gate will have paused it already with a recorded owner); (2) cancel B's active task (`cancel_workflow_run: true` where applicable) **and the tracked gated task** — a still-open gated task survives the pause and auto-starts if a human later retries A to `done`; (3) dispose every pending notification the cancellations produce — only **started** goal-linked cancellations yield one; a pre-start cancellation is administrative and yields none, so never wait for it; (4) record in `nextSteps` and escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
 | Contract drift after B started | A's follow-up outcome wakes launcher; the revision gate protects **A's** rolling state only when the review carries a goal-state update (§4 requires one) | Validate A first, drain B's existing outcomes, then pause B, cancel its active **and tracked gated** tasks (`cancel_workflow_run: true` for workflow-backed ones), dispose all resulting notifications — consolidating concurrent cancellation outcomes into **one** update-bearing review (two sequential update-bearing claims make each other stale) — record the fresh contract, release per §4's hold-reason rules. Known limitation: the CAS does not extend to B — updating B goes through `update_goal`, which has no observed-revision parameter, so a concurrent human edit to B can be overwritten (last-writer-wins; §7) |
-| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then snapshot and clear each affected goal's retained cadence first — persisting every snapshot in the operational-state store **before** issuing the clear, so recovery after a crash in this window can complete either the restore or the pause path (settlement below empties pointers against a live schedule otherwise) — then acquire the **attributed pause** per goal (combined transaction/pause token; a queued successor created by a lost race is cancelled with its run), settle each goal's active tasks (terminal state reached or forced), cancel each settled workflow-backed task's run (`cancel_workflow_run: true` — settlement clears the pointer without stopping the run), drain their pending outcomes (reconciling completions racing the pause; anything still racing uses the stale-review resubmission path), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle) — if it no longer holds, **restore each cleared cadence from its snapshot and release any temporary owned pauses acquired during setup through the normal protocol** (external pauses stay with their owners) before abandoning the branch, since otherwise paused work stays held though the deadlock disappeared — and only if it still holds: persist a hold record per goal in the operational store — ownership follows who acted: owned when this sequence successfully performs the `pause_goal`, external non-owner when the goal was already paused by someone else — then pause and escalate to the human, releasing later through the normal protocol; never spin |
+| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then snapshot and clear each affected goal's retained cadence first — persisting every snapshot in the operational-state store **before** issuing the clear, so recovery after a crash in this window can complete either the restore or the pause path (settlement below empties pointers against a live schedule otherwise) — then acquire the **attributed pause** per goal (combined transaction/pause token; a queued successor created by a lost race is cancelled with its run), settle each goal's active tasks (terminal state reached or forced), cancel each settled workflow-backed task's run (`cancel_workflow_run: true` — settlement clears the pointer without stopping the run) **and each goal's tracked gated task with its run** (gated tasks bypass the pointer and ignore paused status, so a prerequisite completing mid-setup can dispatch them), disposing any resulting Forge outcome, then drain their pending outcomes (reconciling completions racing the pause; anything still racing uses the stale-review resubmission path), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle) — if it no longer holds, **restore each cleared cadence from its snapshot and release any temporary owned pauses acquired during setup through the normal protocol** (external pauses stay with their owners) before abandoning the branch, since otherwise paused work stays held though the deadlock disappeared — and only if it still holds: persist a hold record per goal in the operational store — ownership follows who acted: owned when this sequence successfully performs the `pause_goal`, external non-owner when the goal was already paused by someone else — then pause and escalate to the human, releasing later through the normal protocol; never spin |
 | Human decision needed | `send_session_message` to the Space chat / coordinator session (checks the **minimum of the Space and launcher-agent autonomy levels — both must be ≥4**; template creation assigns the template's suggested level capped by the creator's, so a fresh launcher can silently be below it); below that: durable high-priority draft task + the decision recorded in goal `nextSteps` | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight". Treat Space and launcher autonomy ≥4 as deployment prerequisites for the messaging path |
 
 Backoff policy: cross-goal re-evaluation rides the launcher's own reminders and the
@@ -507,7 +517,8 @@ engage; if a deferred primitive below is ever built, its admission/binding logic
 as a direct superpipe pipeline.
 
 **Why.** Every load-bearing mechanism is verified shipped or in-flight (§3): per-repo
-goal/task binding, serial per-goal execution, durable owner wakes with CAS disposal,
+goal/task binding, serial execution through each goal's active-task pointer
+(pointerless Forge tasks aside, §5), durable owner wakes with CAS disposal,
 `depends_on` (the standalone gated-task shape in §5), pause/resume, reminders/check-ins,
 and a nag backstop. The pattern itself is unproven — prompt doctrine must be exercised
 on a real deployment before primitives are justified, the same sequencing discipline
