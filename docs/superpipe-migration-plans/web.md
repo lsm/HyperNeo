@@ -311,9 +311,13 @@ anywhere in this plan.
   stays imperative).
 - **Proposed combinator.** `decisionRun`. First-matching-type-wins is exactly
   the combinator's semantics; the JSON fallback is the final gate.
-- **Input/output snapshot design.** Wrapper first normalizes the ambiguous
-  input (plain transform): `{ id, content, createdAt, msgType: msgAny.messageType
-  ?? msgAny.type }`. Ctx = that snapshot + `decision: SDKMessage | null`.
+- **Input/output snapshot design.** The ambiguous-input normalization is a
+  LEADING TRANSFORM STAGE inside the pipeline (codex round 16:
+  `stageNormalizeInput` derives `{ id, content, createdAt, msgType:
+  msgAny.messageType ?? msgAny.type }` from the raw message, so the
+  load-bearing `messageType`-over-`type` precedence is decided by the
+  composition, not the wrapper). Ctx = raw message → normalized snapshot +
+  `decision: SDKMessage | null`.
   Output: `ctx.decision` (the final gate always decides, including `null` on
   parse failure).
 - **Pure core design.** Gates: `gateStatusMessage` → `gateLeaderSummary` →
@@ -639,9 +643,12 @@ anywhere in this plan.
 - **Input/output snapshot design.** Wrapper normalizes `err` to
   `{ raw, lower }` (plain transform; `JSON.stringify`-safe `String(err ?? '')`
   path preserved). Ctx = `{ raw: string; lower: string; conn:
-  ConnectionState; decision: SessionLoadErrorKind | null }`; no terminal gate —
-  a final `gateConnectionState` decides `disconnected` or leaves undecided,
-  wrapper maps `ctx.decision ?? 'unknown'` then `loadErrorMessage`.
+  ConnectionState; decision: SessionLoadErrorKind | null }`; a final
+  `gateConnectionState` decides `disconnected` or leaves undecided, and a
+  FINAL MAPPING STAGE (codex round 16) folds `ctx.decision ?? 'unknown'` +
+  `loadErrorMessage` into the composition, so the pipeline's output IS the
+  complete `{ kind, message }` result and the wrapper only runs and
+  returns it — the output mapping no longer lives in the wrapper.
 - **Pure core design.** Gates: `gateMessageDisconnected` →
   `gateMessageTimeout` → `gateMessageNotFound` → `gateMessageUnauthorized` →
   `gateConnectionState`. Each message gate is a one-predicate function over
@@ -669,16 +676,16 @@ anywhere in this plan.
   `isAuthError` / `isTransientError` (boolean matchers, out of scope —
   flat predicates, not cascades).
 - **Proposed combinator.** `decisionRun`.
-- **Input/output snapshot design.** Wrapper owns normalization (the
-  try/catch JSON path) AND the NULLISH EARLY RETURN (review correction:
-  when `err` is `null`/`undefined` the current function returns exactly
-  `'Something went wrong.'` before any normalization, pinned by the existing
-  suite — retain that guard first, then normalize; review correction, codex
-  round 10: the guard MOVES INTO the exported `normalizeUserError` core —
-  the PR 14 send stage calls the core directly, and a wrapper-only guard
-  would let a nullish `hub.request` rejection surface as the string
-  `'null'` or an unsafe `undefined`; wrapper behavior is unchanged either
-  way). Review correction (PR
+- **Input/output snapshot design.** Normalization (the try/catch JSON path)
+  AND the NULLISH EARLY RETURN are the pipeline's LEADING TRANSFORM STAGE
+  over the raw error (codex round 16: `stageNormalizeInput` calls the same
+  exported ordinary core helpers — plain functions, no nesting — so the
+  user-visible fallback selection for nullish/non-string/stringify-fallback
+  inputs happens INSIDE the composition and the wrapper only runs and
+  returns the pipeline; the round-10 guarantee stands, both in the stage
+  and for the PR 14 send stage calling the core directly — a nullish
+  `hub.request` rejection sanitizes to the fallback, never `'null'` or an
+  unsafe `undefined`). Review correction (PR
   #2982): `JSON.stringify` can SUCCEED while producing `undefined` (a
   function, symbol, or object whose `toJSON` returns `undefined`), so today's
   `msg` can be `undefined` and reaches `msg || 'Something went wrong.'` —
@@ -739,10 +746,11 @@ anywhere in this plan.
   is test-covered only.
 - **Proposed combinator.** `decisionRun`.
 - **Input/output snapshot design.** Ctx = `{ modelId: string; lower: string;
-  decision: string | null }`; wrapper guards the falsy early-out
-  (`!modelId → ''`) before invoking the pipeline (or a first gate decides
-  `''`; prefer the wrapper guard — `null`/`undefined` input never reaches
-  gates).
+  decision: string | null }`; the falsy-modelId arm is a LEADING gate
+  `gateEmptyModelId` that decides `''` (codex round 16 — reversed from the
+  earlier wrapper-guard preference: `''` is non-null so `decisionRun`
+  treats it as settled, nullable/empty inputs enter the runner, and the
+  complete formatting operation stays one composed business path).
 - **Pure core design.** Gates: `gateClaudeLabel` → `gateGlmLabel` →
   `gateKimiLabel` (exact-match table + generic) → `gateMoonshotLabel` →
   `gateGenericLabel` (terminal, always decides the dash/camel transform).
@@ -828,8 +836,11 @@ anywhere in this plan.
   it `?? candidates[0]` yields `undefined` and the `.sessionId` dereference
   throws) → `stageSelectCurrent`
   (post-approval preference, `sessionId ?? null`) → `stageApplyExecOverride`
-  (stamps `resolved`). Wrapper returns `ctx.resolved`; null-target early-out
-  stays in the wrapper.
+  (stamps `resolved`). Wrapper returns `ctx.resolved`; the NULL-TARGET exit
+  is a LEADING gate/`!dep` halt (codex round 16: target absence is a valid
+  arm of the exported resolver — a leading `gateNullTarget` decides
+  `resolved: null`, nullable targets enter the runner, and the whole
+  resolver business path stays in the single composition).
 - **Shell/effect wiring.** None — the hook's `useMemo` and the pre-config
   effect keep calling the same exported function.
 - **Step-by-step migration.**
@@ -1239,8 +1250,10 @@ optional router phase 2. No per-site section is left uncovered.
   `reconnecting`/`connecting` inclusion), then gates
   `gateMessageDisconnected` → `gateMessageTimeout` → `gateMessageNotFound` →
   `gateMessageUnauthorized` → `gateConnectionState` (query-retry template;
-  substring lists verbatim), wrapper maps `ctx.decision ?? 'unknown'` and
-  keeps the exported `{ kind, message }` signature.
+  substring lists verbatim), a FINAL MAPPING STAGE folds
+  `ctx.decision ?? 'unknown'` + `loadErrorMessage` into the composition
+  (codex round 16), and the wrapper only runs and returns the pipeline's
+  complete `{ kind, message }` result, keeping the exported signature.
 - **Budget**: prod Δ ≈ 40; test Δ ≈ 50.
 - **Lands**: the first query-retry-template cascade runs as a module-scope
   decisionRun behind an unchanged signature.
@@ -1256,9 +1269,10 @@ optional router phase 2. No per-site section is left uncovered.
 - **Scope**: `packages/web/src/lib/user-error.ts` — order-pair rows FIRST
   (a message matching both `timeout` and `fetch` substrings maps to timeout;
   circular-object `JSON.stringify` throw path; Error/string/object inputs),
-  then the wrapper delegating to the core (the NULLISH EARLY RETURN now
-  lives INSIDE the exported `normalizeUserError`, codex round 10 — wrapper
-  behavior unchanged)
+  then a LEADING `stageNormalizeInput` stage over the raw error (calling the
+  exported core helpers — plain functions, no nesting; the NULLISH guard
+  and fallback selection happen INSIDE the composition, codex rounds 10+16)
+  with the wrapper only running and returning the pipeline
   (review correction) and gates `gatePassThrough` → `gateConnectionLost` →
   `gateTimeout` → `gateEconn` → `gateFetch` → `gateFailedToSend` with
   substring lists and arm order verbatim; `INTERNAL_PATTERNS` untouched.
@@ -1372,7 +1386,9 @@ optional router phase 2. No per-site section is left uncovered.
   timestamp override, unparseable and object content → `null`; then the 5
   gates ending in `gateSdkJson` in
   `packages/web/src/lib/parse-group-message.ts`, `_taskMeta` stamping
-  verbatim, wrapper owns input normalization.
+  verbatim, and a LEADING `stageNormalizeInput` owns the input
+  normalization (`messageType ?? type` precedence inside the composition —
+  codex round 16).
 - **Budget**: prod Δ ≈ 60; test Δ ≈ 200 (the new characterization file).
 - **Lands**: the first per-event reducer body runs as a module-scope
   pipeline; `useTurnBlocks`'s `.map` loop stays imperative.
@@ -1418,7 +1434,8 @@ optional router phase 2. No per-site section is left uncovered.
   empty-candidate HALT (`useTargetSessionContext.ts:73-74` semantics,
   codex round 4) →
   `stageSelectCurrent` → `stageApplyExecOverride`; wrapper keeps the
-  null-target early-out, returns `ctx.resolved`, and the override guard
+  null-target exit as a LEADING gate/`!dep` halt (codex round 16), returns
+  `ctx.resolved`, and the override guard
   keeps the `resolved` truthiness operand (review correction) — copy it and
   the `?? candidates[0]` head-selection atomically.
 - **Budget**: prod Δ ≈ 70; test Δ ≈ 100.
@@ -1488,7 +1505,9 @@ optional router phase 2. No per-site section is left uncovered.
   dropped.
 - **Scope**: `packages/web/src/lib/session-utils.ts` — special-case rows
   FIRST (`kimi-k3`, `kimi-k2.7-code(-highspeed)`, claude date-suffix,
-  single-part families), then the wrapper guards `!modelId → ''` before
+  single-part families), then a LEADING `gateEmptyModelId` decides `''`
+  for nullish/empty ids (codex round 16 — inside the runner, not a wrapper
+  guard) before
   invoking the pipeline and gates `gateClaudeLabel` → `gateGlmLabel` →
   `gateKimiLabel` → `gateMoonshotLabel` → `gateGenericLabel` (terminal); all
   string surgery verbatim.
