@@ -1479,6 +1479,35 @@ describe('QueryLifecycleManager', () => {
     });
   });
 
+  describe('restart supersede detection', () => {
+    test('a rejecting stage while superseded reports IdleRestartSupersededError, not a failure (B5e)', async () => {
+      messageQueue.start(async function* () {
+        yield 'test';
+      });
+      let ownerCurrent = true;
+      mockContext = createMockContext({
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+        queryPromise: Promise.resolve(),
+      });
+      (mockContext.stateManager as unknown as { isIdleOwnerCurrent: unknown }).isIdleOwnerCurrent =
+        mock(() => ownerCurrent);
+      internalPublishSpy.mockImplementation((topic: string) => {
+        if (topic === 'session.errorClear') {
+          ownerCurrent = false;
+          return Promise.reject(new Error('publication failed'));
+        }
+        return Promise.resolve();
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await expect(
+        manager.restart({ idleOwner: { queryGeneration: 7, turnToken: 1 } })
+      ).rejects.toBeInstanceOf(IdleRestartSupersededError);
+    });
+  });
+
   describe('executeDeferredRestartIfPending', () => {
     test('returns early if no pending restart reason', async () => {
       mockContext.pendingRestartReason = null;

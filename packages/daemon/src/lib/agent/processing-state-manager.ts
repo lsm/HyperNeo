@@ -136,7 +136,8 @@ export class ProcessingStateManager {
   private waiterOwnedByTransition(
     waiter: IdleWaiter,
     owner: IdleOwnerScope | undefined,
-    fenceStartToken: number
+    fenceStartToken: number,
+    fenceGeneration: number
   ): boolean {
     if (waiter.owner === undefined) return true;
     if (owner !== undefined) {
@@ -145,7 +146,9 @@ export class ProcessingStateManager {
         waiter.owner.turnToken === owner.turnToken
       );
     }
-    return waiter.owner.turnToken <= fenceStartToken;
+    return (
+      waiter.owner.queryGeneration === fenceGeneration && waiter.owner.turnToken <= fenceStartToken
+    );
   }
 
   beginTerminalIdle(owner?: IdleOwnerScope): IdleOwnerScope {
@@ -153,7 +156,16 @@ export class ProcessingStateManager {
     const fenceOwner = owner ?? this.getCurrentIdleOwner();
     this.pendingFenceOwners.push(fenceOwner);
     for (const waiter of this.idleWaiters.values()) {
-      if (this.waiterOwnedByTransition(waiter, owner, fenceOwner.turnToken)) waiter.fireEnd();
+      if (
+        this.waiterOwnedByTransition(
+          waiter,
+          owner,
+          fenceOwner.turnToken,
+          fenceOwner.queryGeneration
+        )
+      ) {
+        waiter.fireEnd();
+      }
     }
     return fenceOwner;
   }
@@ -260,7 +272,7 @@ export class ProcessingStateManager {
     let claimed: IdleWaiter[] = [];
     if (!suppressDrain) {
       claimed = [...this.idleWaiters.values()].filter((w) =>
-        this.waiterOwnedByTransition(w, opts?.owner, claimCeiling)
+        this.waiterOwnedByTransition(w, opts?.owner, claimCeiling, transitionOwner.queryGeneration)
       );
       for (const w of claimed) w.fireEnd();
     }
@@ -291,8 +303,22 @@ export class ProcessingStateManager {
             : Number.NEGATIVE_INFINITY;
         const drainCeiling = Math.max(fenceStartToken, carryCeiling);
         const drained = [...this.idleWaiters.values()].filter((w) => {
-          if (this.waiterOwnedByTransition(w, opts?.owner, drainCeiling)) return true;
-          return opts?.owner !== undefined && w.owner != null && w.owner.turnToken <= carryCeiling;
+          if (
+            this.waiterOwnedByTransition(
+              w,
+              opts?.owner,
+              drainCeiling,
+              transitionOwner.queryGeneration
+            )
+          ) {
+            return true;
+          }
+          return (
+            opts?.owner !== undefined &&
+            w.owner != null &&
+            w.owner.turnToken <= carryCeiling &&
+            w.owner.queryGeneration === transitionOwner.queryGeneration
+          );
         });
         for (const w of drained) {
           this.idleWaiters.delete(w.id);

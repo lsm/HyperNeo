@@ -262,7 +262,13 @@ export class RateLimitWatchdog {
       return true;
     }
 
-    const armed = await this.scheduleCooldown(errorMessage, trip.decision, entryGeneration);
+    const armed = await this.scheduleCooldown(
+      errorMessage,
+      trip.decision,
+      entryGeneration,
+      undefined,
+      queryGeneration
+    );
 
     if (
       armed &&
@@ -342,7 +348,8 @@ export class RateLimitWatchdog {
     errorMessage: string,
     decision: CooldownDecision,
     episodeGeneration: number,
-    displayRetryCount?: number
+    displayRetryCount?: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
@@ -360,7 +367,15 @@ export class RateLimitWatchdog {
       retryAt,
     });
 
-    if (episodeGeneration !== this.generation || this.cooldownTimer !== timerAtEntry) {
+    const cooldownQuerySuperseded =
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration;
+    if (
+      episodeGeneration !== this.generation ||
+      cooldownQuerySuperseded ||
+      this.cooldownTimer !== timerAtEntry
+    ) {
       this.logger.info(
         'Cooldown state write completed but a newer action owns the cooldown; ' +
           'not publishing pause or arming.'

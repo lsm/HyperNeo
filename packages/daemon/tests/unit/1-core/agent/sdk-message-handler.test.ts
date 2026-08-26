@@ -872,6 +872,57 @@ describe('SDKMessageHandler', () => {
       expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
     });
 
+    it('a stale conversation_reset does not erase the successor session title (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+      mockSession.title = 'Successor Title';
+
+      await handler.handleMessage(
+        {
+          type: 'conversation_reset',
+          new_conversation_id: 'reset-conversation-1',
+          uuid: 'reset-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(mockSession.title).toBe('Successor Title');
+      expect(mockSession.metadata?.titleGenerated).not.toBe(false);
+      expect(updateSessionSpy).not.toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({ title: 'New Session' })
+      );
+    });
+
+    it('consumedTerminalFenceFor is invalidated when the next delivery turn is admitted (B5e)', async () => {
+      let turnToken = 1;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 3
+      );
+      (mockStateManager as unknown as { getCurrentIdleOwner: () => unknown }).getCurrentIdleOwner =
+        mock(() => ({ queryGeneration: 3, turnToken }));
+      beginTerminalIdleSpy.mockImplementation(() => ({ queryGeneration: 3, turnToken }));
+
+      await handler.handleMessage(
+        {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'test-uuid',
+          usage: { input_tokens: 10, output_tokens: 5 },
+          total_cost_usd: 0,
+          modelUsage: {},
+        } as unknown as SDKMessage,
+        3
+      );
+
+      expect(handler.consumedTerminalFenceFor(3)).toBe(true);
+
+      turnToken = 2;
+      expect(handler.consumedTerminalFenceFor(3)).toBe(false);
+    });
+
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
       const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
         ({

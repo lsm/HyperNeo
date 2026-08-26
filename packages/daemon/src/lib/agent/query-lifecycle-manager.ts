@@ -306,6 +306,12 @@ export class QueryLifecycleManager {
     try {
       await runQueryRestartPipeline(ctx);
     } catch (error) {
+      if (!ctx.superseded && !this.ctx.stateManager.isIdleOwnerCurrent(idleOwner)) {
+        ctx.superseded = true;
+      }
+      if (ctx.superseded) {
+        throw new IdleRestartSupersededError();
+      }
       if (ctx.reachedSuppressedIdle && this.ctx.stateManager.isIdleOwnerCurrent(idleOwner)) {
         this.ctx.stateManager.releaseIdleWaiters();
       }

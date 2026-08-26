@@ -112,6 +112,7 @@ export class SDKMessageHandler {
   private pendingTerminalFence: IdleOwnerScope | null = null;
   private pendingTerminalFenceGeneration: number | null = null;
   private settledTerminalFenceGeneration: number | null = null;
+  private settledTerminalFenceTurnToken: number | null = null;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
   private lastSdkErrorTag: string | null = null;
   private clearAwaitingTrailingIdle: boolean = false;
@@ -741,7 +742,7 @@ export class SDKMessageHandler {
       return;
     }
 
-    if (isSDKConversationResetMessage(message)) {
+    if (isSDKConversationResetMessage(message) && !this.isInvocationStale(invocationGeneration)) {
       if (session.metadata.titleSetBy !== 'user') {
         const metadata = { ...session.metadata, titleGenerated: false };
         session.metadata = metadata;
@@ -1311,11 +1312,16 @@ export class SDKMessageHandler {
     this.pendingTerminalFence = null;
     this.pendingTerminalFenceGeneration = null;
     this.settledTerminalFenceGeneration = slotGeneration;
+    this.settledTerminalFenceTurnToken = fence.turnToken;
     return fence;
   }
 
   consumedTerminalFenceFor(generation: number): boolean {
-    return this.settledTerminalFenceGeneration === generation;
+    if (this.settledTerminalFenceGeneration !== generation) return false;
+    if (this.settledTerminalFenceTurnToken == null) return false;
+    return (
+      this.settledTerminalFenceTurnToken === this.ctx.stateManager.getCurrentIdleOwner().turnToken
+    );
   }
 
   private isInvocationStale(invocationGeneration: number | null): boolean {

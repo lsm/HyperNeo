@@ -581,11 +581,11 @@ describe('ProcessingStateManager', () => {
 
       expect(manager.getState().status).toBe('idle');
       expect(resolvedB).toBe(true);
-      await waiterA.promise;
       expect(manager.isTerminalIdlePending()).toBe(true);
 
       await manager.setIdle({ fence: fenceA });
       expect(manager.isTerminalIdlePending()).toBe(false);
+      await waiterA.promise;
     });
 
     test('an unpaired idle never consumes a handle-bound fence', async () => {
@@ -769,6 +769,36 @@ describe('ProcessingStateManager', () => {
       releaseCallback();
       await settle;
       expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('a fence drain does not claim a same-token waiter from a later generation', async () => {
+      let releaseCallback!: () => void;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      const fenceA = manager.beginTerminalIdle();
+      const settleA = manager.setIdle({ fence: fenceA });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      manager.noteQueryOwnerGeneration(2);
+      const ownerB = manager.getCurrentIdleOwner();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+
+      releaseCallback();
+      await settleA;
+      await waiterA.promise;
+
+      expect(resolvedB).toBe(false);
+      waiterB.cancel();
     });
   });
 

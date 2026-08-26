@@ -1497,6 +1497,35 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.isPending()).toBe(false);
     });
 
+    it('does not publish pause or arm a timer if the query generation moved during the cooldown state write (B5e)', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      let writeCount = 0;
+      let resolveStateWrite!: () => void;
+      Object.assign(stateManager, {
+        setRateLimitCooldown: () =>
+          new Promise<void>((resolve) => {
+            writeCount += 1;
+            if (writeCount === 1) {
+              resolveStateWrite = () => resolve();
+            } else {
+              resolve();
+            }
+          }),
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveStateWrite();
+      await pending;
+      await flush();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+      watchdog.cancel();
+    });
+
     it('aborts the cooldown schedule if the query generation moved during resolution (B5e)', async () => {
       let resolveChain!: () => void;
       const { deps, notifyPause } = createMockDeps({ chain: [] });
