@@ -3305,6 +3305,51 @@ describe('NAMED_QUERY_REGISTRY', () => {
             ],
           },
         });
+        insertSdkMessageAt('first-bad-multiedit', sessionId, now + 1250, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-first-bad-me',
+                name: 'MultiEdit',
+                input: { file_path: '/c.txt', edits: [{}, { old_string: 'a', new_string: 'b' }] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('null-todo', sessionId, now + 1300, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-null-todo',
+                name: 'TodoWrite',
+                input: { todos: [null] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('no-id-write', sessionId, now + 1350, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                name: 'Write',
+                input: { file_path: '/d.txt', content: 'v' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('prim-block', sessionId, now + 1400, {
+          type: 'assistant',
+          message: { role: 'assistant', content: ['tool_use'] },
+        });
         for (let i = 0; i < 3; i += 1) {
           insertSdkMessageAt(
             `m-anchor-${i}`,
@@ -3321,9 +3366,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const ids = queryCompact(taskId, 1).map((r) => r.id as string);
         expect(ids).toContain('good-write');
-        expect(ids).not.toContain('bad-edit');
-        expect(ids).not.toContain('bad-multiedit');
-        expect(ids).not.toContain('bad-todo');
+        for (const malformed of [
+          'bad-edit',
+          'bad-multiedit',
+          'bad-todo',
+          'first-bad-multiedit',
+          'null-todo',
+          'no-id-write',
+          'prim-block',
+        ]) {
+          expect(ids).not.toContain(malformed);
+        }
       });
 
       test('caps pinned artifact rows at the newest paths', () => {

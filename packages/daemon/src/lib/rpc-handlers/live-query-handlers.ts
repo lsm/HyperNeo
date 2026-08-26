@@ -2128,6 +2128,14 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
   ) b
   WHERE sm.message_type = 'assistant'
     AND instr(sm.sdk_message, 'tool_use') > 0
+    AND CASE
+      WHEN json_valid(b.value) THEN CASE
+        WHEN json_type(b.value) = 'object' THEN 1
+        ELSE 0
+      END
+      ELSE 0
+    END
+    AND json_type(b.value, '$.id') = 'text'
     AND json_extract(b.value, '$.type') = 'tool_use'
     AND (
       json_extract(b.value, '$.name') NOT IN ('Write', 'Edit', 'MultiEdit')
@@ -2142,26 +2150,43 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
         ELSE
           json_type(b.value, '$.input.file_path') = 'text'
           AND EXISTS (
-            SELECT 1 FROM json_each(b.value, '$.input.edits') me
-            WHERE CASE
-              WHEN json_valid(me.value)
-                THEN CASE
-                  WHEN json_type(me.value) = 'object'
-                    THEN CASE
-                      WHEN json_type(me.value, '$.old_string') = 'text'
-                        THEN json_type(me.value, '$.new_string') = 'text'
-                      ELSE 0
-                    END
+            SELECT 1 FROM (
+              SELECT me.value AS editValue
+              FROM json_each(b.value, '$.input.edits') me
+              WHERE CASE
+                WHEN json_valid(me.value) THEN CASE
+                  WHEN json_type(me.value) = 'object' THEN 1
                   ELSE 0
                 END
-              ELSE 0
-            END
+                ELSE 0
+              END
+              ORDER BY me.key
+              LIMIT 1
+            ) firstEdit
+            WHERE json_type(firstEdit.editValue, '$.old_string') = 'text'
+              AND json_type(firstEdit.editValue, '$.new_string') = 'text'
           )
       END
     )
     AND (
       json_extract(b.value, '$.name') != 'TodoWrite'
-      OR json_type(b.value, '$.input.todos') = 'array'
+      OR (
+        json_array_length(b.value, '$.input.todos') >= 1
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(b.value, '$.input.todos') te
+          WHERE CASE
+            WHEN json_valid(te.value) THEN CASE
+              WHEN json_type(te.value) = 'object' THEN CASE
+                WHEN json_type(te.value, '$.content') = 'text'
+                  THEN json_type(te.value, '$.status') != 'text'
+                ELSE 1
+              END
+              ELSE 1
+            END
+            ELSE 1
+          END
+        )
+      )
     )
 ),
 artifact_state_rows AS (
@@ -2392,7 +2417,14 @@ assistant_text AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'text'
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.type')
+          ELSE NULL
+        END
+        ELSE NULL
+      END = 'text'
         AND TRIM(COALESCE(json_extract(b.value, '$.text'), '')) != ''
     )
 ),
@@ -2406,7 +2438,14 @@ assistant_thinking AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'thinking'
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.type')
+          ELSE NULL
+        END
+        ELSE NULL
+      END = 'thinking'
         AND TRIM(COALESCE(json_extract(b.value, '$.thinking'), '')) != ''
     )
 ),
@@ -2420,7 +2459,14 @@ assistant_tool AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'tool_use'
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.type')
+          ELSE NULL
+        END
+        ELSE NULL
+      END = 'tool_use'
     )
 ),
 -- The summary row id(s) per (session, turn): assistant text if any, else
@@ -2496,8 +2542,22 @@ base_selection AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'tool_use'
-        AND json_extract(b.value, '$.name') IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.name')
+          ELSE NULL
+        END
+        ELSE NULL
+      END IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
+        AND CASE
+          WHEN json_valid(b.value) THEN CASE
+            WHEN json_type(b.value) = 'object'
+              THEN json_extract(b.value, '$.type')
+            ELSE NULL
+          END
+          ELSE NULL
+        END = 'tool_use'
     )
     AND NOT EXISTS (SELECT 1 FROM seg_summary ss WHERE ss.id = joined.id)
   UNION ALL
