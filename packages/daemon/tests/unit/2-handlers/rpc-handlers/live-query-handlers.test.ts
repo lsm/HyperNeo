@@ -3170,7 +3170,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: {
             role: 'assistant',
             content: [
-              { type: 'tool_use', id: 'tu-old-todo', name: 'TodoWrite', input: { todos: [] } },
+              {
+                type: 'tool_use',
+                id: 'tu-old-todo',
+                name: 'TodoWrite',
+                input: {
+                  todos: [{ content: 'ship', status: 'in_progress' }],
+                },
+              },
             ],
           },
         });
@@ -3218,7 +3225,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: {
             role: 'assistant',
             content: [
-              { type: 'tool_use', id: 'tu-cutoff-todo', name: 'TodoWrite', input: { todos: [] } },
+              {
+                type: 'tool_use',
+                id: 'tu-cutoff-todo',
+                name: 'TodoWrite',
+                input: {
+                  todos: [{ content: 'ship', status: 'in_progress' }],
+                },
+              },
             ],
           },
         });
