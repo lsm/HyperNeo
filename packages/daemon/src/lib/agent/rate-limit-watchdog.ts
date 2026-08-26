@@ -171,23 +171,19 @@ export class RateLimitWatchdog {
 
     const { provider, model } = this.deps.getCurrentModel();
     const currentCanonical = (await this.deps.resolveModelId?.(provider, model)) ?? model;
-    if (entryGeneration !== this.generation) {
-      this.logger.info(
-        'Current-model resolution completed but episode was superseded; aborting schedule.'
-      );
+    if (querySuperseded()) {
+      this.logger.info('Model resolution completed but the query was superseded; aborting.');
       return true;
     }
     this.triedKeys.add(`${provider}/${currentCanonical}`);
 
     if (this.chain === null) {
-      const resolvedChain = await this.deps.resolveChain();
-      if (entryGeneration !== this.generation) {
-        this.logger.info(
-          'Fallback chain resolution completed but episode was superseded; aborting schedule.'
-        );
+      const chain = await this.deps.resolveChain();
+      if (querySuperseded()) {
+        this.logger.info('Chain resolution completed but the query was superseded; aborting.');
         return true;
       }
-      this.chain = resolvedChain;
+      this.chain = chain;
     }
 
     if (this.chain.length > 0) {
@@ -201,6 +197,12 @@ export class RateLimitWatchdog {
           canonicalKey.set(entry, `${entry.provider}/${canonical}`);
         })
       );
+      if (querySuperseded()) {
+        this.logger.info(
+          'Availability resolution completed but the query was superseded; aborting.'
+        );
+        return true;
+      }
       const sel = selectNextFallback(
         this.chain,
         this.triedKeys,

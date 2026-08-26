@@ -1302,6 +1302,7 @@ export class QueryRunner {
           this.ctx.getQueryGeneration() === queryGeneration &&
           this.ctx.queryAbortController === runAbortController &&
           !fencedTerminalSettleDone &&
+          !this.ctx.messageHandler.consumedTerminalFenceFor(queryGeneration) &&
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
           !(this.ctx.isLimitRecoveryPending?.() ?? false) &&

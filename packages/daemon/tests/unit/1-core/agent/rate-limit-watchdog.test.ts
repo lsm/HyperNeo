@@ -1519,6 +1519,28 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.isPending()).toBe(false);
     });
 
+    it('aborts before writing episode state when the query moved during model resolution (B5e)', async () => {
+      let resolveCanonical!: () => void;
+      const { deps } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.resolveModelId = () =>
+        new Promise<string>((r) => {
+          resolveCanonical = () => r('claude-sonnet');
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveCanonical();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(watchdog.getState().triedEntries).toEqual([]);
+      expect(watchdog.getState().retryCount).toBe(0);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+    });
+
     it('cancel() clears the stale last user message (no re-entry re-arm)', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);

@@ -111,6 +111,7 @@ export class SDKMessageHandler {
   private suppressIdleOnNextResult: boolean = false;
   private pendingTerminalFence: IdleOwnerScope | null = null;
   private pendingTerminalFenceGeneration: number | null = null;
+  private settledTerminalFenceGeneration: number | null = null;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
   private lastSdkErrorTag: string | null = null;
   private clearAwaitingTrailingIdle: boolean = false;
@@ -985,7 +986,7 @@ export class SDKMessageHandler {
       );
     }
 
-    if (isSDKAssistantMessage(message)) {
+    if (isSDKAssistantMessage(message) && !this.isInvocationStale(invocationGeneration)) {
       await this.handleAssistantMessage(message);
     }
 
@@ -1309,7 +1310,12 @@ export class SDKMessageHandler {
     }
     this.pendingTerminalFence = null;
     this.pendingTerminalFenceGeneration = null;
+    this.settledTerminalFenceGeneration = slotGeneration;
     return fence;
+  }
+
+  consumedTerminalFenceFor(generation: number): boolean {
+    return this.settledTerminalFenceGeneration === generation;
   }
 
   private isInvocationStale(invocationGeneration: number | null): boolean {

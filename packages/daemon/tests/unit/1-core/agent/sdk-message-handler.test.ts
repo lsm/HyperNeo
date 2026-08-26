@@ -846,6 +846,32 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('a stale assistant tool-use does not publish successor tool-liveness events (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'toolu_stale', name: 'Bash', input: {} }],
+          },
+          uuid: 'stale-assistant',
+          session_id: 'test-session-id',
+          parent_tool_use_id: null,
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(emitSpy.mock.calls.map((call) => call[0] as string)).not.toContain(
+        'sdk.toolUse.created'
+      );
+      expect(mockSession.metadata?.toolCallCount ?? 0).toBe(0);
+      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+    });
+
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
       const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
         ({

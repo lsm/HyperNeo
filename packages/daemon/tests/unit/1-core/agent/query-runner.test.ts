@@ -239,6 +239,10 @@ describe('QueryRunner', () => {
       onModelsFetched: onModelsFetchedSpy,
       onMarkApiSuccess: onMarkApiSuccessSpy,
 
+      messageHandler: {
+        consumedTerminalFenceFor: mock(() => false),
+      } as unknown as QueryRunnerContext['messageHandler'],
+
       ...overrides,
     };
   }
@@ -2766,6 +2770,19 @@ describe('QueryRunner', () => {
       expect(onRateLimitExhausted.mock.calls[0][3]).toBe(1);
     });
 
+    it('skips the finalizer idle when the SDK handler settled its own terminal fence (B5e)', async () => {
+      const ctx = createContext({
+        messageHandler: {
+          consumedTerminalFenceFor: mock(() => true),
+        } as unknown as QueryRunnerContext['messageHandler'],
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('passes the assessed limit payload to the handoff callback', async () => {
       const resetAtMs = Date.now() + 60 * 60 * 1000;
       const cases: Array<{ errorMessage: string; hint: LimitRetryHint }> = [
@@ -3212,6 +3229,10 @@ describe('QueryRunner', () => {
         onSlashCommandsFetched: onSlashCommandsFetchedSpy,
         onModelsFetched: onModelsFetchedSpy,
         onMarkApiSuccess: onMarkApiSuccessSpy,
+
+        messageHandler: {
+          consumedTerminalFenceFor: mock(() => false),
+        } as unknown as QueryRunnerContext['messageHandler'],
       };
       return {
         ctx,
