@@ -196,9 +196,7 @@ export function runSpawnExecutionFlow(
         run: async (view) => {
           const sessionId = (view.reuseLive as { sessionId: string }).sessionId;
           const rebind = deps.rebindLiveExecution(view.execution, sessionId);
-          const freshTaskInRun =
-            !view.freshTask.workflowRunId ||
-            view.freshTask.workflowRunId === view.execution.workflowRunId;
+          const freshTaskInRun = view.freshTask.workflowRunId === view.execution.workflowRunId;
           if (rebind !== 'superseded' && freshTaskInRun) {
             await deps.syncReuseLiveWorkspace?.(
               view.freshTask,
@@ -259,7 +257,7 @@ export function runSpawnExecutionFlow(
         run: async (view) => {
           deps.reserveExecution(view.execution.id);
           const spawnTask = view.freshTask ?? view.task;
-          if (spawnTask.workflowRunId && spawnTask.workflowRunId !== view.workflowRun.id) {
+          if (spawnTask.workflowRunId !== view.workflowRun.id) {
             deps.releaseExecution(view.execution.id);
             throw new Error(
               `Task ${spawnTask.id} was reassigned to workflow run ${spawnTask.workflowRunId} during spawn`
