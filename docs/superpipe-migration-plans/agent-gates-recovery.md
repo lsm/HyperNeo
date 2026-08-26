@@ -149,8 +149,11 @@ writes. (The reclaim marker clear is SYNCHRONOUS today —
 boolean call sites, so that one pipeline stays on synchronous `.end`;
 review correction PR #2981.) Those compose as direct async-capable pipelines (`.endAsync` /
 awaited effect stages over injected collaborators) so the promises are
-actually awaited; synchronous `decisionRun`/`.end` runners are reserved for
-the PURE classifier cores only. `stagedRun` itself stays reference-only —
+actually awaited; synchronous `.end` runners are otherwise reserved for
+pure cores — with ONE documented exception: `tool-call-loop-admission` is
+fully synchronous end-to-end and MUST stay on `.end` so parallel PreToolUse
+callbacks cannot interleave between snapshot and commit (review correction
+PR #2981). `stagedRun` itself stays reference-only —
 none of these sites needs its compensation machinery.
 
 ## Per-site detailed plans
@@ -291,8 +294,14 @@ none of these sites needs its compensation machinery.
      re-exports the symbol, not the implementation).
 - **tests.** Existing suite must pass byte-identical (parity proof). Add two
   pipeline-contract rows (review correction — both must hold for
-  `producedResult: true`): (a) a spy gate after `applyProducedResultGate`
-  asserts the cascade halted and the later detail gate was NEVER invoked;
+  `producedResult: true`; review correction PR #2981: only the
+  FAILURE-classification stages are guarded — the pipeline CONTINUES to the
+  completed-arm effect clearing `zeroProgressDeliveryFailures`
+  (`agent-session.ts:2402`), since halting immediately would strand a stale
+  counter after a prior recoverable failure and let a later failure
+  escalate or dead-letter prematurely): (a) a spy gate after `applyProducedResultGate`
+  asserts the FAILURE-classification stages (detail, terminal, subtype,
+  claim-guard) were NEVER invoked while the completed effect still ran;
   (b) `completed` rows never build a detail string (the current classifier
   returns `completed` before reading any error-detail fields — preserve that
   laziness; do not also require the detail gate to run).
@@ -1339,7 +1348,11 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   DB transaction cannot be coupled atomically, and a blind restore could
   overwrite a concurrent defer/delete/status change — extended to the
   SUPPRESSED-path yielded entries too, which sit in `yielded` from before
-  the invocation (`:361-366`; review correction PR #2981))) — while each
+  the invocation (`:361-366`), with FINALIZATION also revalidating the
+  QUEUE GENERATION (`messageQueue.start()` increments it at
+  `message-queue.ts:284-287` leaving the claim present; compensating or
+  requeueing on change) and all acknowledgment-visible effects deferred
+  until finalization commits (review correction PR #2981))) — while each
   individual
   PUBLICATION promise keeps its today-style `.catch` containment AND
   fire-and-forget scheduling (await only the transactional
@@ -1678,8 +1691,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   needed — it re-exports the symbol, not the implementation).
 - **tests.** Existing `turn-outcome-classification.test.ts` parity rows run
   against the pipeline; add the two contract rows: a spy gate proves the
-  cascade halted after `producedResult` (detail gate never invoked), and
-  `completed` rows never build a detail string.
+  FAILURE-classification stages never run after `producedResult` (detail
+  gate never invoked) WHILE the completed-arm effect still clears
+  `zeroProgressDeliveryFailures` (`agent-session.ts:2402`; review
+  correction PR #2981), and `completed` rows never build a detail string.
 - **depends on.** none — parallel-safe leaf.
 
 ### PR 7 — `refactor(agent): wire agent-session turn completion to its pipeline`
@@ -1876,7 +1891,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 ➕ additive core — prod Δ ≲150 (new module + ctx types), test Δ ≲350
 
 - **scope.** New `packages/daemon/src/lib/agent/loop-detector-pipeline.ts`:
-  a DIRECT superpipe pipeline `tool-call-loop-admission` (review correction
+  a DIRECT superpipe pipeline `tool-call-loop-admission`, running on the
+  SYNCHRONOUS executor (`.end`, never `.endAsync` — review correction PR
+  #2981: every effect is a synchronous Map write/log/string build today,
+  `loop-detector-hook.ts:130-199`; an async executor would let parallel
+  PreToolUse callbacks interleave between snapshot, streak advance, and
+  commit — both reading the same previous streak, losing a count and
+  preventing the configured denial threshold from firing — while the hook
+  simply returns the result from its surrounding async callback) (review correction
   PR #2981: NOT `decisionRun` — it appends `!hasDecided` after every gate
   (`decision-pipeline.ts:14-16`), so the first gate to stamp a decision
   would halt execution before the state-effect stages; the first-match
@@ -2282,7 +2304,21 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `yielded` for the whole awaited window, so a `clear()` removing it
   mid-flight would still strand a consumed-but-never-sent row that the
   post-await ownership check cannot recover — reserve/finalize the
-  yielded entry exactly like a claimed one (review correction PR #2981);
+  yielded entry exactly like a claimed one (review correction PR #2981).
+  FINALIZATION also REVALIDATES THE QUEUE GENERATION and compensates or
+  requeues when it changed (review correction PR #2981: a query restart
+  calls `messageQueue.start()`, incrementing the generation while leaving
+  the claimed entry present, `message-queue.ts:284-287`, and the old
+  generator's `myGeneration` checks run only BEFORE the callback,
+  `:307-327` — rechecking claim presence alone would let the superseded
+  generator move the entry to `yielded` and feed it to the old SDK query).
+  All ACKNOWLEDGMENT-VISIBLE effects — the consumed/SDK publications and
+  the `acknowledgedPersistedUserThisTurn` write — are DEFERRED until
+  reservation finalization COMMITS the yield (review correction PR #2981:
+  launching them before the queue decides lets consumers observe a prompt
+  that was compensated and never sent, and a premature flag write
+  suppresses the later turn-end acknowledgment); when compensation fires
+  instead, those effects never run;
   `markMessageAccepted` awaits before its consumed-row query for the ACP
   acceptance path (`sdk-message-handler.ts:551-559`, where the current
   synchronous `try/catch` no longer contains an async rejection); and the
