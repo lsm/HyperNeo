@@ -1596,7 +1596,11 @@ optional router phase 2. No per-site section is left uncovered.
   session-route assertion (returns the parsed session id — codex round 4);
   manual nav smoke via
   `make dev` (walk every route, back/forward, overlay open/close).
-- **Depends on**: PR 5; open question 3.
+- **Depends on**: PR 1, PR 5; open question 3 (codex round 13: PR 1 is
+  required — the parser conversions folded into this slice compose
+  `decisionRun` and need the superpipe dependency PR 1 introduces; PR 5
+  alone is dependency-free, so without the explicit edge this slice could
+  start without the combinator it requires).
 
 ## Open questions
 
