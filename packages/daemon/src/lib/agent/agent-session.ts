@@ -1308,76 +1308,110 @@ export class AgentSession
         );
       }
     }
-    void interruptPromise.catch((error) => {
-      if (!this.pendingResumeAfterCompaction) return;
-      this.pendingResumeAfterCompaction = false;
-      this.logger.warn(
-        `late mid-turn context-budget interrupt failure for session ${this.session.id}:`,
-        error
-      );
-    });
-    const survivors = receipt?.still_queued ?? [];
-    let unconfirmedSurvivor = false;
-    if (
-      survivors.length > 0 &&
-      typeof queryObject.cancelAsyncMessage === 'function' &&
-      !this.messageQueue.hasOutstandingInternalCompaction()
-    ) {
-      for (const uuid of survivors) {
-        try {
-          const cancelled = await Promise.race([
-            Promise.resolve(queryObject.cancelAsyncMessage(uuid)),
-            new Promise<boolean>((resolve) => {
-              const timer = setTimeout(() => resolve(false), MID_TURN_INTERRUPT_TIMEOUT_MS);
-              if (typeof timer.unref === 'function') {
-                timer.unref();
-              }
-            }),
-          ]);
-          if (!cancelled) {
-            unconfirmedSurvivor = true;
-            this.logger.warn(
-              `cancel_async_message did not confirm cancellation of ${uuid} for ` +
-                `session ${this.session.id}; restarting the query so the survivor cannot ` +
-                `run ahead of the pending compaction`
-            );
-            break;
-          }
-          const content = this.messageQueue.getSentPromptContent(uuid);
-          if (content !== undefined) {
-            this.messageQueue.forgetSentPrompt(uuid);
-            void this.messageQueue
-              .enqueueWithId(uuid, content, false, { durable: true })
-              .catch((error) => {
-                this.logger.warn(
-                  `requeue of cancelled survivor ${uuid} failed for session ${this.session.id}:`,
-                  error
-                );
-              });
-            this.logger.info(
-              `requeued cancelled survivor ${uuid} for session ${this.session.id} ` +
-                `to run after the pending compaction`
-            );
-          }
-        } catch (error) {
-          unconfirmedSurvivor = true;
+    await this.processInterruptSurvivorReceipt(queryObject, receipt);
+    void interruptPromise.then(
+      (lateReceipt) => {
+        if (!timedOut || !this.pendingResumeAfterCompaction) return;
+        void this.processInterruptSurvivorReceipt(
+          queryObject,
+          lateReceipt as { still_queued?: string[] } | undefined
+        ).catch((error) => {
           this.logger.warn(
-            `cancel_async_message failed for ${uuid} on session ${this.session.id}:`,
-            error
-          );
-          break;
-        }
-      }
-      if (unconfirmedSurvivor && this.lifecycleManager) {
-        void this.lifecycleManager.restart().catch((error) => {
-          this.logger.warn(
-            `query restart after unconfirmed survivor cancellation failed for ` +
+            `late survivor cancellation after a slow mid-turn interrupt failed for ` +
               `session ${this.session.id}:`,
             error
           );
         });
+      },
+      (error) => {
+        if (!this.pendingResumeAfterCompaction) return;
+        this.pendingResumeAfterCompaction = false;
+        this.logger.warn(
+          `late mid-turn context-budget interrupt failure for session ${this.session.id}:`,
+          error
+        );
+      }
+    );
+  }
+
+  private async processInterruptSurvivorReceipt(
+    queryObject: QueryLike,
+    receipt: { still_queued?: string[] } | undefined
+  ): Promise<void> {
+    const survivors = receipt?.still_queued ?? [];
+    if (survivors.length === 0) return;
+    if (this.queryObject !== queryObject) return;
+    if (typeof queryObject.cancelAsyncMessage !== 'function') return;
+    if (this.messageQueue.hasOutstandingInternalCompaction()) return;
+    let unconfirmedSurvivor = false;
+    for (const uuid of survivors) {
+      try {
+        const cancelled = await Promise.race([
+          Promise.resolve(queryObject.cancelAsyncMessage(uuid)),
+          new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => resolve(false), MID_TURN_INTERRUPT_TIMEOUT_MS);
+            if (typeof timer.unref === 'function') {
+              timer.unref();
+            }
+          }),
+        ]);
+        if (!cancelled) {
+          unconfirmedSurvivor = true;
+          this.logger.warn(
+            `cancel_async_message did not confirm cancellation of ${uuid} for ` +
+              `session ${this.session.id}; restarting the query so the survivor cannot ` +
+              `run ahead of the pending compaction`
+          );
+          break;
+        }
+        const content = this.messageQueue.getSentPromptContent(uuid);
+        if (content !== undefined) {
+          this.messageQueue.forgetSentPrompt(uuid);
+          void this.messageQueue
+            .enqueueWithId(uuid, content, false, { durable: true })
+            .catch((error) => {
+              this.logger.warn(
+                `requeue of cancelled survivor ${uuid} failed for session ${this.session.id}:`,
+                error
+              );
+            });
+          this.logger.info(
+            `requeued cancelled survivor ${uuid} for session ${this.session.id} ` +
+              `to run after the pending compaction`
+          );
+        }
+      } catch (error) {
+        unconfirmedSurvivor = true;
+        this.logger.warn(
+          `cancel_async_message failed for ${uuid} on session ${this.session.id}:`,
+          error
+        );
+        break;
       }
     }
+    if (unconfirmedSurvivor) {
+      await this.finishSurvivorTeardownWithRestart();
+    }
+  }
+
+  private async finishSurvivorTeardownWithRestart(): Promise<void> {
+    if (!this.lifecycleManager) return;
+    const restart = this.lifecycleManager.restart().catch((error) => {
+      this.logger.warn(
+        `query restart after unconfirmed survivor cancellation failed for ` +
+          `session ${this.session.id}:`,
+        error
+      );
+    });
+    await Promise.race([
+      restart,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, MID_TURN_INTERRUPT_TIMEOUT_MS);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
   }
 
   private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {
