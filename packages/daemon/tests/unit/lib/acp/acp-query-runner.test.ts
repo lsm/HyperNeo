@@ -1137,6 +1137,7 @@ describe('AcpQueryRunner', () => {
       expect(terminalEnv.HTTPS_PROXY).toBe('http://session-proxy.example:8080');
       expect(terminalEnv.GITHUB_TOKEN).toBeUndefined();
       expect(terminalEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(constructorOptions[0].replaceEnv).toBe(true);
     } finally {
       releasePrompt();
       await ctx.queryPromise;

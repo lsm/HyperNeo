@@ -624,6 +624,7 @@ export class AcpQueryRunner {
         args,
         cwd,
         env: acpEnv as Record<string, string> | undefined,
+        replaceEnv: true,
         processTreeOwner,
         onProcessSpawn: (proc) =>
           this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
