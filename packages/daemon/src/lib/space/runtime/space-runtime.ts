@@ -43,6 +43,10 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { formatExternalEventEssence } from '../../external-events/event-essence.ts';
 import {
+  deferredExternalEventEntryEvents,
+  parseDeferredDeliveryRow,
+} from '../../external-events/deferred-event-digest.ts';
+import {
   type ExternalEventPublishedPayload,
   isExternalEventDeliveryV2Enabled,
 } from '../../external-events/external-event-service.ts';
@@ -1836,6 +1840,7 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    this.externalEventDeliveriesInFlight.add(deliveryKey);
     try {
       const deps: ImmediateEventDeliveryDeps = {
         getTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -1884,6 +1889,8 @@ export class SpaceRuntime {
         `SpaceRuntime: failed to process immediate-tier event ${payload.eventId} for ` +
           `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
       );
+    } finally {
+      this.externalEventDeliveriesInFlight.delete(deliveryKey);
     }
   }
 
@@ -1940,10 +1947,21 @@ export class SpaceRuntime {
     }
     const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
     if (run && this.pausedSpaceIds.has(run.spaceId)) return null;
+    const messages = this.getSdkMessageRepo();
+    const durableEventIds = new Set(
+      [
+        ...messages.getUserMessagesByStatus(sessionId, 'deferred').messages,
+        ...messages.getUserMessagesByStatus(sessionId, 'enqueued').messages,
+      ]
+        .map((row) => parseDeferredDeliveryRow(row))
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+        .flatMap((entry) => deferredExternalEventEntryEvents(entry).map((event) => event.eventId))
+    );
     const claimedRows: ExternalEventDeliveryRecord[] = [];
     for (const row of scopedPending()) {
       if (claimedRows.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
       if (this.externalEventDeliveriesInFlight.has(row.deliveryKey)) continue;
+      if (durableEventIds.has(row.eventId)) continue;
       const record = store.getById(row.eventId);
       if (
         record &&
@@ -1971,7 +1989,6 @@ export class SpaceRuntime {
       claimedRows.push(row);
     }
     if (claimedRows.length === 0) return null;
-    const messages = this.getSdkMessageRepo();
     const deps: RenderPendingDigestDeps = {
       listPendingDeliveries: () => claimedRows,
       getEventById: (eventId) => store.getById(eventId),
