@@ -1241,24 +1241,37 @@ export class TaskAgentManager {
             });
 
             if (memberInfo.nodeId) {
-              const reuseSpace = await this.config.spaceManager.getSpace(parentTask.spaceId);
-              const reuseWorkspacePath = resolveSpawnWorkspace({
-                cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
-                hasWorktreeManager: false,
-                spaceWorkspacePath: reuseSpace
-                  ? resolveTaskWorkspace(reuseSpace, parentTask)
-                  : init.workspacePath,
-              }).workspacePath;
-              const reuseCtx = {
-                taskId,
-                subSessionId: existingSessionId,
-                agentName: memberInfo.agentName,
-                spaceId: parentTask.spaceId,
-                workflowRunId: parentTask.workflowRunId,
-                workspacePath: reuseWorkspacePath,
-                workflowNodeId: memberInfo.nodeId,
-              };
+              const reuseAgentName = memberInfo.agentName;
+              const reuseNodeId = memberInfo.nodeId;
+              const reuseWorkflowRunId = parentTask.workflowRunId;
               await this.withSessionInjectLock(existingSessionId, async () => {
+                const lockedTask = this.config.taskRepo.getTask(taskId);
+                if (
+                  !lockedTask ||
+                  lockedTask.spaceId !== parentTask.spaceId ||
+                  lockedTask.workflowRunId !== parentTask.workflowRunId
+                ) {
+                  throw new Error(
+                    `Task ${taskId} changed ownership while reusing session ${existingSessionId}; refusing to migrate its workspace`
+                  );
+                }
+                const reuseSpace = await this.config.spaceManager.getSpace(lockedTask.spaceId);
+                const reuseWorkspacePath = resolveSpawnWorkspace({
+                  cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+                  hasWorktreeManager: false,
+                  spaceWorkspacePath: reuseSpace
+                    ? resolveTaskWorkspace(reuseSpace, lockedTask)
+                    : init.workspacePath,
+                }).workspacePath;
+                const reuseCtx = {
+                  taskId,
+                  subSessionId: existingSessionId,
+                  agentName: reuseAgentName,
+                  spaceId: parentTask.spaceId,
+                  workflowRunId: reuseWorkflowRunId,
+                  workspacePath: reuseWorkspacePath,
+                  workflowNodeId: reuseNodeId,
+                };
                 const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;

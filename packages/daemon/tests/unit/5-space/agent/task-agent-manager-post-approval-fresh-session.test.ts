@@ -294,6 +294,76 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
+  test('createSubSession reuse resolves the workspace from the task reloaded under the inject lock', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    let reloadCount = 0;
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => {
+        reloadCount += 1;
+        return reloadCount === 1
+          ? { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }
+          : {
+              id: TASK_ID,
+              spaceId: SPACE_ID,
+              workflowRunId: RUN_ID,
+              title: 'Task 850',
+              workspacePath: '/task/late-update',
+            };
+      },
+    };
+    const reinjectCtx: Array<Record<string, unknown>> = [];
+    (
+      tam as unknown as {
+        reinjectNodeAgentMcpServer: (s: unknown, ctx: Record<string, unknown>) => Promise<void>;
+      }
+    ).reinjectNodeAgentMcpServer = async (_s, ctx) => {
+      reinjectCtx.push(ctx);
+    };
+    (
+      tam as unknown as { ensureRequiredMcpServersAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureRequiredMcpServersAttached = async () => {};
+    (
+      tam as unknown as { registerCompletionCallback: (...a: unknown[]) => void }
+    ).registerCompletionCallback = () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/late-update' });
+    expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/late-update' });
+  });
+
+  test('createSubSession reuse refuses the workspace migration when the task changed ownership before the lock', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    stubReusePathHelpers(tam);
+    let reloadCount = 0;
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => {
+        reloadCount += 1;
+        return reloadCount === 1
+          ? { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }
+          : { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: 'run-other', title: 'Task 850' };
+      },
+    };
+
+    await expect(
+      tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+        agentId: 'agent-reviewer',
+        agentName: REVIEWER_AGENT,
+        nodeId: REVIEWER_NODE_ID,
+      })
+    ).rejects.toThrow('changed ownership');
+
+    expect(live.metadataUpdates).toEqual([]);
+  });
+
   test('stale co-owner sweep preserves blocked status (only active owners become idle)', async () => {
     const NODE_2 = 'node-2';
     const staleCoOwner = {
