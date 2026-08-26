@@ -608,7 +608,7 @@ describe('coder-only workflow template', () => {
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('recorded, not discarded');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'immediately before you write the gate artifact, perform a single terminal read of all three and confirm they are still unchanged'
+      'immediately before you write the gate artifact, perform a single terminal read of all three, requiring only `headRefOid` and `baseRefName` to be unchanged'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('even a change that later reverts');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(

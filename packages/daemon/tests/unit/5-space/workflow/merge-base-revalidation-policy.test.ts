@@ -188,7 +188,7 @@ describe('reviewer contract post-regen base-advance pins (m216)', () => {
       'Capture the baseRefName, baseRefOid, AND headRefOid'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'immediately before you write the gate artifact, perform a single terminal read of all three and confirm they are still unchanged'
+      'immediately before you write the gate artifact, perform a single terminal read of all three, requiring only `headRefOid` and `baseRefName` to be unchanged'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'if the head OR the base NAME is observed to change at ANY point mid-gate'
