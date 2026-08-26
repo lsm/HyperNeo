@@ -766,7 +766,10 @@ export class QueryLifecycleManager {
   }
 
   private scheduleDeferredRestartRetry(): void {
-    const successorOwner = this.ctx.stateManager.getCurrentIdleOwner();
+    this.armDeferredRestartRetry(this.ctx.stateManager.getCurrentIdleOwner(), 0);
+  }
+
+  private armDeferredRestartRetry(successorOwner: IdleOwnerScope, rescheduleDepth: number): void {
     const waiter = this.ctx.stateManager.waitForIdleTransition(
       undefined,
       undefined,
@@ -774,8 +777,14 @@ export class QueryLifecycleManager {
     );
     void waiter.promise.then(() => {
       if (!this.ctx.pendingRestartReason) return;
-      void this.executeDeferredRestartIfPending(successorOwner);
+      void this.executeDeferredRestartIfPending(successorOwner, rescheduleDepth);
     });
+    if (this.ctx.stateManager.isIdle()) {
+      waiter.cancel();
+      if (this.ctx.pendingRestartReason) {
+        void this.executeDeferredRestartIfPending(successorOwner, rescheduleDepth);
+      }
+    }
   }
 
   async executeDeferredRestartIfPending(
@@ -796,16 +805,10 @@ export class QueryLifecycleManager {
       if (error instanceof IdleRestartSupersededError) {
         this.ctx.pendingRestartReason = reason;
         if (rescheduleDepth < 8) {
-          const successorOwner = this.ctx.stateManager.getCurrentIdleOwner();
-          const waiter = this.ctx.stateManager.waitForIdleTransition(
-            undefined,
-            undefined,
-            successorOwner
+          this.armDeferredRestartRetry(
+            this.ctx.stateManager.getCurrentIdleOwner(),
+            rescheduleDepth + 1
           );
-          void waiter.promise.then(() => {
-            if (!this.ctx.pendingRestartReason) return;
-            void this.executeDeferredRestartIfPending(successorOwner, rescheduleDepth + 1);
-          });
         }
       }
       return false;

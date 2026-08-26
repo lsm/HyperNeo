@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  IdleRestartSupersededError,
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from '../../../../src/lib/agent/query-lifecycle-manager';
@@ -119,6 +120,7 @@ describe('QueryLifecycleManager', () => {
         getState: getStateSpy,
         releaseIdleWaiters: releaseIdleWaitersSpy,
         isIdleOwnerCurrent: mock(() => true),
+        isIdle: mock(() => false),
         waitForIdleTransition: mock(() => ({ promise: Promise.resolve(), cancel: () => {} })),
         getCurrentIdleOwner: mock(() => ({ queryGeneration: 7, turnToken: 1 })),
       } as unknown as ProcessingStateManager,
@@ -1439,6 +1441,39 @@ describe('QueryLifecycleManager', () => {
       await manager.restartQuery();
 
       expect(startStreamingCalled).toBe(true);
+    });
+
+    test('retries a superseded immediate restart at once when the successor is already idle (B5e)', async () => {
+      messageQueue.start(async function* () {
+        yield 'test';
+      });
+      mockContext = createMockContext({
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+      });
+      const cancelSpy = mock(() => {});
+      (mockContext.stateManager as unknown as { isIdle: unknown }).isIdle = mock(() => true);
+      (
+        mockContext.stateManager as unknown as { waitForIdleTransition: unknown }
+      ).waitForIdleTransition = mock(() => ({
+        promise: new Promise<void>(() => {}),
+        cancel: cancelSpy,
+      }));
+      manager = new QueryLifecycleManager(mockContext);
+      let restartCalls = 0;
+      spyOn(manager, 'restart').mockImplementation(async () => {
+        restartCalls += 1;
+        if (restartCalls === 1) throw new IdleRestartSupersededError();
+      });
+
+      await manager.restartQuery();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(restartCalls).toBe(2);
+      expect(cancelSpy).toHaveBeenCalled();
+      expect(mockContext.pendingRestartReason).toBeNull();
     });
   });
 

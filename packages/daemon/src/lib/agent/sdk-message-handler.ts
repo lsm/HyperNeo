@@ -969,7 +969,7 @@ export class SDKMessageHandler {
       await this.handleUserMessage(message);
     }
 
-    if (isSDKSystemMessage(message)) {
+    if (isSDKSystemMessage(message) && !this.isInvocationStale(invocationGeneration)) {
       await this.handleSystemMessage(message);
     }
 
@@ -1180,6 +1180,7 @@ export class SDKMessageHandler {
     this.lastSdkErrorTag = null;
 
     await this.recordResultUsageMetadata(message);
+    if (this.isInvocationStale(invocationGeneration)) return;
 
     const usage = message.usage ?? {
       input_tokens: 0,

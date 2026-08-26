@@ -646,6 +646,28 @@ describe('SDKMessageHandler', () => {
       expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
     });
 
+    it('drops a generation-stale system/init before it can rotate the successor session id (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+      mockSession.sdkSessionId = 'successor-session-id';
+
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'test-uuid',
+        session_id: 'obsolete-session-id',
+        slash_commands: ['help'],
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message, 2);
+
+      expect(mockSession.sdkSessionId).toBe('successor-session-id');
+      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+      expect(handler.getSdkCapabilities().size).toBe(0);
+      expect(mockContext.onInitSlashCommands).not.toHaveBeenCalled();
+    });
+
     it('strips terminal-bound commands from the init slash command list', async () => {
       const message: SDKMessage = {
         type: 'system',
@@ -4552,6 +4574,39 @@ describe('SDKMessageHandler', () => {
 
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
+    it('a result going stale during usage metadata publication spares the successor breaker and error state (B5e)', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      const markSuccessSpy = mock(() => {});
+      (
+        handler as unknown as { circuitBreaker: { markSuccess: () => void } }
+      ).circuitBreaker.markSuccess = markSuccessSpy;
+      (
+        handler as unknown as { recordResultUsageMetadata: (message: SDKMessage) => Promise<void> }
+      ).recordResultUsageMetadata = mock(async () => {
+        generation = 9;
+      });
+
+      await handler.handleMessage(
+        {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'test-uuid',
+          usage: { input_tokens: 100, output_tokens: 50 },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage,
+        3
+      );
+
+      expect(markSuccessSpy).not.toHaveBeenCalled();
+      expect(emitSpy.mock.calls.map((call) => call[0] as string)).not.toContain(
+        'session.errorClear'
+      );
     });
 
     it('ignores genuine success results', async () => {
