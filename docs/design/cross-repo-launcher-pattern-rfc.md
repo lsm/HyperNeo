@@ -78,8 +78,10 @@ Everything below exists on `dev` or is an approved in-flight epic slice. The pat
   layer accepts these fields; exposing `workspacePath` on the MCP tool schemas arrives
   with #2531/#2535 — spawn paths today still resolve from the Space primary.)
 - `trigger_goal_task` creates a goal-linked task immediately, or queues **one** follow-up
-  when a goal task is already active and `autoTriggerNext` is set — per-goal execution is
-  serial by construction.
+  when a goal task is already active and `autoTriggerNext` is set — execution through
+  the goal's active-task pointer is serial by construction, though pointerless
+  Forge-proposal tasks run outside that slot and can proceed concurrently with it (§5
+  accounts for them).
 - Goal-linked task terminal outcomes produce durable outcome notifications in the same
   transaction as the terminal write; they wake the **primary owner** (or the coordinator
   fallback when no usable owner exists — `goals/goal-owner-resolution.ts`), are recovered
@@ -177,10 +179,15 @@ The launcher contract extends the owner-review contract with:
   leaves the rest stale) — a bare acknowledge skips the revision
   gate — `applyRevisionMatchGate` only checks when an update is present — and pausing B
   before this check would leave an unjustified cross-goal mutation with no rollback if
-  the review returns `stale_revision`). Then settle B's active task (terminal state
+  the review returns `stale_revision`). Then — **pausing B first when it is found
+  active with `autoTriggerNext` and a queued run** (forcing settlement while B is still
+  active would let the terminal transaction create and claim the queued stale
+  successor) — settle B's active task (terminal state
   reached or forced) and drain B's own pending outcomes — a completed-but-unreviewed
   Forge outcome, or an active completion racing the pause, with anything still racing
-  resubmitted through the stale-review path — **before** pausing: the pause is itself a
+  resubmitted through the stale-review path — before the pause completes its remaining
+  effect: the pause is itself a revision-changing mutation, so draining after it leaves
+  only a result-losing bare acknowledgement. Then ensure B is paused —
   revision-changing mutation, so draining after it leaves only a result-losing bare
   acknowledgement. Then ensure B is paused —
   an existing paused
@@ -270,10 +277,12 @@ gate's hold lifecycle):
   post-pause revision through the documented stale-review resubmission path. Tasks the
   hold deliberately retains (durable-wait independence) are not settled here — their
   races are handled by the release step's pre-resume review. Then persist the hold
-  identity and intended ownership in **agent memory — before the pause mutation** (a
-  crash between the pause and the write would leave B durably paused with no record of
-  who may resume it; update or remove the record if the pause fails), with the
-  human-readable condition mirrored in `nextSteps` for visibility (outcome reviews
+  identity and intended ownership in **the keyed operational store — before the pause
+  mutation** (a crash between the pause and the write would leave B durably paused with
+  no record of who may resume it; update or remove the record if the pause fails);
+  until that store ships, agent memory is the only stand-in and carries the loss risks
+  described below. The human-readable condition mirrors in `nextSteps` for visibility
+  (outcome reviews
   replace `nextSteps` wholesale, so a marker recorded only there is erased before
   release revalidates it). Operational state lives as **one keyed record per goal**
   (holds, saved cadence values, and each tracked gated task/proposal ID — updated
@@ -325,7 +334,8 @@ gate's hold lifecycle):
   retained task produces racing the resume — before resuming (the resume
   bumps the revision; a stale review then needs the documented resubmission against
   fresh state); clear any retained cadence **before** `resume_goal` — first
-  durably recording its cron expression and timezone in **agent memory** — not goal
+  durably recording its cron expression and timezone in the **keyed operational store**
+  (agent memory only as the pre-store stand-in) — never goal
   `nextSteps`, which outcome reviews replace wholesale, losing a saved marker —
   because clearing (`check_in_cron_expression: null`) hard-deletes the schedule and its
   values cannot be recovered from the goal afterwards; resuming reactivates the
@@ -348,7 +358,10 @@ gate's hold lifecycle):
   external-hold record is cleared as lifted-by-owner **and any surviving launcher hold
   immediately acquires the pause** — re-pausing on its own authority, taking ownership,
   re-running setup's cancellation/drain steps for anything another actor started in the
-  window, and creating a sole deferred hard gate when applicable — otherwise B stays
+  window, and creating a sole deferred hard gate when applicable; when **no** launcher
+  hold survives, reconciliation instead continues the deferred release path — restoring
+  the saved cadence from its snapshot so B does not stay active without check-ins —
+  otherwise B stays
   active under conditions the launcher still treats as unresolved while no gate can
   ever be created;
   re-trigger only when the active-task pointer is confirmed empty (with a
