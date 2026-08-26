@@ -265,6 +265,13 @@ The repo already has several proven pipelines. Use these as the model for each s
      the existing session is alive without a probe and returns `already-routed`;
      defaulting an absent probe to false would classify the ID as dead, claim
      it through the replacement CAS, and spawn duplicate post-approval work).
+     Review correction PR #2983 round 13: the snapshot gathers ONLY the fresh
+     task first — routes are collected AFTER the `notApproved` gate passes
+     and liveness is probed only where the current router needs it (its
+     `not approved` return precedes route collection at
+     `post-approval-router.ts:133-154`) — so a throwing probe or a
+     route-resolution failure can never replace the stable skipped/no-route
+     outcomes.
   2. `decide` stages express the routing branches DIRECTLY (review
      correction: do not extract and run a separate `decidePostApprovalRoute`
      runner from this staged flow — a second composition boundary for the
@@ -315,28 +322,36 @@ The repo already has several proven pipelines. Use these as the model for each s
      captured stage view (review correction round 23: a view-captured guard
      releases the claim even while the spawned session is live or its
      termination is unverified, letting a retry spawn a second session).
-  8. `effect` `spawn-post-approval-sub-session` catches and classifies the
+  8. `effect` `spawn-post-approval-sub-session` is FENCED like the core
+     slices require (review correction PR #2983 round 13: this sequence must
+     carry the same fencing as P44/P46 — an unbounded await here with
+     expired-token takeover at step 7 would reintroduce duplicate workers):
+     wrapped in a DEADLINE SHORTER THAN THE RESERVATION TTL with lease
+     RENEWAL until the spawn actually settles, or acknowledged cancellation
+     plus LATE-SESSION CLEANUP on the deadline. It catches and classifies the
      EXPECTED failures in-stage (review correction round 8:
      `isSpawnSupersededError` and `isTransientSpawnError` are caught by the
      current router, which clears pending-completion fields, records the
-     specific `postApprovalBlockedReason`, releases the unconsumed
+     specific mapped `postApprovalBlockedReason`, releases the unconsumed
      reservation, and returns `{ mode: 'skipped' }` — a generic effect
      failure would unwind and escape, losing that durable blocked state).
      The in-stage catch diverts to the existing clear/block/skip branch;
      compensation-based failure propagation applies only to UNEXPECTED
-     errors. Its `compensate` for unexpected failures
-     terminates/ends the spawned sub-session (review correction round 3: the
-     only previously specified compensation released the reservation, so a
-     `record-dispatched-session` throw or CAS loss would make the task
-     dispatchable again while the spawned session stayed live — a retry then
-     creates a second orphan. After a successful spawn the claim is
-     NON-releasable; failure cleanup owns the session, not the claim). The
-     spawn effect writes the spawned session ID and start time into an
-     EXTERNAL MUTABLE BOX (SpawnAttemptBox-style) — the effect view is a
-     shallow copy, so assigning `spawnedSessionId` on the shared state would
-     be discarded and `record-dispatched-session` would record a null ID;
-     the step-8 compensate reads the box DIRECTLY so it can terminate the
-     session even when the failure precedes the resnapshot.
+     errors. Its `compensate` for unexpected failures terminates/ends the
+     spawned sub-session ONLY WHEN THIS ATTEMPT CREATED IT (review
+     corrections PR #2983 rounds 12/13: when the target agent already has a
+     live sub-session, the spawner INJECTS INTO IT and returns its
+     pre-existing ID — `task-agent-manager.ts:4759-4784` — so the attempt
+     box carries an OWNERSHIP flag and termination runs only for
+     created sessions; review correction round 3: after a successful spawn
+     the claim is NON-releasable; failure cleanup owns the CREATED session,
+     not the claim). The
+     spawn effect writes the spawned session ID, start time, and ownership
+     into an EXTERNAL MUTABLE BOX (SpawnAttemptBox-style) — the effect view
+     is a shallow copy, so assigning `spawnedSessionId` on the shared state
+     would be discarded and `record-dispatched-session` would record a null
+     ID; the step-8 compensate reads the box DIRECTLY so it can terminate
+     the CREATED session even when the failure precedes the resnapshot.
   9. `resnapshot` copies the spawned session ID and start time from the
      external box into ctx (`spawnedSessionId`/`startedAt`) before the
      dispatch record is written.
@@ -481,7 +496,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     dispatchErr?: unknown;
   }
   ```
-- **Pure core design**: Authorization (`unauthorized`), task-state (`notFound`, `spaceMismatch`, `notPending`, `notReview`), and approve/reject branches are DIRECT decide stages of the shared `approve-pending-completion` pipeline (review correction: delegating them to a separately composed `decideApprovePendingCompletion` runner splits one approval/rejection operation across two pipelines), so the subsequent status, dispatch, and blocked-reason effect stages remain part of the same composition.
+- **Pure core design**: Authorization (`unauthorized`), task-state (`notFound`, `spaceMismatch`, `notPending`, `notReview`), a RUNTIME-AVAILABILITY branch on the approve arm (review correction PR #2983 round 13: the RPC throws its stable `spaceRuntimeService is required to approve pending completion` error BEFORE dispatch or any approval write when the optional service is absent — `space-task-handlers.ts:670-675`; without this branch a detailed-design implementation dereferences the missing dependency or commits approval without routing; see also the round-6 P26 scope), and approve/reject branches are DIRECT decide stages of the shared `approve-pending-completion` pipeline (review correction: delegating them to a separately composed `decideApprovePendingCompletion` runner splits one approval/rejection operation across two pipelines), so the subsequent status, dispatch, and blocked-reason effect stages remain part of the same composition. Review correction PR #2983 round 13: the shells' `spaceMismatch` mappings stay DISTINCT — the RPC's space-bound `taskManager.getTask` masks a foreign task to `Task not found`, while the tool's direct repo lookup returns the explicit `does not belong to this space` response; sharing identical preconditions verbatim would either expose foreign-task existence through the RPC or change the tool contract (same masking discipline as the lookup pipelines).
 - **Shell/effect wiring**:
   - Tool shell: validates `callerRole === 'coordinator' | 'legacy_task_agent'`, sets `callerMayApprove`, runs the pipeline, maps to `jsonResult`.
   - RPC shell: sets `callerMayApprove = true`, runs the pipeline, returns the final task.
@@ -506,7 +521,12 @@ The repo already has several proven pipelines. Use these as the model for each s
      returns a successful result; only committed post-approval failures
      enter `record-blocked-reason` (matching the current
      `if (afterCommit?.status !== 'approved') throw dispatchErr` guard).
-  7. `effect` `record-blocked-reason` (when dispatch threw) updates `postApprovalBlockedReason`.
+  7. `effect` `record-blocked-reason` (when dispatch threw) updates
+     `postApprovalBlockedReason` with `mapPostApprovalDispatchWarning(detail)`
+     — review correction PR #2983 round 13: both current callers persist the
+     MAPPED warning (its stable text distinguishes interruption/cancellation
+     from other errors and explains the task remains approved), never the raw
+     exception; pin interrupted and general-error rows (P25).
   8. Guarded `effect` `set-rejected` (when `reject`) calls `taskManager.setTaskStatus` then `updateTask` with reason.
   9. ONE COMMON FINAL `resnapshot` refreshes the task after the
       `record-blocked-reason`/`set-rejected` writes and BEFORE publication
@@ -686,7 +706,16 @@ The repo already has several proven pipelines. Use these as the model for each s
     own limited-status allowance (parameterized predicates or the RPC
     branch kept ahead of the shared ones), pinned before rewiring — routing
     the remaining RPC requests through the shared predicates verbatim would
-    turn an existing successful public RPC request into an error. It already
+    turn an existing successful public RPC request into an error. Review
+    correction PR #2983 round 13: the same retention covers the NO-OP case —
+    `spaceTask.update` with only `spaceId`/`taskId` currently performs an
+    empty `updateTask`, returns the existing task, and emits
+    `space.task.updated` (`space-task-handlers.ts:540-560`), while the shared
+    helper's `no_updatable_fields` branch rejects `hasChanges === false`
+    before even checking the task (`task-transition-routing.ts:146-152`);
+    keep the RPC's no-op success (bypass or parameterized predicates) and
+    pin it — silently turning that request into the tool-only error would be
+    a public contract change. It already
     lives in `task-transition-routing.ts` as `routeTaskUpdate`. Review correction: retain it as an ORDINARY PURE HELPER (or inline its routing gates) inside the single `spaceTask.update` RPC pipeline — do NOT wrap it in a separate `decisionRun` for callers to invoke, which would recreate the composition boundaries the corrected design removes.
   - Review correction PR #2983 round 2: the TOOL side composes its COMPLETE update
     operation as ONE direct pipeline in `space-tool-pipeline.ts` — the
@@ -1376,10 +1405,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P22 — `feat(handlers): add the one-pipeline spaceTask.update core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
-- **Scope**: ONE direct RPC update pipeline: the P13 validation helpers as early rejection/normalization stages — validated against the SYNTHETIC started snapshot when the request itself transitions the task to `in_progress` (an in-request start locks overrides — review correction PR #2983 round 8) — plus a WORKFLOW-SELECTION-CHANGE normalization stage injecting `workflowModelOverrides: null` when `preferredWorkflowId` changes and overrides are omitted (round 8: retained overrides could seed a reused `nodeId:agentName` key with a stale model); the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner), WITH the RPC's caller-specific limited-status allowance retained — `rate_limited`/`usage_limited` requests proceed into the stop-for-status/set-status arms instead of hitting the shared `limited_direct` rejection (review correction PR #2983 round 12); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps — each of the three runtime-backed branches (park/recover/stop) behind a RUNTIME-AVAILABILITY rejection gate throwing the exact current `SpaceRuntimeService is unavailable` errors BEFORE any mutation (review correction PR #2983 round 9: the service is optional; without the gate the pipeline dereferences an absent dependency or changes the public error contract), `set_status` retaining its guarded FOLLOW-UP field update (remaining fields persisted via `updateTask` after `setTaskStatus`, with the override-lock recheck — plus the cancellation-reason follow-up write; review correction PR #2983 round 9: ending the arm after `setTaskStatus` silently drops the other requested changes), and the TWO-PHASE dependency-added arm inside `fields_only` GUARDED ON RUNTIME PRESENCE (the whole flow is skipped when `spaceRuntimeService` is absent — the ordinary `updateTask` proceeds, matching the current `spaceRuntimeService && ...` condition; review correction PR #2983 round 10); when present: safe-params update → returned-state check → on `blocked`/`dependency_added` the guarded `stopWorkflowBackedTask` effect stops the active agents, else the pointer-params follow-up write (review correction PR #2983 round 8: a plain `updateTask`-only stage leaves agents running on a blocked task); a fresh-task resnapshot + lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary). Parallel-safe leaf.
+- **Scope**: ONE direct RPC update pipeline: the P13 validation helpers as early rejection/normalization stages — validated against the SYNTHETIC started snapshot when the request itself transitions the task to `in_progress` (an in-request start locks overrides — review correction PR #2983 round 8) — plus a WORKFLOW-SELECTION-CHANGE normalization stage injecting `workflowModelOverrides: null` when `preferredWorkflowId` changes and overrides are omitted (round 8: retained overrides could seed a reused `nodeId:agentName` key with a stale model); the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner), WITH the RPC's caller-specific limited-status allowance retained — `rate_limited`/`usage_limited` requests proceed into the stop-for-status/set-status arms instead of hitting the shared `limited_direct` rejection (review correction PR #2983 round 12) — AND its NO-OP success retained (only `spaceId`/`taskId` supplied → empty `updateTask`, existing task returned, `space.task.updated` emitted; never the tool-only `no_updatable_fields` error — review correction PR #2983 round 13); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps — each of the three runtime-backed branches (park/recover/stop) behind a RUNTIME-AVAILABILITY rejection gate throwing the exact current `SpaceRuntimeService is unavailable` errors BEFORE any mutation (review correction PR #2983 round 9: the service is optional; without the gate the pipeline dereferences an absent dependency or changes the public error contract), `set_status` retaining its guarded FOLLOW-UP field update (remaining fields persisted via `updateTask` after `setTaskStatus`, with the override-lock recheck — plus the cancellation-reason follow-up write; review correction PR #2983 round 9: ending the arm after `setTaskStatus` silently drops the other requested changes), and the TWO-PHASE dependency-added arm inside `fields_only` GUARDED ON RUNTIME PRESENCE (the whole flow is skipped when `spaceRuntimeService` is absent — the ordinary `updateTask` proceeds, matching the current `spaceRuntimeService && ...` condition; review correction PR #2983 round 10); when present: safe-params update → returned-state check → on `blocked`/`dependency_added` the guarded `stopWorkflowBackedTask` effect stops the active agents, else the pointer-params follow-up write (review correction PR #2983 round 8: a plain `updateTask`-only stage leaves agents running on a blocked task); a fresh-task resnapshot + lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary). Parallel-safe leaf.
 - **Lands**: the complete update operation exists as one composition; the handler still runs its old path.
 - **Excludes**: handler rewiring (P23) and the tool's complete update pipeline (P24).
-- **Tests**: branch/parity rows for every `plan.action`, the re-check-lock rows, the in-request-start locks-overrides row, the workflow-switch clears-omitted-overrides row, and the dependency-added two-phase stop row (review correction PR #2983 round 8).
+- **Tests**: branch/parity rows for every `plan.action`, the re-check-lock rows, the in-request-start locks-overrides row, the workflow-switch clears-omitted-overrides row, the dependency-added two-phase stop row (round 8), the limited-status allowance row, and the no-op-update success row (review correction PR #2983 round 13).
 - **Depends on**: P13, P14.
 
 ### P23 — `refactor(handlers): run spaceTask.update on its single pipeline`
@@ -1417,7 +1446,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Scope**: New `packages/daemon/src/lib/space/runtime/approve-pending-completion-pipeline.ts`: `stagedRun('approve-pending-completion')` with DIRECT decide stages (`unauthorized`, `notFound`, `spaceMismatch`, `notPending`, `notReview`, a RUNTIME-AVAILABILITY branch on the approve arm — the dispatch dependency absent rejects with the exact current `spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.` error BEFORE any approval write (review correction PR #2983 round 6: the RPC is optionally configured; a literal pipeline would dereference the missing dependency or commit `approved` without routing), approve/reject — no separately composed admission runner); `runtime.dispatchPostApproval` kept as the approval primitive (or `approvalSource`/`approvalReason` stamped in the initial write — state carries the source either way); an IN-STAGE catch on dispatch storing the error in a `dispatchError` external box ALLOCATED PER INVOCATION — created inside the exported per-call shell, never at module/runner scope (review correction PR #2983 round 2: a shared box lets two overlapping approvals cross-write `postApprovalBlockedReason` or miss a dispatch failure); a resnapshot that refreshes the task AND materializes the caught error into ctx so later guarded stages branch on the resnapshotted flag, never the box — with the round-10 rule that a caught dispatch error RETHROWS unless the refreshed task is actually `approved` (a pre-commit failure surfaces instead of being recorded as a blocked reason on an unapproved task); guarded `record-blocked-reason`; the reject-path effects; ONE common final task resnapshot after the blocked-reason/reject writes (review correction PR #2983 round 2: without it the publication and halt reuse the post-dispatch task, so a rejected task publishes as still `review` and a dispatch-failure task omits `postApprovalBlockedReason`); and a guarded shared `publish-task-updated` stage emitting `space.task.updated` with that finally refreshed task after approving OR rejecting, ordered BEFORE the halt (review correction rounds 22/23 — a stage after the halt never executes, and a shell effect lets callers skip the publication). Parallel-safe leaf.
 - **Lands**: the one approval/rejection state machine exists; both shells still run their old paths.
 - **Excludes**: shell rewiring (P27, P28); post-approval routing internals (P43–P47).
-- **Tests**: stagedRun contract rows for every branch, the missing-runtime rejection row (review correction PR #2983 round 6), the dispatch-failure path, the shared publication, and an overlapping-approval row proving two concurrent invocations never cross-read each other's `dispatchError` box (review correction PR #2983 round 2).
+- **Tests**: stagedRun contract rows for every branch, the missing-runtime rejection row (review correction PR #2983 round 6), the dispatch-failure path INCLUDING the mapped-warning rows (`mapPostApprovalDispatchWarning` output persisted, interrupted vs general error — review correction PR #2983 round 13), per-shell foreign-task rows (RPC masks to `Task not found`; tool returns the explicit mismatch — round 13), the shared publication, and an overlapping-approval row proving two concurrent invocations never cross-read each other's `dispatchError` box (review correction PR #2983 round 2).
 - **Depends on**: P25.
 
 ### P27 — `refactor(tools): run approve_pending_completion on the shared pipeline`
