@@ -1064,8 +1064,10 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   rows (missing ids, bad role, non-string batch members, empty batchUuids
   omitted, origin default) and reclaim rows — ALL EIGHT input combinations
   of the three independent booleans plus the explicit precedence rows
-  (terminalIdle beats successResult; the marker arm with successResult
-  true; review correction PR #2981, matching the PR 18 scope).
+  (terminalIdle beats successResult; success wins over the marker when
+  both are true and `terminalIdleInFlight: false` → `terminated`, with the
+  marker arm firing only when `successResult: false`; review correction
+  PR #2981, matching the PR 18 scope).
 - **risks/caveats.** `asMessageDeliveryPayload` runs on every delivery job
   claim — cheap, but keep the pipeline linear with no per-stage allocation
   beyond the payload itself. The `origin` field is cast, not validated
@@ -1261,7 +1263,10 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   returning the promise per `:140-142` and the ACP `onAccepted` contract
   per `acp-query-adapter.ts:29`/`acp-client.ts:272,286`) — while each
   individual
-  PUBLICATION promise keeps its today-style `.catch` containment so a
+  PUBLICATION promise keeps its today-style `.catch` containment AND
+  fire-and-forget scheduling (await only the transactional
+  status/timestamp work; a slow subscriber must never block the yield —
+  review correction PR #2981) so a
   publication failure never becomes an unhandled rejection. EVERY
   successful or already-consumed acknowledgment arm —
   yielded and immediate alike — also sets the
@@ -1915,8 +1920,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   (`message-delivery.ts:235-244`): review correction (PR #2981): the function
   has THREE independent boolean inputs, so enumerate ALL EIGHT combinations
   (not four) plus the explicit precedence rows — terminalIdle and
-  successResult both true, and the marker-precedence case with
-  successResult true — before the cascade is replaced.
+  successResult both true, and the success-wins-over-marker row
+  (`successResult && markerExists`, `terminalIdleInFlight: false` →
+  `terminated`: the success check precedes the marker arm,
+  `message-delivery.ts:235-244`, and the marker arm fires only when
+  `successResult: false` — review correction PR #2981: expecting
+  `redrive` there would teach the replacement to clear the marker and
+  rerun a completed delivery) — before the cascade is replaced.
 - **lands.** The reclaim contract the PR 19 gates must preserve is pinned.
 - **excludes.** Payload validation rows (PR 17).
 - **tests.** This slice is the pin table.
@@ -2135,7 +2145,15 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   rejection is handled rather than unhandled (review correction PR
   #2981) — while
   the individual PUBLICATION promises keep
-  today's per-publication `.catch` containment, so a publication failure
+  today's per-publication `.catch` containment AND today's
+  FIRE-AND-FORGET scheduling (review correction PR #2981: the handler
+  launches `messages.statusChanged`, `sdk.message`, and
+  tool-result-consumed with `.catch(...)` but never awaits them,
+  `sdk-message-handler.ts:659-687,696-710` — with the queue now awaiting
+  the pipeline, awaiting the publications would let a slow or non-settling
+  event subscriber block the SDK message from ever being yielded; await
+  ONLY the transactional status/timestamp work, launch publications as
+  `void …catch(…)`), so a publication failure
   never becomes an unhandled rejection or escapes the handler. Every
   consumed arm also sets
   the `acknowledgedPersistedUserThisTurn` flag (`:666,704`) as an effect
@@ -2248,8 +2266,11 @@ cleanup — docs Δ ≲150
    into `limit-error-classifier.ts` (both are error-text classifiers). This
    plan proposes separate modules to keep the limit classifier free of
    api-validation template concerns; confirm at review.
-6. **Loop-admission ledger reset semantics.** The disabled/no-threshold path
-   currently *deletes* the scope's ledger entry (`loop-detector-hook.ts:131`).
-   The pipeline models this as `resetLedger: true` on the allow decision;
+6. **Loop-admission ledger reset semantics.** The ENABLED no-threshold
+   branch *deletes* the scope's ledger entry
+   (`loop-detector-hook.ts:130-132`); the disabled arm is a no-op
+   passthrough (review correction PR #2981). The pipeline models the
+   no-threshold deletion as `resetLedger: true` on that arm's allow
+   decision;
    confirm that flag-on-decision shape is preferred over keeping the delete
    in the shell keyed on the same predicate.
