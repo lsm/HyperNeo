@@ -82,7 +82,7 @@ export class ContextFetcher {
     if (!query?.getContextUsage) return null;
 
     try {
-      const response = await query.getContextUsage();
+      const response = await ContextFetcher.withUsageTimeout(query.getContextUsage());
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
         response,
         modelMetadata
@@ -95,6 +95,20 @@ export class ContextFetcher {
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
+    }
+  }
+
+  private static async withUsageTimeout<T>(pending: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('getContextUsage timed out')), 5000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
