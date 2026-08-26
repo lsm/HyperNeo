@@ -1,6 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 
 export type SpaceAgentPendingDrainOutcome =
   | { action: 'skip' }
@@ -10,8 +10,11 @@ export interface SpaceAgentPendingDrainDeps {
   repo: {
     listPendingForTarget(workflowRunId: string, targetName: string): PendingAgentMessageRecord[];
     listByRunAndStatus?(workflowRunId: string, status: string): PendingAgentMessageRecord[];
-    getById(id: string): { status: string } | null | undefined;
+    getById(id: string): PendingAgentMessageRecord | null | undefined;
     markDelivered(id: string, sessionId: string): void;
+    recordDeliveryAttempt(id: string, error: string | null): PendingAgentMessageRecord | null;
+    recordDeliveryError(id: string, error: string | null): void;
+    markFailed(id: string, error: string): unknown;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string, excludeIds?: string[]): unknown;
@@ -20,6 +23,7 @@ export interface SpaceAgentPendingDrainDeps {
   probeDeliveryStatus(sessionId: string, messageId: string): string | undefined;
   onSettled(row: PendingAgentMessageRecord, deliveredSessionId: string): void;
   watchActiveDelivery?(row: PendingAgentMessageRecord): void;
+  deliverRow(row: PendingAgentMessageRecord): Promise<void>;
 }
 
 export interface SpaceAgentPendingDrainInput {
@@ -32,7 +36,6 @@ interface SpaceAgentPendingDrainCtx extends SpaceAgentPendingDrainInput {
   listedRows?: PendingAgentMessageRecord[];
   activeDeliveryIds?: string[];
   pendingRows?: PendingAgentMessageRecord[];
-  outcome?: SpaceAgentPendingDrainOutcome;
 }
 
 function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
@@ -115,21 +118,19 @@ function admitDrain(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
     ],
     admission: { executionPresent: true, targetKind: 'space_agent' },
   });
-  if (drain.action === 'skip') {
-    return { ...ctx, outcome: { action: 'skip' } };
+  return { ...ctx, pendingRows: drain.action === 'skip' ? [] : drain.rows };
+}
+
+async function deliverAdmittedRows(
+  ctx: SpaceAgentPendingDrainCtx
+): Promise<SpaceAgentPendingDrainCtx> {
+  for (const row of ctx.pendingRows ?? []) {
+    await ctx.deps.deliverRow(row);
   }
-  return { ...ctx, outcome: { action: 'drain', rows: drain.rows } };
+  return ctx;
 }
 
-function hasOutcome(ctx: SpaceAgentPendingDrainCtx): boolean {
-  return ctx.outcome !== undefined;
-}
-
-const run = (
-  superpipe<{ hasOutcome: (ctx: SpaceAgentPendingDrainCtx) => boolean }>({
-    hasOutcome,
-  })('space-agent-pending-drain') as PipelineAPI
-)
+const run = (superpipe({})('space-agent-pending-drain') as PipelineAPI)
   .input(['ctx'])
   .pipe(listRows, 'ctx', 'ctx')
   .pipe(reconcileRows, 'ctx', 'ctx')
@@ -137,7 +138,16 @@ const run = (
   .pipe(runRetention, 'ctx', 'ctx')
   .pipe(listAdmissibleRows, 'ctx', 'ctx')
   .pipe(admitDrain, 'ctx', 'ctx')
+  .pipe(deliverAdmittedRows, 'ctx', 'ctx')
   .endAsync('ctx') as (input: SpaceAgentPendingDrainCtx) => Promise<SpaceAgentPendingDrainCtx>;
+
+export async function runSpaceAgentPendingDrain(
+  deps: SpaceAgentPendingDrainDeps,
+  input: SpaceAgentPendingDrainInput
+): Promise<SpaceAgentPendingDrainOutcome> {
+  const ctx = await run({ ...input, deps });
+  return { action: 'drain', rows: ctx.pendingRows ?? [] };
+}
 
 export function collectActiveSpaceDeliveryIds(args: {
   repo: SpaceAgentPendingDrainDeps['repo'];
@@ -157,19 +167,11 @@ export function collectActiveSpaceDeliveryIds(args: {
     if (
       candidates.some((sessionId) => {
         const sendStatus = args.probeDeliveryStatus(sessionId, row.id);
-        return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
+        return sendStatus === 'enqueued' || sendStatus === 'submitted';
       })
     ) {
       activeIds.push(row.id);
     }
   }
   return activeIds;
-}
-
-export async function runSpaceAgentPendingDrain(
-  deps: SpaceAgentPendingDrainDeps,
-  input: SpaceAgentPendingDrainInput
-): Promise<SpaceAgentPendingDrainOutcome> {
-  const ctx = await run({ ...input, deps });
-  return ctx.outcome ?? { action: 'skip' };
 }

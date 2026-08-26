@@ -258,6 +258,17 @@ export class PendingAgentMessageRepository {
     return this.getById(id);
   }
 
+  recordDeliveryError(id: string, error: string | null): void {
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET last_error = ?, last_attempt_at = ?
+				 WHERE id = ?`
+      )
+      .run(error, Date.now(), id);
+    this.notify();
+  }
+
   deferExpiration(ids: string[], ttlMs = DEFAULT_PENDING_MESSAGE_TTL_MS): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
