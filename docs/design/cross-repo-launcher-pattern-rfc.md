@@ -370,12 +370,19 @@ gate's hold lifecycle):
   window, and creating a sole deferred hard gate when applicable; if the inspection
   finds B **terminal** (`completed` rather than resumed), reconciliation performs the
   same crash-safe hold/cadence cleanup as launcher-driven completion; when **no** launcher
-  hold survives, reconciliation instead continues the deferred release path — restoring
-  the saved cadence from its snapshot so B does not stay active without check-ins —
+  hold survives, reconciliation instead continues the deferred release path **with the
+  cadence still cleared**: B is active again but its pointer stays empty until that
+  path's explicit trigger, and restoring the snapshot on reactivation alone would let a
+  due check-in claim the pointer and start stale-`nextSteps` work before the deferred
+  release finishes — the cadence is restored only after the explicitly triggered
+  replacement's outcome is reviewed, exactly as the release protocol already requires;
+  the observation reminder below, not the schedule, watches the interval, so B does not
+  linger unobserved —
   and because goal resume is not an LH wake source and the cleared cadence cannot fire,
   a durable observation reminder **stays armed for the full lifetime of the external
-  pause**, **armed before each pause-state inspection** (arm-then-inspect, as the
-  standalone loop below) — bounded escalation to the human is layered on top of it, but
+  pause**, **armed before each pause-state inspection** (arm-then-inspect under the
+  one-live-reminder rule of the standalone loop below) — bounded escalation to the
+  human is layered on top of it, but
   re-arming never terminates while the pause lasts, so the human resuming B is always
   followed by an observing wake —
   otherwise B stays
@@ -436,7 +443,16 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   not inspect-then-arm: a launcher turn or daemon death between reading the task and
   re-arming would otherwise leave it terminal with no pending wake. A fired reminder is
   consumed by arming the replacement; when the inspection finds a terminal state the
-  new reminder simply expires harmlessly. Re-arming continues until terminality —
+  new reminder simply expires harmlessly. Arm-then-inspect re-arms **one live
+  reminder, not one per wake**: `create_agent_reminder` always inserts a fresh record
+  and the reminder surface exposes listing only — no cancellation or keyed upsert — so
+  a re-arm taken while a previous reminder is still pending (another wake, an A
+  outcome or the inactivity nag, arriving before it fires) leaves both armed, and
+  every duplicate that later fires arms its own successor — parallel wake loops for
+  the gate's lifetime. The launcher therefore records the outstanding observation
+  reminder in its operational record and re-arms only when the previous one has fired
+  or been consumed, until the reminder surface gains an idempotent replacement
+  operation. Re-arming continues until terminality —
   bounded human escalation layers on top rather than replacing it, since a later
   completion would otherwise go unwoken. Prefer
   the Forge shape when the goal has a scope: its goal link produces a real outcome wake.
@@ -612,12 +628,24 @@ ADR 0004 applies to new combinators.
    trigger handler, so pattern goals either disable Forge automation or every
    automation enqueue/execution path applies the same launcher-authority check, as
    does **manual** proposal/task creation (`create_forge_task_proposal` →
-   `create_task_from_forge_proposal`, currently membership-checked only). Sole trigger authority holds throughout the objective, not only during
-   holds; plus
+   `create_task_from_forge_proposal`, currently membership-checked only) — and the direct
+   MessageHub RPC route: `spaceGoal.createImmediateTask` (`space-goal-handlers.ts`)
+   invokes `SpaceGoalService.createImmediateTask` after only a Space-membership check,
+   bypassing the trigger handler with no actor identity, so it joins the same
+   launcher-authority check or immediate-task creation funnels through one actor-aware
+   service seam every creation route shares. Sole trigger authority holds throughout
+   the objective, not only during holds; plus
    **dependency-reopen leases enforced at the shared task-transition seam** — every
    reopen path for a `done` prerequisite (`retry_task`, `update_task(status:
    'in_progress')`, future tools alike, not only "retried" ones) stops its started
-   dependents and wakes the launcher instead of silently revoking the gate, and
+   dependents and wakes the launcher instead of silently revoking the gate — the lease
+   equally covers **every transition away from a consumed prerequisite success, not
+   only reopens**: `archive_task` accepts `done → archived` after a membership-only
+   check, and `setTaskStatus` unblocks dependents on `done` without stopping or waking
+   them when the prerequisite is later archived, so a gate A's success released would
+   keep running although the dependency is no longer exactly `done`; archiving a
+   consumed prerequisite therefore stops its started dependents and wakes the launcher
+   like any other revocation, and
    **consumption enforcement on every reopening path** — `update_task(status:
    'in_progress')` permits `done → in_progress` just as `retry_task` does, so a
    consumed standalone/Forge gate is guarded in the shared task-transition logic
