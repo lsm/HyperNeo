@@ -60,9 +60,9 @@ export class SessionConfigHandler {
 
     if (updates.title) session.title = updates.title;
 
-    if (updates.workspacePath) {
+    if (updates.workspacePath !== undefined) {
       session.workspacePath = updates.workspacePath;
-      this.ctx.settingsManager = new SettingsManager(db, updates.workspacePath);
+      this.ctx.settingsManager = new SettingsManager(db, updates.workspacePath || undefined);
     }
 
     if (updates.status) session.status = updates.status;
