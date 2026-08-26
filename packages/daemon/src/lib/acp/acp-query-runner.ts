@@ -726,8 +726,14 @@ export class AcpQueryRunner {
         const adapter = new AcpQueryAdapter(client, promptContent, {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
-          onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
-          onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
+          onContextUsageUpdate: (used) => {
+            if (this.ctx.getQueryGeneration() !== queryGeneration) return;
+            this.persistAcpContextUsageEstimate(used);
+          },
+          onConfigOptionsUpdate: (configOptions) => {
+            if (this.ctx.getQueryGeneration() !== queryGeneration) return;
+            this.updateAcpModelCache(configOptions);
+          },
           onSubmitted: () => {
             if (submitted) return;
             const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');

@@ -1005,6 +1005,31 @@ describe('SDKMessageHandler', () => {
       ).toBeNull();
     });
 
+    it('a stale api_retry does not publish successor retry telemetry (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 1,
+          max_retries: 3,
+          retry_delay_ms: 1000,
+          error_status: 500,
+          error: 'boom',
+          uuid: 'stale-retry-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(emitSpy.mock.calls.map((call) => call[0] as string)).not.toContain(
+        'session.retryAttempt'
+      );
+    });
+
     it('a stale model_refusal_no_fallback does not persist refusal rewind state (B5e)', async () => {
       (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
         () => 9

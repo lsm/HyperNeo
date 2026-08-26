@@ -52,6 +52,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
+  getQueryGeneration?(): number;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
 }
 
@@ -131,7 +132,11 @@ export class ModelSwitchHandler {
     }
   }
 
-  async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
+  async switchModel(
+    newModel: string,
+    newProvider: string,
+    queryGeneration?: number
+  ): Promise<ModelSwitchResult> {
     const {
       session,
       db,
@@ -143,6 +148,10 @@ export class ModelSwitchHandler {
       logger,
       lifecycleManager,
     } = this.ctx;
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined &&
+      this.ctx.getQueryGeneration != null &&
+      this.ctx.getQueryGeneration() !== queryGeneration;
 
     const previousModel = session.config.model;
     const originalProvider = session.config.provider;
@@ -180,6 +189,15 @@ export class ModelSwitchHandler {
           success: true,
           model: resolvedModel,
           error: `Already using ${modelInfo?.name || resolvedModel}`,
+        };
+      }
+
+      if (querySuperseded()) {
+        logger.info('Model switch aborted after validation: the query was superseded.');
+        return {
+          success: false,
+          model: previousModel,
+          error: 'Model switch aborted: the originating query was superseded.',
         };
       }
 
@@ -285,6 +303,14 @@ export class ModelSwitchHandler {
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
           await this.ctx.queryObject.setModel(resolvedModel);
         } else {
+          if (querySuperseded()) {
+            logger.info('Model switch restart aborted: the query was superseded.');
+            return {
+              success: false,
+              model: previousModel,
+              error: 'Model switch aborted: the originating query was superseded.',
+            };
+          }
           await lifecycleManager.restart();
           if (clearAcpSessionId && previousAcpSessionId) {
             await this.disposePreviousAcpSession(

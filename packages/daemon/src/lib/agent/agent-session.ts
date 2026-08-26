@@ -1003,7 +1003,7 @@ export class AgentSession
         });
       }
 
-      const result = await this.handleModelSwitch(entry.model, entry.provider);
+      const result = await this.handleModelSwitch(entry.model, entry.provider, queryGeneration);
       if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after model switch (episode superseded).');
         return false;
@@ -1127,9 +1127,10 @@ export class AgentSession
 
   async handleModelSwitch(
     newModel: string,
-    newProvider: string
+    newProvider: string,
+    queryGeneration?: number
   ): Promise<{ success: boolean; model: string; error?: string }> {
-    return this.modelSwitchHandler.switchModel(newModel, newProvider);
+    return this.modelSwitchHandler.switchModel(newModel, newProvider, queryGeneration);
   }
 
   getCurrentModel(): CurrentModelInfo {

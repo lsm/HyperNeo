@@ -2295,7 +2295,7 @@ describe('AgentSession', () => {
 
       const result = await agentSession.handleModelSwitch('claude-opus-4-20250514', 'anthropic');
 
-      expect(switchModelSpy).toHaveBeenCalledWith('claude-opus-4-20250514', 'anthropic');
+      expect(switchModelSpy).toHaveBeenCalledWith('claude-opus-4-20250514', 'anthropic', undefined);
       expect(result).toEqual(mockResult);
     });
 

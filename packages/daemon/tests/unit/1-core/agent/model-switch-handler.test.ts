@@ -233,6 +233,7 @@ describe('ModelSwitchHandler', () => {
       log: mock(() => {}),
       error: mock(() => {}),
       warn: mock(() => {}),
+      info: mock(() => {}),
       debug: mock(() => {}),
     } as unknown as Logger;
 
@@ -636,6 +637,21 @@ describe('ModelSwitchHandler', () => {
         expect(result.success).toBe(false);
         expect(result.error).toContain('Invalid model');
         expect(result.model).toBe('default');
+      });
+
+      it('aborts without writes when the query generation moved during validation (B5e)', async () => {
+        let generation = 3;
+        handler = createHandler({
+          getQueryGeneration: () => generation,
+        });
+        generation = 9;
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic', 3);
+
+        expect(result.success).toBe(false);
+        expect(result.model).toBe('default');
+        expect(updateSessionSpy).not.toHaveBeenCalled();
+        expect(restartSpy).not.toHaveBeenCalled();
       });
 
       it('rejects a curated-out model before mutating the session', async () => {
