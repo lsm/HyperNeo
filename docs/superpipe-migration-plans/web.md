@@ -857,8 +857,8 @@ anywhere in this plan.
   appear). The hub race stays a dynamic stage after the startup effects (see
   pure core design). Step 2 extends ctx with ports: `{ getHub: () =>
   Hub | null, request: (hub: Hub, payload) => Promise<{ messageId?: string }>,
-  enqueue:
-  (label, payload, immediate) => void, onSendStart, onSendComplete, onError,
+  enqueue: (label, executor: () => Promise<void>, options?: {
+  executeImmediately?: boolean }) => void, onSendStart, onSendComplete, onError,
   onMessageAccepted, armTimeout, clearTimeout, toastError, toastInfo }` and
   `outcome: boolean | null` — all supplied fresh per call from the hook's
   `useCallback` closures (functions pass through gate spreads by reference).
