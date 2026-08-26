@@ -260,6 +260,7 @@ export interface TaskAgentManagerConfig {
     options?: {
       onConsumed?: (settledSessionId: string) => void;
       lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      disposeSignal?: AbortSignal;
     }
   ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
@@ -1515,6 +1516,31 @@ export class TaskAgentManager {
         this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
       onSettled: (row, deliveredSessionId) =>
         this.emitPendingDelivered(row.id, deliveredSessionId, row),
+      watchActiveDelivery: (row) => {
+        const replyToSession = this.resolveSpaceAgentReplySession(row);
+        const candidates =
+          replyToSession && replyToSession !== spaceChatSessionId
+            ? [replyToSession, spaceChatSessionId]
+            : [spaceChatSessionId];
+        const probe = (sessionId: string) =>
+          this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        if (
+          candidates.some((sessionId) => {
+            const status = probe(sessionId);
+            return status === 'enqueued' || status === 'submitted';
+          })
+        ) {
+          this.lateSettlements.arm({
+            sessionId: replyToSession ?? spaceChatSessionId,
+            messageId: row.id,
+            onConsumed: (settledSessionId) => {
+              if (repo.getById(row.id)?.status !== 'pending') return;
+              repo.markDelivered(row.id, settledSessionId);
+              this.emitPendingDelivered(row.id, settledSessionId, row);
+            },
+          });
+        }
+      },
     };
 
     const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
@@ -1547,6 +1573,7 @@ export class TaskAgentManager {
         const outcome = await inject(spaceId, message, replyTo, row.id, {
           onConsumed: settleDelivered,
           lateSettlement: this.lateSettlements,
+          disposeSignal: this.lateSettlements.disposeSignal(),
         });
         if (outcome.state === 'delivered') {
           settleDelivered(outcome.sessionId);

@@ -382,9 +382,20 @@ export async function awaitDeliveryConsumptionTolerant(args: {
   messageUuid: string;
   deliver: () => Promise<void>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<{ consumed: boolean }> {
   const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<boolean>((resolve) => {
+    if (!args.signal) return;
+    if (args.signal.aborted) {
+      resolve(false);
+      return;
+    }
+    onAbort = () => resolve(false);
+    args.signal.addEventListener('abort', onAbort, { once: true });
+  });
   try {
     await args.deliver();
     const won = await Promise.race([
@@ -395,10 +406,12 @@ export async function awaitDeliveryConsumptionTolerant(args: {
           deliveryConsumptionTimeoutOrDefault(args.timeoutMs)
         );
       }),
+      aborted,
     ]);
     return { consumed: won };
   } finally {
     if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    if (onAbort && args.signal) args.signal.removeEventListener('abort', onAbort);
     consumed.cancel();
   }
 }

@@ -992,6 +992,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     injectorOptions?: {
       onConsumed?: (settledSessionId: string) => void;
       lateSettlement?: import('../space/runtime/space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      disposeSignal?: AbortSignal;
     }
   ): Promise<SpaceAgentInjectionOutcome> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
@@ -1034,6 +1035,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           stateManager: session.stateManager,
           onConsumed: injectorOptions?.onConsumed,
           lateSettlement: injectorOptions?.lateSettlement,
+          disposeSignal: injectorOptions?.disposeSignal,
         },
         {
           sessionId,

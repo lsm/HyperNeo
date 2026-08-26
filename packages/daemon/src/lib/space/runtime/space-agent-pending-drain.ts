@@ -24,6 +24,7 @@ export interface SpaceAgentPendingDrainDeps {
   resolveReplySession(row: PendingAgentMessageRecord): string | null;
   probeDeliveryStatus(sessionId: string, messageId: string): string | undefined;
   onSettled(row: PendingAgentMessageRecord, deliveredSessionId: string): void;
+  watchActiveDelivery?(row: PendingAgentMessageRecord): void;
 }
 
 export interface SpaceAgentPendingDrainInput {
@@ -78,6 +79,7 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
     }
     if (activeSeen) {
       if (!activeDeliveryIds.includes(row.id)) activeDeliveryIds.push(row.id);
+      ctx.deps.watchActiveDelivery?.(row);
       continue;
     }
     if (failedSeen) {
