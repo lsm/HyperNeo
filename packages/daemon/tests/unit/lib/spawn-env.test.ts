@@ -30,7 +30,7 @@ const SOURCE: Record<string, string> = {
   GNUPGHOME: '/tmp/gnupg-keyring',
   GPG_TTY: '/dev/ttys000',
   NODE_ENV: 'production',
-  WINDIR: 'C:\\Windows',
+  windir: 'C:\\Windows',
   ProgramFiles: 'C:\\Program Files',
   'ProgramFiles(x86)': 'C:\\Program Files (x86)',
   ProgramW6432: 'C:\\Program Files',
@@ -91,6 +91,8 @@ describe('buildOsBaselineEnv', () => {
     expect(env.USERNAME).toBe(SOURCE.USERNAME);
     expect(env.CI).toBe(SOURCE.CI);
     expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
+    expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
+    expect(env.windir).toBe(SOURCE.windir);
     expect(env.ProgramFiles).toBe(SOURCE.ProgramFiles);
     expect(env['ProgramFiles(x86)']).toBe(SOURCE['ProgramFiles(x86)']);
     expect(env.ProgramW6432).toBe(SOURCE.ProgramW6432);
@@ -146,6 +148,7 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_CEILING_DIRECTORIES).toBe(SOURCE.GIT_CEILING_DIRECTORIES);
     expect(env.GIT_DISCOVERY_ACROSS_FILESYSTEM).toBe(SOURCE.GIT_DISCOVERY_ACROSS_FILESYSTEM);
     expect(env.GIT_ALLOW_PROTOCOL).toBe(SOURCE.GIT_ALLOW_PROTOCOL);
+    expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
