@@ -120,7 +120,7 @@ type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
 export class SDKMessageHandler {
   private sdkMessageDeltaVersion: number = 0;
   private logger: Logger;
-  private contextFetcher: ContextFetcher;
+  readonly contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
   private usesSessionStateChangedTurnEnd: boolean = false;
@@ -1631,10 +1631,10 @@ export class SDKMessageHandler {
           !this.ctx.stateManager.getIsCompacting();
         if (deadDeliveredCompaction) {
           this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
-          contextTracker.clearCompactionCooldown();
           this.logger.info(
-            `clearing stale compaction cooldown for session ${session.id} after a ` +
-              `delivered /compact ended without a compact boundary`
+            `acknowledging a delivered /compact for session ${session.id} that ended ` +
+              `without a compact boundary; retaining the compaction cooldown so a ` +
+              `failed compaction does not immediately retry`
           );
         }
         const effectiveWindow =

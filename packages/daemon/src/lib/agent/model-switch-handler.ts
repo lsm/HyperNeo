@@ -243,6 +243,11 @@ export class ModelSwitchHandler {
 
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
+        const revokedCompactions = this.ctx.messageQueue.revokeAllInternalCompactions();
+        await this.ctx.reevaluateContextBudgetAfterModelSwitch?.({
+          supersededQueued: revokedCompactions > 0,
+        });
+
         if (clearAcpSessionId && previousAcpSessionId) {
           await this.disposePreviousAcpSession(
             previousAcpSessionId,

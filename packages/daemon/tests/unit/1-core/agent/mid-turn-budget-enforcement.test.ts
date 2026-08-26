@@ -175,6 +175,58 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
 
+  it('replaces a cancelled still-queued internal compaction with a fresh one', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'compact-uuid',
+      content: '/compact',
+      internal: true,
+    } as never);
+    expect(session.messageQueue.hasOutstandingInternalCompaction()).toBe(true);
+    harness.setInterruptResult(async () => ({ still_queued: ['compact-uuid'] }));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(harness.cancelMock).toHaveBeenCalledWith('compact-uuid');
+    expect(enqueueSpy.mock.calls.some((call) => call[0] === 'compact-uuid')).toBe(false);
+    const compactCall = enqueueSpy.mock.calls.find((call) => call[1] === '/compact');
+    expect(compactCall).toBeDefined();
+  });
+
+  it('does not reprocess an in-time receipt when survivor processing outlasts the deadline', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'uuid-a',
+      content: 'slow work a',
+      internal: false,
+    } as never);
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'uuid-b',
+      content: 'slow work b',
+      internal: false,
+    } as never);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-a', 'uuid-b'] }));
+    harness.cancelMock.mockImplementation(async () => {
+      await tick(3_000);
+      return true;
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+
+    await session.midTurnContextBudgetCheck();
+    for (let i = 0; i < 60; i += 1) {
+      await tick(30);
+    }
+
+    expect(harness.cancelMock).toHaveBeenCalledTimes(2);
+    expect(enqueueSpy.mock.calls.filter((call) => call[0] === 'uuid-a')).toHaveLength(1);
+    expect(enqueueSpy.mock.calls.filter((call) => call[0] === 'uuid-b')).toHaveLength(1);
+  }, 15_000);
+
   it('awaits a bounded query restart after an unconfirmed survivor cancellation', async () => {
     const session = createAgentSession();
     const harness = makeQuery();

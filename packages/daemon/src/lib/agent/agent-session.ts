@@ -188,7 +188,7 @@ import {
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
 } from './message-delivery-pipeline.ts';
-import { MessageQueue } from './message-queue.ts';
+import { isCompactionSupersededError, MessageQueue } from './message-queue.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry } from './query-attempt-token.ts';
@@ -1230,7 +1230,6 @@ export class AgentSession
   private pendingMidTurnBudgetKey: number | undefined;
   private midTurnBudgetCheckInFlight = false;
   private midTurnRecheckPending = false;
-  private contextBudgetFetcher: ContextFetcher | null = null;
 
   async midTurnContextBudgetCheck(): Promise<void> {
     if (this.midTurnBudgetCheckInFlight) {
@@ -1287,16 +1286,17 @@ export class AgentSession
     const interruptPromise = Promise.resolve().then(() => queryObject.interrupt());
     let receipt: { still_queued?: string[] } | undefined;
     let timedOut = false;
+    let interruptTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       receipt = (await Promise.race([
         interruptPromise,
         new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
+          interruptTimeoutTimer = setTimeout(() => {
             timedOut = true;
             reject(new Error('mid-turn context-budget interrupt not acknowledged in time'));
           }, MID_TURN_INTERRUPT_TIMEOUT_MS);
-          if (typeof timer.unref === 'function') {
-            timer.unref();
+          if (typeof interruptTimeoutTimer.unref === 'function') {
+            interruptTimeoutTimer.unref();
           }
         }),
       ])) as { still_queued?: string[] } | undefined;
@@ -1315,6 +1315,10 @@ export class AgentSession
           `mid-turn context-budget interrupt failed for session ${this.session.id}:`,
           error
         );
+      }
+    } finally {
+      if (interruptTimeoutTimer) {
+        clearTimeout(interruptTimeoutTimer);
       }
     }
     if (timedOut || !this.pendingResumeAfterCompaction) {
@@ -1390,6 +1394,14 @@ export class AgentSession
               `run ahead of the pending compaction`
           );
           break;
+        }
+        if (this.messageQueue.revokeDeliveredCompaction(uuid)) {
+          this.logger.info(
+            `cancelled still-queued internal compaction ${uuid} for session ` +
+              `${this.session.id}; a replacement compaction is enqueued after survivor ` +
+              `processing`
+          );
+          continue;
         }
         const content = this.messageQueue.getSentPromptContent(uuid);
         if (content !== undefined) {
@@ -1515,10 +1527,7 @@ export class AgentSession
   }
 
   private getBudgetFetcher(): ContextFetcher {
-    if (!this.contextBudgetFetcher) {
-      this.contextBudgetFetcher = new ContextFetcher(this.session.id);
-    }
-    return this.contextBudgetFetcher;
+    return this.messageHandler.contextFetcher;
   }
 
   private enqueueMidTurnCompaction(budgetKey: number | undefined, reason: string): void {
@@ -1533,6 +1542,7 @@ export class AgentSession
     void this.messageQueue
       .enqueue('/compact', true, { durable: true, prepend: true })
       .catch((error) => {
+        if (isCompactionSupersededError(error)) return;
         if (this.messageQueue.hasOutstandingInternalCompaction()) {
           return;
         }
@@ -1667,6 +1677,7 @@ export class AgentSession
       void this.messageQueue
         .enqueue('/compact', true, { durable: true, prepend: true })
         .catch((error) => {
+          if (isCompactionSupersededError(error)) return;
           if (this.messageQueue.hasOutstandingInternalCompaction()) {
             return;
           }

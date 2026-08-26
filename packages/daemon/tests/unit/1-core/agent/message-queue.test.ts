@@ -1027,6 +1027,44 @@ describe('MessageQueue', () => {
 
       expect(queue.getSentPromptContent('early')).toBe('early work');
     });
+
+    it('counts delivered compactions and notifies when revoking all', () => {
+      let revokedNotifications = 0;
+      queue.onDeliveredCompactionRevoked = () => {
+        revokedNotifications += 1;
+      };
+      queue.noteInternalCompactionSent({
+        id: 'c1',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(queue.hasCompactionsAwaitingBoundary()).toBe(true);
+
+      const total = queue.revokeAllInternalCompactions();
+
+      expect(total).toBe(1);
+      expect(revokedNotifications).toBe(1);
+      expect(queue.hasCompactionsAwaitingBoundary()).toBe(false);
+    });
+
+    it('revokes a single delivered compaction by id', () => {
+      queue.noteInternalCompactionSent({
+        id: 'c1',
+        content: '/compact',
+        internal: true,
+      } as never);
+      queue.noteInternalCompactionSent({
+        id: 'c2',
+        content: '/compact',
+        internal: true,
+      } as never);
+
+      expect(queue.revokeDeliveredCompaction('c1')).toBe(true);
+      expect(queue.revokeDeliveredCompaction('missing')).toBe(false);
+      expect(queue.hasCompactionsAwaitingBoundary()).toBe(true);
+      queue.revokeDeliveredCompaction('c2');
+      expect(queue.hasCompactionsAwaitingBoundary()).toBe(false);
+    });
   });
 
   describe('durable delivery feeds — TTL bypass (#3742616720)', () => {

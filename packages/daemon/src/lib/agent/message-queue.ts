@@ -19,6 +19,12 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
 
 const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
 
+const COMPACTION_SUPERSEDED_MESSAGE = 'compaction superseded by model switch';
+
+export function isCompactionSupersededError(error: unknown): boolean {
+  return error instanceof Error && error.message === COMPACTION_SUPERSEDED_MESSAGE;
+}
+
 interface QueuedMessage {
   id: string;
   content: string | MessageContent[];
@@ -63,6 +69,8 @@ export class MessageQueue {
 
   private internalCompactionsAwaitingBoundary = 0;
 
+  private internalCompactionIdsAwaitingBoundary = new Set<string>();
+
   private nonCompactionSentSinceBoundary = false;
 
   private recentSentPrompts = new Map<string, string | MessageContent[]>();
@@ -74,6 +82,7 @@ export class MessageQueue {
   noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
       this.internalCompactionsAwaitingBoundary += 1;
+      this.internalCompactionIdsAwaitingBoundary.add(message.id);
       for (const id of this.recentSentPrompts.keys()) {
         this.sentPromptsBeforeCompaction.add(id);
       }
@@ -93,10 +102,20 @@ export class MessageQueue {
 
   acknowledgeCompactionsAwaitingBoundary(): void {
     this.internalCompactionsAwaitingBoundary = 0;
+    this.internalCompactionIdsAwaitingBoundary.clear();
     for (const id of this.sentPromptsBeforeCompaction) {
       this.recentSentPrompts.delete(id);
       this.sentPromptsBeforeCompaction.delete(id);
     }
+  }
+
+  revokeDeliveredCompaction(messageId: string): boolean {
+    if (!this.internalCompactionIdsAwaitingBoundary.delete(messageId)) return false;
+    this.internalCompactionsAwaitingBoundary = Math.max(
+      0,
+      this.internalCompactionsAwaitingBoundary - 1
+    );
+    return true;
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -120,7 +139,7 @@ export class MessageQueue {
       if (queued.timeoutId) {
         clearTimeout(queued.timeoutId);
       }
-      queued.reject(new Error('compaction superseded by model switch'));
+      queued.reject(new Error(COMPACTION_SUPERSEDED_MESSAGE));
     }
     return stale.length;
   }
@@ -128,14 +147,16 @@ export class MessageQueue {
   revokeAllInternalCompactions(): number {
     const revoked = this.removePendingInternalCompactions();
     let total = revoked;
+    const delivered = this.internalCompactionsAwaitingBoundary;
     this.internalCompactionsAwaitingBoundary = 0;
+    this.internalCompactionIdsAwaitingBoundary.clear();
     for (const message of [...this.claimed]) {
       if (this.isInternalCompaction(message)) {
         this.claimed.delete(message);
         if (message.timeoutId) {
           clearTimeout(message.timeoutId);
         }
-        message.reject(new Error('compaction superseded by model switch'));
+        message.reject(new Error(COMPACTION_SUPERSEDED_MESSAGE));
         total += 1;
       }
     }
@@ -145,9 +166,13 @@ export class MessageQueue {
         if (message.timeoutId) {
           clearTimeout(message.timeoutId);
         }
-        message.reject(new Error('compaction superseded by model switch'));
+        message.reject(new Error(COMPACTION_SUPERSEDED_MESSAGE));
         total += 1;
       }
+    }
+    total += delivered;
+    if (delivered > 0 && this.onDeliveredCompactionRevoked) {
+      this.onDeliveredCompactionRevoked();
     }
     return total;
   }
@@ -311,6 +336,7 @@ export class MessageQueue {
   clear(): void {
     this.clearEpoch += 1;
     this.internalCompactionsAwaitingBoundary = 0;
+    this.internalCompactionIdsAwaitingBoundary.clear();
     this.sentPromptsBeforeCompaction.clear();
     this.nonCompactionSentSinceBoundary = false;
     for (const msg of this.queue) {
@@ -459,13 +485,8 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
-    const hadDeliveredAwaitingBoundary = this.internalCompactionsAwaitingBoundary > 0;
     this.revokeAllInternalCompactions();
-    this.internalCompactionsAwaitingBoundary = 0;
     this.sentPromptsBeforeCompaction.clear();
-    if (hadDeliveredAwaitingBoundary && this.onDeliveredCompactionRevoked) {
-      this.onDeliveredCompactionRevoked();
-    }
     this.nonCompactionSentSinceBoundary = false;
     this.wakeWaiters();
   }
