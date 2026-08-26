@@ -6,11 +6,7 @@ import type {
   ContextMessageBreakdown,
   ModelInfo,
 } from '@hyperneo/shared';
-import {
-  AUTO_COMPACT_PERCENT_DEFAULT,
-  AUTO_COMPACT_PERCENT_MAX,
-  resolveAutoCompactPercent,
-} from '@hyperneo/shared';
+import { AUTO_COMPACT_PERCENT_MAX, resolveAutoCompactPercent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
@@ -334,8 +330,7 @@ export class ContextFetcher {
         budgetThreshold > 0 &&
         budgetThreshold <= capacity &&
         effectivePercent < AUTO_COMPACT_PERCENT_MAX &&
-        (effectivePercent > AUTO_COMPACT_PERCENT_DEFAULT ||
-          response.isAutoCompactEnabled === false ||
+        (response.isAutoCompactEnabled === false ||
           !rawThresholdKnown ||
           rawSdkAutoCompactThreshold > budgetThreshold)
       ) {

@@ -274,6 +274,30 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBeFalsy();
   });
 
+  it('preserves an earlier known SDK threshold above the default percent', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 180000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 95,
+    });
+
+    expect(info.daemonBackstopActive).toBe(false);
+    expect(info.autoCompactThreshold).toBe(180000);
+    expect(info.sdkAutoCompactThreshold).toBe(180000);
+  });
+
   it('recalculates free space against the armed window when metadata capacity differs from SDK capacity', () => {
     const response = baseResponse({
       totalTokens: 90000,
