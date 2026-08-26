@@ -2129,6 +2129,25 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
   WHERE sm.message_type = 'assistant'
     AND instr(sm.sdk_message, 'tool_use') > 0
     AND json_extract(b.value, '$.type') = 'tool_use'
+    AND (
+      json_extract(b.value, '$.name') NOT IN ('Write', 'Edit', 'MultiEdit')
+      OR CASE
+        WHEN json_extract(b.value, '$.name') = 'Write' THEN
+          json_type(b.value, '$.input.file_path') = 'text'
+          AND json_type(b.value, '$.input.content') = 'text'
+        WHEN json_extract(b.value, '$.name') = 'Edit' THEN
+          json_type(b.value, '$.input.file_path') = 'text'
+          AND json_type(b.value, '$.input.old_string') = 'text'
+          AND json_type(b.value, '$.input.new_string') = 'text'
+        ELSE
+          json_type(b.value, '$.input.file_path') = 'text'
+          AND EXISTS (
+            SELECT 1 FROM json_each(b.value, '$.input.edits') me
+            WHERE json_type(me.value, '$.old_string') = 'text'
+              AND json_type(me.value, '$.new_string') = 'text'
+          )
+      END
+    )
 ),
 artifact_state_rows AS (
   SELECT id FROM (

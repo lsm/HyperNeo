@@ -3245,6 +3245,57 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).not.toContain('old-text');
       });
 
+      test('skips malformed mutations when ranking artifact state per path', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('good-write', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-good-write',
+                name: 'Write',
+                input: { file_path: '/a.txt', content: 'v1' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('bad-edit', sessionId, now + 1100, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-bad-edit',
+                name: 'Edit',
+                input: { file_path: '/a.txt', old_string: 'x' },
+              },
+            ],
+          },
+        });
+        for (let i = 0; i < 3; i += 1) {
+          insertSdkMessageAt(
+            `m-anchor-${i}`,
+            sessionId,
+            now + 2000 + i * 2,
+            { type: 'user', uuid: `u-m-${i}`, message: { role: 'user', content: `a${i}` } },
+            'user'
+          );
+          insertSdkMessageAt(`m-flood-${i}`, sessionId, now + 2001 + i * 2, {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: `flood ${i}` }] },
+          });
+        }
+
+        const ids = queryCompact(taskId, 1).map((r) => r.id as string);
+        expect(ids).toContain('good-write');
+        expect(ids).not.toContain('bad-edit');
+      });
+
       test('caps pinned artifact rows at the newest paths', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
