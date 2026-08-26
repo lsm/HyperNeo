@@ -335,7 +335,9 @@ anywhere in this plan.
      `{ text }`, generic SDK JSON passthrough with timestamp override, and
      unparseable content → `null`. Cover it indirectly through
      `src/hooks/__tests__/useTurnBlocks.test.ts` afterwards.
-  2. Extract the snapshot normalization into the wrapper; add gates; compose
+  2. Add `stageNormalizeInput` as the LEADING composed stage (codex round
+     17: the normalization stays INSIDE the composition — not a wrapper
+     extraction); add gates; compose
      `decisionRun('parse-group-message', [...])`.
 - **Tests.** The new characterization file is the parity proof; keep
   `useTurnBlocks` tests unchanged and green.
@@ -581,7 +583,11 @@ anywhere in this plan.
   `App.tsx:65-88` reapplies it after asynchronous store initialization. The
   pipeline runner's result is NOT this value (a runner returning its ctx or
   nothing silently nulls `initialSessionId` while signal-write tests still
-  pass); the wrapper derives and returns the parsed ID exactly as today.
+  pass); the session-arm match gate STAMPS the parsed session ID onto the
+  result ctx (`sessionId: string | null`), and the wrapper only returns
+  that field (codex round 17: no wrapper-side re-parsing — one
+  implementation of the pattern, so the exported return and the pipeline's
+  classification cannot diverge).
 - **Step-by-step migration.**
   1. Confirm `src/lib/__tests__/router.test.ts`,
      `router-space-slug.test.ts`, `router-lifecycle-recovery.test.ts`,
@@ -640,18 +646,29 @@ anywhere in this plan.
   `unknown`. Message text is user-facing mapped via `loadErrorMessage`.
 - **Proposed combinator.** `decisionRun` (query-retry template — keep
   `classifyByMessage` intact as gate bodies).
-- **Input/output snapshot design.** Wrapper normalizes `err` to
-  `{ raw, lower }` (plain transform; `JSON.stringify`-safe `String(err ?? '')`
-  path preserved). Ctx = `{ raw: string; lower: string; conn:
-  ConnectionState; decision: SessionLoadErrorKind | null }`; a final
-  `gateConnectionState` decides `disconnected` or leaves undecided, and a
-  FINAL MAPPING STAGE (codex round 16) folds `ctx.decision ?? 'unknown'` +
-  `loadErrorMessage` into the composition, so the pipeline's output IS the
-  complete `{ kind, message }` result and the wrapper only runs and
-  returns it — the output mapping no longer lives in the wrapper.
+- **Input/output snapshot design.** The RAW error enters the context
+  (`ctx = { err: unknown; raw: string; lower: string; conn:
+  ConnectionState; decision: { kind, message } | null }`) and a LEADING
+  `stageNormalizeInput` transform owns the `Error.message`/nullish-string
+  normalization + lowercasing (`JSON.stringify`-safe `String(err ?? '')`
+  path preserved — codex round 17, matching the sanitizer and
+  group-message shapes; the wrapper only runs and returns the pipeline).
+  Review correction (codex round 17, replacing the round-16 "final mapping
+  stage", which was UNREACHABLE: `decisionRun` appends
+  `.pipe('!hasDecided', 'ctx')` after every gate —
+  `decision-pipeline.ts:14-16` — so the run halts on the first decided
+  gate and no post-decision stage can run): every gate decides the
+  COMPLETE `{ kind, message }` result — the message gates stamp
+  `{ kind, loadErrorMessage(kind) }`, `gateConnectionState` stamps the
+  complete disconnected result or leaves undecided, and a terminal
+  `gateUnknown` ALWAYS decides the complete `unknown` result — so the
+  pipeline's output IS the complete `{ kind, message }` result with no
+  wrapper-side mapping or fallback.
 - **Pure core design.** Gates: `gateMessageDisconnected` →
   `gateMessageTimeout` → `gateMessageNotFound` → `gateMessageUnauthorized` →
-  `gateConnectionState`. Each message gate is a one-predicate function over
+  `gateConnectionState` → `gateUnknown` (terminal, codex round 17). Every
+  gate decides the complete `{ kind, message }`; each message gate is a
+  one-predicate function over
   `ctx.lower`, keeping the substring lists verbatim.
 - **Shell/effect wiring.** None; `session-store.ts` catch path and
   `UnavailableSessionView` rendering are unchanged consumers.
@@ -718,7 +735,14 @@ anywhere in this plan.
   (`armMessage(kind): string` over the same literals the gates decide)
   — so a direct consumer can map a matched arm to its final string without
   invoking the pipeline or duplicating the message literals; the gates and
-  the send stage call the SAME helpers.
+  the send stage call the SAME helpers. Review correction (codex round 17):
+  the core ALSO exports `classifyUserErrorArm(lower): ArmKind | null` —
+  the ordered connection → timeout → econn → fetch → failedToSend cascade
+  as ONE ordinary function; `armMessage` maps an already-selected kind, but
+  the PRECEDENCE DECISION itself must be shared too, or the send stage
+  would duplicate the cascade and the two could diverge when the order
+  changes (an internal message matching both `timeout` and `fetch` must
+  map to timeout everywhere).
 - **Shell/effect wiring.** None. Consumers: `useSendMessage` catch,
   `outbound-queue` flush loop, plus `isAuthError` in `connection-manager`
   (untouched).
@@ -745,12 +769,17 @@ anywhere in this plan.
   `getModelLabel` (name-or-dash-replace, no provider awareness). Lib version
   is test-covered only.
 - **Proposed combinator.** `decisionRun`.
-- **Input/output snapshot design.** Ctx = `{ modelId: string; lower: string;
-  decision: string | null }`; the falsy-modelId arm is a LEADING gate
+- **Input/output snapshot design.** Ctx =
+  `{ modelId: string | null | undefined; lower: string | null; decision:
+  string | null }` (codex round 17: the nullable RAW id threads into the
+  context — a `string`-typed field cannot carry the supported input); the
+  falsy-modelId arm is a LEADING gate
   `gateEmptyModelId` that decides `''` (codex round 16 — reversed from the
   earlier wrapper-guard preference: `''` is non-null so `decisionRun`
-  treats it as settled, nullable/empty inputs enter the runner, and the
-  complete formatting operation stays one composed business path).
+  treats it as settled), and `stageDeriveLower` computes the safe
+  lowercased value AFTER that gate (the empty arm never lowercases a
+  null), feeding the provider gates — the complete formatting operation
+  stays one composed business path.
 - **Pure core design.** Gates: `gateClaudeLabel` → `gateGlmLabel` →
   `gateKimiLabel` (exact-match table + generic) → `gateMoonshotLabel` →
   `gateGenericLabel` (terminal, always decides the dash/camel transform).
@@ -1021,9 +1050,11 @@ anywhere in this plan.
   `sanitizeUserError` decisionRun wrapper, which would nest the PR 3
   pipeline inside this one and split the send business path across nested
   pipeline boundaries — the identical correction applied to the router
-  helpers and per-model classifiers; codex round 15 adds the ARM-RESULT
-  helpers `armMessage(kind)` so the stage maps a matched arm to its final
-  user-facing string without the pipeline or duplicated literals), then
+  helpers and per-model classifiers; codex rounds 15+17 add
+  `classifyUserErrorArm` (the ordered cascade — the PRECEDENCE decision)
+  and `armMessage(kind)` so the stage SELECTS AND MAPS the arm via the
+  same shared functions the gates use — no duplicated precedence, no
+  divergence when the order changes), then
   `onError`, toast, `onSendComplete`,
   clear this send's
   timer, stamp `false`, and return normally, so the ordinary failure arm
@@ -1250,9 +1281,11 @@ optional router phase 2. No per-site section is left uncovered.
   `reconnecting`/`connecting` inclusion), then gates
   `gateMessageDisconnected` → `gateMessageTimeout` → `gateMessageNotFound` →
   `gateMessageUnauthorized` → `gateConnectionState` (query-retry template;
-  substring lists verbatim), a FINAL MAPPING STAGE folds
-  `ctx.decision ?? 'unknown'` + `loadErrorMessage` into the composition
-  (codex round 16), and the wrapper only runs and returns the pipeline's
+  substring lists verbatim), `gateConnectionState` → terminal `gateUnknown`,
+  every gate deciding the COMPLETE `{ kind, message }` (the round-16 final
+  mapping stage was unreachable under `decisionRun`'s per-gate
+  `!hasDecided` halts, codex round 17), with a LEADING `stageNormalizeInput`
+  over the raw error, and the wrapper only runs and returns the pipeline's
   complete `{ kind, message }` result, keeping the exported signature.
 - **Budget**: prod Δ ≈ 40; test Δ ≈ 50.
 - **Lands**: the first query-retry-template cascade runs as a module-scope
@@ -1285,7 +1318,10 @@ optional router phase 2. No per-site section is left uncovered.
   `matchesFailedToSend`), `isInternalMessage` (the pass-through
   discriminator, currently private — codex round 9), and the ARM-RESULT
   helpers `armMessage(kind): string` (the per-arm user-facing strings and
-  the generic tail, codex round 15) — so direct consumers
+  the generic tail, codex round 15) and `classifyUserErrorArm(lower):
+  ArmKind | null` (the ordered arm cascade as one ordinary function — the
+  PRECEDENCE decision, not just the mapping, codex round 17) — so direct
+  consumers
   (the PR 14 send stage)
   compose the same plain building blocks instead of invoking this
   decisionRun from inside another pipeline (one copy of the mapping logic
@@ -1667,7 +1703,10 @@ optional router phase 2. No per-site section is left uncovered.
   (`string | null` — `initializeRouter` forwards it and `App.tsx:65-88`
   reapplies it after async store init; codex round 4: a runner returning
   its context or nothing silently nulls `initialSessionId` while
-  signal-write tests still pass).
+  signal-write tests still pass) — the session-arm match gate carries the
+  parsed ID in the pipeline RESULT (`sessionId: string | null` on ctx) and
+  the wrapper only returns that field (codex round 17: no wrapper-side
+  re-parse of the path).
   `handlePopState`'s overlay short-circuit stays untouched. This slice ALSO
   performs the parser conversions deferred from PR 5 (codex round 12):
   `getSpaceIdFromPath`, `getSpaceEvolveFromPath`, and
