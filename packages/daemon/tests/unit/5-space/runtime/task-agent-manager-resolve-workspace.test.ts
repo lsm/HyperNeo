@@ -239,6 +239,17 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedWarning: '',
       },
       {
+        name: 'whitespace-only task workspace is treated as absent and creates a space-root worktree',
+        taskWorkspacePath: '   ',
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'success',
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedCachedPath: CREATED_PATH,
+        expectedWarning: '',
+      },
+      {
         name: 'persisted durable worktree wins over the explicit task workspace after restart',
         taskWorkspacePath: TASK_WORKSPACE,
         cachedTaskWorktreePath: undefined,

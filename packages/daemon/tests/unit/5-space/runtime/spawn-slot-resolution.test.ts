@@ -131,6 +131,12 @@ describe('resolveTaskWorkspace', () => {
       resolveTaskWorkspace({ workspacePath: '/space' }, { workspacePath: '' } as SpaceTask)
     ).toBe('/space');
   });
+
+  test('treats a whitespace-only task workspace as absent and falls back to the space workspace', () => {
+    expect(
+      resolveTaskWorkspace({ workspacePath: '/space' }, { workspacePath: '   ' } as SpaceTask)
+    ).toBe('/space');
+  });
 });
 
 describe('resolveSpawnWorkspace', () => {

@@ -148,6 +148,7 @@ import {
   buildExecutionBaseSessionId,
   buildSlotOverrides,
   findAvailableSessionId,
+  explicitTaskWorkspace,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   taskIdFromSubSessionIdentity,
@@ -867,9 +868,10 @@ export class TaskAgentManager {
         this.resolveSessionId(buildExecutionBaseSessionId(space.id, task.id, execution.id)),
       resolveWorkspacePath: async (task, space) => {
         const workspace = resolveSpawnWorkspace({
-          cachedTaskWorktreePath:
-            this.getTaskWorktreePath(task.id) ?? (task.workspacePath || undefined),
-          hasWorktreeManager: task.workspacePath ? false : Boolean(this.config.worktreeManager),
+          cachedTaskWorktreePath: this.getTaskWorktreePath(task.id) ?? explicitTaskWorkspace(task),
+          hasWorktreeManager: explicitTaskWorkspace(task)
+            ? false
+            : Boolean(this.config.worktreeManager),
           spaceWorkspacePath: space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
@@ -3276,7 +3278,7 @@ export class TaskAgentManager {
     const workspacePath = resolveSpawnWorkspace({
       cachedTaskWorktreePath:
         this.getTaskWorktreePath(taskId) ??
-        (parentTask.workspacePath || undefined) ??
+        explicitTaskWorkspace(parentTask) ??
         agentSession.getSessionData().workspacePath ??
         undefined,
       hasWorktreeManager: false,
@@ -4306,7 +4308,7 @@ export class TaskAgentManager {
     const healWorkspacePath = resolveSpawnWorkspace({
       cachedTaskWorktreePath:
         this.getTaskWorktreePath(parentTask.id) ??
-        (parentTask.workspacePath || undefined) ??
+        explicitTaskWorkspace(parentTask) ??
         agentSession.getSessionData().workspacePath ??
         undefined,
       hasWorktreeManager: false,

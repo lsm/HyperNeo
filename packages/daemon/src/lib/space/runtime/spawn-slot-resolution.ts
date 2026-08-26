@@ -133,11 +133,15 @@ export function resolveSpawnWorkspace(input: {
   };
 }
 
+export function explicitTaskWorkspace(task: Pick<SpaceTask, 'workspacePath'>): string | undefined {
+  return task.workspacePath?.trim() || undefined;
+}
+
 export function resolveTaskWorkspace(
   space: Pick<Space, 'workspacePath'>,
   task: Pick<SpaceTask, 'workspacePath'>
 ): string {
-  return task.workspacePath || space.workspacePath;
+  return explicitTaskWorkspace(task) ?? space.workspacePath;
 }
 
 export function assembleNodeAgentSessionInit(input: {
