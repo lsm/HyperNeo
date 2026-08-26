@@ -840,8 +840,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           null,
         isResumeChoiceResolved: (sessionId: string) =>
           !(
-            reactiveDb
-              ?.db.getSDKMessageRepo()
+            reactiveDb?.db
+              .getSDKMessageRepo()
               .hasUnresolvedHyperNeoAction(sessionId, 'sdk_resume_choice') ?? true
           ),
         publishStatusChanged: (sessionId: string, messageIds: string[]) =>

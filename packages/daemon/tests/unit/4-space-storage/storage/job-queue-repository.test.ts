@@ -21,7 +21,11 @@ describe('JobQueueRepository', () => {
         payload: { sessionId: 'sess-a', messageUuid: 'u3' },
         runAt: future,
       });
-      const changed = repository.rescheduleSessionDeliveries('message_delivery', 'sess-a', Date.now());
+      const changed = repository.rescheduleSessionDeliveries(
+        'message_delivery',
+        'sess-a',
+        Date.now()
+      );
       expect(changed).toBe(1);
       const jobs = repository.listJobs({ queue: 'message_delivery', limit: 10 });
       const a = jobs.find((j) => (j.payload as { sessionId: string }).sessionId === 'sess-a');
