@@ -120,6 +120,7 @@ describe('QueryLifecycleManager', () => {
         releaseIdleWaiters: releaseIdleWaitersSpy,
         isIdleOwnerCurrent: mock(() => true),
         waitForIdleTransition: mock(() => ({ promise: Promise.resolve(), cancel: () => {} })),
+        getCurrentIdleOwner: mock(() => ({ queryGeneration: 7, turnToken: 1 })),
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
@@ -1431,6 +1432,7 @@ describe('QueryLifecycleManager', () => {
         getState: getStateSpy,
         isIdleOwnerCurrent: mock(() => true),
         waitForIdleTransition: mock(() => ({ promise: Promise.resolve(), cancel: () => {} })),
+        getCurrentIdleOwner: mock(() => ({ queryGeneration: 7, turnToken: 1 })),
       } as unknown as ProcessingStateManager;
       manager = new QueryLifecycleManager(mockContext);
 
@@ -1489,6 +1491,8 @@ describe('QueryLifecycleManager', () => {
       const stopSpy = spyOn(messageQueue, 'stop');
 
       await manager.executeDeferredRestartIfPending({ queryGeneration: 0, turnToken: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(stopSpy).not.toHaveBeenCalled();
       expect(startStreamingCalled).toBe(false);
@@ -1512,6 +1516,8 @@ describe('QueryLifecycleManager', () => {
       });
 
       await manager.executeDeferredRestartIfPending({ queryGeneration: 0, turnToken: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(startStreamingCalled).toBe(false);
       expect(mockContext.pendingRestartReason).toBe('settings.local.json');

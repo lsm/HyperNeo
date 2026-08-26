@@ -1103,7 +1103,9 @@ export class AcpQueryRunner {
 
   private async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
     await this.ctx.onSDKMessage(message, undefined, queryGeneration);
-    await this.ctx.onMarkApiSuccess(message);
+    if (queryGeneration === undefined || this.ctx.getQueryGeneration() === queryGeneration) {
+      await this.ctx.onMarkApiSuccess(message);
+    }
   }
 
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {

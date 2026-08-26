@@ -939,9 +939,11 @@ export class SDKMessageHandler {
     }
 
     if (isSDKSessionStateChangedMessage(message)) {
-      this.usesSessionStateChangedTurnEnd = true;
-      if (message.state !== 'idle') {
-        this.expectsSessionStateIdleAfterResult = true;
+      if (!this.isInvocationStale(invocationGeneration)) {
+        this.usesSessionStateChangedTurnEnd = true;
+        if (message.state !== 'idle') {
+          this.expectsSessionStateIdleAfterResult = true;
+        }
       }
     }
 
