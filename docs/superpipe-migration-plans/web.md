@@ -647,6 +647,11 @@ anywhere in this plan.
   `gateTimeout` → `gateEconn` (econnrefused / econnreset) → `gateFetch` →
   `gateFailedToSend`. Substring lists move verbatim; note current order checks
   `websocket` before `timeout` before `econn` before `fetch` — preserved.
+  Review correction (codex round 8): the arm predicates land as EXPORTED
+  ordinary helpers (`matchesConnectionLost` et al., plus
+  `normalizeUserError`) that the gates compose from — the PR 14 send stage
+  reuses the same plain core instead of invoking this pipeline (no nested
+  runners).
 - **Shell/effect wiring.** None. Consumers: `useSendMessage` catch,
   `outbound-queue` flush loop, plus `isAuthError` in `connection-manager`
   (untouched).
@@ -913,10 +918,16 @@ anywhere in this plan.
   in-flight and the armed timer later emits a false timeout error. Timeout
   resource stays in the hook per ADR Decision 5 — the pipeline receives
   per-call `armTimeout`/`clearTimeout` port values (codex round 3: handles
-  tracked per invocation, not one shared ref). Errors (review correction,
-  codex round 7): `stageSendRequest` handles request rejections INSIDE the
-  stage — sanitize via `sanitizeUserError` (imported directly by the
-  pipeline module), `onError`, toast, `onSendComplete`, clear this send's
+  tracked per invocation, not one shared ref). Errors (review corrections,
+  codex rounds 7+8): `stageSendRequest` handles request rejections INSIDE the
+  stage — sanitize through the ORDINARY SHARED CORE extracted in PR 3
+  (`normalizeUserError` + the named arm predicates — the same plain
+  building blocks the `sanitize-user-error` gates compose from; NOT the
+  `sanitizeUserError` decisionRun wrapper, which would nest the PR 3
+  pipeline inside this one and split the send business path across nested
+  pipeline boundaries — the identical correction applied to the router
+  helpers and per-model classifiers), then `onError`, toast, `onSendComplete`,
+  clear this send's
   timer, stamp `false`, and return normally, so the ordinary failure arm
   belongs to the pipeline and nothing of the send business path remains in
   the shell; when the per-call `timedOut` flag is already set, the
@@ -1147,6 +1158,14 @@ optional router phase 2. No per-site section is left uncovered.
   (review correction) and gates `gatePassThrough` → `gateConnectionLost` →
   `gateTimeout` → `gateEconn` → `gateFetch` → `gateFailedToSend` with
   substring lists and arm order verbatim; `INTERNAL_PATTERNS` untouched.
+  Review correction (codex round 8): the module ALSO exports the ordinary
+  shared core the gates are composed from — `normalizeUserError(err):
+  string` (the try/catch JSON normalization) and the named arm predicates
+  (`matchesConnectionLost`, `matchesTimeout`, `matchesEconn`, `matchesFetch`,
+  `matchesFailedToSend`) — so direct consumers (the PR 14 send stage)
+  compose the same plain building blocks instead of invoking this
+  decisionRun from inside another pipeline (one copy of the mapping logic,
+  no nested runners).
 - **Budget**: prod Δ ≈ 55; test Δ ≈ 90.
 - **Lands**: the user-facing error mapper runs as a module-scope decisionRun
   behind an unchanged signature with arm order pinned.
@@ -1469,8 +1488,9 @@ optional router phase 2. No per-site section is left uncovered.
   the late-SUCCESS row stays green UNCHANGED (`onMessageAccepted` + `true`
   return preserved, codex round 5)
   plus the new pipeline-level admission decision-table test.
-- **Depends on**: PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
-  unchanged).
+- **Depends on**: PR 1, PR 13 (PR 3's ordinary sanitization CORE —
+  `normalizeUserError` + arm predicates — is consumed
+  unchanged, NOT its decisionRun wrapper, codex round 8).
 
 ### PR 15 — `refactor(web): compose the complete apply-space-route pipeline (router phase 2)`
 
