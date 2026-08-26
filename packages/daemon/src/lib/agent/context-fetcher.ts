@@ -6,7 +6,11 @@ import type {
   ContextMessageBreakdown,
   ModelInfo,
 } from '@hyperneo/shared';
-import { AUTO_COMPACT_PERCENT_DEFAULT, resolveAutoCompactPercent } from '@hyperneo/shared';
+import {
+  AUTO_COMPACT_PERCENT_DEFAULT,
+  AUTO_COMPACT_PERCENT_MAX,
+  resolveAutoCompactPercent,
+} from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
@@ -96,7 +100,13 @@ export class ContextFetcher {
       return null;
     }
 
-    const request = query.getContextUsage();
+    let request: Promise<SDKControlGetContextUsageResponse>;
+    try {
+      request = query.getContextUsage();
+    } catch (error) {
+      this.logger.warn('query.getContextUsage() failed:', error);
+      return null;
+    }
     this.inFlightUsage = request;
     this.inFlightUsageStartedAt = Date.now();
     request
@@ -357,15 +367,19 @@ export class ContextFetcher {
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
       !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
     ) {
+      const resolvedAutoCompactPercent = resolveAutoCompactPercent(
+        modelMetadata?.autoCompactPercent
+      );
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
       if (
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
         budgetThreshold <= capacity &&
-        (resolveAutoCompactPercent(modelMetadata?.autoCompactPercent) >
-          AUTO_COMPACT_PERCENT_DEFAULT ||
+        ((resolvedAutoCompactPercent > AUTO_COMPACT_PERCENT_DEFAULT &&
+          resolvedAutoCompactPercent < AUTO_COMPACT_PERCENT_MAX) ||
           response.isAutoCompactEnabled === false ||
           typeof autoCompactThreshold !== 'number' ||
+          autoCompactThreshold <= 0 ||
           autoCompactThreshold > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;

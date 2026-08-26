@@ -1059,6 +1059,47 @@ describe('ContextFetcher.fetch', () => {
     expect(recovered).toBeNull();
   }, 20000);
 
+  it('returns null when the SDK usage call throws synchronously', async () => {
+    const getContextUsage = mock(() => {
+      throw new Error('control channel closed');
+    });
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('sync-throw-session');
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+  });
+
+  it('keeps the daemon backstop off at percent 100 and treats a zero SDK threshold as unknown', () => {
+    const response = baseResponse({
+      totalTokens: 150000,
+      maxTokens: 200000,
+      percentage: 75,
+      autoCompactThreshold: 100000,
+      isAutoCompactEnabled: true,
+    });
+    const metadata = {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+    };
+
+    const atHundred = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 150000 },
+      { ...metadata, autoCompactPercent: 100 }
+    );
+    expect(atHundred.autoCompactThreshold).toBe(150000);
+    expect(atHundred.daemonBackstopActive).toBe(false);
+
+    const zeroSdk = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 0 },
+      { ...metadata, autoCompactPercent: 80 }
+    );
+    expect(zeroSdk.autoCompactThreshold).toBe(160000);
+    expect(zeroSdk.daemonBackstopActive).toBe(true);
+  });
+
   describe('capacity mismatch warning', () => {
     it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {
       const getContextUsage = mock(async () =>
