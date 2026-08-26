@@ -10,7 +10,7 @@ import type { ExternalEventPublishedPayload } from '../../external-events/extern
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import {
   prepareExternalEventTask,
-  resolveSubscriptionTarget,
+  resolveCurrentQueueableOrActiveExecution,
   type WorkflowTargetKey,
 } from './external-event-admission-gates.ts';
 import {
@@ -19,7 +19,6 @@ import {
   applyTaskAdmissionGate,
   applyTerminalGate,
   type ExternalEventDeliveryCtx,
-  type ExternalEventDeliveryDecision,
 } from './external-event-delivery-pipeline.ts';
 
 export type ImmediateEventMechanics = 'steer' | 'turn';
@@ -69,7 +68,7 @@ export interface ImmediateEventDeliveryInput {
   deliveryKey: string;
 }
 
-interface ImmediateEventDeliveryCtx extends ImmediateEventDeliveryInput {
+interface ImmediateEventDeliveryCtx extends ImmediateEventDeliveryInput, ExternalEventDeliveryCtx {
   deps: ImmediateEventDeliveryDeps;
   sessionId?: string;
   mechanics?: ImmediateEventMechanics;
@@ -97,33 +96,14 @@ export function buildImmediateEventMessageUuid(eventId: string, deliveryKey: str
 }
 
 export function resolveTarget(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
-  const resolved = resolveSubscriptionTarget(
+  const current = resolveCurrentQueueableOrActiveExecution(
     ctx.deps.listExecutions(ctx.target.workflowRunId),
     ctx.target
   );
-  return { ...ctx, sessionId: resolved.sessionId };
-}
-
-const ROUTING_GATES: ReadonlyArray<(ctx: ExternalEventDeliveryCtx) => ExternalEventDeliveryCtx> = [
-  applyTerminalGate,
-  applyClaimConflictGate,
-  applySubscriptionGate,
-  applyTaskAdmissionGate,
-];
-
-function firstRoutingDecision(
-  input: ExternalEventDeliveryCtx
-): ExternalEventDeliveryDecision | null {
-  let ctx = input;
-  for (const gate of ROUTING_GATES) {
-    if (ctx.decision !== null) break;
-    ctx = gate(ctx);
-  }
-  return ctx.decision;
-}
-
-export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
-  const decision = firstRoutingDecision({
+  const sessionId = current?.agentSessionId ?? undefined;
+  return {
+    ...ctx,
+    sessionId,
     deliveryTerminal: ctx.deps.eventStore.isDeliveryTerminal(ctx.event.eventId, ctx.deliveryKey),
     deliveryInFlight: ctx.deps.isDeliveryInFlight(ctx.deliveryKey),
     subscriptionActive: ctx.deps.isSubscriptionActive(ctx.target, ctx.event.topic),
@@ -132,14 +112,25 @@ export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
       ctx.deps.getRun(ctx.target.workflowRunId),
       ctx.event
     ),
-    targetHasSession: false,
-    targetSessionLive: false,
-    targetSpacePaused: false,
-    executionPendingActivation: false,
+    targetHasSession: sessionId !== undefined,
+    targetSessionLive: sessionId !== undefined && ctx.deps.isTargetSessionLive(sessionId),
+    targetSpacePaused: ctx.deps.isTargetSpacePaused(ctx.target),
+    executionPendingActivation:
+      current?.status === 'pending' || current?.status === 'waiting_rebind',
     decision: null,
-  });
+  };
+}
+
+function undecided<Ctx extends ExternalEventDeliveryCtx>(
+  gate: (ctx: Ctx) => Ctx
+): (ctx: Ctx) => Ctx {
+  return (ctx) => (ctx.decision === null ? gate(ctx) : ctx);
+}
+
+export function settleRoutingDecision(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
+  const decision = ctx.decision;
   if (decision === null) {
-    if (ctx.deps.isTargetSpacePaused(ctx.target)) {
+    if (ctx.targetSpacePaused) {
       return settled(ctx, { action: 'deferred', reason: 'space_paused' });
     }
     return ctx;
@@ -163,7 +154,7 @@ export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
 
 export function pickMechanics(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
   if (!ctx.sessionId) return settled(ctx, { action: 'deferred', reason: 'no_active_session' });
-  if (!ctx.deps.isTargetSessionLive(ctx.sessionId)) {
+  if (!ctx.targetSessionLive) {
     return settled(ctx, { action: 'deferred', reason: 'stale_session' });
   }
   if (!ctx.deps.withinRateBudget(ctx.sessionId)) {
@@ -217,6 +208,7 @@ export function markLedger(ctx: ImmediateEventDeliveryCtx): ImmediateEventDelive
   try {
     ctx.deps.eventStore.markDeliveryDelivered(ctx.event.eventId, ctx.deliveryKey);
     ctx.deps.eventStore.markEventDeliveredIfAllDeliveriesDelivered(ctx.event.eventId);
+    ctx.deps.eventStore.markEventFailedIfAllDeliveriesTerminal(ctx.event.eventId);
   } catch (error) {
     return settled(ctx, { action: 'error', stage: 'markLedger', error });
   }
@@ -235,8 +227,11 @@ const run = (
 )
   .input(['ctx'])
   .pipe(resolveTarget, 'ctx', 'ctx')
-  .pipe('!hasOutcome', 'ctx')
-  .pipe(routingGates, 'ctx', 'ctx')
+  .pipe(undecided(applyTerminalGate), 'ctx', 'ctx')
+  .pipe(undecided(applyClaimConflictGate), 'ctx', 'ctx')
+  .pipe(undecided(applySubscriptionGate), 'ctx', 'ctx')
+  .pipe(undecided(applyTaskAdmissionGate), 'ctx', 'ctx')
+  .pipe(settleRoutingDecision, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(pickMechanics, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
@@ -245,7 +240,9 @@ const run = (
   .pipe(persistAndEnqueue, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(markLedger, 'ctx', 'ctx')
-  .endAsync('ctx') as (input: ImmediateEventDeliveryCtx) => Promise<ImmediateEventDeliveryCtx>;
+  .endAsync('ctx') as (
+  input: ImmediateEventDeliveryInput & { deps: ImmediateEventDeliveryDeps }
+) => Promise<ImmediateEventDeliveryCtx>;
 
 export async function deliverImmediateEvent(
   deps: ImmediateEventDeliveryDeps,

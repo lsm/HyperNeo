@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import type { DeliveryFailure } from '../../../../src/lib/external-events/types';
+import type { ExternalEventTaskDecision } from '../../../../src/lib/space/runtime/external-event-admission-gates';
 import {
   buildImmediateEventMessageUuid,
   deliverImmediateEvent,
@@ -186,6 +187,7 @@ describe('deliver-immediate-event pipeline', () => {
     expect(rec.queuedIfIdle).toEqual([uuid]);
     expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
     expect(rec.eventRollups).toEqual([EVENT_ID]);
+    expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
   });
 
   it('steers into a session whose status is exactly processing', async () => {
@@ -359,10 +361,19 @@ describe('deliver-immediate-event pipeline', () => {
   });
 
   it('pickMechanics switches mechanically on exact session status', () => {
-    const ctx = (status: string, sessionId?: string) => ({
+    const ctx = (status: string, sessionId?: string, sessionLive = true) => ({
       ...input(),
       deps: makeDeps({ getSessionStatus: () => status }).deps,
       sessionId,
+      deliveryTerminal: false,
+      deliveryInFlight: false,
+      subscriptionActive: true,
+      taskDecision: { action: 'deliver' } as ExternalEventTaskDecision,
+      targetHasSession: sessionId !== undefined,
+      targetSessionLive: sessionId !== undefined && sessionLive,
+      targetSpacePaused: false,
+      executionPendingActivation: false,
+      decision: null,
     });
     expect(pickMechanics(ctx('processing', SESSION_ID)).mechanics).toBe('steer');
     expect(pickMechanics(ctx('idle', SESSION_ID)).mechanics).toBe('turn');
@@ -370,6 +381,10 @@ describe('deliver-immediate-event pipeline', () => {
     expect(pickMechanics(ctx('processing')).outcome).toEqual({
       action: 'deferred',
       reason: 'no_active_session',
+    });
+    expect(pickMechanics(ctx('idle', SESSION_ID, false)).outcome).toEqual({
+      action: 'deferred',
+      reason: 'stale_session',
     });
   });
 });
