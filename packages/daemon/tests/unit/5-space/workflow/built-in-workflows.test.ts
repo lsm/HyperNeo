@@ -427,7 +427,7 @@ describe('coder-only workflow template', () => {
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('DISCOVER the bots actually available');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Verdicts are language, so read them');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Silence is NOT a pass');
-    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Poll the gate every 60 seconds');
+    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('Wait for delivered PR events');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('kind: "external-review-gate", key: "gate"');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
       'the run-scoped `gh api graphql` lookup is permitted by your contract'
@@ -608,10 +608,7 @@ describe('coder-only workflow template', () => {
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('recorded, not discarded');
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'poll all three on every wait cycle while the gate is live'
-    );
-    expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'a reverted head excursion still passes the trigger-anchored freshness checks'
+      'immediately before you write the gate artifact, perform a single terminal read of all three and confirm they are still unchanged'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain('even a change that later reverts');
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(

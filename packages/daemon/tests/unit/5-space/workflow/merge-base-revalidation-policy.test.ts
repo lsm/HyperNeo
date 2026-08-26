@@ -48,7 +48,7 @@ describe('merge-time base revalidation policy (issue #2906)', () => {
       'When the acknowledged head differs, or the base NAME differs'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'if the head OR the base NAME is observed to change at ANY point mid-gate'
+      'if the head OR the base NAME is observed to change at ANY point mid-gate — even a change that later reverts — discard'
     );
   });
 
@@ -188,7 +188,7 @@ describe('reviewer contract post-regen base-advance pins (m216)', () => {
       'Capture the baseRefName, baseRefOid, AND headRefOid'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'poll all three on every wait cycle while the gate is live'
+      'immediately before you write the gate artifact, perform a single terminal read of all three and confirm they are still unchanged'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'if the head OR the base NAME is observed to change at ANY point mid-gate'
