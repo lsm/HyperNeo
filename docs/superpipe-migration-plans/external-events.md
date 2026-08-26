@@ -12,7 +12,7 @@ The target is **planning only**: no source code is changed by this document.
 | --- | --- | --- |
 | `github/github-normalizer.ts` normalizer family | One raw superpipe ingest pipeline for the webhook business path (`ingest-github-webhook`) with inline self-guarding dispatch stages; `normalizeGitHubPollingRow` stays a plain function | Dispatch and per-kind processing are stages of the single webhook pipeline; projection (`project-external-event`) stays a separate per-space transform at the publish boundary. The polling-row normalizer runs once per endpoint row (pages up to 100 — `github-event-extension.ts:2491-2499`), so a per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 Decision 8 excludes. |
 | `event-essence.ts:formatExternalEventEssence` | Raw superpipe transform | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
-| `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. |
+| `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. Wired at the fold-path caller only; the direct-steer-flush stage keeps the plain export (no nested runner inside a superpipe stage). |
 | `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called as a stage of the digest pipeline — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper (or direct stages) inside `build-external-event-digest-message`. |
 | `deferred-event-digest.ts:parseDeferredExternalEventText` | None — stays a plain function (review correction PR #2979: it runs once per row inside the `partitionDeferredExternalEventRows`/`planDeferredExternalEventOverflow` loops; per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 excludes) | Precedence (JSON event → JSON digest → rate-limit forms → `null`) pinned by decision-table tests instead. |
 | `event-tiers.ts:classifyExternalEventDirectSteer` | Ordinary pure helper (review correction: called once per essence from `partitionDirectSteerEssences`, already a stage of `external-event-steer-admission` — converting to `decisionRun` adds a nested runner invocation per buffered event) | A short precedence chain over topic suffixes/state/conclusion/actor. First match wins; fall-through returns `null`. |
@@ -155,6 +155,9 @@ guards that reject set `outcome = { status: 'rejected' }` and `!isDone` halts.
 interface ToExternalEventCtx {
   spaceId: string;
   event: NormalizedGitHubEvent;
+  canonicalRepo: { owner: string; repo: string } | null;
+  topicParts: { resource: string; entityId: string; action: string } | null;
+  projectedPayload: Record<string, unknown> | null;
   now: () => number;
   newId: () => string;
   result: ExternalEvent | null;
@@ -162,7 +165,13 @@ interface ToExternalEventCtx {
 ```
 
 `toExternalEvent` never rejects — it always produces an event — so a plain
-`result` with `isDone = result !== null` is sound there.
+`result` with `isDone = result !== null` is sound there. The intermediate
+fields are threaded through the ctx (review correction:
+`canonicalizeRepo`/`selectTopicParts`/`buildPayload` write
+`canonicalRepo`/`topicParts`/`projectedPayload`, all seeded `null` by the
+shell — stages must NOT mutate `event`/`event.payload`: the same normalized
+object is projected once per matching space at
+`github-event-extension.ts:729-733`).
 
 #### Pure core design
 
@@ -272,6 +281,9 @@ export function toExternalEvent(
   return runToExternalEvent({
     spaceId,
     event,
+    canonicalRepo: null,
+    topicParts: null,
+    projectedPayload: null,
     now: Date.now,
     newId: () => crypto.randomUUID(),
     result: null,
@@ -552,8 +564,18 @@ const buildDigestPipeline = superpipe<{ isDone: (ctx: BuildDigestMessageCtx) => 
 
 #### Shell/effect wiring
 
+Review correction: the EXPORTED `buildExternalEventDigestMessage` STAYS A
+PLAIN FUNCTION over the extracted stage helpers — its caller `buildSteerText`
+(`direct-steer-flush-pipeline.ts:173`) is a STAGE of the
+`direct-steer-flush` superpipe, so routing it through a second runner would
+nest a pipeline boundary inside every direct-steer flush (one cohesive
+pipeline per business path). The pipeline is wired at the fold-path business
+caller instead — `foldDeferredExternalEventsAtFlush`
+(`deferred-event-digest.ts:725`) swaps its `buildExternalEventDigestMessage`
+call for a module-private shell over the runner:
+
 ```ts
-export function buildExternalEventDigestMessage(
+function runFoldDigestMessage(
   events: ExternalEventEssenceEntry[],
   options?: { ... }
 ): string {
@@ -576,8 +598,13 @@ export function buildExternalEventDigestMessage(
    `decisionRun` would add a second composition boundary inside this one
    business path).
 2. Add a `BuildDigestMessageCtx` type and the `isDone` helper.
-3. Replace the body of `buildExternalEventDigestMessage` with the pipeline
-   stages above.
+3. Build the pipeline over the extracted stage helpers and wire it at the
+   fold-path caller ONLY — `foldDeferredExternalEventsAtFlush`
+   (`deferred-event-digest.ts:725`) calls the pipeline shell; the exported
+   `buildExternalEventDigestMessage` stays a plain helper over the same
+   stages because `buildSteerText` (`direct-steer-flush-pipeline.ts:173`)
+   runs inside the `direct-steer-flush` superpipe and must not invoke a
+   nested runner (review correction).
 4. Keep the existing `digestGroupKind`, `digestGroupKey`, `digestTimestamp`,
    `digestSnippet`, `digestLinkSuffix`, `digestDetailSuffix`, and
    `essenceScopeLabel` as pure helpers.
@@ -1182,7 +1209,7 @@ rewrite is forbidden)
   still runs its old body; the pipeline is UNWIRED.
 - **Lands**: the digest pipeline exists with stage-level tests; production
   behavior unchanged.
-- **Excludes**: wiring `buildExternalEventDigestMessage` (PR 4); envelope text
+- **Excludes**: wiring the fold-path caller (PR 4); envelope text
   or line-break format changes.
 - **Tests**:
   `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`
@@ -1198,12 +1225,21 @@ rewrite is forbidden)
 
 🔧 apply — prod Δ ≲20, test Δ ≲0 (PR 2-3 pins stay green)
 
-- **Scope**: same file — the body of `buildExternalEventDigestMessage` becomes
-  the shell that seeds the ctx and unwraps `result!`.
-- **Lands**: digest building runs as one raw superpipe transform for this
-  business path; the parity suite is green unchanged.
-- **Excludes**: `parseDeferredExternalEventText` (PR 5-6); further changes to
-  the `buildXGroupLine` helpers.
+- **Scope**: same file — wire the pipeline at the fold-path business caller
+  ONLY: `foldDeferredExternalEventsAtFlush` (`deferred-event-digest.ts:725`)
+  swaps its `buildExternalEventDigestMessage` call for the shell that seeds
+  the ctx and unwraps `result!`. The exported
+  `buildExternalEventDigestMessage` REMAINS a plain function over the
+  extracted stage helpers (review correction: its remaining caller
+  `buildSteerText` — `direct-steer-flush-pipeline.ts:173` — is a STAGE of
+  the `direct-steer-flush` superpipe; routing it through a second runner
+  would nest a pipeline boundary inside every direct-steer flush).
+- **Lands**: the fold path runs as one raw superpipe transform; the
+  direct-steer-flush stage keeps a plain call; the parity suite is green
+  unchanged.
+- **Excludes**: `parseDeferredExternalEventText` (PR 5); wiring the
+  direct-steer-flush caller; further changes to the `buildXGroupLine`
+  helpers.
 - **Tests**: `deferred-event-digest.test.ts` parity suite, unchanged.
 - **Depends on**: PR 3.
 
@@ -1548,7 +1584,9 @@ rewrite is forbidden)
 - **Excludes**: other families; wiring (PR 21).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
   family.
-- **Depends on**: PR 17, PR 13.
+- **Depends on**: PR 18, PR 13 — PRs 18-20 append stages to the SAME
+  `ingest-github-webhook` declaration and extend the same pipeline test
+  file, so they land sequentially 18 → 19 → 20.
 - **Size guard**: move-heavy; split by kind before opening if over tier.
 
 ---
@@ -1574,7 +1612,9 @@ rewrite is forbidden)
 - **Excludes**: wiring (PR 21).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
   family, including the branch-protection resource shape.
-- **Depends on**: PR 17, PR 14.
+- **Depends on**: PR 19, PR 14 — same sequential rule: PRs 18-20 append
+  stages to the SAME `ingest-github-webhook` declaration and extend the same
+  pipeline test file, so they land sequentially 18 → 19 → 20.
 - **Size guard**: move-heavy; split by kind before opening if over tier.
 
 ---
@@ -1607,7 +1647,10 @@ rewrite is forbidden)
 
 - **Scope**: same file — add the `project-external-event` raw transform
   covering `canonicalizeRepo`, `selectTopicParts` (`mapEventType` stays a
-  lookup-table helper), `buildPayload`, and `assembleExternalEvent`
+  lookup-table helper), `buildPayload`, and `assembleExternalEvent` (the ctx
+  threads `canonicalRepo`/`topicParts`/`projectedPayload` intermediates,
+  seeded `null`; `event` is never mutated — it is shared across the
+  per-space projections at `github-event-extension.ts:729-733`)
   (`newId()` AND `now()` from the ctx's INJECTED seams only in the final
   stage — one fresh id per space, one ingestion timestamp; review correction
   PR #2979: `ToExternalEventCtx` carries `now`/`newId` and the exported
