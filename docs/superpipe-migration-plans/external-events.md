@@ -262,8 +262,11 @@ not even for the extension's publish path, because `handleWebhook` normalizes
 once before iterating `validForRepo` while `publishEvent` runs the distinct
 per-space `project-external-event` transform inside each iteration; an
 appended projection either lacks a `spaceId` or reuses one scoped event/UUID
-across every watched space). The `id` generation (`crypto.randomUUID()`) is
-the only non-determinism; it stays in the projection's final assembly stage.
+across every watched space). The `id` generation (`crypto.randomUUID()`)
+and the `ingestedAt` timestamp (`Date.now()` — persisted and consumed
+downstream) are the projection's non-determinism (review correction PR
+#2979: NOT just the UUID); BOTH live in the projection's final assembly
+stage and must never be replaced by `occurredAt`.
 The normalizer family has no DB/network writes.
 
 #### Step-by-step migration
@@ -1082,25 +1085,26 @@ Every site in "Per-site detailed plans" is covered:
 - `github/github-event-extension.ts:validateRemoteHook` — PRs 10-11
 - `github/github-normalizer.ts` normalizer family — PRs 12-25
 
-### PR 1 — `refactor(external-events): rewrite direct-steer classification as an ordered helper`
+### PR 1 — `test(external-events): pin direct-steer classification precedence`
 
-📌 pins + 🔧 apply — prod Δ ≲20, test Δ ≲120
+📌 pins — prod Δ = 0, test Δ ≲120 (review correction PR #2979: the current
+`classifyExternalEventDirectSteer` is ALREADY the exact ordered plain helper
+this slice used to prescribe — suffix computed once, then `review_submitted`
+→ `review_comment_polled` → `check_failed` → `merge_conflict` → `null` — so
+there is NO production refactor to land; manufacturing a behavior-identical
+rewrite is forbidden)
 
-- **Scope**: `packages/daemon/src/lib/external-events/event-tiers.ts` — replace
-  the hand-rolled body of `classifyExternalEventDirectSteer` with the ordered
-  classifier (`review_submitted` → `review_comment_polled` → `check_failed` →
-  `merge_conflict` → `null`); the export keeps its exact signature and remains
-  a plain function called once per essence from `partitionDirectSteerEssences`.
-- **Lands**: classification is a plain leaf helper of
+- **Scope**:
+  `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts`
+  only — pin the precedence table (first matching branch wins; fall-through
+  returns `null`) of the EXISTING helper. `event-tiers.ts` is untouched.
+- **Lands**: classification precedence is pinned as a plain leaf helper of
   `external-event-steer-admission` — no `decisionRun`, no nested runner
-  invocation per buffered event; behavior identical and precedence-pinned.
+  invocation per buffered event, no source change.
 - **Excludes**: any edit to
   `packages/daemon/src/lib/space/runtime/external-event-steer-admission-pipeline.ts`;
   the batch/benchmark contingency from the site's risks.
-- **Tests**:
-  `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts`
-  — keep the existing `classifyExternalEventDirectSteer` block as parity; add
-  precedence rows (first matching branch wins; fall-through returns `null`).
+- **Tests**: the precedence table above.
 - **Depends on**: none. Parallel-safe leaf.
 
 ---
@@ -1208,8 +1212,9 @@ Every site in "Per-site detailed plans" is covered:
 - **Lands**: current essence output is fully pinned before any extraction.
 - **Excludes**: any production change.
 - **Tests**: the contract test file only.
-- **Depends on**: PR 6 (parse precedence pinned first so round-trip rows are
-  stable). Parallel-safe with everything outside `event-essence.ts`.
+- **Depends on**: PR 5 (parse precedence pinned first so round-trip rows are
+  stable; review correction PR #2979 — the previous PR 6 self-reference was
+  unschedulable). Parallel-safe with everything outside `event-essence.ts`.
 - **Size guard**: if the table would exceed test Δ ≲350, split by dimension
   family (eventType field-selection table vs topic-suffix + round-trip) before
   opening — never truncate rows.
@@ -1361,7 +1366,10 @@ Every site in "Per-site detailed plans" is covered:
 - **Lands**: the review/comment/PR dispatch and output shapes are pinned.
 - **Excludes**: production changes; other families.
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: none. Parallel-safe with PR 12/15/16.
+- **Depends on**: PR 12 (review correction PR #2979: PRs 12-15 all extend
+  the SAME test file, so they are SEQUENCED, not parallel — concurrent
+  edits would collide; land in family order 12 → 13 → 14 → 15, and PR 16
+  lands after all four).
 
 ---
 
@@ -1453,7 +1461,12 @@ Every site in "Per-site detailed plans" is covered:
   `assembleNormalizedEvent`); guards that reject set
   `outcome = { status: 'rejected' }`; the per-kind exports stay callable as
   thin wrappers over their stage groups. Stages stay synchronous (no
-  `endAsync`) and never mutate `payload`. Still UNWIRED.
+  `endAsync`) and never mutate `payload`. Review correction (PR #2979):
+  these stages replace only the RAW WEBHOOK-EVENT arm — the enriched
+  handler-side `normalizeGitHubStatus` / deployment normalizers
+  (`github-event-extension.ts:825-934`, fed derived inputs by their own
+  handlers) are NOT what these stages replace; they stay plain logic behind
+  wrappers per PR 25. Still UNWIRED.
 - **Lands**: the CI kinds run as pipeline stages with first-class rejection
   halts, verified against the PR 12 pins.
 - **Excludes**: other families (PR 19-20); wiring (PR 21).
@@ -1492,9 +1505,12 @@ Every site in "Per-site detailed plans" is covered:
 - **Scope**: same file — inline the deployment/config family (`deployment`,
   `deployment_status`, `branch_protection_rule` with its branch-aware
   `repo/<branch>.<action>` resource) into `ingest-github-webhook`; per-kind
-  exports stay callable wrappers. Still UNWIRED.
-- **Lands**: the deployment/config kinds run as stages, verified against the
-  PR 14 pins; every webhook kind is now inline.
+  exports stay callable wrappers. Same raw-webhook-arm scoping as PR 18
+  (review correction PR #2979: the enriched handler-side deployment/status
+  normalizers stay plain logic behind wrappers — PR 25). Still UNWIRED.
+- **Lands**: the deployment/config webhook-event kinds run as stages,
+  verified against the PR 14 pins; every raw webhook-event kind is now
+  inline.
 - **Excludes**: wiring (PR 21); the polling pipeline (PR 22).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
   family, including the branch-protection resource shape.
@@ -1527,12 +1543,20 @@ Every site in "Per-site detailed plans" is covered:
 
 ➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
 
-- **Scope**: same file — add the `ingest-github-polling-row` pipeline: the
-  `PollingBase` snapshot (PR 16) and dispatch stages keyed on `endpointKey`
-  (`issue_comments`, `review_comments`, `pulls`, etc.) with the
-  endpoint-specific transform stages inline under the same boxed-outcome
-  template (including the polled check-run, status, deployment,
-  deployment-status, merge-conflict, review, and reaction kinds). UNWIRED:
+- **Scope**: same file — add the `ingest-github-polling-row` pipeline:
+  the `PollingBase` snapshot (PR 16) and dispatch stages keyed on
+  `endpointKey` — ENDPOINT-ROW KINDS ONLY (`issue_comments`,
+  `review_comments`, `pulls`, and the other rows `normalizeGitHubPollingRow`
+  actually receives; review correction PR #2979: the polled check-run,
+  status, deployment, deployment-status, merge-conflict, review, and
+  reaction normalizers are invoked from SEPARATE handlers and polling loops
+  with derived inputs — asynchronously resolved `prNumber`s,
+  `prScopedDedupe`, computed conflict state and sequence — that the raw
+  `(watched, row, endpointKey)` runner never sees; as stages of this runner
+  they would be unreachable or lose their required enrichment, so they stay
+  SHARED PLAIN LOGIC behind their existing wrappers per PR 25's rule, never
+  stages of the polling pipeline). Endpoint-specific transform stages inline
+  under the same boxed-outcome template. UNWIRED:
   `normalizeGitHubPollingRow` keeps its old body; per-kind exports stay
   callable.
 - **Lands**: the polling ingest pipeline exists with endpoint dispatch-order
@@ -1574,7 +1598,10 @@ Every site in "Per-site detailed plans" is covered:
 - **Scope**: same file — add the `project-external-event` raw transform
   covering `canonicalizeRepo`, `selectTopicParts` (`mapEventType` stays a
   lookup-table helper), `buildPayload`, and `assembleExternalEvent`
-  (`crypto.randomUUID()` only in the final stage — one fresh UUID per space),
+  (`crypto.randomUUID()` AND `ingestedAt` via `Date.now()` only in the final
+  stage — one fresh UUID per space, one ingestion timestamp; review
+  correction PR #2979 — pin both with an injected clock so the migration
+  cannot omit `ingestedAt` or substitute `occurredAt`),
   and wire the exported `toExternalEvent(spaceId, event)` to wrap it. ONE
   site wired; the `publishEvent` per-space call site is unchanged; the ingest
   pipelines still end at `NormalizedGitHubEvent` — projection stages never
@@ -1594,12 +1621,14 @@ Every site in "Per-site detailed plans" is covered:
 
 ### PR 25 — `refactor(external-events): rewire per-kind normalizer consumers and drop legacy bodies`
 
-cleanup — prod Δ ≲200 net (deletions dominate), test Δ ≲0 (all pins stay green)
+cleanup A (rewiring) — prod Δ ≲150 (move-heavy, at the cap), test Δ ≲0
 
 - **Scope**:
   `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
   — rewire only the RAW webhook/polling-row dispatch paths to the ingest
-  pipelines. Review correction (PR #2979): the DIRECT per-kind consumers
+  pipelines. (Review correction PR #2979: the former ≲200-line slice is
+  SPLIT at the plan's own budget — this slice rewires consumers only; the
+  legacy-body deletion is cleanup B, the next PR.) Review correction (PR #2979): the DIRECT per-kind consumers
   (`normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus` ~lines
   825-834 with asynchronously resolved `prNumber`s, `normalizeGitHubStatus`
   ~line 925, and the check-run (prNumber + `prScopedDedupe`), merge-conflict
@@ -1608,12 +1637,12 @@ cleanup — prod Δ ≲200 net (deletions dominate), test Δ ≲0 (all pins stay
   webhook/polling-row runners do not accept — they keep the per-kind exports
   with their CURRENT signatures, reimplemented as thin wrappers over the
   shared per-kind transform logic (not over the raw runners). In
-  `github-normalizer.ts`, delete only the superseded raw-input bodies;
-  `github/index.ts` keeps the public export surface unchanged.
-- **Lands**: one composition boundary per business path with no duplicate
-  raw-input normalization; enriched per-kind consumers keep their exact
-  contracts while delegating to shared transforms, per the site's review
-  correction.
+  `github-normalizer.ts`, mark the superseded raw-input bodies for deletion
+  (they are DELETED in cleanup B, the next PR — never in the same review
+  surface); `github/index.ts` keeps the public export surface unchanged.
+- **Lands**: one composition boundary per business path; enriched per-kind
+  consumers keep their exact contracts while delegating to shared
+  transforms, per the site's review correction.
 - **Excludes**: behavior changes to webhook/polling processing;
   `validateRemoteHook` (already landed in PR 11).
 - **Tests**: the full `github-normalizer.test.ts`,
@@ -1622,6 +1651,21 @@ cleanup — prod Δ ≲200 net (deletions dominate), test Δ ≲0 (all pins stay
   `github-event-extension` integration coverage for the deployment, status,
   check-run, merge-conflict, review, and reaction event classes.
 - **Depends on**: PR 11 (same-file sequencing), PR 21, PR 23, PR 24.
+
+---
+
+### PR 26 — `refactor(external-events): drop superseded raw-input normalizer bodies`
+
+cleanup B (deletion) — prod Δ net-negative (deletions only), test Δ ≲0
+
+- **Scope**: `github-normalizer.ts` — delete the raw-input bodies superseded
+  by PR 25's rewiring (review correction PR #2979: split from the rewiring
+  slice so each stays inside the plan's review budget); re-run the export
+  surface check on `github/index.ts`.
+- **Lands**: no duplicate raw-input normalization paths remain.
+- **Excludes**: any behavior change; `validateRemoteHook`.
+- **Tests**: the full normalizer/essence/pipeline suites stay green.
+- **Depends on**: PR 25.
 
 ## Open questions
 
