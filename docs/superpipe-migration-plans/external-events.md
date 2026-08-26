@@ -12,8 +12,8 @@ The target is **planning only**: no source code is changed by this document.
 | --- | --- | --- |
 | `github/github-normalizer.ts` normalizer family | One raw superpipe ingest pipeline for the webhook business path (`ingest-github-webhook`) with inline self-guarding dispatch stages; `normalizeGitHubPollingRow` stays a plain function | Dispatch and per-kind processing are stages of the single webhook pipeline; projection (`project-external-event`) stays a separate per-space transform at the publish boundary. The polling-row normalizer runs once per endpoint row (pages up to 100 — `github-event-extension.ts:2491-2499`), so a per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 Decision 8 excludes. |
 | `event-essence.ts:formatExternalEventEssence` | Raw superpipe transform | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
-| `deferred-event-digest.ts:buildExternalEventDigestMessage` | Raw superpipe transform | Pure list-of-essences to digest string. Sort, group, render, header/footer are discrete stages. Wired at the fold-path caller only; the direct-steer-flush stage keeps the plain export (no nested runner inside a superpipe stage). |
-| `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called as a stage of the digest pipeline — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper (or direct stages) inside `build-external-event-digest-message`. |
+| `deferred-event-digest.ts:buildExternalEventDigestMessage` | None — stays a plain function over extracted ordered pure helpers (review correction: both callers sit inside larger business operations — `buildSteerText` is a stage of the `direct-steer-flush` superpipe, and `foldDeferredExternalEventsAtFlush` is an imperative async fold — so a separately-run rendering pipeline would nest inside another runner or split the fold operation) | Sort, group, render, header/footer become unit-tested pure helpers called in order from the plain body. |
+| `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called by the `renderGroups` helper of the plain digest function — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper inside `buildExternalEventDigestMessage`. |
 | `deferred-event-digest.ts:parseDeferredExternalEventText` | None — stays a plain function (review correction PR #2979: it runs once per row inside the `partitionDeferredExternalEventRows`/`planDeferredExternalEventOverflow` loops; per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 excludes) | Precedence (JSON event → JSON digest → rate-limit forms → `null`) pinned by decision-table tests instead. |
 | `event-tiers.ts:classifyExternalEventDirectSteer` | Ordinary pure helper (review correction: called once per essence from `partitionDirectSteerEssences`, already a stage of `external-event-steer-admission` — converting to `decisionRun` adds a nested runner invocation per buffered event) | A short precedence chain over topic suffixes/state/conclusion/actor. First match wins; fall-through returns `null`. |
 | `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` | `decisionRun` | Validation gates each produce an `invalid` decision and halt; the final gate builds the `ok` pattern. The shell preserves the current throw-on-error contract. |
@@ -508,88 +508,75 @@ Callers:
 
 #### Proposed combinator
 
-Raw superpipe transform. The kind switch stays an ordinary pure helper
-(`renderDigestGroup`) called from the `renderGroups` stage — review
-correction: NOT a separate `decisionRun`; that would recreate a second
-composition boundary inside this business path.
+None — stays a plain function over extracted ordered pure helpers (review
+correction: both callers sit inside larger business operations —
+`buildSteerText` (`direct-steer-flush-pipeline.ts:173`) is a STAGE of the
+`direct-steer-flush` superpipe, and `foldDeferredExternalEventsAtFlush`
+(`deferred-event-digest.ts:725`) is an imperative async fold (partitioning,
+message construction, persistence, supersession) — a separately-run
+rendering pipeline would nest a runner inside the flush or split the fold
+operation; composing the complete fold as a pipeline is a separate future
+undertaking, not this plan's slice). The kind switch stays an ordinary pure
+helper (`renderDigestGroup`).
 
 #### Input/output snapshot design
 
+No pipeline context (review correction: with rendering plain, each helper
+takes explicit inputs and returns values):
+
 ```ts
-interface BuildDigestMessageCtx {
-  events: ExternalEventEssenceEntry[];
-  options?: {
-    droppedEventCount?: number;
-    title?: string;
-    snippetMaxChars?: number;
-    renderAllReviewBodies?: boolean;
-  };
-  ordered: ExternalEventEssenceEntry[];
-  includeDate: boolean;
-  groups: Map<string, DigestGroup>;
-  lines: string[];
-  result: string | null;
-}
+function guardEmpty(events: ExternalEventEssenceEntry[]): boolean
+function computeOptions(options?: DigestMessageOptions): ResolvedDigestOptions
+function sortEvents(events: ExternalEventEssenceEntry[]): ExternalEventEssenceEntry[]
+function decideIncludeDate(ordered: ExternalEventEssenceEntry[]): boolean
+function groupEvents(ordered: ExternalEventEssenceEntry[]): Map<string, DigestGroup>
+function renderGroups(groups: Map<string, DigestGroup>, options: ResolvedDigestOptions): string[]
+function assembleMessage(lines: string[], options: ResolvedDigestOptions): string
 ```
 
 #### Pure core design
 
 ```ts
-const buildDigestPipeline = superpipe<{ isDone: (ctx: BuildDigestMessageCtx) => boolean }>({
-  isDone: (ctx) => ctx.result !== null,
-})('build-external-event-digest-message')
-  .input(['ctx'])
-  .pipe(guardEmpty, 'ctx', 'ctx')      // if events.length === 0 -> result = ''
-  .pipe('!isDone', 'ctx')
-  .pipe(computeOptions, 'ctx', 'ctx')
-  .pipe(sortEvents, 'ctx', 'ctx')
-  .pipe(decideIncludeDate, 'ctx', 'ctx')
-  .pipe(groupEvents, 'ctx', 'ctx')
-  .pipe(renderGroups, 'ctx', 'ctx')    // renders groups via the pure kind-switch helper
-  .pipe(assembleMessage, 'ctx', 'ctx')
-  .end('ctx');
+export function buildExternalEventDigestMessage(
+  events: ExternalEventEssenceEntry[],
+  options?: DigestMessageOptions
+): string {
+  if (guardEmpty(events)) return '';
+  const resolved = computeOptions(options);
+  const ordered = sortEvents(events);
+  const includeDate = decideIncludeDate(ordered);
+  const groups = groupEvents(ordered);
+  const lines = renderGroups(groups, resolved);
+  return assembleMessage(lines, resolved);
+}
 ```
 
-- `guardEmpty`: set `result = ''` if `events.length === 0`.
-- `sortEvents`: stable sort by `orderTime` with index tie-break.
+- `guardEmpty`: true if `events.length === 0` (the plain early return).
+- `sortEvents`: stable sort by `orderTime` with index tie-break, where a
+  `NaN` `orderTime` (both `occurredAt` and `receivedAt` invalid/absent) is
+  normalized to `-Infinity` exactly as the current comparator does
+  (`deferred-event-digest.ts:607-613`) — review correction: without the
+  normalization a later undated entry can remain after a dated one and
+  become the group's `latest` event, changing the rendered timestamp,
+  details, and link.
 - `decideIncludeDate`: true when more than one UTC date is present.
 - `groupEvents`: `digestGroupKind` + `digestGroupKey`, collect into a `Map`.
 - `renderGroups`: iterate `DIGEST_GROUP_ORDER`, render each matching group
-  via the kind switch — kept as an ORDINARY PURE HELPER or direct stages,
-  not a separately-run `renderDigestGroup` `decisionRun` (review correction:
-  that would recreate a second composition boundary for a private helper
-  inside the one `build-external-event-digest-message` business path) — and
-  append to `lines`.
+  via the kind switch — kept as an ORDINARY PURE HELPER, not a separately-run
+  `renderDigestGroup` `decisionRun` (review correction: that would recreate
+  a second composition boundary for a private helper inside the one
+  digest-rendering path) — and collect the lines.
 - `assembleMessage`: header + lines + footer joined with `\n`.
 
 #### Shell/effect wiring
 
-Review correction: the EXPORTED `buildExternalEventDigestMessage` STAYS A
-PLAIN FUNCTION over the extracted stage helpers — its caller `buildSteerText`
-(`direct-steer-flush-pipeline.ts:173`) is a STAGE of the
-`direct-steer-flush` superpipe, so routing it through a second runner would
-nest a pipeline boundary inside every direct-steer flush (one cohesive
-pipeline per business path). The pipeline is wired at the fold-path business
-caller instead — `foldDeferredExternalEventsAtFlush`
-(`deferred-event-digest.ts:725`) swaps its `buildExternalEventDigestMessage`
-call for a module-private shell over the runner:
-
-```ts
-function runFoldDigestMessage(
-  events: ExternalEventEssenceEntry[],
-  options?: { ... }
-): string {
-  return runBuildDigestMessage({
-    events,
-    options,
-    ordered: [],
-    includeDate: false,
-    groups: new Map(),
-    lines: [],
-    result: null,
-  }).result!;
-}
-```
+None — the export keeps a plain body over the extracted helpers; no runner
+exists to wire (review correction: a rendering-only runner would split
+either caller's business operation — the direct-steer-flush stage would nest
+a second runner inside the flush pipeline, and
+`foldDeferredExternalEventsAtFlush` would reduce an imperative async fold —
+partitioning, message construction, persistence, supersession — to a
+pipeline call for one rendering slice).
 
 #### Step-by-step migration
 
@@ -597,15 +584,13 @@ function runFoldDigestMessage(
    is private with no other callers — converting it to a separately-run
    `decisionRun` would add a second composition boundary inside this one
    business path).
-2. Add a `BuildDigestMessageCtx` type and the `isDone` helper.
-3. Build the pipeline over the extracted stage helpers and wire it at the
-   fold-path caller ONLY — `foldDeferredExternalEventsAtFlush`
-   (`deferred-event-digest.ts:725`) calls the pipeline shell; the exported
-   `buildExternalEventDigestMessage` stays a plain helper over the same
-   stages because `buildSteerText` (`direct-steer-flush-pipeline.ts:173`)
-   runs inside the `direct-steer-flush` superpipe and must not invoke a
-   nested runner (review correction).
-4. Keep the existing `digestGroupKind`, `digestGroupKey`, `digestTimestamp`,
+2. Extract the ordered helpers and keep the plain body calling them in
+   order — NO pipeline (review correction: rendering stays plain at BOTH
+   callers; `buildSteerText` runs inside the `direct-steer-flush` superpipe
+   and `foldDeferredExternalEventsAtFlush` is an imperative async fold, so a
+   separately-run rendering runner would nest inside another runner or split
+   the fold operation).
+3. Keep the existing `digestGroupKind`, `digestGroupKey`, `digestTimestamp`,
    `digestSnippet`, `digestLinkSuffix`, `digestDetailSuffix`, and
    `essenceScopeLabel` as pure helpers.
 
@@ -813,23 +798,15 @@ invocation per buffered event.
 
 #### Input/output snapshot design
 
-```ts
-interface ClassifyDirectSteerCtx {
-  input: DirectSteerClassificationInput;
-  decision: DirectSteerEventClass | null;
-}
-```
+No pipeline context — the plain function takes
+`DirectSteerClassificationInput` and returns `DirectSteerEventClass | null`.
 
 #### Pure core design
 
-```ts
-function decided(
-  ctx: ClassifyDirectSteerCtx,
-  decision: DirectSteerEventClass
-): ClassifyDirectSteerCtx {
-  return { ...ctx, decision };
-}
+The CURRENT body, pinned as-is (review correction: it already IS the exact
+ordered classifier — there is no production rewrite to perform):
 
+```ts
 export function classifyExternalEventDirectSteer(
   input: DirectSteerClassificationInput
 ): DirectSteerEventClass | null {
@@ -855,8 +832,9 @@ continues calling it as a plain function.
 
 #### Step-by-step migration
 
-1. Replace the hand-rolled body with the ordered classifier above (behavior
-   identical); no runner, no wrapper changes.
+1. Pins only (review correction: the current production body already IS the
+   ordered classifier above — PR 1 pins the precedence and `event-tiers.ts`
+   remains untouched; no production rewrite, no runner, no wrapper changes).
 
 #### Tests
 
@@ -1139,12 +1117,12 @@ Every site in "Per-site detailed plans" is covered:
 
 - `event-tiers.ts:classifyExternalEventDirectSteer` — PR 1
 - `deferred-event-digest.ts:renderDigestGroup` — PR 2
-- `deferred-event-digest.ts:buildExternalEventDigestMessage` — PRs 3-4
-- `deferred-event-digest.ts:parseDeferredExternalEventText` — PR 5
-- `event-essence.ts:formatExternalEventEssence` — PRs 6-8
-- `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` — PR 9
-- `github/github-event-extension.ts:validateRemoteHook` — PRs 10-11
-- `github/github-normalizer.ts` normalizer family — PRs 12-22
+- `deferred-event-digest.ts:buildExternalEventDigestMessage` — PR 3
+- `deferred-event-digest.ts:parseDeferredExternalEventText` — PR 4
+- `event-essence.ts:formatExternalEventEssence` — PRs 5-7
+- `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` — PR 8
+- `github/github-event-extension.ts:validateRemoteHook` — PRs 9-10
+- `github/github-normalizer.ts` normalizer family — PRs 11-21
 
 ### PR 1 — `test(external-events): pin direct-steer classification precedence`
 
@@ -1183,9 +1161,9 @@ rewrite is forbidden)
   `digestActionLabel`, `digestStateMarkers`, and `essenceScopeLabel` remain
   pure helpers.
 - **Lands**: behavior-identical helper extraction; the kind switch is a plain
-  leaf ready to be called from the `renderGroups` stage in PR 3.
-- **Excludes**: the `build-external-event-digest-message` pipeline and
-  `BuildDigestMessageCtx` (PR 3); `parseDeferredExternalEventText` (PR 5).
+  leaf ready to be called from the `renderGroups` helper in PR 3.
+- **Excludes**: the `buildExternalEventDigestMessage` internals (PR 3);
+  `parseDeferredExternalEventText` (PR 4).
 - **Tests**:
   `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`
   — add a `describe('renderDigestGroup')` block covering every
@@ -1194,58 +1172,45 @@ rewrite is forbidden)
 
 ---
 
-### PR 3 — `refactor(external-events): add digest-message superpipe core unwired`
+### PR 3 — `refactor(external-events): extract ordered digest-message helpers`
 
-➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
+🔧 apply — prod Δ ≲120 (move-heavy, behavior-identical), test Δ ≲350
 
 - **Scope**: `packages/daemon/src/lib/external-events/deferred-event-digest.ts`
-  — add `BuildDigestMessageCtx`, the `isDone` helper, and the
-  `build-external-event-digest-message` raw transform: `guardEmpty` (sets
-  `result = ''`, halts via `!isDone`), `computeOptions`, `sortEvents` (stable,
-  `orderTime` with index tie-break), `decideIncludeDate`, `groupEvents`
-  (`digestGroupKind`/`digestGroupKey` into a `Map`), `renderGroups` (iterates
-  `DIGEST_GROUP_ORDER`, calls the PR-2 `renderDigestGroup` helper directly —
-  no nested runner), `assembleMessage` (header + lines + footer). The export
-  still runs its old body; the pipeline is UNWIRED.
-- **Lands**: the digest pipeline exists with stage-level tests; production
-  behavior unchanged.
-- **Excludes**: wiring the fold-path caller (PR 4); envelope text
-  or line-break format changes.
+  — extract the ordered pure helpers behind
+  `buildExternalEventDigestMessage`: `guardEmpty`, `computeOptions`,
+  `sortEvents` (stable, `orderTime` with NaN normalized to `-Infinity` and
+  index tie-break — review correction: an entry whose `occurredAt` and
+  `receivedAt` are both invalid/absent must sort as `-Infinity`, matching
+  the current comparator at `deferred-event-digest.ts:607-613`, or a later
+  undated entry can become the group's `latest` event and change the
+  rendered timestamp, details, and link), `decideIncludeDate`, `groupEvents`
+  (`digestGroupKind`/`digestGroupKey` into a `Map`), `renderGroups`
+  (iterates `DIGEST_GROUP_ORDER`, calls the PR-2 `renderDigestGroup` helper
+  directly), `assembleMessage` (header + lines + footer). The export KEEPS a
+  plain body calling them in order — NO pipeline, NO ctx, NO runner (review
+  correction: both callers sit inside larger business operations —
+  `buildSteerText` (`direct-steer-flush-pipeline.ts:173`) is a stage of the
+  `direct-steer-flush` superpipe, and `foldDeferredExternalEventsAtFlush`
+  (`deferred-event-digest.ts:725`) is an imperative async fold — so a
+  separately-run rendering pipeline would nest inside another runner or
+  split the fold operation; composing the complete fold as a pipeline is a
+  separate future undertaking, not this plan's slice).
+- **Lands**: the ordered helpers exist with unit tests; production behavior
+  unchanged.
+- **Excludes**: any pipeline/runner for digest rendering; envelope text or
+  line-break format changes; composing the full fold operation.
 - **Tests**:
   `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`
-  — stage tests: empty input returns `''` before sort/group; multi-date input
-  sets `includeDate = true`; groups render in `DIGEST_GROUP_ORDER`;
+  — helper tests: empty input returns `''` before sort/group; multi-date
+  input sets `includeDate = true`; groups render in `DIGEST_GROUP_ORDER`;
   `renderAllReviewBodies` propagates into `renderDigestGroup`; stable-sort
-  tie-break.
+  tie-break; mixed dated/undated row pins the NaN → `-Infinity` ordering.
 - **Depends on**: PR 2.
 
 ---
 
-### PR 4 — `refactor(external-events): route digest message through the pipeline`
-
-🔧 apply — prod Δ ≲20, test Δ ≲0 (PR 2-3 pins stay green)
-
-- **Scope**: same file — wire the pipeline at the fold-path business caller
-  ONLY: `foldDeferredExternalEventsAtFlush` (`deferred-event-digest.ts:725`)
-  swaps its `buildExternalEventDigestMessage` call for the shell that seeds
-  the ctx and unwraps `result!`. The exported
-  `buildExternalEventDigestMessage` REMAINS a plain function over the
-  extracted stage helpers (review correction: its remaining caller
-  `buildSteerText` — `direct-steer-flush-pipeline.ts:173` — is a STAGE of
-  the `direct-steer-flush` superpipe; routing it through a second runner
-  would nest a pipeline boundary inside every direct-steer flush).
-- **Lands**: the fold path runs as one raw superpipe transform; the
-  direct-steer-flush stage keeps a plain call; the parity suite is green
-  unchanged.
-- **Excludes**: `parseDeferredExternalEventText` (PR 5); wiring the
-  direct-steer-flush caller; further changes to the `buildXGroupLine`
-  helpers.
-- **Tests**: `deferred-event-digest.test.ts` parity suite, unchanged.
-- **Depends on**: PR 3.
-
----
-
-### PR 5 — `test(external-events): pin deferred-text parse precedence`
+### PR 4 — `test(external-events): pin deferred-text parse precedence`
 
 📌 pins — prod Δ = 0, test Δ ≲200
 
@@ -1257,18 +1222,18 @@ rewrite is forbidden)
   (PR #2979): `parseDeferredExternalEventText` STAYS a plain function — it
   runs once per row inside the partition/overflow loops, and a per-row
   pipeline invocation is the hot-inner-loop pattern ADR 0004 excludes; there
-  is deliberately no parse pipeline to add or wire (the former PR 5/PR 6 pair
-  is replaced by this pins-only slice).
+  is deliberately no parse pipeline to add or wire (the former parse
+  pipeline/pins pair is replaced by this pins-only slice).
 - **Lands**: the parser's precedence contract is pinned before any later
   digest work touches its neighbors.
 - **Excludes**: any production change; restructuring
   `RATE_LIMIT_DIGEST_PATTERN`; essence formatting (next PRs).
 - **Tests**: the decision table above.
-- **Depends on**: PR 4 (same-file sequencing within the digest pass).
+- **Depends on**: PR 3 (same-file sequencing within the digest pass).
 
 ---
 
-### PR 6 — `test(external-events): pin essence formatting per eventType and topic suffix`
+### PR 5 — `test(external-events): pin essence formatting per eventType and topic suffix`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
@@ -1282,8 +1247,8 @@ rewrite is forbidden)
 - **Lands**: current essence output is fully pinned before any extraction.
 - **Excludes**: any production change.
 - **Tests**: the contract test file only.
-- **Depends on**: PR 5 (parse precedence pinned first so round-trip rows are
-  stable; review correction PR #2979 — the previous PR 6 self-reference was
+- **Depends on**: PR 4 (parse precedence pinned first so round-trip rows are
+  stable; review correction PR #2979 — the previous PR 5 self-reference was
   unschedulable). Parallel-safe with everything outside `event-essence.ts`.
 - **Size guard**: if the table would exceed test Δ ≲350, split by dimension
   family (eventType field-selection table vs topic-suffix + round-trip) before
@@ -1291,7 +1256,7 @@ rewrite is forbidden)
 
 ---
 
-### PR 7 — `refactor(external-events): add essence formatting pipeline unwired`
+### PR 6 — `refactor(external-events): add essence formatting pipeline unwired`
 
 ➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
 
@@ -1307,19 +1272,19 @@ rewrite is forbidden)
   UNWIRED: the export keeps its old body.
 - **Lands**: the formatting pipeline exists with per-stage tests; production
   behavior unchanged.
-- **Excludes**: wiring (PR 8); key renames or `undefined`-omission changes
+- **Excludes**: wiring (PR 7); key renames or `undefined`-omission changes
   that would break the round trip.
 - **Tests**: add
   `packages/daemon/tests/unit/1-core/external-events/event-essence-pipeline.test.ts`
   with per-stage tests for `buildBaseEssence`, `decideFieldSet`, and
   `omitUndefinedAndStringify`.
-- **Depends on**: PR 6.
+- **Depends on**: PR 5.
 
 ---
 
-### PR 8 — `refactor(external-events): route essence formatting through the pipeline`
+### PR 7 — `refactor(external-events): route essence formatting through the pipeline`
 
-🔧 apply — prod Δ ≲15, test Δ ≲0 (PR 6 pins stay green)
+🔧 apply — prod Δ ≲15, test Δ ≲0 (PR 5 pins stay green)
 
 - **Scope**: same file — the body of `formatExternalEventEssence` becomes the
   shell unwrapping `result!`; callers in `space-runtime.ts` and
@@ -1328,11 +1293,11 @@ rewrite is forbidden)
   contract pins are green unchanged.
 - **Excludes**: any edit under `packages/daemon/src/lib/space/`.
 - **Tests**: the expanded contract test, unchanged.
-- **Depends on**: PR 7.
+- **Depends on**: PR 6.
 
 ---
 
-### PR 9 — `refactor(external-events): compose subscription pattern via decisionRun`
+### PR 8 — `refactor(external-events): compose subscription pattern via decisionRun`
 
 🔧 apply — prod Δ ≲110, test Δ ≲150 (the existing exhaustive suite is the pin)
 
@@ -1363,7 +1328,7 @@ rewrite is forbidden)
 
 ---
 
-### PR 10 — `test(external-events): pin remote-hook validation failure modes`
+### PR 9 — `test(external-events): pin remote-hook validation failure modes`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
@@ -1380,13 +1345,13 @@ rewrite is forbidden)
 - **Depends on**: none. Parallel-safe leaf.
 - **Size guard**: if both files exceed test Δ ≲350 together, keep the unit
   characterization file in this slice and move the `webhookLastError`
-  integration rows into PR 11 rather than truncating either.
+  integration rows into PR 10 rather than truncating either.
 
 ---
 
-### PR 11 — `refactor(external-events): validate remote hook via decisionRun`
+### PR 10 — `refactor(external-events): validate remote hook via decisionRun`
 
-🔧 apply — prod Δ ≲110, test Δ ≲0 (PR 10 pins stay green)
+🔧 apply — prod Δ ≲110, test Δ ≲0 (PR 9 pins stay green)
 
 - **Scope**:
   `packages/daemon/src/lib/external-events/github/github-event-extension.ts` —
@@ -1400,14 +1365,14 @@ rewrite is forbidden)
   `validateRemoteHook` stays module-private. Single-function rewire.
 - **Lands**: hook validation is a precedence-ordered gate chain; stored
   `webhookLastError` strings are preserved.
-- **Excludes**: normalizer work in the same file (PR 12-25); any
+- **Excludes**: normalizer work in the same file (PR 11-21); any
   decision-shape contract change.
-- **Tests**: the PR 10 suite, green unchanged.
-- **Depends on**: PR 10.
+- **Tests**: the PR 9 suite, green unchanged.
+- **Depends on**: PR 9.
 
 ---
 
-### PR 12 — `test(external-events): pin webhook check/status normalization family`
+### PR 11 — `test(external-events): pin webhook check/status normalization family`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
@@ -1419,15 +1384,15 @@ rewrite is forbidden)
   `normalizeGitHubStatus`.
 - **Lands**: the check/status family — including rejection halts — is pinned
   before any ingest pipeline exists.
-- **Excludes**: any production change; other kind families (PR 13-15).
+- **Excludes**: any production change; other kind families (PR 12-14).
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: none. Sequenced before PR 13-15: all four pin slices extend
-  the SAME test file, so they land in family order 12 → 13 → 14 → 15 (PR 16
-  after all four); parallel-safe with PR 1-11.
+- **Depends on**: none. Sequenced before PR 12-14: all four pin slices extend
+  the SAME test file, so they land in family order 11 → 12 → 13 → 14 (PR 15
+  after all four); parallel-safe with PR 1-10.
 
 ---
 
-### PR 13 — `test(external-events): pin webhook review/comment/PR normalization family`
+### PR 12 — `test(external-events): pin webhook review/comment/PR normalization family`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
@@ -1438,14 +1403,14 @@ rewrite is forbidden)
 - **Lands**: the review/comment/PR dispatch and output shapes are pinned.
 - **Excludes**: production changes; other families.
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: PR 12 (review correction PR #2979: PRs 12-15 all extend
+- **Depends on**: PR 11 (review correction PR #2979: PRs 11-14 all extend
   the SAME test file, so they are SEQUENCED, not parallel — concurrent
-  edits would collide; land in family order 12 → 13 → 14 → 15, and PR 16
+  edits would collide; land in family order 11 → 12 → 13 → 14, and PR 15
   lands after all four).
 
 ---
 
-### PR 14 — `test(external-events): pin webhook deployment/config normalization family`
+### PR 13 — `test(external-events): pin webhook deployment/config normalization family`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
@@ -1458,12 +1423,12 @@ rewrite is forbidden)
   `github-event-extension.ts` — is pinned.
 - **Excludes**: production changes; other families.
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: PR 13 — PRs 12-15 extend the same test file and land in
-  family order 12 → 13 → 14 → 15.
+- **Depends on**: PR 12 — PRs 11-14 extend the same test file and land in
+  family order 11 → 12 → 13 → 14.
 
 ---
 
-### PR 15 — `test(external-events): pin polling-row normalization family`
+### PR 14 — `test(external-events): pin polling-row normalization family`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
@@ -1476,14 +1441,14 @@ rewrite is forbidden)
   correction: it runs once per endpoint row at
   `github-event-extension.ts:2491-2499`, pages up to 100 rows — no per-row
   pipeline).
-- **Excludes**: production changes; webhook families (PR 12-14).
+- **Excludes**: production changes; webhook families (PR 11-13).
 - **Tests**: `github-normalizer.test.ts` only.
-- **Depends on**: PR 14 — PRs 12-15 extend the same test file and land in
-  family order 12 → 13 → 14 → 15.
+- **Depends on**: PR 13 — PRs 11-14 extend the same test file and land in
+  family order 11 → 12 → 13 → 14.
 
 ---
 
-### PR 16 — `refactor(external-events): add normalizer outcome types and base snapshots`
+### PR 15 — `refactor(external-events): add normalizer outcome types and base snapshots`
 
 ➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
 
@@ -1497,13 +1462,13 @@ rewrite is forbidden)
   functions. UNWIRED: no pipeline consumes them yet; no behavior change.
 - **Lands**: the shared scaffolding exists with snapshot-helper unit tests,
   ready for the webhook ingest pipeline.
-- **Excludes**: the ingest pipelines (PR 17+); edits to callers.
+- **Excludes**: the ingest pipelines (PR 16+); edits to callers.
 - **Tests**: `github-normalizer.test.ts` — snapshot-helper unit tests.
-- **Depends on**: PR 12-15 (pins before extraction).
+- **Depends on**: PR 11-14 (pins before extraction).
 
 ---
 
-### PR 17 — `refactor(external-events): add github webhook ingest skeleton with dispatch stages`
+### PR 16 — `refactor(external-events): add github webhook ingest skeleton with dispatch stages`
 
 ➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
 
@@ -1521,21 +1486,21 @@ rewrite is forbidden)
   body (`issue_comment`, `pull_request_review`,
   `pull_request_review_comment`, `pull_request_review_thread`,
   `pull_request` — `github-normalizer.ts:207-332`) are DISPATCH-ONLY
-  placeholders whose transform stages arrive with PR 19 (review correction:
+  placeholders whose transform stages arrive with PR 18 (review correction:
   no per-kind export exists for them to delegate to). UNWIRED:
   `normalizeGitHubWebhook` keeps its old body.
 - **Lands**: dispatch precedence is independently testable while production
   behavior is unchanged.
-- **Excludes**: inline per-kind conversion (PR 18-20); wiring (PR 21).
+- **Excludes**: inline per-kind conversion (PR 17-19); wiring (PR 20).
 - **Tests**: add
   `packages/daemon/tests/unit/2-handlers/github/github-normalizer-pipeline.test.ts`
   — dispatch-order rows (e.g. `issue_comment` dispatches only when the issue
   is a PR; unknown events leave `kind` unset so the shell returns `null`).
-- **Depends on**: PR 16.
+- **Depends on**: PR 15.
 
 ---
 
-### PR 18 — `refactor(external-events): inline check transforms in webhook ingest`
+### PR 17 — `refactor(external-events): inline check transforms in webhook ingest`
 
 ➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
 
@@ -1556,18 +1521,18 @@ rewrite is forbidden)
   (`github-event-extension.ts:925`, fed derived inputs) stays plain logic
   with its CURRENT signature. Still UNWIRED.
 - **Lands**: the CI kinds run as pipeline stages with first-class rejection
-  halts, verified against the PR 12 pins.
-- **Excludes**: other families (PR 19-20); wiring (PR 21).
+  halts, verified against the PR 11 pins.
+- **Excludes**: other families (PR 18-19); wiring (PR 20).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage-order rows (e.g.
   the `check_run` guard halts before payload parsing when
   `action !== 'completed'`).
-- **Depends on**: PR 17, PR 12.
+- **Depends on**: PR 16, PR 11.
 - **Size guard**: prod Δ is move-heavy; if two kinds exceed the tier, split by
   kind before opening.
 
 ---
 
-### PR 19 — `refactor(external-events): inline review/comment/PR transforms in webhook ingest`
+### PR 18 — `refactor(external-events): inline review/comment/PR transforms in webhook ingest`
 
 ➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
 
@@ -1580,18 +1545,18 @@ rewrite is forbidden)
   `github-event-extension.ts:2978` — is an enriched consumer, stays plain
   with its CURRENT signature, and is NOT inlined here). Still UNWIRED.
 - **Lands**: the review/comment/PR kinds run as stages, verified against the
-  PR 13 pins.
-- **Excludes**: other families; wiring (PR 21).
+  PR 12 pins.
+- **Excludes**: other families; wiring (PR 20).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
   family.
-- **Depends on**: PR 18, PR 13 — PRs 18-20 append stages to the SAME
+- **Depends on**: PR 17, PR 12 — PRs 17-19 append stages to the SAME
   `ingest-github-webhook` declaration and extend the same pipeline test
-  file, so they land sequentially 18 → 19 → 20.
+  file, so they land sequentially 17 → 18 → 19.
 - **Size guard**: move-heavy; split by kind before opening if over tier.
 
 ---
 
-### PR 20 — `refactor(external-events): inline branch-protection transform in webhook ingest`
+### PR 19 — `refactor(external-events): inline branch-protection transform in webhook ingest`
 
 ➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
 
@@ -1607,21 +1572,21 @@ rewrite is forbidden)
   (`github-event-extension.ts:825-834`, fed derived inputs) stay plain logic
   with their CURRENT signatures. Still UNWIRED.
 - **Lands**: the branch-protection webhook-event kind runs as a stage,
-  verified against the PR 14 pins; every raw webhook-event kind is now
+  verified against the PR 13 pins; every raw webhook-event kind is now
   inline.
-- **Excludes**: wiring (PR 21).
+- **Excludes**: wiring (PR 20).
 - **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
   family, including the branch-protection resource shape.
-- **Depends on**: PR 19, PR 14 — same sequential rule: PRs 18-20 append
+- **Depends on**: PR 18, PR 13 — same sequential rule: PRs 17-19 append
   stages to the SAME `ingest-github-webhook` declaration and extend the same
-  pipeline test file, so they land sequentially 18 → 19 → 20.
+  pipeline test file, so they land sequentially 17 → 18 → 19.
 - **Size guard**: move-heavy; split by kind before opening if over tier.
 
 ---
 
-### PR 21 — `refactor(external-events): route webhook normalization through ingest pipeline`
+### PR 20 — `refactor(external-events): route webhook normalization through ingest pipeline`
 
-🔧 apply — prod Δ ≲30, test Δ ≲0 (PR 12-20 pins stay green)
+🔧 apply — prod Δ ≲30, test Δ ≲0 (PR 11-19 pins stay green)
 
 - **Scope**: same file — the body of `normalizeGitHubWebhook` becomes the
   thin shell seeding the ctx and unwrapping
@@ -1632,16 +1597,16 @@ rewrite is forbidden)
 - **Lands**: webhook normalization (dispatch + per-kind transforms as stages
   of one pipeline) is live; the full parity suite is green unchanged.
 - **Excludes**: `normalizeGitHubPollingRow` (stays plain — hot per-row loop);
-  `toExternalEvent` (PR 22); any edit to `github-event-extension.ts` (the raw
+  `toExternalEvent` (PR 21); any edit to `github-event-extension.ts` (the raw
   call site at line 716 already calls this export and picks the pipeline up
   unchanged; re-run the `github/index.ts` export-surface check unchanged).
 - **Tests**: `github-normalizer.test.ts` and
   `github-normalizer-pipeline.test.ts`, unchanged and green.
-- **Depends on**: PR 18, PR 19, PR 20.
+- **Depends on**: PR 17, PR 18, PR 19.
 
 ---
 
-### PR 22 — `refactor(external-events): project external events per space via superpipe transform`
+### PR 21 — `refactor(external-events): project external events per space via superpipe transform`
 
 🔧 apply — prod Δ ≲110 (types-dominated transform + one-line shell), test Δ ≲60
 
@@ -1675,7 +1640,7 @@ rewrite is forbidden)
   `occurredAt` substitution): inject a fixed `now` and assert `ingestedAt`
   equals it while differing from `occurredAt`; inject a deterministic
   `newId` and assert each per-space projection carries its own fresh id.
-- **Depends on**: PR 21 (`NormalizedGitHubEvent` stable; same-file
+- **Depends on**: PR 20 (`NormalizedGitHubEvent` stable; same-file
   sequencing).
 
 ---
