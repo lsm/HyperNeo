@@ -789,7 +789,14 @@ anywhere in this plan.
   after the 15-second timer fired, the timeout triple (`onSendComplete` +
   `onError` + toast) has already run, yet the resolved leg still calls
   `onMessageAccepted` and returns `true` (`useSendMessage.ts:135-141`) —
-  contradictory UI outcomes the pipeline must guard, not inherit. A direct
+  contradictory UI outcomes the pipeline must keep coherent rather than
+  "fix" by failing the send: the late acceptance still reconciles the
+  store and still returns `true` (codex round 5: `MessageInput.tsx:851-858`
+  restores the composer draft whenever `onSend` returns `false`, so failing
+  an accepted send re-queues it as a draft and — the RPC being
+  non-idempotent — invites a double-send); the genuine defects the guard
+  removes are the late-REJECTION double failure report and the shared
+  timer ref under overlapping sends. A direct
   mixed pipeline (ADR default) is the honest shape; porting 738 lines of
   stagedRun machinery for one caller is not.
 - **Proposed combinator.** Direct mixed pipeline (review correction round
@@ -852,17 +859,23 @@ anywhere in this plan.
   notification (`ChatContainer.tsx:635-652` records the messageId and
   refreshes the store when the accepted message never becomes visible;
   skipping it can strand a late-accepted message whose live update was also
-  missed) — but stamps the timed-out outcome rather than success, so the
-  user sees exactly one terminal report. Late REJECTION: the guard
+  missed) — AND stamps the delivery outcome `true` (codex round 5:
+  `MessageInput.tsx:851-858` restores the saved draft whenever `onSend`
+  returns `false`, so stamping failure for an ACCEPTED message re-queues it
+  as a resendable draft and — the RPC being non-idempotent — invites a
+  double-send; the timeout already delivered the one user-facing failure
+  report, and the guard suppresses only a SECOND report, never the
+  delivery result). Late REJECTION: the guard
   intercepts the throw inside the stage, STAMPS the timed-out failure
   outcome (`false`) FIRST, then swallows it — the shell's
   unconditional catch must not run a second
   `onError`/toast/`onSendComplete` round on top of the timeout triple, and
   the wrapper must still resolve `false` per its unchanged boolean contract
   (codex round 4: swallowing without stamping leaves `outcome` null and the
-  hook returns `undefined` instead of `false`). One
-  send, one terminal failure report; acceptance reconciliation always
-  runs).
+  hook returns `undefined` instead of `false`); draft restoration on a
+  genuinely undelivered send is correct. One
+  send, one terminal failure report; acceptance reconciliation and the
+  delivery result always survive).
   Review correction on
   the connected-without-hub diversion: when the live `getHub()` read comes
   back empty, the stage must run the SAME completion sequence as the
@@ -895,9 +908,10 @@ anywhere in this plan.
   messageId callback, timeout cleared), failure path (sanitized message,
      `onSendComplete`, timeout cleared), timeout fire path, AND the
      late-completion paths (fake timers: a request RESOLVING after the timer
-     fired — pin TODAY's contradiction, the timeout triple PLUS the late
-     `onMessageAccepted` + `true` return, before the generation guard
-     deliberately changes it; and a request REJECTING after the timer fired —
+     fired — pin TODAY's behavior, the timeout triple PLUS the late
+     `onMessageAccepted` + `true` return, which the pipeline PRESERVES
+     (codex round 5: an accepted send must not come back as a resendable
+     draft); and a request REJECTING after the timer fired —
      pin TODAY's double terminal report, the timeout triple PLUS the catch's
      second `onError`/toast/`onSendComplete`) AND the overlapping-send path
      (codex round 3: `ChatContainer.tsx:653-657` passes
@@ -939,9 +953,10 @@ anywhere in this plan.
   invocation's handle in per-call state, `clearTimeout` clears only that
   invocation's handle, and the exported `clearSendTimeout` (unmount
   cleanup) clears ALL outstanding handles. The late-completion generation
-  guard (codex rounds 2+3) is a deliberate behavior change over today's
-  contradictory double-reports — late success keeps the reconciliation
-  callback but changes the outcome; late rejection is swallowed; the
+  guard (codex rounds 2+3+5) changes behavior only where today is defective
+  — late success keeps the reconciliation callback AND the `true` return
+  (round 5: `MessageInput.tsx:851-858` must not restore an accepted
+  message's draft); late rejection becomes a single-report `false`; the
   pipeline never re-arms — and its rows land in the same slice as the
   guard, with the current behavior characterized first.
 
@@ -1325,8 +1340,9 @@ optional router phase 2. No per-site section is left uncovered.
   hub check, messageId callback, timeout cleared), failure path (sanitized
   message, `onSendComplete`, timeout cleared), timeout fire path, AND the
   late-completion paths (review corrections, codex rounds 2+3: fake timers —
-  a request RESOLVING after the timer fired pins TODAY's contradiction, the
-  timeout triple PLUS the late `onMessageAccepted` + `true` return, and a
+  a request RESOLVING after the timer fired pins TODAY's behavior — the
+  timeout triple PLUS the late `onMessageAccepted` + `true` return, which
+  the pipeline PRESERVES (codex round 5) — and a
   request REJECTING after the timer fired pins TODAY's double terminal
   report, the timeout triple PLUS the catch's second
   `onError`/toast/`onSendComplete`, because `message.send` is not
@@ -1362,8 +1378,11 @@ optional router phase 2. No per-site section is left uncovered.
   by the hook and threaded through the `armTimeout` port, and BOTH
   post-await legs consult it: a late SUCCESS still calls `onMessageAccepted`
   (store reconciliation — `ChatContainer.tsx:635-652` refreshes when the
-  accepted message never becomes visible; never suppress it) but stamps the
-  timed-out outcome, and a late REJECTION is intercepted inside the stage —
+  accepted message never becomes visible; never suppress it) and stamps the
+  delivery outcome `true` (codex round 5: `MessageInput.tsx:851-858`
+  restores the draft on a `false` return — an accepted message must not
+  come back as a resendable draft), and a late REJECTION is intercepted
+  inside the stage —
   stamping the timed-out failure outcome (`false`) first (codex round 4: the
   wrapper must still resolve `false`, never `undefined`) — so
   the shell's catch adds no second `onError`/toast/`onSendComplete` round),
@@ -1398,11 +1417,12 @@ optional router phase 2. No per-site section is left uncovered.
 - **Tests**: `src/hooks/__tests__/useSendMessage.test.ts` and
   `src/islands/__tests__/ChatContainerSendOverride.test.ts` (PR 13 rows stay
   green; the PR 13 late-completion and overlapping-send rows are UPDATED
-  here to the guarded expectations — late resolution after a fired timer
-  STILL calls `onMessageAccepted` but yields the timed-out outcome, a late
-  rejection adds no second error round AND resolves `false` (assert the
+  here to the guarded expectations — a late rejection after a fired timer
+  adds no second error round AND resolves `false` (assert the
   returned boolean, codex round 4), and overlapping sends each keep
-  their own timer with no false timeout — as the deliberate divergences)
+  their own timer with no false timeout — as the deliberate divergences;
+  the late-SUCCESS row stays green UNCHANGED (`onMessageAccepted` + `true`
+  return preserved, codex round 5)
   plus the new pipeline-level admission decision-table test.
 - **Depends on**: PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
   unchanged).
