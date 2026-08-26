@@ -264,9 +264,13 @@ gate's hold lifecycle):
   hard gate, drain once more immediately before creating the gated shape — the setup
   cancellation itself produces outcomes.
 - **Release:** review any outcome produced while held (before resuming — the resume
-  bumps the revision); clear any retained cadence **before** `resume_goal` (resuming
-  reactivates the schedule against an empty pointer), restoring it only after the next
-  outcome is reviewed — the explicitly triggered replacement's, or the retained task's
+  bumps the revision); clear any retained cadence **before** `resume_goal` — first
+  durably recording its cron expression and timezone (goal `nextSteps` or agent memory),
+  because clearing (`check_in_cron_expression: null`) hard-deletes the schedule and its
+  values cannot be recovered from the goal afterwards; resuming reactivates the
+  schedule against an empty pointer. Restore it — recreating from the recorded values —
+  only after the next
+  outcome is reviewed, the explicitly triggered replacement's or the retained task's
   when setup deliberately kept it; revalidate that no other recorded hold
   remains; resume only when this sequence owns the pause or all other gates are
   cleared; re-trigger only when the active-task pointer is confirmed empty; a
