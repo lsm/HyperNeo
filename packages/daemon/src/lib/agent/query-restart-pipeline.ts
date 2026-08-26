@@ -79,9 +79,10 @@ const stages: ReadonlyArray<{
   step: (
     ctx: QueryRestartPipelineCtx
   ) => Promise<QueryRestartPipelineCtx> | QueryRestartPipelineCtx;
+  ownershipGateBefore?: boolean;
   ownershipGateAfter?: boolean;
 }> = [
-  { step: resetTurnGuardsStage },
+  { step: resetTurnGuardsStage, ownershipGateBefore: true },
   { step: publishErrorClearStage, ownershipGateAfter: true },
   { step: stopQueryStage, ownershipGateAfter: true },
   { step: settleSuppressedIdleStage, ownershipGateAfter: true },
@@ -96,6 +97,9 @@ let api = (
   })('query-restart') as PipelineAPI
 ).input(['ctx']);
 for (const stage of stages) {
+  if (stage.ownershipGateBefore) {
+    api = api.pipe(recheckOwnershipStage, 'ctx', 'ctx').pipe('!haltIfSuperseded', 'ctx');
+  }
   api = api.pipe(stage.step, 'ctx', 'ctx');
   if (stage.ownershipGateAfter) {
     api = api.pipe(recheckOwnershipStage, 'ctx', 'ctx').pipe('!haltIfSuperseded', 'ctx');

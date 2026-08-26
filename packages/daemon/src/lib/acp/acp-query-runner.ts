@@ -1032,6 +1032,7 @@ export class AcpQueryRunner {
           return false;
         }
         const terminalFence = stateManager.beginTerminalIdle();
+        this.ctx.registerRunnerTerminalFence?.(queryGeneration, terminalFence);
         try {
           await errorManager.handleError(
             session.id,
@@ -1049,9 +1050,11 @@ export class AcpQueryRunner {
           );
         } catch (reportError) {
           stateManager.cancelTerminalFence(terminalFence);
+          this.ctx.clearRunnerTerminalFence?.(queryGeneration);
           throw reportError;
         }
         await stateManager.setIdle({ fence: terminalFence });
+        this.ctx.clearRunnerTerminalFence?.(queryGeneration);
         return true;
       }
     }

@@ -291,6 +291,7 @@ export class AgentSession
     return tracked.isLive();
   }
   private _queryGeneration = 0;
+  private runnerTerminalFences = new Map<number, IdleOwnerScope>();
   queryAbortController: AbortController | null = null;
   firstMessageReceived = false;
   startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1451,6 +1452,21 @@ export class AgentSession
       this.deliveryResponseObserver.pendingStart = false;
     }
     return next;
+  }
+
+  registerRunnerTerminalFence(generation: number, fence: IdleOwnerScope): void {
+    this.runnerTerminalFences.set(generation, fence);
+  }
+
+  clearRunnerTerminalFence(generation: number): void {
+    this.runnerTerminalFences.delete(generation);
+  }
+
+  retireRunnerTerminalFence(generation: number): void {
+    const fence = this.runnerTerminalFences.get(generation);
+    if (!fence) return;
+    this.runnerTerminalFences.delete(generation);
+    this.stateManager.cancelTerminalFence(fence);
   }
 
   getQueryGeneration(): number {

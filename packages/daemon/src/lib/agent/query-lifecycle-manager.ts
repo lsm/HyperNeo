@@ -77,6 +77,7 @@ export interface QueryLifecycleManagerContext {
   cleanupEventSubscriptions(): void;
   clearModelsCache(): Promise<void>;
   getQueryGeneration?(): number;
+  retireRunnerTerminalFence?(generation: number): void;
   isRateLimitEpisodeSuperseded?(generation: number): boolean;
 }
 
@@ -200,7 +201,11 @@ export class QueryLifecycleManager {
   async stop(options?: { timeoutMs?: number; catchQueryErrors?: boolean }): Promise<void> {
     const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
     const { messageQueue } = this.ctx;
-    const stopGeneration = this.ctx.getQueryGeneration?.() ?? null;
+    const stopGeneration = this.ctx.getQueryGeneration?.();
+
+    if (stopGeneration !== undefined) {
+      this.ctx.retireRunnerTerminalFence?.(stopGeneration);
+    }
 
     this.ctx.messageHandler.cancelSuppressedResultWait();
     this.ctx.messageHandler.retirePendingTerminalFence();
@@ -290,6 +295,9 @@ export class QueryLifecycleManager {
     }
 
     this.ctx.messageHandler.retirePendingTerminalFence({ generation: stopGeneration });
+    if (stopGeneration !== undefined) {
+      this.ctx.retireRunnerTerminalFence?.(stopGeneration);
+    }
   }
 
   async restart(options?: { idleOwner?: IdleOwnerScope }): Promise<void> {

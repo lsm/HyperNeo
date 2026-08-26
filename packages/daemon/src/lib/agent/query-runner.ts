@@ -347,6 +347,10 @@ export interface QueryRunnerContext {
     queuedMessages?: SDKMessage[],
     runnerGeneration?: number
   ): Promise<void>;
+
+  registerRunnerTerminalFence?(generation: number, fence: unknown): void;
+
+  clearRunnerTerminalFence?(generation: number): void;
   onSlashCommandsFetched(): Promise<void>;
   onModelsFetched(): Promise<void>;
   onMarkApiSuccess(message: SDKMessage): Promise<void>;
@@ -1202,6 +1206,7 @@ export class QueryRunner {
         if (route.action === 'api_validation') {
           if (!finalizer.skipBeginTerminalIdle) {
             terminalFence = stateManager.beginTerminalIdle();
+            this.ctx.registerRunnerTerminalFence?.(queryGeneration, terminalFence);
           }
           try {
             await this.displayErrorAsAssistantMessage(route.text, {
@@ -1209,11 +1214,13 @@ export class QueryRunner {
             });
           } catch (error) {
             if (terminalFence) stateManager.cancelTerminalFence(terminalFence);
+            this.ctx.clearRunnerTerminalFence?.(queryGeneration);
             throw error;
           }
         } else if (route.action === 'terminal') {
           if (!finalizer.skipBeginTerminalIdle) {
             terminalFence = stateManager.beginTerminalIdle();
+            this.ctx.registerRunnerTerminalFence?.(queryGeneration, terminalFence);
           }
           try {
             if (!finalizer.skipErrorManager) {
@@ -1235,12 +1242,14 @@ export class QueryRunner {
             }
           } catch (reportError) {
             if (terminalFence) stateManager.cancelTerminalFence(terminalFence);
+            this.ctx.clearRunnerTerminalFence?.(queryGeneration);
             throw reportError;
           }
         }
 
         if (!finalizer.skipCatchIdle) {
           await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
+          this.ctx.clearRunnerTerminalFence?.(queryGeneration);
         }
       }
     } finally {
