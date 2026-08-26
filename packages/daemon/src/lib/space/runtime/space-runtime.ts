@@ -1924,6 +1924,11 @@ export class SpaceRuntime {
       nodeId: execution.workflowNodeId,
       agentName: execution.agentName,
     };
+    const currentExecution = resolveCurrentQueueableOrActiveExecution(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
+    if (!currentExecution || currentExecution.agentSessionId !== sessionId) return null;
     const task = this.config.taskRepo.getTask(target.taskId);
     if (
       !task ||
@@ -1990,8 +1995,13 @@ export class SpaceRuntime {
           for (const mark of marks) {
             store.markDeliveryDelivered(mark.eventId, mark.deliveryKey);
             store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
+            store.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
           }
         })();
+        for (const mark of marks) {
+          this.clearExternalEventRetry(mark.deliveryKey);
+          this.clearQueuedDelivery(target, mark.deliveryKey);
+        }
       },
     };
     for (const row of claimedRows) this.externalEventDeliveriesInFlight.add(row.deliveryKey);
