@@ -72,6 +72,8 @@ Prefer unit/component tests; add E2E coverage only when explicitly requested or 
 
 Whenever decomposing a feature, refactor, removal, or change request into tasks/PRs, follow the slice ladder below. It is what keeps PRs small and reviewable — construction and integration rarely share a diff. Reference implementation: the external-events delivery redesign (issues #3013–#3027).
 
+**Measure before cutting.** Slice budgets and slice counts come from reading the code, never from the description. Before decomposing, inspect the touched files, call sites, and existing test mass — for a re-slice, measure the mined branch (`git diff --shortstat origin/dev...<branch>`, three-dot, never GitHub's displayed diff). Work against a size limit (~300 prod lines per PR; tests ride their slice) and let the count follow: if an honest measure says an imagined slice is a multiple of the limit, it is multiple slices — the count is an output of measurement, not an input. Estimating from a description alone is the known root cause of PR expansion.
+
 1. **Pin** — characterization tests for existing behavior that must survive. Pin only what survives; never pin what a later slice deletes (those tests die with the code).
 2. **Extract** — refactor existing logic into pure functions (verbatim moves, zero behavior change); existing suites pass unmodified. Equivalence pins (new ⟺ old classifier, new source ≡ old source) turn semantic changes into reviewable test diffs.
 3. **Build** — new pure functions with tests; add ONE direct superpipe pipeline per business path **where a pipeline fits** (per-stage tests) — additive dead code, nothing calls them yet. Hot per-event loops and plain helper extractions stay plain functions (ADR 0004 exclusions).
