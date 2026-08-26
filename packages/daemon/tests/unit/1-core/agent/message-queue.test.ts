@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
 describe('MessageQueue', () => {
   let queue: MessageQueue;
@@ -984,6 +984,356 @@ describe('MessageQueue', () => {
       );
       q.clear();
       expect(await settled).toMatchObject({ message: 'Interrupted by user' });
+    });
+  });
+
+  describe('delivered-compaction lifecycle', () => {
+    it('counts a sent internal /compact as awaiting its compact boundary', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(q.hasInFlightInternalCompaction()).toBe(true);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+
+      result.value.onSent();
+      await sent;
+      expect(q.hasInFlightInternalCompaction()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      q.stop();
+    });
+
+    it('tracks internal compactions as outstanding while queued', () => {
+      const q = new MessageQueue();
+      const queued = q.enqueue('/compact', true, { durable: true });
+      expect(q.hasQueuedMessages()).toBe(true);
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+
+      q.clear();
+      queued.catch(() => {});
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+    });
+
+    it('acknowledging a yielded internal compaction counts it as delivered', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueueWithId('compact-yielded', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+      expect(q.hasYielded('compact-yielded')).toBe(true);
+
+      expect(q.acknowledgeYielded('compact-yielded')).toBe(true);
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      q.stop();
+    });
+
+    it('does not count non-compaction internal messages as compactions', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueue('/context', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+
+      expect(q.hasQueuedInternalCompaction()).toBe(false);
+      expect(q.hasInFlightInternalCompaction()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      q.stop();
+    });
+
+    it('clear resets boundary accounting', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+
+      q.clear();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      expect(q.hasOutstandingNonCompactionMessages()).toBe(false);
+    });
+
+    it('counts a durable internal compaction delivered but unacknowledged until its timeout', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+
+      const delivery = q.enqueueWithId('compact-timeout', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+
+      await delivery;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+      q.stop();
+    });
+
+    it('acknowledges one delivered compaction per compact boundary', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const first = q.enqueueWithId('compact-a', '/compact', true, { durable: true });
+      const second = q.enqueueWithId('compact-b', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const a = await generator.next();
+      a.value.onSent();
+      await first;
+      const b = await generator.next();
+      b.value.onSent();
+      await second;
+
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      q.stop();
+    });
+  });
+
+  describe('sent-prompt lifecycle', () => {
+    it('remembers sent non-compaction prompts until forgotten or pruned', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const delivery = q.enqueueWithId('prompt-1', 'hello', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await delivery;
+
+      expect(q.getSentPromptContent('prompt-1')).toBe('hello');
+      q.forgetSentPrompt('prompt-1');
+      expect(q.getSentPromptContent('prompt-1')).toBeUndefined();
+
+      const second = q.enqueueWithId('prompt-2', 'again', false, { durable: true });
+      const secondResult = await generator.next();
+      secondResult.value.onSent();
+      await second;
+      expect(q.getSentPromptContent('prompt-2')).toBe('again');
+      q.pruneSentPrompts();
+      expect(q.getSentPromptContent('prompt-2')).toBeUndefined();
+      q.stop();
+    });
+
+    it('marks the boundary as having non-compaction sends while prompts were sent', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      expect(q.hasOutstandingNonCompactionMessages()).toBe(false);
+      const delivery = q.enqueue('user prompt', false, { durable: true });
+      expect(q.hasOutstandingNonCompactionMessages()).toBe(true);
+
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await delivery;
+      expect(q.hasOutstandingNonCompactionMessages()).toBe(true);
+
+      q.clearNonCompactionSentSinceBoundary();
+      expect(q.hasOutstandingNonCompactionMessages()).toBe(false);
+      q.stop();
+    });
+
+    it('caps remembered sent prompts at the most recent 32', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const deliveries: Array<Promise<string>> = [];
+      for (let i = 0; i < 33; i++) {
+        deliveries.push(q.enqueue(`prompt-${i}`, false, { durable: true }));
+      }
+      const generator = q.messageGenerator(testSessionId);
+      for (let i = 0; i < 33; i++) {
+        const result = await generator.next();
+        result.value.onSent();
+      }
+      const ids = await Promise.all(deliveries);
+
+      expect(q.getSentPromptContent(ids[0])).toBeUndefined();
+      expect(q.getSentPromptContent(ids[1])).toBe('prompt-1');
+      expect(q.getSentPromptContent(ids[32])).toBe('prompt-32');
+      q.stop();
+    });
+
+    it('treats a resent prompt id as the most recent entry', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const deliveries: Array<Promise<void>> = [];
+      for (let i = 0; i < 33; i++) {
+        deliveries.push(q.enqueueWithId(`prompt-${i}`, `text-${i}`, false, { durable: true }));
+      }
+      const generator = q.messageGenerator(testSessionId);
+      for (let i = 0; i < 33; i++) {
+        const result = await generator.next();
+        result.value.onSent();
+      }
+      await Promise.all(deliveries);
+      expect(q.getSentPromptContent('prompt-0')).toBeUndefined();
+
+      const resend = q.enqueueWithId('prompt-0', 'text-0-retry', false, { durable: true });
+      const resent = await generator.next();
+      resent.value.onSent();
+      await resend;
+
+      expect(q.getSentPromptContent('prompt-0')).toBe('text-0-retry');
+      expect(q.getSentPromptContent('prompt-1')).toBeUndefined();
+      q.stop();
+    });
+  });
+
+  describe('delivery gate', () => {
+    it('holds queued messages until the gate resolves', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      q.setDeliveryGate(gate);
+
+      let yielded = false;
+      const consumer = (async () => {
+        for await (const entry of q.messageGenerator(testSessionId)) {
+          yielded = true;
+          entry.onSent();
+          break;
+        }
+      })();
+      const delivery = q.enqueue('first prompt', false, { durable: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(yielded).toBe(false);
+
+      releaseGate();
+      await consumer;
+      await delivery;
+      expect(yielded).toBe(true);
+      q.stop();
+    });
+
+    it('keeps waiting for new messages while a gate spans an empty queue', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      q.setDeliveryGate(gate);
+
+      let delivered: string | undefined;
+      const consumer = (async () => {
+        for await (const entry of q.messageGenerator(testSessionId)) {
+          delivered = entry.message.message.content[0].text;
+          entry.onSent();
+          break;
+        }
+      })();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const delivery = q.enqueue('after empty', false, { durable: true });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(delivered).toBeUndefined();
+
+      releaseGate();
+      await consumer;
+      await delivery;
+      expect(delivered).toBe('after empty');
+      q.stop();
+    });
+
+    it('a rejected gate does not wedge the queue', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.setDeliveryGate(Promise.reject(new Error('gate failed')));
+
+      const delivery = q.enqueue('survivor', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.value.message.message.content[0].text).toBe('survivor');
+      result.value.onSent();
+      await delivery;
+      q.stop();
+    });
+
+    it('stop ends the generator even while a delivery gate never settles', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.setDeliveryGate(new Promise<void>(() => {}));
+      const delivery = q.enqueue('gated', false, { durable: true });
+
+      const generator = q.messageGenerator(testSessionId);
+      const pending = generator.next();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      q.stop();
+
+      const outcome = await pending;
+      expect(outcome.done).toBe(true);
+      q.clear();
+      delivery.catch(() => {});
+    });
+
+    it('a restarted generation consumes normally after stop dropped a never-settling gate', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.setDeliveryGate(new Promise<void>(() => {}));
+      const stranded = q.enqueue('stranded', false, { durable: true });
+
+      const firstGenerator = q.messageGenerator(testSessionId);
+      const firstPending = firstGenerator.next();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      q.stop();
+      await firstPending;
+      q.clear();
+      stranded.catch(() => {});
+
+      q.start();
+      const delivery = q.enqueue('after restart', false, { durable: true });
+      const secondGenerator = q.messageGenerator(testSessionId);
+      const result = await secondGenerator.next();
+      expect(result.value.message.message.content[0].text).toBe('after restart');
+      result.value.onSent();
+      await delivery;
+      q.stop();
+    });
+  });
+
+  describe('enqueue options passthrough', () => {
+    it('admits a prepend message ahead of earlier admissions', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const first = q.enqueue('first', false, { durable: true });
+      const urgent = q.enqueue('urgent', false, { durable: true, prepend: true });
+      expect(q.hasQueuedMessages()).toBe(true);
+
+      const generator = q.messageGenerator(testSessionId);
+      const firstResult = await generator.next();
+      expect(firstResult.value.message.message.content[0].text).toBe('urgent');
+      firstResult.value.onSent();
+      const secondResult = await generator.next();
+      expect(secondResult.value.message.message.content[0].text).toBe('first');
+      secondResult.value.onSent();
+      await Promise.all([first, urgent]);
+      q.stop();
     });
   });
 });
