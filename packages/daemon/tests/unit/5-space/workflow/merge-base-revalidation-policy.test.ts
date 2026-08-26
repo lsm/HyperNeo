@@ -204,7 +204,7 @@ describe('reviewer contract post-regen base-advance pins (m216)', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('A base-OID excursion alone');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('recorded, not discarded');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'when the head never moved and the final pre-artifact `mergeStateStatus` is CLEAN or HAS_HOOKS'
+      'when the head never moved and the final pre-artifact `mergeStateStatus` is CLEAN, HAS_HOOKS, or BLOCKED (only `DIRTY` signals a merge conflict'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       `base branch had advanced (<start baseRefOid>-><finish baseRefOid>); ${AUDIT_ACCEPTANCE_LINE}`

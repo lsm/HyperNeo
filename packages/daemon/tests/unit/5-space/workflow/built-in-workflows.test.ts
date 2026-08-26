@@ -37,6 +37,9 @@ import {
   RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
   RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
   RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT,
+  RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
+  RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT,
   RETIRED_PR_MERGER_SLOT_PROMPT,
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
@@ -1963,6 +1966,110 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterResearchNode.agents[0]!.customPrompt?.value).toBe(RESEARCH_PROMPT);
     expect(afterResearchNode.agents[0]!.customPrompt?.value).not.toBe(
       RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT
+    );
+  });
+
+  test('re-stamp upgrades polling coder prompts to the event-driven template', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+    const coderOnly = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
+    const coderOnlyNode = coderOnly.nodes[0]!;
+    const research = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === RESEARCH_WORKFLOW.name)!;
+    const researchNode = research.nodes.find((n) => n.name === 'Research')!;
+
+    const staleCoding = manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: {
+                        value: RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
+                      },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    const staleCoderOnly = manager.updateWorkflow(coderOnly.id, {
+      nodes: coderOnly.nodes.map((n) =>
+        n.id !== coderOnlyNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: {
+                        value: RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
+                      },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    const staleResearch = manager.updateWorkflow(research.id, {
+      nodes: research.nodes.map((n) =>
+        n.id !== researchNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0
+                  ? {
+                      ...a,
+                      customPrompt: { value: RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT },
+                    }
+                  : a
+              ),
+            }
+      ),
+    })!;
+    expect(staleCoding).toBeTruthy();
+    expect(staleCoderOnly).toBeTruthy();
+    expect(staleResearch).toBeTruthy();
+    for (const workflow of [coding, coderOnly, research]) {
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        'stale-polling-prompts',
+        workflow.id
+      );
+    }
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+    expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
+    expect(result.restamped).toContain(RESEARCH_WORKFLOW.name);
+
+    const afterCoding = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = afterCoding.nodes.find((n) => n.name === 'Coding')!;
+    expect(afterCodingNode.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
+    expect(afterCodingNode.agents[0]!.customPrompt?.value).toContain(
+      'Wait for delivered PR events'
+    );
+
+    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
+    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+    expect(afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value).toContain(
+      'Wait for delivered PR events'
+    );
+
+    const afterResearch = manager.getWorkflow(research.id)!;
+    const afterResearchNode = afterResearch.nodes.find((n) => n.name === 'Research')!;
+    expect(afterResearchNode.agents[0]!.customPrompt?.value).toBe(RESEARCH_PROMPT);
+    expect(afterResearchNode.agents[0]!.customPrompt?.value).not.toBe(
+      RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT
     );
   });
 
