@@ -178,7 +178,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   1. Define `stagedRun<FlushFoldState>('fold-deferred-at-flush', (s) => [...])`.
   2. `snapshot` runs `partitionDeferredExternalEventRows` and stores `partition`.
   3. `decide` halts (`!proceed` branch) if `partition.digestRows.length === 0`.
-  4. `effect` `supersede-stale-folds` calls `ops.supersedeStaleFolds(keepUuid)`.
+  4. `effect` `supersede-stale-folds` calls `ops.supersedeStaleFolds?.(keepUuid)` —
+     an OPTIONAL, GUARDED stage (review correction PR #2983 round 8:
+     `supersedeStaleFolds` is an optional member of `DeferredEventDigestRowOps`
+     and the current fold uses optional chaining, so an unconditional
+     dereference aborts before the digest is saved when a minimal ops
+     implementation omits it).
   5. `effect` `save-fold-row` calls `saveFoldRowIdempotently` with deterministic
      UUID and stores its return via an EXTERNAL MUTABLE BOX (a
      `SpawnAttemptBox`-style holder owned by the shell) ALLOCATED PER
@@ -371,7 +376,10 @@ The repo already has several proven pipelines. Use these as the model for each s
   (no `taskAgentManager` configured → the exact `Task agent communication is
   not available in this context.` failure BEFORE task identification —
   review correction PR #2983 round 7), the target-admission gates
-  (`task_id`/`task_number`, space, archived, the DEPRECATED `task-agent`
+  (`task_id`/`task_number` with `task_id` WINNING when both are supplied and
+  distinct per-identifier error responses — NOT the lookup tools'
+  task-number-first order; review correction PR #2983 round 8; space,
+  archived, the DEPRECATED `task-agent`
   target rejection — `target`/`node_id === 'task-agent'` returns the exact
   `Target "task-agent" is no longer supported. Use a worker target or
   node_id.` error at its current precedence, after the space/archived gates
@@ -578,8 +586,8 @@ The repo already has several proven pipelines. Use these as the model for each s
   ```
 - **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction: the node-agent `get_task` shell must MAP `spaceMismatch` to `notFound` (or normalize an out-of-space task to `null` before the decision) — the current handler deliberately masks a valid foreign-space task as the same `Task not found` response as an unknown UUID, and exposing `spaceMismatch` would reveal that the foreign task exists, changing the tool contract. Review correction PR #2983 round 3: `get_task_detail` masks the SAME way — its current `SpaceTaskManager.getTask`/`getTaskByNumber` lookups already normalize a foreign-space task to `null`, so the migrated shell maps `spaceMismatch` to the identical `Task not found` response (P10); only `list_task_members` keeps its existing explicit `does not belong to this space` mismatch response, which it emits today.
 - **Shell/effect wiring**:
-  - `get_task_detail` shell: runs the `decisionRun`, maps `spaceMismatch` to the same `Task not found` response as `notFound` (round-3 correction above), returns `jsonResult`.
-  - `list_task_members`: ONE complete pipeline — shared target-resolution
+  - `get_task_detail` shell: runs its ONE complete pipeline (the identifier-dependent lookup as the pipeline's async snapshot stage — review correction PR #2983 round 8, not a shell pre-step feeding an admission-only runner), maps `spaceMismatch` to the same `Task not found` response as `notFound` (round-3 correction above), returns `jsonResult`.
+  - `list_task_members`: ONE complete pipeline — its task lookup in the same snapshot stage, shared target-resolution
     stages, then if
     `task.workflowRunId` is null returns `success: true, executions: []`
     PLUS the existing `task_id` and the message `This task has no associated
@@ -592,7 +600,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   2. Replace the inline if-cascades in both tools with the `decisionRun`.
   3. `list_task_members` composes the workflow-run branch and the `nodeExecutionRepo.listByWorkflowRun` read as stages of its complete pipeline (review correction round 23 — not a post-decision shell read).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add tests for missing identifier, not found, and space mismatch.
-- **Risks/caveats**: `get_task_detail` is currently `await taskManager.getTaskByNumber` (async), while `taskRepo.getTaskByNumber` is sync. The `decisionRun` should accept a `getTaskByNumber` function returning a `Promise` or `SpaceTask`? `decisionRun` is sync; gather the task in the shell before calling the pipeline, or use a `stagedRun` if the lookup must be in the pipeline. Because lookups are fast and the rest is pure, gather in the shell and pass `task`/`taskInSpace` to the `decisionRun`.
+- **Risks/caveats**: `get_task_detail` is currently `await taskManager.getTaskByNumber` (async), while `taskRepo.getTaskByNumber` is sync. Review correction PR #2983 round 8: the lookup runs AS THE PIPELINE'S OWN SNAPSHOT STAGE, never as a shell pre-step — a shell-fed admission-only `decisionRun` splits each lookup business path at its read boundary, exactly the split the one-direct-pipeline rule forbids. Because the read is async and the operation has no effects, each lookup tool composes as a raw async `superpipe` pipeline (or `stagedRun`) whose snapshot stage performs the identifier-dependent read and whose halt maps to the tool response; the shared admission gates stay the same branches either way.
 
 ### `packages/daemon/src/lib/space/tools/node-agent-tools.ts:get_task`
 
@@ -677,7 +685,23 @@ The repo already has several proven pipelines. Use these as the model for each s
   - `recover_transition` → `spaceRuntimeService.recoverWorkflowBackedTask` then optional field update.
   - `stop_for_status` → `spaceRuntimeService.stopWorkflowBackedTaskForStatus`.
   - `set_status` → `taskManager.setTaskStatus`.
-  - `fields_only` → `taskManager.updateTask`.
+  - `fields_only` → `taskManager.updateTask` — with the TWO-PHASE
+    dependency-added arm preserved (review correction PR #2983 round 8):
+    when an in-progress workflow-backed task receives changed `dependsOn`,
+    the current handler updates with safe params, INSPECTS the returned
+    state, and on `blocked`/`blockReason: 'dependency_added'` calls
+    `spaceRuntimeService.stopWorkflowBackedTask` (stopping the still-active
+    agents) instead of leaving them running on a blocked task; the
+    non-blocked path continues with the pointer-params follow-up write.
+  - Normalization stages ahead of the writes (review corrections
+    PR #2983 round 8): a WORKFLOW-SELECTION-CHANGE stage injects
+    `workflowModelOverrides: null` when `preferredWorkflowId` changes and
+    overrides are omitted (retained overrides authored for the previous
+    workflow could otherwise seed a reused `nodeId:agentName` key with a
+    stale model), and the early override validation runs against the
+    SYNTHETIC started snapshot when the request itself transitions the task
+    to `in_progress` (an in-request start locks overrides exactly like a
+    prior start).
   - Review correction: the current handler calls
     `ensureWorkflowOverridesStillUnlocked` immediately before EACH subsequent
     field update; the pipeline must re-check the lock (fresh task resnapshot
@@ -1184,29 +1208,29 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`, `packages/daemon/tests/unit/5-space/agent/node-agent-tools.test.ts`.
 - **Depends on**: none.
 
-### P9 — `feat(tools): add task-target-resolution decisionRun core (unwired)`
+### P9 — `feat(tools): add task-target-resolution admission gates for the lookup pipelines (unwired)`
 
 - ➕ additive core — prod Δ ≲80, test Δ ≲150
-- **Scope**: New `packages/daemon/src/lib/space/tools/task-target-resolution-pipeline.ts` exporting `decideTaskTargetResolution` with branches `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`; the shell gathers the task (async lookup stays outside) and passes `task`/`taskInSpace` in. Parallel-safe leaf.
-- **Lands**: the shared lookup admission core exists; no tool uses it yet.
+- **Scope**: New `packages/daemon/src/lib/space/tools/task-target-resolution-pipeline.ts` exporting the shared admission gates with branches `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction PR #2983 round 8: the gates land as the ADMISSION STAGES of each tool's COMPLETE pipeline — the identifier-dependent lookup runs as that pipeline's own async SNAPSHOT stage (raw async `superpipe`/`stagedRun` shape, since `decisionRun` is sync), never as a shell pre-step feeding an admission-only runner (that splits each lookup business path at its read boundary). Parallel-safe leaf.
+- **Lands**: the shared lookup admission gates exist; no tool uses them yet.
 - **Excludes**: tool rewiring (P10, P11).
 - **Tests**: branch rows for the three rejection arms in the P8 suites' style.
 - **Depends on**: P8.
 
-### P10 — `refactor(tools): run get_task_detail on task-target-resolution and list_task_members as a complete pipeline`
+### P10 — `refactor(tools): run get_task_detail and list_task_members as complete lookup pipelines`
 
 - 🔧 apply — prod Δ ≲100, test Δ ≲150
-- **Scope**: In `packages/daemon/src/lib/space/tools/space-agent-tools.ts`: `get_task_detail` runs the P9 `decisionRun` and maps its decision to `jsonResult`, mapping `spaceMismatch` to the same masked `Task not found` response as `notFound` (review correction PR #2983 round 3 — the current `taskManager` lookup already normalizes foreign-space tasks to `null`; surfacing a distinct mismatch would reveal foreign-task existence); `list_task_members` composes the shared target-resolution gates INTO its ONE complete `list-task-members` pipeline, with its EXPLICIT mismatch response retained, the workflow-run branch (null run → `success: true, executions: []` plus the existing `task_id` and the `This task has no associated workflow run.` message) and the `nodeExecutionRepo.listByWorkflowRun` read as STAGES — no admission-only fragment with a shell-side execution read (review correction round 23).
-- **Lands**: both lookup tools share one admission core, and `list_task_members` is a single complete pipeline; P8 pins stay green.
+- **Scope**: In `packages/daemon/src/lib/space/tools/space-agent-tools.ts`: `get_task_detail` becomes its ONE complete pipeline — the task lookup as the async snapshot stage, then the P9 admission gates, mapping `spaceMismatch` to the same masked `Task not found` response as `notFound` (review correction PR #2983 round 3 — the current `taskManager` lookup already normalizes foreign-space tasks to `null`; surfacing a distinct mismatch would reveal foreign-task existence), with the shell keeping only `jsonResult` mapping (review correction PR #2983 round 8 — no shell-side lookup feeding an admission-only `decisionRun`); `list_task_members` composes the shared target-resolution gates INTO its ONE complete `list-task-members` pipeline, with its task lookup in the same snapshot stage, its EXPLICIT mismatch response retained, the workflow-run branch (null run → `success: true, executions: []` plus the existing `task_id` and the `This task has no associated workflow run.` message) and the `nodeExecutionRepo.listByWorkflowRun` read as STAGES — no admission-only fragment with a shell-side execution read (review correction round 23).
+- **Lands**: both lookup tools are single complete pipelines sharing one admission gate group; P8 pins stay green.
 - **Excludes**: `send_message_to_task` (P55–P57) and the node-agent tool (P11).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts` (missing identifier / not found / space mismatch rows).
 - **Depends on**: P9.
 
-### P11 — `refactor(tools): route node-agent get_task through task-target-resolution`
+### P11 — `refactor(tools): route node-agent get_task through the complete lookup pipeline`
 
-- 🔧 apply — prod Δ ≲40, test Δ ≲80
-- **Scope**: `get_task` in `packages/daemon/src/lib/space/tools/node-agent-tools.ts` imports `decideTaskTargetResolution` and maps `spaceMismatch` to the pinned `Task not found` response; the inline `taskRepo` checks are deleted.
-- **Lands**: node-agent and Space-agent lookups converge on one `decisionRun` with identical error messages and `success` shapes.
+- 🔧 apply — prod Δ ≲40, test Δ ≸80
+- **Scope**: `get_task` in `packages/daemon/src/lib/space/tools/node-agent-tools.ts` composes its complete lookup pipeline (lookup snapshot stage + the P9 admission gates) and maps `spaceMismatch` to the pinned `Task not found` response; the inline `taskRepo` checks are deleted, and no shell-side lookup remains (review correction PR #2983 round 8).
+- **Lands**: node-agent and Space-agent lookups converge on one admission gate group with identical error messages and `success` shapes.
 - **Excludes**: other node-agent tools.
 - **Tests**: `packages/daemon/tests/unit/5-space/agent/node-agent-tools.test.ts`.
 - **Depends on**: P9 (parallel-safe with P10).
@@ -1214,7 +1238,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P12 — `test(handlers): pin workflow-override validation gates`
 
 - 📌 pins — prod Δ = 0, test Δ ≲250
-- **Scope**: Decision-table rows for `validateWorkflowModelOverrides` in `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts`: `overridesUndefined`, `lockedAfterStart` (task already started), `nullOverrides`, `invalidMap`, `noWorkflow`, `workflowDisabled`, `invalidKey` (`nodeId:agentName`), `valid` normalization. Parallel-safe leaf.
+- **Scope**: Decision-table rows for `validateWorkflowModelOverrides` in `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts`: `overridesUndefined`, `lockedAfterStart` (task already started), the IN-REQUEST-START case (the request itself transitions an unstarted task to `in_progress` while supplying overrides — validated against the synthetic started snapshot and rejected as locked — review correction PR #2983 round 8), `nullOverrides`, `invalidMap`, `noWorkflow`, `workflowDisabled`, `invalidKey` (`nodeId:agentName`), `valid` normalization, and the handler-level WORKFLOW-SWITCH normalization row (`preferredWorkflowId` changes with overrides omitted → `workflowModelOverrides: null` is injected — round 8). Parallel-safe leaf.
 - **Lands**: the validation contract the P13 helpers and P22 pipeline stages must reproduce is pinned.
 - **Excludes**: production changes.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
@@ -1306,10 +1330,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P22 — `feat(handlers): add the one-pipeline spaceTask.update core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
-- **Scope**: ONE direct RPC update pipeline: the P13 validation helpers as early rejection/normalization stages; the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps; a fresh-task resnapshot + lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary). Parallel-safe leaf.
+- **Scope**: ONE direct RPC update pipeline: the P13 validation helpers as early rejection/normalization stages — validated against the SYNTHETIC started snapshot when the request itself transitions the task to `in_progress` (an in-request start locks overrides — review correction PR #2983 round 8) — plus a WORKFLOW-SELECTION-CHANGE normalization stage injecting `workflowModelOverrides: null` when `preferredWorkflowId` changes and overrides are omitted (round 8: retained overrides could seed a reused `nodeId:agentName` key with a stale model); the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps — with the TWO-PHASE dependency-added arm inside `fields_only` (safe-params update → returned-state check → on `blocked`/`dependency_added` the guarded `stopWorkflowBackedTask` effect stops the active agents, else the pointer-params follow-up write — review correction PR #2983 round 8: a plain `updateTask`-only stage leaves agents running on a blocked task); a fresh-task resnapshot + lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary). Parallel-safe leaf.
 - **Lands**: the complete update operation exists as one composition; the handler still runs its old path.
 - **Excludes**: handler rewiring (P23) and the tool's complete update pipeline (P24).
-- **Tests**: branch/parity rows for every `plan.action` and the re-check-lock rows.
+- **Tests**: branch/parity rows for every `plan.action`, the re-check-lock rows, the in-request-start locks-overrides row, the workflow-switch clears-omitted-overrides row, and the dependency-added two-phase stop row (review correction PR #2983 round 8).
 - **Depends on**: P13, P14.
 
 ### P23 — `refactor(handlers): run spaceTask.update on its single pipeline`
@@ -1598,7 +1622,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P54 — `test(tools): pin send_message_to_task delivery arms`
 
 - 📌 pins — prod Δ = 0, test Δ ≲350 (split by family: target-resolution arms vs delivery-mode arms)
-- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: the MANAGER-AVAILABILITY gate (no `taskAgentManager` configured → the `Task agent communication is not available in this context.` failure BEFORE task identification — review correction PR #2983 round 7), target disambiguation (`task_id`/`task_number`), the DEPRECATED `task-agent` target rejection for BOTH input forms (`target === 'task-agent'` and `node_id === 'task-agent'`, at its current precedence after the space/archived gates — review correction PR #2983 round 5), the `target`/`node_id` DISAGREEMENT rejection (both supplied, different executions, including the long-horizon-handle conflict case, before any registry write or delivery — review correction PR #2983 round 6), the AMBIGUOUS-HANDLE rejections (`ambiguous_long_horizon_target` and `ambiguous_target`, each with its `node_id`-override escape, before any long-term or worker delivery — review correction PR #2983 round 7), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the MISSING-ACTIVATION-CALLBACK arm (no live session and no `activateNode` configured → the specific `activation_callback_missing` failure with no activation attempt and no queueing — review correction PR #2983 round 3), the caught `activateNode` failure returning `{ success: false, error }`, the OPTIONAL-DEPENDENCY FALLBACKS (an `@handle`/`@role` target without the long-term resolver/delivery dependencies → the `long_term_agent_messaging_unavailable` failure; activation with no session and no `pendingMessageQueue` → SUCCESS with `queued: false` and the `Retry after the node starts.` message — review correction PR #2983 round 4), and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on — INCLUDING that it is written only on the node-execution arms and NOT on the long-term `@handle`/`@role` arm, whose replies ride the envelope's `replyToSessionId`/`replyTargetHandle` instead (review correction PR #2983 round 2). Parallel-safe leaf.
+- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: the MANAGER-AVAILABILITY gate (no `taskAgentManager` configured → the `Task agent communication is not available in this context.` failure BEFORE task identification — review correction PR #2983 round 7), the DUAL-IDENTIFIER PRECEDENCE (when BOTH `task_id` and `task_number` are supplied, `task_id` WINS with its distinct per-identifier error responses — the OPPOSITE of the `get_task_detail` task-number-first convention; reusing that order validates and delivers against the wrong task — review correction PR #2983 round 8), target disambiguation (`task_id`/`task_number`), the DEPRECATED `task-agent` target rejection for BOTH input forms (`target === 'task-agent'` and `node_id === 'task-agent'`, at its current precedence after the space/archived gates — review correction PR #2983 round 5), the `target`/`node_id` DISAGREEMENT rejection (both supplied, different executions, including the long-horizon-handle conflict case, before any registry write or delivery — review correction PR #2983 round 6), the AMBIGUOUS-HANDLE rejections (`ambiguous_long_horizon_target` and `ambiguous_target`, each with its `node_id`-override escape, before any long-term or worker delivery — review correction PR #2983 round 7), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the MISSING-ACTIVATION-CALLBACK arm (no live session and no `activateNode` configured → the specific `activation_callback_missing` failure with no activation attempt and no queueing — review correction PR #2983 round 3), the caught `activateNode` failure returning `{ success: false, error }`, the OPTIONAL-DEPENDENCY FALLBACKS (an `@handle`/`@role` target without the long-term resolver/delivery dependencies → the `long_term_agent_messaging_unavailable` failure; activation with no session and no `pendingMessageQueue` → SUCCESS with `queued: false` and the `Retry after the node starts.` message — review correction PR #2983 round 4), and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on — INCLUDING that it is written only on the node-execution arms and NOT on the long-term `@handle`/`@role` arm, whose replies ride the envelope's `replyToSessionId`/`replyTargetHandle` instead (review correction PR #2983 round 2). Parallel-safe leaf.
 - **Lands**: every delivery arm — especially the reply-routing pin — is characterized before the cascade is replaced.
 - **Excludes**: production changes.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
@@ -1607,7 +1631,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P55 — `feat(tools): add deliver-task-message target-admission core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲250
-- **Scope**: First half of the ONE `deliver-task-message` pipeline: `DeliverTaskMessageState`; snapshot stages running the target parse (`ParsedAddress`), handle resolution, and execution resolution; the AVAILABILITY gate first (no `taskAgentManager` → the exact `Task agent communication is not available in this context.` response before task identification — review correction PR #2983 round 7); the target-admission gates (`task_id`/`task_number`, space, archived, the deprecated `task-agent` target rejection at its pinned precedence for both input forms — review correction PR #2983 round 5, target presence, workflow run) as direct inline stages, FOLLOWED by the TARGET-AGREEMENT gate: when BOTH `target` and `node_id` are supplied and resolve to different executions (including the long-horizon-handle conflict case), reject with the exact current `target and node_id disagree` response BEFORE the reply-registry write or any delivery effect (review correction PR #2983 round 6: selecting one resolution and delivering would send the message to an unintended worker while silently ignoring the conflicting identifier); and the AMBIGUOUS-HANDLE terminal gates (`ambiguous_long_horizon_target` for a task-scoped handle resolving to a long-horizon agent — `node_id` override or reject; `ambiguous_target` for an ambiguous worker/persistent resolution — `node_id`-matches-handle override or reject — review correction PR #2983 round 7); and the effect recording `replyRoutingRegistry.set(...)` on the NODE-EXECUTION path only — after the node-resolution gates, before the `injectLive`/activation/`queue` arms, and never on the `deliverLongTerm` arm where `resolved` is null and replies ride the envelope's reply handle (review correction PR #2983 round 2).
+- **Scope**: First half of the ONE `deliver-task-message` pipeline: `DeliverTaskMessageState`; snapshot stages running the target parse (`ParsedAddress`), handle resolution, and execution resolution; the AVAILABILITY gate first (no `taskAgentManager` → the exact `Task agent communication is not available in this context.` response before task identification — review correction PR #2983 round 7); the target-admission gates (`task_id`/`task_number` with the DUAL-IDENTIFIER PRECEDENCE gate — `task_id` WINS when both are supplied, preserving the tool's distinct per-identifier error responses and NOT reusing the lookup tools' task-number-first order — review correction PR #2983 round 8; space, archived, the deprecated `task-agent` target rejection at its pinned precedence for both input forms — review correction PR #2983 round 5; target presence, workflow run) as direct inline stages, FOLLOWED by the TARGET-AGREEMENT gate: when BOTH `target` and `node_id` are supplied and resolve to different executions (including the long-horizon-handle conflict case), reject with the exact current `target and node_id disagree` response BEFORE the reply-registry write or any delivery effect (review correction PR #2983 round 6: selecting one resolution and delivering would send the message to an unintended worker while silently ignoring the conflicting identifier); and the AMBIGUOUS-HANDLE terminal gates (`ambiguous_long_horizon_target` for a task-scoped handle resolving to a long-horizon agent — `node_id` override or reject; `ambiguous_target` for an ambiguous worker/persistent resolution — `node_id`-matches-handle override or reject — review correction PR #2983 round 7); and the effect recording `replyRoutingRegistry.set(...)` on the NODE-EXECUTION path only — after the node-resolution gates, before the `injectLive`/activation/`queue` arms, and never on the `deliverLongTerm` arm where `resolved` is null and replies ride the envelope's reply handle (review correction PR #2983 round 2).
 - **Lands**: the admission half of the delivery business path exists as pipeline stages.
 - **Excludes**: delivery-mode gates and effect arms (P56); tool wiring (P57).
 - **Tests**: admission rows (including both deprecated `task-agent` input forms, the `target`/`node_id` disagreement rows, the manager-unavailable precedence row, and both ambiguous-handle rejection/override rows) plus the reply-routing parity pin (node arms write the registry; the long-term arm does not).
@@ -1643,10 +1667,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P59 — `feat(events): add fold-deferred-at-flush staged core (unwired)`
 
 - ➕ additive core — prod Δ ≲120, test Δ ≲250
-- **Scope**: `stagedRun('fold-deferred-at-flush')` with `FlushFoldState`: `partitionDeferredExternalEventRows` as the first decide stage (halts `no-fold` on empty `digestRows`); effects `supersede-stale-folds` → `save-fold-row` (idempotent, deterministic UUID, return stored via an EXTERNAL MUTABLE BOX ALLOCATED PER INVOCATION — created inside the exported per-call shell, never module/runner scope, per review correction PR #2983 round 3 — followed by a `resnapshot` — `stagedRun` effects return only `void`/`won`/`superseded` and receive a shallow-copied view) → `mark-sources-superseded`; `halt` returns `DeferredEventDigestFlushResult`.
+- **Scope**: `stagedRun('fold-deferred-at-flush')` with `FlushFoldState`: `partitionDeferredExternalEventRows` as the first decide stage (halts `no-fold` on empty `digestRows`); effects `supersede-stale-folds` as an OPTIONAL GUARDED stage (`ops.supersedeStaleFolds?.(keepUuid)` — the interface member is optional and the current fold optional-chains it; an unconditional dereference aborts before the save on minimal ops implementations — review correction PR #2983 round 8) → `save-fold-row` (idempotent, deterministic UUID, return stored via an EXTERNAL MUTABLE BOX ALLOCATED PER INVOCATION — created inside the exported per-call shell, never module/runner scope, per review correction PR #2983 round 3 — followed by a `resnapshot` — `stagedRun` effects return only `void`/`won`/`superseded` and receive a shallow-copied view) → `mark-sources-superseded`; `halt` returns `DeferredEventDigestFlushResult`.
 - **Lands**: the flush fold exists as one staged composition.
 - **Excludes**: wiring (P60); the optional single `foldDeferredRows` repo primitive (open question 4).
-- **Tests**: staged rows — no digest rows, duplicate deterministic UUID, failure after save before mark, and an overlapping-flush row proving two concurrent invocations never cross-return each other's saved digest row through the box (review correction PR #2983 round 3).
+- **Tests**: staged rows — no digest rows, duplicate deterministic UUID, failure after save before mark, a MINIMAL-OPS row (no `supersedeStaleFolds` member — the fold still saves; review correction PR #2983 round 8), and an overlapping-flush row proving two concurrent invocations never cross-return each other's saved digest row through the box (review correction PR #2983 round 3).
 - **Depends on**: P58.
 
 ### P60 — `refactor(events): run flush folding on the staged pipeline`
