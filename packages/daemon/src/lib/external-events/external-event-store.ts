@@ -1,5 +1,7 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics.ts';
+import { validateLiteralTopic, validateSource } from './topic-validator.ts';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -15,8 +17,6 @@ import {
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
 } from './types.ts';
-import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics.ts';
-import { validateLiteralTopic, validateSource } from './topic-validator.ts';
 
 interface ExternalEventRow {
   id: string;
@@ -621,57 +621,51 @@ export class ExternalEventStore {
   }
 
   private validate(event: ExternalEvent): void {
-    if (!event.id || typeof event.id !== 'string') {
-      throw new ExternalEventValidationError('ExternalEvent.id is required');
-    }
-    if (!event.spaceId || typeof event.spaceId !== 'string') {
-      throw new ExternalEventValidationError('ExternalEvent.spaceId is required');
-    }
-    if (
-      !event.dedupeKey ||
-      typeof event.dedupeKey !== 'string' ||
-      event.dedupeKey.trim().length === 0
-    ) {
-      throw new ExternalEventValidationError(
-        'ExternalEvent.dedupeKey is required and must not be whitespace-only'
-      );
-    }
-    if (event.dedupeKey !== event.dedupeKey.trim()) {
-      throw new ExternalEventValidationError(
-        'ExternalEvent.dedupeKey must not have leading or trailing whitespace'
-      );
-    }
-
-    const sourceCheck = validateSource(event.source);
-    if (!sourceCheck.valid) {
-      throw new ExternalEventValidationError(`ExternalEvent.source invalid: ${sourceCheck.reason}`);
-    }
-
-    const topicCheck = validateLiteralTopic(event.topic);
-    if (!topicCheck.valid) {
-      throw new ExternalEventValidationError(`ExternalEvent.topic invalid: ${topicCheck.reason}`);
-    }
-
-    const firstSegment = event.topic.split('/')[0];
-    if (firstSegment !== event.source) {
-      throw new ExternalEventValidationError(
-        `ExternalEvent.topic first segment "${firstSegment}" must equal source "${event.source}"`
-      );
-    }
-
-    if (typeof event.occurredAt !== 'number' || !Number.isFinite(event.occurredAt)) {
-      throw new ExternalEventValidationError('ExternalEvent.occurredAt must be a finite number');
-    }
-    if (typeof event.ingestedAt !== 'number' || !Number.isFinite(event.ingestedAt)) {
-      throw new ExternalEventValidationError('ExternalEvent.ingestedAt must be a finite number');
-    }
-    if (typeof event.summary !== 'string') {
-      throw new ExternalEventValidationError('ExternalEvent.summary must be a string');
-    }
-    if (typeof event.payload !== 'object' || event.payload === null) {
-      throw new ExternalEventValidationError('ExternalEvent.payload must be an object');
+    const reason = validateExternalEvent(event);
+    if (reason !== null) {
+      throw new ExternalEventValidationError(reason);
     }
   }
+}
+
+export function validateExternalEvent(event: ExternalEvent): string | null {
+  if (!event.id || typeof event.id !== 'string') return 'ExternalEvent.id is required';
+  if (!event.spaceId || typeof event.spaceId !== 'string') {
+    return 'ExternalEvent.spaceId is required';
+  }
+  if (
+    !event.dedupeKey ||
+    typeof event.dedupeKey !== 'string' ||
+    event.dedupeKey.trim().length === 0
+  ) {
+    return 'ExternalEvent.dedupeKey is required and must not be whitespace-only';
+  }
+  if (event.dedupeKey !== event.dedupeKey.trim()) {
+    return 'ExternalEvent.dedupeKey must not have leading or trailing whitespace';
+  }
+
+  const sourceCheck = validateSource(event.source);
+  if (!sourceCheck.valid) return `ExternalEvent.source invalid: ${sourceCheck.reason}`;
+
+  const topicCheck = validateLiteralTopic(event.topic);
+  if (!topicCheck.valid) return `ExternalEvent.topic invalid: ${topicCheck.reason}`;
+
+  const firstSegment = event.topic.split('/')[0];
+  if (firstSegment !== event.source) {
+    return `ExternalEvent.topic first segment "${firstSegment}" must equal source "${event.source}"`;
+  }
+
+  if (typeof event.occurredAt !== 'number' || !Number.isFinite(event.occurredAt)) {
+    return 'ExternalEvent.occurredAt must be a finite number';
+  }
+  if (typeof event.ingestedAt !== 'number' || !Number.isFinite(event.ingestedAt)) {
+    return 'ExternalEvent.ingestedAt must be a finite number';
+  }
+  if (typeof event.summary !== 'string') return 'ExternalEvent.summary must be a string';
+  if (typeof event.payload !== 'object' || event.payload === null) {
+    return 'ExternalEvent.payload must be an object';
+  }
+  return null;
 }
 
 function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
