@@ -219,12 +219,18 @@ none of these sites needs its compensation machinery.
      `agent-session.ts:2364-2374`); its effect stages perform that branch's
      marker clear and parking log. Without this gate the arm stays an
      imperative branch outside the "complete" operation.
-  3. `applyTurnErrorConsumeStage` — failure-arm effect/transform stage:
-     calls the injected `consumeTerminalTurnError(turnStartedAt)` and stores
-     the result in `ctx.turnError`, and gathers
-     `ctx.errorResultSubtype` via the injected repo query (lazy by
-     construction — only reached when
-     neither gate 1 nor gate 2 decided; review correction PR #2981).
+  3. `applyTurnErrorConsumeStage` — failure-arm SEQUENCE in today's order,
+     as separate stages with the guarded `clearDeliveryTurnEnd` marker
+     clear BETWEEN them (review correction PR #2981): first the injected
+     `consumeTerminalTurnError(turnStartedAt)` storing
+     `ctx.turnError`; then the marker clear — BEFORE any fallible query,
+     since if the subtype query threw first the stale marker would make
+     later reclaim logic select `redrive` (today:
+     `agent-session.ts:2376` consume → `:2377` clear → `:2378-2380`
+     query); then the injected repo query gathering
+     `ctx.errorResultSubtype` (the whole arm is lazy by construction —
+     only reached when
+     neither gate 1 nor gate 2 decided).
   4. `applyTurnDetailGate` — computes `detail` from the
      preference chain `turnError.userMessage || turnError.message ||
      subtype-template || stall-template || default` and stores it in `ctx.detail`
@@ -1323,8 +1329,9 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   (`:361-362`), via a claim RESERVATION/FINALIZATION protocol or a CAS
   compensation guarded to this exact transition — the queue claim and the
   DB transaction cannot be coupled atomically, and a blind restore could
-  overwrite a concurrent defer/delete/status change (review correction PR
-  #2981))) — while each
+  overwrite a concurrent defer/delete/status change — extended to the
+  SUPPRESSED-path yielded entries too, which sit in `yielded` from before
+  the invocation (`:361-366`; review correction PR #2981))) — while each
   individual
   PUBLICATION promise keeps its today-style `.catch` containment AND
   fire-and-forget scheduling (await only the transactional
@@ -2248,7 +2255,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   propagating an acknowledgment failure (review correction PR #2981:
   leaving it in `yielded` strands the prompt with an unsettled enqueue
   promise until the queue timeout — which resolves rather than reports for
-  durable entries — while the DB row stays retryable);
+  durable entries — while the DB row stays retryable). The
+  reservation/finalization-or-compensation protocol above EXTENDS TO THE
+  YIELDED ENTRY ITSELF on this suppressed path: the entry sits in
+  `yielded` for the whole awaited window, so a `clear()` removing it
+  mid-flight would still strand a consumed-but-never-sent row that the
+  post-await ownership check cannot recover — reserve/finalize the
+  yielded entry exactly like a claimed one (review correction PR #2981);
   `markMessageAccepted` awaits before its consumed-row query for the ACP
   acceptance path (`sdk-message-handler.ts:551-559`, where the current
   synchronous `try/catch` no longer contains an async rejection); and the
