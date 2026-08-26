@@ -612,7 +612,6 @@ describe('N4: literal /compact never enters the transcript or provider request',
       releaseGate = resolve;
     });
     queue.setDeliveryGate(gate);
-    await queue.enqueue('first prompt', false);
 
     let yielded = false;
     const consumer = (async () => {
@@ -622,10 +621,12 @@ describe('N4: literal /compact never enters the transcript or provider request',
         break;
       }
     })();
+    const enqueued = queue.enqueue('first prompt', false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(yielded).toBe(false);
     releaseGate();
     await consumer;
+    await enqueued;
     queue.stop();
     expect(yielded).toBe(true);
   });
