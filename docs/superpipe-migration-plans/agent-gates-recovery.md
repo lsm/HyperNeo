@@ -66,7 +66,7 @@ Two structural rules applied throughout:
 | `turn-outcome-classification.ts:decideReconcileAdmission` | Admission stages of the complete `reconcile-stranded-deliveries` pipelines (review correction round 22) | `reconcile-stranded-deliveries` |
 | `limit-error-classifier.ts:assessLimitError` | raw superpipe transform | `limit-error-assess` |
 | `limit-error-classifier.ts:resolveLimitKind`, `isBillingTerminal` | none (leaves) | — |
-| `repeated-tool-error-gates.ts:decideConsecutiveError` | Per-row reducer pipeline of the complete error-observation operation (orchestration owns the loop per ADR 0004 P6): classification-once with reset/ignore arms, scope gate, state/reset/evidence/recovery effects with stage-local failure isolation (review corrections round 22 + PR #2981) | `repeated-tool-error-observation` |
+| `repeated-tool-error-gates.ts:decideConsecutiveError` | Message-level direct pipeline (scope gate, classification-once with reset/ignore effects) plus a per-row reducer pipeline invoked by the orchestration loop (ADR 0004 P6), covering state/reset/evidence/recovery effects with stage-local failure isolation (review corrections round 22 + PR #2981) | `repeated-tool-error-observation` |
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | Direct pipeline composing both (new `loop-detector-pipeline.ts`; review correction PR #2981: NOT `decisionRun`, whose per-gate `!hasDecided` halt would stop execution before the ledger/ring/logging/output effect stages) | `tool-call-loop-admission` |
 | `circuit-breaker-transitions.ts:extractErrorPattern` | Ordinary pure helper consumed by the complete circuit-breaker check operation (review correction round 21: no standalone runner) | `breaker-check` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | Plain helper consumed by the complete breaker-check pipeline (review correction round 22) | — |
@@ -568,8 +568,12 @@ none of these sites needs its compensation machinery.
   3. `applyThresholdGate` — `consecutiveCount >= threshold` → `intervene`.
   4. `applyCountFinalGate` — decides `count` with the new `lastError`.
 - **shell/effect wiring.** Review correction round 22 + PR #2981: compose the
-  COMPLETE error-observation operation as one pipeline — the scope
-  precondition FIRST (review correction PR #2981: `applyScopeGate` —
+  COMPLETE error-observation operation as TWO pipelines (review correction
+  PR #2981, later round: unscoped/reset/ignore observations must also run
+  a pipeline, so scope+classification compose as a MESSAGE-LEVEL direct
+  pipeline while error rows reduce through the per-row one) — the message-level
+  pipeline's scope
+  precondition FIRST (`applyScopeGate` —
   `getTaskForSession()` returning no task or a task without
   `evolutionScopeId` decides the passthrough `false` BEFORE classification,
   mirroring `repeated-tool-error-guardrail.ts:75-76`; the ctx carries the
@@ -1350,8 +1354,12 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   SUPPRESSED-path yielded entries too, which sit in `yielded` from before
   the invocation (`:361-366`), with FINALIZATION also revalidating the
   QUEUE GENERATION (`messageQueue.start()` increments it at
-  `message-queue.ts:284-287` leaving the claim present; compensating or
-  requeueing on change) and all acknowledgment-visible effects deferred
+  `message-queue.ts:284-287` leaving the claim present) and QUEUE-RUNNING
+  LIVENESS (`stop()` clears neither, `:294-297`) — compensating the
+  consumed row BEFORE any requeue or carrying a durable finalized-ack
+  token, and superseded outcomes are REASONED (requeue only for retryable
+  status races; abort on ownership loss/deletion/defer) — with all
+  acknowledgment-visible effects deferred
   until finalization commits (review correction PR #2981))) — while each
   individual
   PUBLICATION promise keeps its today-style `.catch` containment AND
@@ -1863,14 +1871,17 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 - **scope.**
   `packages/daemon/src/lib/agent/repeated-tool-error-guardrail.ts:74-120`
-  (`observeToolResultErrors`): the method becomes the observation
-  ORCHESTRATION — the scope
-  precondition (`:74-76`), content
-  classification with its `reset`/`ignore` arms (`:78-89`), then the
-  error-row loop invoking the per-row reducer pipeline with the threaded
-  state and `triggered` aggregation (`:91-119`; review correction PR
-  #2981, per ADR 0004 P6: the loop stays in the orchestration — the
-  pipeline is the per-row reducer);
+  (`observeToolResultErrors`): the method composes as TWO pipelines (review
+  correction PR #2981: leaving scope/classification in imperative
+  orchestration would mean unscoped, reset, and ignore observations never
+  execute a pipeline at all, contradicting the one-direct-pipeline rule):
+  first a MESSAGE-LEVEL direct pipeline — the scope precondition gate
+  (`:74-76`), whole-message content classification (`:78-89`) with its
+  reset-effect and ignore-passthrough stages — whose outcome feeds either
+  the completed reset or the error-row loop; then that loop remains
+  ORCHESTRATION around the per-row reducer pipeline with the threaded
+  state and `triggered` aggregation (`:91-119`, ADR 0004 P6: the loop is
+  never a pipeline stage);
   the shell-level per-block invocation is gone, classification runs once
   per message, and the observation injects a CLOCK FUNCTION the
   orchestration evaluates per
@@ -2305,13 +2316,22 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   mid-flight would still strand a consumed-but-never-sent row that the
   post-await ownership check cannot recover — reserve/finalize the
   yielded entry exactly like a claimed one (review correction PR #2981).
-  FINALIZATION also REVALIDATES THE QUEUE GENERATION and compensates or
-  requeues when it changed (review correction PR #2981: a query restart
-  calls `messageQueue.start()`, incrementing the generation while leaving
-  the claimed entry present, `message-queue.ts:284-287`, and the old
-  generator's `myGeneration` checks run only BEFORE the callback,
-  `:307-327` — rechecking claim presence alone would let the superseded
-  generator move the entry to `yielded` and feed it to the old SDK query).
+  FINALIZATION also REVALIDATES THE QUEUE GENERATION and, when it changed,
+  REQUIRES GUARDED COMPENSATION OF THE ALREADY-CONSUMED ROW BEFORE any
+  requeue — or a durable FINALIZED-ACK TOKEN that lets the replacement
+  generator complete the send and publications (review correction PR
+  #2981: a query restart calls `messageQueue.start()`, incrementing the
+  generation while leaving the claimed entry present,
+  `message-queue.ts:284-287`, and the old generator's `myGeneration`
+  checks run only BEFORE the callback, `:307-327`; the guarded transition
+  has already set the row `consumed`, `selectYieldedAckRow` has no
+  already-consumed arm (`ack-selection.ts:21-31`), so a bare requeue whose
+  crash precedes its send strands a consumed row reconciliation cannot
+  recover). It also REVALIDATES QUEUE-RUNNING/GENERATOR LIVENESS with the
+  same compensation path (`stop()` sets `running = false` WITHOUT
+  incrementing the generation or removing the claim,
+  `message-queue.ts:294-297`, and the generator has no post-callback
+  running check; review correction PR #2981).
   All ACKNOWLEDGMENT-VISIBLE effects — the consumed/SDK publications and
   the `acknowledgedPersistedUserThisTurn` write — are DEFERRED until
   reservation finalization COMMITS the yield (review correction PR #2981:
@@ -2332,7 +2352,15 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `accepted = true` only after the acknowledgment settles (review
   correction PR #2981: otherwise TypeScript is free to discard the
   promise and a transactional rejection stays unhandled while ACP
-  processing continues as accepted). Because `AcpClient` dispatches
+  processing continues as accepted). The shared in-flight acceptance
+  promise is also EXPOSED TO THE ABORT CLEANUP PATH and settled there
+  before deciding non-acceptance (review correction PR #2981:
+  `QueryRunner.createAbortableQuery` deliberately does not await iterator
+  cleanup when abort wins (`query-runner.ts:1797-1802`), and
+  `acp-query-runner.ts:804-807` calls `markACPDeliveryFailed` while its
+  local `accepted` flag is still false — the failure transition could race
+  the pending consumed transition and wrongly fail an accepted prompt).
+  Because `AcpClient` dispatches
   subscribers SYNCHRONOUSLY (`handleNotification`, `acp-client.ts:479-483`)
   while the `accept()` guard holds only a boolean with no in-flight state
   (`:283-287`), making the chain async requires a shared IN-FLIGHT
@@ -2353,7 +2381,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   never becomes an unhandled rejection or escapes the handler. A
   `superseded` result from the guarded transition maps to a
   NON-acknowledged outcome (review correction PR #2981): the queue entry is
-  aborted/requeued — never finalized or sent — with no publications and no
+  aborted or requeued as a REASONED result — requeue ONLY for explicitly
+  retryable status races; ownership loss, deletion, or defer changes ABORT
+  the queue entry (review correction PR #2981: a blanket requeue preserves
+  a stale in-memory prompt that a later generator could retry or send if
+  the row becomes eligible again despite the winning ownership change) —
+  never finalized or sent — with no publications and no
   `acknowledgedPersistedUserThisTurn` write; the immediate persisted arm
   likewise treats `superseded` as not-acknowledged via a DISTINCT
   handled-but-unacknowledged outcome that STOPS the caller (review
