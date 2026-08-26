@@ -85,8 +85,10 @@ function buildRegistrySnapshot(
 }
 
 function containsNestedPath(parent: string, child: string): boolean {
-  if (parent === '/') return child !== '/';
-  return child.startsWith(`${parent}/`);
+  const normalizedParent = parent.replace(/\\/g, '/');
+  const normalizedChild = child.replace(/\\/g, '/');
+  if (normalizedParent === '/') return normalizedChild !== '/';
+  return normalizedChild.startsWith(`${normalizedParent}/`);
 }
 
 function insertWorkspaceIfUnclaimed(

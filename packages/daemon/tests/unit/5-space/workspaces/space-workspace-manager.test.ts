@@ -185,6 +185,22 @@ describe('SpaceWorkspaceManager', () => {
       }
     });
 
+    test('surfaces ambiguous_nesting for backslash-separated paths', async () => {
+      workspaceRepo.create({ spaceId: SPACE_A, path: '/repo/work/sub' });
+      const windowsIo = fakeIo({
+        realpath: async (path) => path.replace(/\//g, '\\'),
+      });
+      const windowsManager = new SpaceWorkspaceManager(db, windowsIo);
+
+      try {
+        await windowsManager.registerWorkspace(SPACE_A, '/repo/work');
+        expect.unreachable();
+      } catch (err) {
+        expect(err).toBeInstanceOf(WorkspaceRegistrationError);
+        expect((err as WorkspaceRegistrationError).reason).toBe('ambiguous_nesting');
+      }
+    });
+
     test('surfaces workspace_cap_reached', async () => {
       workspaceRepo.create({ spaceId: SPACE_A, path: '/repo/a', isPrimary: true });
       for (let i = 0; i < MAX_WORKSPACES_PER_SPACE - 1; i++) {

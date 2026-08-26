@@ -249,7 +249,25 @@ export class SessionLifecycle {
           : undefined,
     };
 
-    this.db.createSession(session, { enforceWorkspaceOwnership: true });
+    try {
+      this.db.createSession(session, { enforceWorkspaceOwnership: true });
+    } catch (error) {
+      if (
+        worktreeMetadata &&
+        error instanceof Error &&
+        error.message.includes('is not registered to space')
+      ) {
+        try {
+          await this.worktreeManager.removeWorktree(worktreeMetadata, true);
+        } catch (removeError) {
+          this.logger.error(
+            '[SessionLifecycle] Failed to remove orphan worktree after admission failure:',
+            removeError
+          );
+        }
+      }
+      throw error;
+    }
 
     const agentSession = this.createAgentSession(session);
     this.sessionCache.set(sessionId, agentSession);

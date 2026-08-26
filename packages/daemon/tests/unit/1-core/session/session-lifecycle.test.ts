@@ -435,6 +435,50 @@ describe('SessionLifecycle', () => {
       );
     });
 
+    it('removes the worktree when session admission is rejected', async () => {
+      (mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
+        isGitRepo: true,
+        isBare: false,
+        gitRoot: '/test/repo',
+      });
+      (mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockResolvedValue({
+        isWorktree: true,
+        worktreePath: '/test/repo-worktree',
+        mainRepoPath: '/test/repo',
+        branch: 'session/abc',
+      });
+      (mockDb.createSession as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new Error(
+          'Workspace /test/repo is not registered to space space-1; session creation blocked'
+        );
+      });
+
+      const worktreeEnabledConfig = {
+        ...config,
+        disableWorktrees: false,
+      };
+      const worktreeLifecycle = new SessionLifecycle(
+        mockDb,
+        mockWorktreeManager,
+        mockSessionCache,
+        mockInternalEventBus,
+        mockMessageHub,
+        worktreeEnabledConfig,
+        mockToolsConfigManager,
+        mockAgentSessionFactory
+      );
+
+      await expect(
+        worktreeLifecycle.create({
+          workspacePath: '/test/repo',
+          spaceId: 'space-1',
+          worktreeMode: 'worktree',
+        })
+      ).rejects.toThrow('is not registered to space');
+
+      expect(mockWorktreeManager.removeWorktree).toHaveBeenCalled();
+    });
+
     it('should not use worktree choice flow for non-worker sessions', async () => {
       (mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
         isGitRepo: true,
