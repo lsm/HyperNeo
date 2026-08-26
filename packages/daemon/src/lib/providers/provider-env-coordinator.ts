@@ -15,6 +15,9 @@ interface LeaseState {
 interface LeaseWaiter {
   name: string;
   resolve: (token: ProviderEnvLeaseToken) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  abortListener?: () => void;
 }
 
 export class ProviderEnvCoordinator {
@@ -47,9 +50,17 @@ export class ProviderEnvCoordinator {
 
   async acquire(
     name: string,
-    holder?: ProviderEnvLeaseToken | null
+    holder?: ProviderEnvLeaseToken | null,
+    signal?: AbortSignal
   ): Promise<ProviderEnvLeaseToken> {
     this.assertEnrolled(name);
+    if (signal?.aborted) {
+      const error = new Error(
+        signal.reason ? String(signal.reason) : 'provider-env-coordinator: acquire aborted'
+      );
+      error.name = 'AbortError';
+      throw error;
+    }
     const propagated = holder ?? this.context.getStore() ?? null;
     if (propagated) {
       if (!this.current || this.current.token !== propagated) {
@@ -61,7 +72,25 @@ export class ProviderEnvCoordinator {
     if (!this.current) {
       return this.admit(name);
     }
-    return new Promise((resolve) => this.queue.push({ name, resolve }));
+    return new Promise<ProviderEnvLeaseToken>((resolve, reject) => {
+      const waiter: LeaseWaiter = { name, resolve, reject, signal };
+      if (signal) {
+        const onAbort = () => {
+          const idx = this.queue.indexOf(waiter);
+          if (idx > -1) {
+            this.queue.splice(idx, 1);
+          }
+          const error = new Error(
+            signal.reason ? String(signal.reason) : 'provider-env-coordinator: acquire aborted'
+          );
+          error.name = 'AbortError';
+          reject(error);
+        };
+        waiter.abortListener = onAbort;
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      this.queue.push(waiter);
+    });
   }
 
   release(token: ProviderEnvLeaseToken): void {
@@ -75,15 +104,19 @@ export class ProviderEnvCoordinator {
     const next = this.queue.shift() ?? null;
     this.current = null;
     if (next) {
+      if (next.signal && next.abortListener) {
+        next.signal.removeEventListener('abort', next.abortListener);
+      }
       next.resolve(this.admit(next.name));
     }
   }
 
   async runWithLease<T>(
     name: string,
-    fn: (token: ProviderEnvLeaseToken) => T | Promise<T>
+    fn: (token: ProviderEnvLeaseToken) => T | Promise<T>,
+    signal?: AbortSignal
   ): Promise<T> {
-    const token = await this.acquire(name);
+    const token = await this.acquire(name, undefined, signal);
     return this.context.run(token, async () => {
       try {
         return await fn(token);
