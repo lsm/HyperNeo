@@ -132,19 +132,21 @@ pre-vacuum backup copy to reclaim its disk.
 ## What is handled automatically
 
 - **Rewrite migrations:** migrations that rebuild tables are declared with `rewrite(...)` in the
-  migration runner. After those migrations commit and before normal daemon services start,
-  the daemon runs `VACUUM main` when the freelist is nonempty, verifies that it reaches zero,
-  truncates the WAL, and records the rewrite markers as reclaimed. A reclaim interrupted by a
-  concurrent WAL reader defers instead of blocking startup, and any failed or interrupted
-  reclaim remains pending and is retried on the next startup. Future table rewrites must use
-  this declaration.
+  migration runner. Their row copies run with a raised connection page cache, in-memory temp
+  storage, and mmap reads, batched into ~200k-row transactions so the WAL auto-checkpoints
+  between chunks and an interrupted copy resumes from the last committed chunk on the next
+  startup. After those migrations commit the daemon records the rewrite markers as reclaimed
+  **without running `VACUUM`**: the freelist pages a rewrite leaves behind are dead weight the
+  daemon never shrinks on its own, so run the offline VACUUM procedure above when the file's
+  high-water mark matters. Future table rewrites must use this declaration.
 - **Stats:** plain `PRAGMA optimize` on every clean daemon shutdown — the periodic,
   connection-aware form SQLite recommends for long-lived connections
   (`packages/daemon/src/storage/database-core.ts`, `DatabaseCore.close()`).
 - **WAL growth:** SQLite's default auto-checkpoint keeps the WAL bounded during operation,
   and clean shutdown truncates it.
 - **Space reuse:** free pages left by ordinary deletes are reused for future writes before the
-  file grows again. Automatic `VACUUM` is limited to declared rewrite migrations.
+  file grows again. The daemon never runs `VACUUM` automatically; shrinking the file is always
+  the manual procedure above.
 
 `auto_vacuum` is deliberately not enabled: it must be set before the DB is populated (or
 followed by a full VACUUM anyway), only returns trailing pages, and adds write overhead.

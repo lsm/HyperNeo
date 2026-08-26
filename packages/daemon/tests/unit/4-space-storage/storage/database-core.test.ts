@@ -101,6 +101,38 @@ describe('DatabaseCore', () => {
       expect(result.foreign_keys).toBe(1);
     });
 
+    it('should raise cache, temp store, and mmap limits while migrations run', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      const internals = dbCore as unknown as Record<string, unknown>;
+      const originalCreateBackup = internals.createBackup as () => void;
+      const windowPragmas: Record<string, number> = {};
+      internals.createBackup = () => {
+        const db = dbCore.getDb();
+        const readPragma = (name: string): number =>
+          (db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[name];
+        windowPragmas.cacheSize = readPragma('cache_size');
+        windowPragmas.tempStore = readPragma('temp_store');
+        windowPragmas.mmapSize = readPragma('mmap_size');
+        return originalCreateBackup.call(dbCore);
+      };
+
+      await dbCore.initialize();
+
+      expect(windowPragmas.cacheSize).toBe(-524288);
+      expect(windowPragmas.tempStore).toBe(2);
+      expect(windowPragmas.mmapSize).toBeGreaterThanOrEqual(1073741824);
+    });
+
+    it('should restore bounded runtime cache, temp store, and mmap defaults after migrations', async () => {
+      dbCore = new DatabaseCore(dbPath);
+      await dbCore.initialize();
+
+      const db = dbCore.getDb();
+      expect(db.prepare('PRAGMA cache_size').get()).toEqual({ cache_size: 2000 });
+      expect(db.prepare('PRAGMA temp_store').get()).toEqual({ temp_store: 0 });
+      expect(db.prepare('PRAGMA mmap_size').get()).toEqual({ mmap_size: 0 });
+    });
+
     it('should create database tables', async () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
