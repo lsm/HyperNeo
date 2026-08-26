@@ -1537,6 +1537,7 @@ export class TaskAgentManager {
         if (outcome.state === 'delivered') {
           settleDelivered(outcome.sessionId);
         } else if (outcome.state === 'failed') {
+          repo.deferExpiration([row.id]);
           log.warn(
             `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
               `the attempt is charged at the next drain's reconciliation`

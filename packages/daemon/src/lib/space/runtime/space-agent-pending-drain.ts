@@ -82,6 +82,7 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
     }
     if (failedSeen) {
       ctx.deps.repo.markLateDeadLetter(row.id, LATE_DEAD_LETTER_ERROR);
+      ctx.deps.repo.deferExpiration([row.id]);
       settledIds.add(row.id);
       continue;
     }
