@@ -350,10 +350,6 @@ export class MessageQueue {
         break;
       }
 
-      if (this.deliveryGate) {
-        await this.deliveryGate.catch(() => {});
-      }
-
       const queuedMessage = await this.waitForNextMessage();
 
       if (!queuedMessage) {
@@ -424,6 +420,10 @@ export class MessageQueue {
       });
 
       if (!this.running) return null;
+    }
+
+    if (this.deliveryGate) {
+      await this.deliveryGate.catch(() => {});
     }
 
     const message = this.queue.shift() || null;

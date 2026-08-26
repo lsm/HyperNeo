@@ -207,7 +207,6 @@ export class ModelSwitchHandler {
       const nextProvider = newProviderInstance.id as Provider;
       const clearAcpSessionId = previousProvider === 'acp' && nextProvider !== 'acp';
       const clearSdkSessionState = previousProvider !== 'acp' && nextProvider === 'acp';
-      this.ctx.messageQueue.removePendingInternalCompactions();
 
       if (!this.isQueryActiveOrStarting()) {
         session.config.model = resolvedModel;
@@ -298,6 +297,7 @@ export class ModelSwitchHandler {
 
       const selectedModel = session.config.model;
       contextTracker.setModel(selectedModel);
+      this.ctx.messageQueue.removePendingInternalCompactions();
 
       messageHub.event(
         'session.model-switched',
