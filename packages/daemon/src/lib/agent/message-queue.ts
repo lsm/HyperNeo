@@ -271,6 +271,7 @@ export class MessageQueue {
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
+    this.deliveryGate = null;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -417,6 +418,7 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
+    this.deliveryGate = null;
     this.wakeWaiters();
   }
 

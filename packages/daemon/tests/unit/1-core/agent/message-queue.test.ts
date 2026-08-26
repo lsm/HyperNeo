@@ -1290,6 +1290,30 @@ describe('MessageQueue', () => {
       q.clear();
       delivery.catch(() => {});
     });
+
+    it('a restarted generation consumes normally after stop dropped a never-settling gate', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.setDeliveryGate(new Promise<void>(() => {}));
+      const stranded = q.enqueue('stranded', false, { durable: true });
+
+      const firstGenerator = q.messageGenerator(testSessionId);
+      const firstPending = firstGenerator.next();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      q.stop();
+      await firstPending;
+      q.clear();
+      stranded.catch(() => {});
+
+      q.start();
+      const delivery = q.enqueue('after restart', false, { durable: true });
+      const secondGenerator = q.messageGenerator(testSessionId);
+      const result = await secondGenerator.next();
+      expect(result.value.message.message.content[0].text).toBe('after restart');
+      result.value.onSent();
+      await delivery;
+      q.stop();
+    });
   });
 
   describe('enqueue options passthrough', () => {
