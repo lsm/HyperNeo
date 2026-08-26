@@ -1514,6 +1514,10 @@ export class TaskAgentManager {
     );
 
     for (const row of drainOutcome.rows) {
+      if (row.attempts >= row.maxAttempts) {
+        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
+        continue;
+      }
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const replyTo = resolveReplySession(row);
