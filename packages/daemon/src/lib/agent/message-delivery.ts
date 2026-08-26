@@ -401,12 +401,17 @@ export async function awaitDeliveryConsumptionTolerant(args: {
   const terminal = new Promise<{ consumed: boolean }>((resolve) => {
     if (!args.getSendStatus) return;
     const check = () => {
-      const status = args.getSendStatus!();
-      if (status === 'consumed') {
-        signalDeliveryConsumed(args.sessionId, args.messageUuid);
-        if (statusPoll) clearInterval(statusPoll);
-        resolve({ consumed: true });
-      } else if (status === 'failed') {
+      try {
+        const status = args.getSendStatus!();
+        if (status === 'consumed') {
+          signalDeliveryConsumed(args.sessionId, args.messageUuid);
+          if (statusPoll) clearInterval(statusPoll);
+          resolve({ consumed: true });
+        } else if (status === 'failed') {
+          if (statusPoll) clearInterval(statusPoll);
+          resolve({ consumed: false });
+        }
+      } catch {
         if (statusPoll) clearInterval(statusPoll);
         resolve({ consumed: false });
       }

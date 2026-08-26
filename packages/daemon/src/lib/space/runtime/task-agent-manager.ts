@@ -366,6 +366,7 @@ export class TaskAgentManager {
   private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
+  private disposed = false;
 
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
@@ -1677,9 +1678,9 @@ export class TaskAgentManager {
   }
 
   private scheduleSpaceAgentReconciliation(spaceId: string, workflowRunId: string): void {
+    if (this.disposed) return;
     const key = `${spaceId}\0${workflowRunId}`;
-    const existing = this.spaceAgentRetryTimers.get(key);
-    if (existing) clearTimeout(existing);
+    if (this.spaceAgentRetryTimers.has(key)) return;
     const timer = setTimeout(() => {
       this.spaceAgentRetryTimers.delete(key);
       void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
@@ -2821,6 +2822,7 @@ export class TaskAgentManager {
   }
 
   async cleanupAll(): Promise<void> {
+    this.disposed = true;
     this.lateSettlements.dispose();
     for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
     this.spaceAgentRetryTimers.clear();
