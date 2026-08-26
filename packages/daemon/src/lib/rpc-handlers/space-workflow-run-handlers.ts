@@ -34,6 +34,7 @@ import {
   fileDiffCacheKey,
   commitFilesCacheKey,
   commitFileDiffCacheKey,
+  worktreePathScopedCacheKey,
   FILE_DIFF_SIZE_LIMIT_BYTES,
 } from '../space/artifact-git-ops.ts';
 import {
@@ -355,7 +356,22 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cached = artifactCacheRepo.get(params.runId, CACHE_KEY_GATE_ARTIFACTS, taskId);
+    const worktreePath = await resolveWorktreePath(
+      run.id,
+      run.spaceId,
+      spaceManager,
+      spaceTaskRepo,
+      spaceWorktreeManager,
+      params.taskId
+    );
+    if (!worktreePath) {
+      throw new Error(`No workspace path found for run: ${params.runId}`);
+    }
+    const cached = artifactCacheRepo.get(
+      params.runId,
+      worktreePathScopedCacheKey(worktreePath, CACHE_KEY_GATE_ARTIFACTS),
+      taskId
+    );
 
     if (!cached || !isCacheFresh(cached.syncedAt)) {
       enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS, {
@@ -371,18 +387,6 @@ export function setupSpaceWorkflowRunHandlers(
         syncedAt: cached.syncedAt,
         status: cached.status,
       };
-    }
-
-    const worktreePath = await resolveWorktreePath(
-      run.id,
-      run.spaceId,
-      spaceManager,
-      spaceTaskRepo,
-      spaceWorktreeManager,
-      params.taskId
-    );
-    if (!worktreePath) {
-      throw new Error(`No workspace path found for run: ${params.runId}`);
     }
 
     if (!(await isGitRepo(worktreePath))) {
@@ -415,7 +419,18 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cacheKey = fileDiffCacheKey(params.filePath);
+    const worktreePath = await resolveWorktreePath(
+      run.id,
+      run.spaceId,
+      spaceManager,
+      spaceTaskRepo,
+      spaceWorktreeManager,
+      params.taskId
+    );
+    if (!worktreePath) {
+      throw new Error(`No workspace path found for run: ${params.runId}`);
+    }
+    const cacheKey = worktreePathScopedCacheKey(worktreePath, fileDiffCacheKey(params.filePath));
     const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
 
     if (!cached || !isCacheFresh(cached.syncedAt)) {
@@ -433,18 +448,6 @@ export function setupSpaceWorkflowRunHandlers(
         syncedAt: cached.syncedAt,
         status: cached.status,
       };
-    }
-
-    const worktreePath = await resolveWorktreePath(
-      run.id,
-      run.spaceId,
-      spaceManager,
-      spaceTaskRepo,
-      spaceWorktreeManager,
-      params.taskId
-    );
-    if (!worktreePath) {
-      throw new Error(`No workspace path found for run: ${params.runId}`);
     }
 
     if (!(await isGitRepo(worktreePath))) {
@@ -480,7 +483,20 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cached = artifactCacheRepo.get(params.runId, CACHE_KEY_COMMITS, taskId);
+    const worktreePath = await resolveWorktreePath(
+      run.id,
+      run.spaceId,
+      spaceManager,
+      spaceTaskRepo,
+      spaceWorktreeManager,
+      params.taskId
+    );
+    if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+    const cached = artifactCacheRepo.get(
+      params.runId,
+      worktreePathScopedCacheKey(worktreePath, CACHE_KEY_COMMITS),
+      taskId
+    );
 
     if (!cached || !isCacheFresh(cached.syncedAt)) {
       enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_COMMITS, {
@@ -497,16 +513,6 @@ export function setupSpaceWorkflowRunHandlers(
         status: cached.status,
       };
     }
-
-    const worktreePath = await resolveWorktreePath(
-      run.id,
-      run.spaceId,
-      spaceManager,
-      spaceTaskRepo,
-      spaceWorktreeManager,
-      params.taskId
-    );
-    if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
 
     if (!(await isGitRepo(worktreePath))) {
       return { commits: [], baseRef: null, isGitRepo: false, repoUrl: null };
@@ -543,12 +549,6 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cacheKey = commitFilesCacheKey(params.commitSha);
-    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
-    if (cached && cached.status === 'ok') {
-      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
-    }
-
     const worktreePath = await resolveWorktreePath(
       run.id,
       run.spaceId,
@@ -558,6 +558,14 @@ export function setupSpaceWorkflowRunHandlers(
       params.taskId
     );
     if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+    const cacheKey = worktreePathScopedCacheKey(
+      worktreePath,
+      commitFilesCacheKey(params.commitSha)
+    );
+    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+    if (cached && cached.status === 'ok') {
+      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
+    }
 
     if (!(await isGitRepo(worktreePath))) {
       return { files: [] };
@@ -611,12 +619,6 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cacheKey = commitFileDiffCacheKey(params.commitSha, params.filePath);
-    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
-    if (cached && cached.status === 'ok') {
-      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
-    }
-
     const worktreePath = await resolveWorktreePath(
       run.id,
       run.spaceId,
@@ -626,6 +628,14 @@ export function setupSpaceWorkflowRunHandlers(
       params.taskId
     );
     if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+    const cacheKey = worktreePathScopedCacheKey(
+      worktreePath,
+      commitFileDiffCacheKey(params.commitSha, params.filePath)
+    );
+    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+    if (cached && cached.status === 'ok') {
+      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
+    }
 
     if (!(await isGitRepo(worktreePath))) {
       return { diff: '', additions: 0, deletions: 0, filePath: params.filePath };

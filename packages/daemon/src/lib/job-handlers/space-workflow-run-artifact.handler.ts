@@ -1,5 +1,6 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
+import { worktreePathScopedCacheKey } from '../space/artifact-git-ops.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
@@ -130,6 +131,7 @@ async function handleSyncGateArtifacts(
     });
     return { ok: false, reason: 'worktree-unresolved' };
   }
+  const rowCacheKey = worktreePathScopedCacheKey(worktreePath, CACHE_KEY_GATE_ARTIFACTS);
 
   if (!(await isGitRepo(worktreePath))) {
     const data = {
@@ -142,7 +144,7 @@ async function handleSyncGateArtifacts(
     deps.cacheRepo.upsert({
       runId,
       taskId,
-      cacheKey: CACHE_KEY_GATE_ARTIFACTS,
+      cacheKey: rowCacheKey,
       status: 'ok',
       data,
     });
@@ -164,7 +166,7 @@ async function handleSyncGateArtifacts(
     deps.cacheRepo.upsert({
       runId,
       taskId,
-      cacheKey: CACHE_KEY_GATE_ARTIFACTS,
+      cacheKey: rowCacheKey,
       status: 'error',
       data: { files: [], totalAdditions: 0, totalDeletions: 0, worktreePath, isGitRepo: true },
       error: err instanceof Error ? err.message : String(err),
@@ -184,7 +186,7 @@ async function handleSyncGateArtifacts(
   deps.cacheRepo.upsert({
     runId,
     taskId,
-    cacheKey: CACHE_KEY_GATE_ARTIFACTS,
+    cacheKey: rowCacheKey,
     status: 'ok',
     data,
   });
@@ -222,12 +224,13 @@ async function handleSyncCommits(
     });
     return { ok: false, reason: 'worktree-unresolved' };
   }
+  const rowCacheKey = worktreePathScopedCacheKey(worktreePath, CACHE_KEY_COMMITS);
 
   if (!(await isGitRepo(worktreePath))) {
     deps.cacheRepo.upsert({
       runId,
       taskId,
-      cacheKey: CACHE_KEY_COMMITS,
+      cacheKey: rowCacheKey,
       status: 'ok',
       data: { commits: [], baseRef: null, isGitRepo: false, repoUrl: null },
     });
@@ -258,7 +261,7 @@ async function handleSyncCommits(
     deps.cacheRepo.upsert({
       runId,
       taskId,
-      cacheKey: CACHE_KEY_COMMITS,
+      cacheKey: rowCacheKey,
       status: 'error',
       data: { commits: [], baseRef: baseRef || null, isGitRepo: true, repoUrl },
       error: err instanceof Error ? err.message : String(err),
@@ -277,7 +280,7 @@ async function handleSyncCommits(
   deps.cacheRepo.upsert({
     runId,
     taskId,
-    cacheKey: CACHE_KEY_COMMITS,
+    cacheKey: rowCacheKey,
     status: 'ok',
     data: { commits, baseRef: baseRef || null, isGitRepo: true, repoUrl },
   });
@@ -316,12 +319,13 @@ async function handleSyncFileDiff(
     });
     return { ok: false, reason: 'worktree-unresolved' };
   }
+  const rowCacheKey = worktreePathScopedCacheKey(worktreePath, fileDiffCacheKey(filePath));
 
   if (!(await isGitRepo(worktreePath))) {
     deps.cacheRepo.upsert({
       runId,
       taskId,
-      cacheKey: fileDiffCacheKey(filePath),
+      cacheKey: rowCacheKey,
       status: 'ok',
       data: { diff: '', additions: 0, deletions: 0, filePath, truncated: false },
     });
@@ -343,7 +347,7 @@ async function handleSyncFileDiff(
     deps.cacheRepo.upsert({
       runId,
       taskId,
-      cacheKey: fileDiffCacheKey(filePath),
+      cacheKey: rowCacheKey,
       status: 'error',
       data: { diff: '', additions: 0, deletions: 0, filePath, truncated: false },
       error: err instanceof Error ? err.message : String(err),
@@ -372,7 +376,7 @@ async function handleSyncFileDiff(
   deps.cacheRepo.upsert({
     runId,
     taskId,
-    cacheKey: fileDiffCacheKey(filePath),
+    cacheKey: rowCacheKey,
     status: 'ok',
     data,
   });

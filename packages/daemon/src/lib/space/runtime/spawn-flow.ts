@@ -196,12 +196,14 @@ export function runSpawnExecutionFlow(
         run: async (view) => {
           const sessionId = (view.reuseLive as { sessionId: string }).sessionId;
           const rebind = deps.rebindLiveExecution(view.execution, sessionId);
-          await deps.syncReuseLiveWorkspace?.(
-            view.freshTask,
-            view.space,
-            view.execution,
-            sessionId
-          );
+          if (rebind !== 'superseded') {
+            await deps.syncReuseLiveWorkspace?.(
+              view.freshTask,
+              view.space,
+              view.execution,
+              sessionId
+            );
+          }
           return rebind;
         },
       }),

@@ -2375,23 +2375,34 @@ export class TaskAgentManager {
     execution: NodeExecution,
     sessionId: string
   ): Promise<void> {
-    const live = this.getSubSession(sessionId);
-    if (!live) return;
-    const workspacePath = resolveSpawnWorkspace({
-      cachedTaskWorktreePath: this.getTaskWorktreePath(task.id),
-      hasWorktreeManager: false,
-      spaceWorkspacePath: resolveTaskWorkspace(space, task),
-    }).workspacePath;
-    if (!workspacePath || live.getSessionData().workspacePath === workspacePath) return;
-    live.updateMetadata({ workspacePath });
-    await this.reinjectNodeAgentMcpServer(live, {
-      taskId: task.id,
-      subSessionId: sessionId,
-      agentName: execution.agentName,
-      spaceId: space.id,
-      workflowRunId: execution.workflowRunId,
-      workspacePath,
-      workflowNodeId: execution.workflowNodeId,
+    await this.withSessionInjectLock(sessionId, async () => {
+      const terminalStatus = execution.workflowRunId
+        ? this.resolveTerminalInjectionStatus(execution.workflowRunId)
+        : null;
+      if (terminalStatus) {
+        log.warn(
+          `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — task/run is terminal (${terminalStatus})`
+        );
+        return;
+      }
+      const live = this.getSubSession(sessionId);
+      if (!live) return;
+      const workspacePath = resolveSpawnWorkspace({
+        cachedTaskWorktreePath: this.getTaskWorktreePath(task.id),
+        hasWorktreeManager: false,
+        spaceWorkspacePath: resolveTaskWorkspace(space, task),
+      }).workspacePath;
+      if (!workspacePath || live.getSessionData().workspacePath === workspacePath) return;
+      live.updateMetadata({ workspacePath });
+      await this.reinjectNodeAgentMcpServer(live, {
+        taskId: task.id,
+        subSessionId: sessionId,
+        agentName: execution.agentName,
+        spaceId: space.id,
+        workflowRunId: execution.workflowRunId,
+        workspacePath,
+        workflowNodeId: execution.workflowNodeId,
+      });
     });
   }
 
@@ -4230,7 +4241,9 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
-    const parentTask = tasks[0] ?? null;
+    const ownerId = this.findParentTaskIdForSubSession(sessionId);
+    const parentTask =
+      (ownerId ? tasks.find((candidate) => candidate.id === ownerId) : null) ?? tasks[0] ?? null;
     if (!parentTask) {
       log.error(
         `TaskAgentManager.mcpSelfHeal: no parent task found for workflowRunId=${execution.workflowRunId} — cannot self-heal`
