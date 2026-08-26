@@ -84,6 +84,11 @@ function buildRegistrySnapshot(
   return { claims, workspaceCountForSpace };
 }
 
+function containsNestedPath(parent: string, child: string): boolean {
+  if (parent === '/') return child !== '/';
+  return child.startsWith(`${parent}/`);
+}
+
 function insertWorkspaceIfUnclaimed(
   workspaceRepo: SpaceWorkspaceRepository,
   spaceRepo: SpaceRepository,
@@ -152,6 +157,40 @@ function insertWorkspaceIfUnclaimed(
   }
 
   const rows = workspaceRepo.listBySpace(space.id);
+  for (const row of rows) {
+    if (row.path === canonicalPath) continue;
+    if (containsNestedPath(canonicalPath, row.path)) {
+      throw new WorkspaceRegistrationError(
+        `Workspace path contains registered workspace ${row.path} of the same space`,
+        'ambiguous_nesting',
+        {
+          accepted: false,
+          reason: 'ambiguous_nesting',
+          message: `Workspace path contains registered workspace ${row.path} of the same space`,
+          canonicalPath,
+          conflictPath: row.path,
+          conflictSpaceId: row.spaceId,
+          nestingDirection: 'existing_inside_candidate',
+        }
+      );
+    }
+    if (containsNestedPath(row.path, canonicalPath)) {
+      throw new WorkspaceRegistrationError(
+        `Workspace path is inside registered workspace ${row.path} of the same space`,
+        'ambiguous_nesting',
+        {
+          accepted: false,
+          reason: 'ambiguous_nesting',
+          message: `Workspace path is inside registered workspace ${row.path} of the same space`,
+          canonicalPath,
+          conflictPath: row.path,
+          conflictSpaceId: row.spaceId,
+          nestingDirection: 'candidate_inside_existing',
+        }
+      );
+    }
+  }
+
   const hasPrimaryRow = rows.some((row) => row.isPrimary);
   const workspaceCount = rows.length + (hasPrimaryRow ? 0 : 1);
   if (workspaceCount >= MAX_WORKSPACES_PER_SPACE) {

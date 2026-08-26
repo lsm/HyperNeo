@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
 import {
   SpaceWorkspaceManager,
@@ -323,6 +324,45 @@ describe('SpaceWorkspaceManager', () => {
 
       expect(await manager.removeWorkspace(SPACE_A, secondary.id)).toBe(true);
       expect(workspaceRepo.getById(secondary.id)).toBeNull();
+    });
+
+    test('blocks new sessions for a workspace removed during admission', async () => {
+      const secondary = workspaceRepo.create({
+        spaceId: SPACE_A,
+        path: '/repo/a-secondary',
+      });
+      expect(await manager.removeWorkspace(SPACE_A, secondary.id)).toBe(true);
+
+      const sessionRepo = new SessionRepository(db);
+      const now = new Date().toISOString();
+      expect(() =>
+        sessionRepo.createSession(
+          {
+            id: 'session-admission',
+            title: 'Admission',
+            workspacePath: '/repo/a-secondary',
+            createdAt: now,
+            lastActiveAt: now,
+            status: 'active',
+            config: {
+              model: 'claude-sonnet-4-5-20250929',
+              maxTokens: 4096,
+              temperature: 0.7,
+            },
+            metadata: {
+              messageCount: 0,
+              totalTokens: 0,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalCost: 0,
+              toolCallCount: 0,
+            },
+            type: 'worker',
+            context: { spaceId: SPACE_A },
+          },
+          { enforceWorkspaceOwnership: true }
+        )
+      ).toThrow('is not registered to space');
     });
   });
 });

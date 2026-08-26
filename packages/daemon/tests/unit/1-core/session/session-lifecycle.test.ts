@@ -298,7 +298,8 @@ describe('SessionLifecycle', () => {
           id: sessionId,
           title: 'New Session',
           status: 'active',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -308,7 +309,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'My Custom Title',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -320,7 +322,8 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             titleGenerated: true,
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -332,7 +335,8 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             titleGenerated: false,
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -344,7 +348,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: '/custom/workspace',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -354,7 +359,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: null,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -364,7 +370,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: '/explicit/path',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -380,7 +387,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: null,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -390,7 +398,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: null,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -421,7 +430,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'pending_worktree_choice',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -441,7 +451,8 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             worktreeChoice: undefined,
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -456,7 +467,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'active',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -473,7 +485,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'active',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -511,7 +524,8 @@ describe('SessionLifecycle', () => {
             parentSessionId: 'parent-id',
             currentTaskId: 'task-123',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -535,7 +549,8 @@ describe('SessionLifecycle', () => {
             autoScroll: false,
             thinkingLevel: 'think32k',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -552,7 +567,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-for-coding',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -570,7 +586,8 @@ describe('SessionLifecycle', () => {
             model: 'moonshot-v1-32k',
             provider: 'custom',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -587,7 +604,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -604,7 +622,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -621,7 +640,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -638,7 +658,8 @@ describe('SessionLifecycle', () => {
             model: 'k3-256k',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -669,7 +690,8 @@ describe('SessionLifecycle', () => {
               model: 'kimi-for-coding',
               provider: 'kimi',
             }),
-          })
+          }),
+          expect.anything()
         );
       });
 
@@ -694,7 +716,8 @@ describe('SessionLifecycle', () => {
               model: 'totally-custom-model-x',
               provider: 'kimi',
             }),
-          })
+          }),
+          expect.anything()
         );
       });
 
@@ -721,7 +744,8 @@ describe('SessionLifecycle', () => {
               config: expect.objectContaining({
                 model: 'sonnet',
               }),
-            })
+            }),
+            expect.anything()
           );
         });
 

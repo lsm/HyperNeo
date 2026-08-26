@@ -249,7 +249,7 @@ export class SessionLifecycle {
           : undefined,
     };
 
-    this.db.createSession(session);
+    this.db.createSession(session, { enforceWorkspaceOwnership: true });
 
     const agentSession = this.createAgentSession(session);
     this.sessionCache.set(sessionId, agentSession);

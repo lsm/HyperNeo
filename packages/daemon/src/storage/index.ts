@@ -191,8 +191,8 @@ export class Database {
     }
   }
 
-  createSession(session: Session): void {
-    this.sessionRepo.createSession(session);
+  createSession(session: Session, options?: { enforceWorkspaceOwnership?: boolean }): void {
+    this.sessionRepo.createSession(session, options);
   }
 
   getSession(id: string): Session | null {
