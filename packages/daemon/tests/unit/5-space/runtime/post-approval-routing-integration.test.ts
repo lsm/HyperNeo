@@ -322,7 +322,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
   });
 
-  test('task workspacePath feeds {{workspace_path_sh}} instead of the space root (WS10)', async () => {
+  test('merge templates keep receiving the Space checkout even with a task workspacePath (WS10)', async () => {
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name)!;
@@ -334,8 +334,8 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
     expect(result.mode).toBe('spawn');
     expect(h.spawned).toHaveLength(1);
-    expect(h.spawned[0].kickoffMessage).toContain(`'${TASK_WORKSPACE}'`);
-    expect(h.spawned[0].kickoffMessage).not.toContain(`'/tmp/ws'`);
+    expect(h.spawned[0].kickoffMessage).toContain(`'/tmp/par-int'`);
+    expect(h.spawned[0].kickoffMessage).not.toContain(TASK_WORKSPACE);
     expect(h.spawned[0].kickoffMessage).not.toContain('{{workspace_path_sh}}');
   });
 
