@@ -254,20 +254,29 @@ anywhere in this plan.
   fallback ("Thinking...", "Processing...", ...). Two purity defects: the
   module-level `lastFallbackIndex` rotator and `Date.now()` inside
   `getPhaseAction`.
-- **Proposed combinator.** `decisionRun`, with the fallback rotation hoisted
-  to the shell. (The message extraction helper stays a helper — it is a
+- **Proposed combinator.** `decisionRun`, with the fallback rotation owned
+  by the TERMINAL gate (review correction, codex round 7). (The message
+  extraction helper stays a helper — it is a
   nested type-switch, not a precedence cascade; do not pipeline it.)
 - **Input/output snapshot design.** Ctx =
   `{ latestMessage: SDKMessage | null; isProcessing: boolean; isCompacting?:
   boolean; streamingPhase?: StreamingPhase; streamingStartedAt?: number;
   decision: string | 'fallback' | 'none' | null }`. Wrapper maps `'none'` →
   `undefined`, `'fallback'` → `getNextFallbackAction()` (rotation stays in the
-  module, outside the pipeline), string → string.
+  module, outside the pipeline), string → string. Superseded by review
+  correction, codex round 7: drop the `'fallback'` sentinel — the decision
+  union is `string | 'none' | null`, the TERMINAL gate itself calls
+  `getNextFallbackAction()` and decides the rotated label, and the wrapper
+  maps only `'none'` → `undefined`, so the whole business path (rotation
+  included) lives in the pipeline.
 - **Pure core design.** Gates: `gateNotProcessing` (decides `'none'`) →
   `gateCompacting` → `gateMessageAction` (decides
   `extractActionFromMessage(latestMessage)` when non-null) → `gatePhaseAction`
-  (decides `getPhaseAction(...)`) → `gateFallback` (always decides
-  `'fallback'`). `Date.now()` remains inside `gatePhaseAction` — impure but
+  (decides `getPhaseAction(...)`) → `gateFallback` (terminal — decides the
+  ROTATED label by calling `getNextFallbackAction()`, codex round 7: reached
+  only after every higher-priority gate fell through, so the rotation
+  advances exactly when the fallback label is displayed, matching today's
+  cadence). `Date.now()` remains inside `gatePhaseAction` — impure but
   unchanged; see open questions for injecting a clock if we ever want fully
   deterministic pipeline tests (wrapper tests already fake time where needed).
 - **Shell/effect wiring.** None; pure label computation. The hook's `useMemo`
@@ -276,16 +285,19 @@ anywhere in this plan.
   1. Extend `src/lib/__tests__/status-actions.test.ts` with gate-order rows
      (not-processing beats everything; compacting beats message; message
      beats phase; phase beats fallback) and elapsed-seconds formatting cases.
-  2. Introduce the three-value decision union; extract gates; compose with
-     `decisionRun('current-action', [...])`; wrapper interprets the sentinel
-     values.
-- **Tests.** Characterization above + a test asserting the fallback sentinel
-  maps through the rotator (preserving the rotation sequence across calls).
+  2. Introduce the two-value decision union; extract gates; compose with
+     `decisionRun('current-action', [...])`; wrapper maps only
+     `'none'` → `undefined`.
+- **Tests.** Characterization above + a test asserting consecutive fallback
+  results rotate in order (the terminal gate drives the rotator, preserving
+  the rotation sequence across calls).
 - **Risks/caveats.** Runs per streaming tick — pipeline must stay module-scope
   and gates allocation-light (each undecided gate spreads ctx once; ~13 spreads
-  worst case is fine at batch cadence). Do not move the rotator into a gate:
-  `decisionRun` halts make "ran or not" order-dependent, and tests comparing
-  consecutive fallback labels would become flaky. The `as unknown as`
+  worst case is fine at batch cadence). Review correction (codex round 7):
+  the rotator lives IN the terminal gate — halts make "ran or not"
+  order-dependent, which is exactly the current cadence (the rotation
+  advances only when the fallback label is actually produced); the earlier
+  flakiness worry was wrong. The `as unknown as`
   SDK-message narrowing in `extractActionFromMessage` stays as-is.
 
 ### `packages/web/src/lib/parse-group-message.ts:parseGroupMessage`
@@ -901,18 +913,22 @@ anywhere in this plan.
   in-flight and the armed timer later emits a false timeout error. Timeout
   resource stays in the hook per ADR Decision 5 — the pipeline receives
   per-call `armTimeout`/`clearTimeout` port values (codex round 3: handles
-  tracked per invocation, not one shared ref). Errors: `stageSendRequest`
-  throws propagate out of `.endAsync` EXCEPT when the per-call `timedOut`
-  flag is already set — a late rejection is intercepted inside the stage,
-  stamps the timed-out failure outcome (`false`), and is swallowed so
-  the shell's catch cannot run a second `onError`/toast/`onSendComplete`
-  round; otherwise the shell (the `useCallback` body) keeps the existing
-  catch and performs sanitize/toast/complete/clear interpretation.
+  tracked per invocation, not one shared ref). Errors (review correction,
+  codex round 7): `stageSendRequest` handles request rejections INSIDE the
+  stage — sanitize via `sanitizeUserError` (imported directly by the
+  pipeline module), `onError`, toast, `onSendComplete`, clear this send's
+  timer, stamp `false`, and return normally, so the ordinary failure arm
+  belongs to the pipeline and nothing of the send business path remains in
+  the shell; when the per-call `timedOut` flag is already set, the
+  late-rejection rule applies instead (stamp `false`, swallow, no second
+  error round).
 - **Shell/effect wiring.** The hook keeps the exported `clearSendTimeout`
   (now clearing ALL outstanding per-send handles — unmount cleanup paths
   depend on it) and owns the per-call timer/handle state; the
   `sendMessage` `useCallback` shrinks to: snapshot inputs → build ports →
-  `await sendMessagePipeline(input)` → catch → interpret. Dependency array
+  `await sendMessagePipeline(input)` → return the outcome (codex round 7:
+  the shell only invokes and returns — no imperative error interpretation
+  remains in the shell). Dependency array
   unchanged in substance (ports capture the same closures).
 - **Step-by-step migration.**
   1. Audit `src/hooks/__tests__/useSendMessage.test.ts` and
@@ -944,7 +960,8 @@ anywhere in this plan.
      round 23): create `src/lib/send-message-pipeline.ts` with the admission
      gates AND the send/queue effect bodies as stages over injected ports,
      and wire the hook to it in the same change — the hook shell reduces to
-     snapshot + run + error interpretation. Do NOT ship an admission-only
+     snapshot + run + return (codex round 7: request failures are handled
+     inside the stage, not the shell's catch). Do NOT ship an admission-only
      intermediate whose decision the hook still interprets through the
      imperative queue/reject/send bodies; keep the plain helper logic until
      the whole mixed pipeline can land. `SEND_TIMEOUT_MS` stays module-scope;
@@ -1195,9 +1212,11 @@ optional router phase 2. No per-site section is left uncovered.
   FIRST (not-processing beats everything; compacting beats message; message
   beats phase; phase beats fallback; elapsed-seconds formatting), then gates
   `gateNotProcessing` → `gateCompacting` → `gateMessageAction` →
-  `gatePhaseAction` → `gateFallback` with the three-value decision union
-  (`Date.now()` stays inside `gatePhaseAction`; the fallback rotator hoisted
-  to the wrapper, never a gate; `extractActionFromMessage` stays a helper
+  `gatePhaseAction` → `gateFallback` with the two-value decision union
+  (`Date.now()` stays inside `gatePhaseAction`; the fallback rotation owned
+  by the TERMINAL gate calling `getNextFallbackAction()` — codex round 7,
+  reached only when every higher gate fell through; wrapper maps only
+  `'none'` → `undefined`; `extractActionFromMessage` stays a helper
   with its `as unknown as` narrowing).
 - **Budget**: prod Δ ≈ 55; test Δ ≈ 80.
 - **Lands**: the first cadence-sensitive site (streaming ticks) runs as a
@@ -1205,7 +1224,7 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: `useChatComposerController.ts`; clock injection for
   `getCurrentAction` (open question 4).
 - **Tests**: `src/lib/__tests__/status-actions.test.ts` (+ the
-  fallback-sentinel rotation test).
+  fallback-rotation test).
 - **Depends on**: PR 1. Parallel-safe with PR 7.
 
 ### PR 7 — `refactor(web): migrate parseGroupMessage to decisionRun`
@@ -1422,7 +1441,9 @@ optional router phase 2. No per-site section is left uncovered.
   overlapping sends admitted via `allowQueueWhileProcessing: true` must not
   clobber each other's timers; `clearSendTimeout` clears all outstanding
   handles) and shrinks to
-  snapshot → run → catch interpretation; unify the duplicated `> 40`-char
+  snapshot → run → return (codex round 7: request failures are handled inside
+  the stage — sanitize/toast/complete/clear/stamp-`false`); unify the
+  duplicated `> 40`-char
   enqueue-label truncation helper (behavior-preserving);
   `clearSendTimeout` behavior identical for unmount cleanup.
 - **Budget**: sanctioned exception to the production tier — the complete
