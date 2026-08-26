@@ -500,11 +500,20 @@ export class AgentSession
         }).classifyWithTimeout(rawText),
     });
     this.rateLimitWatchdog.setRetryCallback(
-      async (lastUserMessage, switchTo, episodeGeneration) => {
+      async (lastUserMessage, switchTo, episodeGeneration, queryGeneration) => {
         if (switchTo) {
-          return await this.switchAndRetryForFallback(lastUserMessage, switchTo, episodeGeneration);
+          return await this.switchAndRetryForFallback(
+            lastUserMessage,
+            switchTo,
+            episodeGeneration,
+            queryGeneration
+          );
         }
-        return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+        return await this.executeRateLimitAutoRetry(
+          lastUserMessage,
+          episodeGeneration,
+          queryGeneration
+        );
       }
     );
 
@@ -1016,7 +1025,11 @@ export class AgentSession
         return false;
       }
 
-      return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+      return await this.executeRateLimitAutoRetry(
+        lastUserMessage,
+        episodeGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
@@ -1034,7 +1047,8 @@ export class AgentSession
 
   private async executeRateLimitAutoRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
@@ -1056,6 +1070,12 @@ export class AgentSession
       ) {
         this.logger.info('Rate limit auto-retry aborted before re-enqueue (episode superseded).');
         this.stateManager.releaseIdleWaiters(episodeGeneration);
+        return false;
+      }
+      if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
+        this.logger.info(
+          'Rate limit auto-retry aborted before re-enqueue (the originating query was superseded).'
+        );
         return false;
       }
 

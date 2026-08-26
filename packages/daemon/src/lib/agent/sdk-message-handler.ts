@@ -863,7 +863,7 @@ export class SDKMessageHandler {
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
 
-    if (invocationStale) {
+    if (this.isInvocationStale(invocationGeneration)) {
       return;
     }
 

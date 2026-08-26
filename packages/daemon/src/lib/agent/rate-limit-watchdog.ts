@@ -71,7 +71,8 @@ export interface RateLimitWatchdogDeps {
 export type RateLimitRetryCallback = (
   lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
   switchTo: FallbackModelEntry | undefined,
-  episodeGeneration: number
+  episodeGeneration: number,
+  queryGeneration?: number
 ) => Promise<boolean>;
 
 export class RateLimitWatchdog {
@@ -454,10 +455,11 @@ export class RateLimitWatchdog {
       return;
     }
     const entryGeneration = this.generation;
+    const armedQueryGeneration = this.cooldownQueryGeneration;
     this.retryCallbackInFlight = true;
     this.retryCallbackInFlightOwner = entryGeneration;
     try {
-      await this.runCooldownRetry(errorMessage, entryGeneration);
+      await this.runCooldownRetry(errorMessage, entryGeneration, armedQueryGeneration);
     } finally {
       if (this.retryCallbackInFlightOwner === entryGeneration) {
         this.retryCallbackInFlight = false;
@@ -466,14 +468,23 @@ export class RateLimitWatchdog {
     }
   }
 
-  private async runCooldownRetry(errorMessage: string, entryGeneration: number): Promise<void> {
+  private async runCooldownRetry(
+    errorMessage: string,
+    entryGeneration: number,
+    queryGeneration?: number
+  ): Promise<void> {
     if (!this.retryCallback) {
       if (entryGeneration === this.generation) this.notifyResume();
       return;
     }
     let started = false;
     try {
-      started = await this.retryCallback(this.lastUserMessage, undefined, entryGeneration);
+      started = await this.retryCallback(
+        this.lastUserMessage,
+        undefined,
+        entryGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error('Cooldown retry callback threw; rescheduling a startup retry:', err);
       started = false;

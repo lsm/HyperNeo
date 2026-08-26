@@ -1049,6 +1049,34 @@ describe('SDKMessageHandler', () => {
       expect(emitSpy.mock.calls.map((call) => call[0] as string)).not.toContain('session.updated');
     });
 
+    it('staleness is recomputed at the persistence gate after the breaker await (B5e)', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      const checkMessage = mock(async (): Promise<boolean> => {
+        generation = 9;
+        return false;
+      });
+      (
+        handler as unknown as {
+          circuitBreaker: { checkMessage: (m: SDKMessage) => Promise<boolean> };
+        }
+      ).circuitBreaker.checkMessage = checkMessage;
+      const lateResult = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'late-result-uuid',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(lateResult, 3);
+
+      expect(saveSDKMessageSpy).not.toHaveBeenCalledWith('test-session-id', lateResult);
+    });
+
     it('a stale model_refusal_no_fallback does not persist refusal rewind state (B5e)', async () => {
       (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
         () => 9
