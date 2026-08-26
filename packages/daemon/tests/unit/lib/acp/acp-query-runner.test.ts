@@ -247,7 +247,6 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     messageHandler: {
       markMessageSubmitted: mock(() => true),
       markMessageAccepted: mock(() => {}),
-      markMessageSubmissionFailed: mock(() => {}),
       markACPDeliveryFailed: mock(() => {}),
     } as never,
     queryObject: null,

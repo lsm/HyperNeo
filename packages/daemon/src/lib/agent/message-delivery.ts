@@ -4,7 +4,6 @@ import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 import { planDeliveryRoleArbitration } from './delivery-turn-routing.ts';
-import { selectStrandedDeliveries } from './turn-outcome-classification.ts';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
   stateManager: { setIdle(): Promise<void> },
@@ -195,38 +194,6 @@ export async function deliverBatchAndMarkQueued(args: {
       } catch {}
     }
     return true;
-  });
-}
-
-export interface StrandedDeliveryDb {
-  getUserMessageIdsByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
-}
-
-export async function reconcileStrandedDeliveries(args: {
-  sessionId: string;
-  db: StrandedDeliveryDb;
-  jobQueue: JobQueueRepository;
-  stateManager?: {
-    setQueuedIfIdle(messageId: string): Promise<boolean>;
-  };
-  isInFlight?: (uuid: string) => boolean;
-}): Promise<number> {
-  if (!isMessageDeliveryV2Enabled()) return 0;
-  return withSessionLock(args.sessionId, async () => {
-    const stranded = selectStrandedDeliveries(
-      args.db.getUserMessageIdsByStatus(args.sessionId, 'enqueued'),
-      args.jobQueue.activeDeliveryMessageUuids(args.sessionId),
-      args.isInFlight
-    );
-    for (const uuid of stranded) {
-      const role = deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
-      if (role === 'turn' && args.stateManager) {
-        try {
-          await args.stateManager.setQueuedIfIdle(uuid);
-        } catch {}
-      }
-    }
-    return stranded.length;
   });
 }
 
