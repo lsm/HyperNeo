@@ -11,12 +11,14 @@ is a thin data-access layer over that table:
 - `create` / `getById` / `listBySpace` (primary first, then oldest) / `getByPath(spaceId, path)` /
   `findOwnerByPath(path)` (across all spaces) / `updateLabel` / `delete(spaceId, id)` / `countBySpace`.
 - Constraint violations surface as thrown SQLite errors with no reclassification. The two
-  `UNIQUE` rules in this table — `UNIQUE(space_id, path)` and the partial unique index on
-  `(space_id) WHERE is_primary = 1` — both surface as `UNIQUE constraint failed: ...` with
-  only the failing index name to tell them apart, so a bare `/UNIQUE constraint/i` check
-  cannot tell a duplicate-path collision from a second-primary attempt. Callers that need
-  to distinguish them should pre-check with `getByPath` / `getById` (or inspect the failing
-  index name in the SQLite error); the repository itself does not parse the message.
+  `UNIQUE` rules in this table both raise `UNIQUE constraint failed: ...` and are
+  distinguishable only by the column list in the message: a duplicate path fails as
+  `UNIQUE constraint failed: space_workspaces.space_id, space_workspaces.path`, while a
+  second primary fails as `UNIQUE constraint failed: space_workspaces.space_id` (the
+  partial unique index on `(space_id) WHERE is_primary = 1` reports its indexed column,
+  not its name). A bare `/UNIQUE constraint/i` check therefore cannot tell the two apart;
+  callers that need to distinguish them must match the column signature. Pre-checks
+  (`getByPath` / `getById`) are advisory only — they race with concurrent inserts.
 
 ## Canonical path comparison
 
@@ -27,8 +29,10 @@ is given and applies no normalization of its own. Canonicalization is the manage
 
 Consequences of that contract:
 
-- `/tmp/repo` and `/tmp/repo/` are distinct keys; only one can be registered per space, and
-  `findOwnerByPath` will not match both.
+- `/tmp/repo` and `/tmp/repo/` are distinct keys: both spellings can be registered in the
+  same space at this layer, and `getByPath` / `findOwnerByPath` match only the exact
+  string given. Collapsing spelling variants of one directory is the caller's
+  canonicalization job, not the database's.
 - `getByPath` never leaks across spaces: it always takes `(spaceId, path)`.
 - When several spaces registered the same canonical path, `findOwnerByPath` returns the primary
   row of one of them deterministically (primary rows win, then earliest `created_at`, then
