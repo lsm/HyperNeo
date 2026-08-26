@@ -1524,24 +1524,31 @@ export class TaskAgentManager {
             : [spaceChatSessionId];
         const probe = (sessionId: string) =>
           this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
-        let activeSessionId: string | null = null;
+        const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
+          [];
+        let settled = false;
+        const settleFrom = (settledSessionId: string) => {
+          if (settled) return;
+          settled = true;
+          for (const handle of handles) handle.cancel();
+          if (repo.getById(row.id)?.status !== 'pending') return;
+          repo.markDelivered(row.id, settledSessionId);
+          this.emitPendingDelivered(row.id, settledSessionId, row);
+        };
         for (const sessionId of candidates) {
-          const status = probe(sessionId);
-          if (status === 'enqueued' || status === 'submitted') {
-            activeSessionId = sessionId;
-            break;
-          }
+          handles.push(
+            this.lateSettlements.arm({
+              sessionId,
+              messageId: row.id,
+              onConsumed: settleFrom,
+            })
+          );
         }
-        if (activeSessionId) {
-          this.lateSettlements.arm({
-            sessionId: activeSessionId,
-            messageId: row.id,
-            onConsumed: (settledSessionId) => {
-              if (repo.getById(row.id)?.status !== 'pending') return;
-              repo.markDelivered(row.id, settledSessionId);
-              this.emitPendingDelivered(row.id, settledSessionId, row);
-            },
-          });
+        for (const sessionId of candidates) {
+          if (probe(sessionId) === 'consumed') {
+            settleFrom(sessionId);
+            return;
+          }
         }
       },
     };
