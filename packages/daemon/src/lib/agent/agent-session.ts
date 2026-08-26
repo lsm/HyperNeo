@@ -1158,20 +1158,20 @@ export class AgentSession
     await this.sessionConfigHandler.updateConfig(configUpdates);
   }
 
-  replaceAllRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
+  replaceAllRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): Promise<void> {
     this.session.config = {
       ...this.session.config,
       mcpServers,
     };
     this.emitMcpAttachLog('replace', Object.keys(mcpServers));
-    this.syncRuntimeMcpServersToActiveQuery('replace', Object.keys(mcpServers));
+    return this.syncRuntimeMcpServersToActiveQuery('replace', Object.keys(mcpServers));
   }
 
   setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
     this.replaceAllRuntimeMcpServers(mcpServers);
   }
 
-  mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): void {
+  mergeRuntimeMcpServers(additional: Record<string, McpServerConfig>): Promise<void> {
     const existing = this.session.config?.mcpServers ?? {};
     this.session.config = {
       ...this.session.config,
@@ -1181,12 +1181,12 @@ export class AgentSession
       },
     };
     this.emitMcpAttachLog('merge', Object.keys(additional));
-    this.syncRuntimeMcpServersToActiveQuery('merge', Object.keys(additional));
+    return this.syncRuntimeMcpServersToActiveQuery('merge', Object.keys(additional));
   }
 
-  detachRuntimeMcpServer(name: string): void {
+  detachRuntimeMcpServer(name: string): Promise<void> {
     const existing = this.session.config?.mcpServers;
-    if (!existing || !(name in existing)) return;
+    if (!existing || !(name in existing)) return Promise.resolve();
     const updated = { ...existing };
     delete updated[name];
     this.session.config = {
@@ -1194,18 +1194,18 @@ export class AgentSession
       mcpServers: updated,
     };
     this.emitMcpAttachLog('detach', [name]);
-    this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
+    return this.syncRuntimeMcpServersToActiveQuery('detach', [name]);
   }
 
-  reconcileEffectiveMcpServers(): void {
+  reconcileEffectiveMcpServers(): Promise<void> {
     if (this.session.config.provider === 'acp') {
       this.logger.info(
         `mcp.reconcile skipped: provider 'acp' does not support live MCP updates; ` +
           `changes apply on next query recreation (session ${this.session.id})`
       );
-      return;
+      return Promise.resolve();
     }
-    this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
+    return this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
   }
 
   private enforceRestoredContextBudget(): void {
@@ -1240,7 +1240,7 @@ export class AgentSession
         `(provider=${providerId}, reason=${decision.reason}, ` +
         `${restored.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
     );
-    void this.messageQueue.enqueue('/compact', true).catch((error) => {
+    void this.messageQueue.enqueue('/compact', true, { durable: true }).catch((error) => {
       this.logger.warn(`restored compaction enqueue failed for session ${this.session.id}:`, error);
       this.contextTracker.clearCompactionCooldown();
     });
@@ -1249,16 +1249,16 @@ export class AgentSession
   private syncRuntimeMcpServersToActiveQuery(
     action: 'merge' | 'detach' | 'replace' | 'reconcile',
     servers: string[]
-  ): void {
+  ): Promise<void> {
     const queryObject = this.queryObject;
-    if (!queryObject) return;
+    if (!queryObject) return Promise.resolve();
 
     const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
-    if (!setMcpServers) return;
+    if (!setMcpServers) return Promise.resolve();
 
     const effectiveMcpServers = this.optionsBuilder.getEffectiveMcpServers() ?? {};
-    void setMcpServers(effectiveMcpServers)
-      .then((result) => {
+    return setMcpServers(effectiveMcpServers)
+      .then(async (result) => {
         this.logger.info(
           `mcp.attach.live ${JSON.stringify({
             event: 'mcp.attach.live',
@@ -1271,7 +1271,7 @@ export class AgentSession
             errors: result.errors,
           })}`
         );
-        void this.messageHandler.refreshContextUsage('mcp-sync');
+        await this.messageHandler.refreshContextUsage('mcp-sync');
       })
       .catch((error) => {
         this.logger.warn(

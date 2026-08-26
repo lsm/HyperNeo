@@ -63,7 +63,7 @@ export class MessageQueue {
   async enqueue(
     content: string | MessageContent[],
     internal: boolean = false,
-    options?: { prepend?: boolean }
+    options?: { durable?: boolean; prepend?: boolean }
   ): Promise<string> {
     const messageId = generateUUID();
     await this.enqueueWithId(messageId, content, internal, options);

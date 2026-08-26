@@ -316,7 +316,7 @@ export class ContextFetcher {
       if (
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
-        budgetThreshold < capacity &&
+        budgetThreshold <= capacity &&
         (resolveAutoCompactPercent(modelMetadata?.autoCompactPercent) >
           AUTO_COMPACT_PERCENT_DEFAULT ||
           response.isAutoCompactEnabled === false ||
