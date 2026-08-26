@@ -199,10 +199,8 @@ The launcher contract extends the owner-review contract with:
   from the rolling state). Release distinguishes hold reasons: a pause this sequence or the
   hard-gate setup introduced is released (recreating the gate re-pauses as needed);
   only an unrelated human or judgment hold keeps B paused, with the drift outcome
-  recorded against that hold's `nextSteps`. When releasing: clear any retained cadence
-  **while B is still paused**, then `resume_goal` and `trigger_goal_task` (resuming
-  first reactivates the schedule, and a fire in the interval can claim B's task before
-  the launcher's own trigger).
+  recorded against that hold's `nextSteps`. When releasing, apply the §5 release
+  protocol in full — including the cadence snapshot/clear/restore cycle.
   (`interrupt_session` alone only stops the current turn; the task stays active and a
   subsequent `trigger_goal_task` would throw or merely queue.)
 - **No tight loops.** Cross-goal re-evaluation rides the launcher's own reminders and
@@ -252,12 +250,15 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 gate's hold lifecycle):
 
 - **Setup:** drain B's pending outcomes first — reconciling any completion racing the
-  pause, since the pause is itself a revision-changing mutation; then pause — `pause_goal`
-  only if B is active; an already-paused goal instead records the additional hold and
-  marks that this sequence does **not** own the pause. Hold ownership lives in **agent
-  memory** (with the human-readable condition mirrored in `nextSteps` for visibility) —
-  outcome reviews replace `nextSteps` wholesale, so a marker recorded only there is
-  erased before release revalidates it. Then cancel what
+  pause, since the pause is itself a revision-changing mutation; then persist the hold
+  identity and intended ownership in **agent memory — before the pause mutation** (a
+  crash between the pause and the write would leave B durably paused with no record of
+  who may resume it; update or remove the record if the pause fails), with the
+  human-readable condition mirrored in `nextSteps` for visibility (outcome reviews
+  replace `nextSteps` wholesale, so a marker recorded only there is erased before
+  release revalidates it). Then pause — `pause_goal` only if B is active; an
+  already-paused goal instead records the additional hold and marks that this sequence
+  does **not** own the pause. Then cancel what
   the hold must stop: every active goal task for a judgment gate **or a hard gate**, and
   for a durable wait only dependency-sensitive ones (independent work may deliberately
   continue under the wait) — plus, for either hold, any tracked gated task (both gated shapes bypass
@@ -277,7 +278,9 @@ gate's hold lifecycle):
   schedule against an empty pointer. Restore it — recreating from the recorded values —
   only after the next
   outcome is reviewed, the explicitly triggered replacement's or the retained task's
-  when setup deliberately kept it; revalidate that no other recorded hold
+  when setup deliberately kept it; resolve this sequence's own hold record in agent
+  memory **before** revalidating the rest (a stale record surviving future wakes reads
+  as an unresolved overlapping gate); revalidate that no other recorded hold
   remains; resume only when this sequence owns the pause or all other gates are
   cleared; re-trigger only when the active-task pointer is confirmed empty (with a
   retained task's terminal outcome already reviewed per the release step above); a
