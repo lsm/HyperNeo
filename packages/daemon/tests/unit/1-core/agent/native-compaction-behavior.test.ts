@@ -8,6 +8,7 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import {
   buildProviderSettings,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
   shouldUseHyperNeoCompactFallback,
 } from '../../../../src/lib/agent/query-options-builder';
@@ -198,6 +199,12 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
 describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
   it('PROVIDER_NO_SDK_AUTO_COMPACT is empty (no provider uses the async /compact fallback)', () => {
     expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
+  });
+
+  it('the four native context-window providers are exactly the documented set', () => {
+    expect([...NATIVE_CONTEXT_WINDOW_PROVIDER_IDS].sort()).toEqual(
+      ['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm'].sort()
+    );
   });
 
   it.each([
