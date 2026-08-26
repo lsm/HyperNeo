@@ -15,7 +15,7 @@ no awaits, no DB writes, no resource ownership inside the classified cores.
 The COMPLETE operations this plan composes them into add guarded effect
 stages over injected collaborators — several of them awaited (the breaker's
 `onTrip`, reconciliation's state updates, repeated-error intervention,
-acknowledgement publications, the reclaim marker clear; see the `stagedRun`
+acknowledgement publications; see the `stagedRun`
 note below) — so those compose as direct async-capable pipelines, never as
 synchronous-only runners. `stagedRun`
 (`packages/daemon/src/lib/space/runtime/staged-run.ts`) is still not
@@ -66,7 +66,7 @@ Two structural rules applied throughout:
 | `turn-outcome-classification.ts:decideReconcileAdmission` | Admission stages of the complete `reconcile-stranded-deliveries` pipelines (review correction round 22) | `reconcile-stranded-deliveries` |
 | `limit-error-classifier.ts:assessLimitError` | raw superpipe transform | `limit-error-assess` |
 | `limit-error-classifier.ts:resolveLimitKind`, `isBillingTerminal` | none (leaves) | — |
-| `repeated-tool-error-gates.ts:decideConsecutiveError` | Classification stages of the complete error-observation pipeline from the leading scope gate through content classification (reset/ignore arms included) and error-row aggregation to state/reset/evidence/recovery effects with stage-local failure isolation (review corrections round 22 + PR #2981) | `repeated-tool-error-observation` |
+| `repeated-tool-error-gates.ts:decideConsecutiveError` | Per-row reducer pipeline of the complete error-observation operation (orchestration owns the loop per ADR 0004 P6): classification-once with reset/ignore arms, scope gate, state/reset/evidence/recovery effects with stage-local failure isolation (review corrections round 22 + PR #2981) | `repeated-tool-error-observation` |
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | Direct pipeline composing both (new `loop-detector-pipeline.ts`; review correction PR #2981: NOT `decisionRun`, whose per-gate `!hasDecided` halt would stop execution before the ledger/ring/logging/output effect stages) | `tool-call-loop-admission` |
 | `circuit-breaker-transitions.ts:extractErrorPattern` | Ordinary pure helper consumed by the complete circuit-breaker check operation (review correction round 21: no standalone runner) | `breaker-check` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | Plain helper consumed by the complete breaker-check pipeline (review correction round 22) | — |
@@ -143,8 +143,11 @@ plain `superpipe({})(name)` function registry suffices.
 compensated. Review correction (PR #2981): several planned pipelines in this
 plan DO perform awaited effects — the breaker's async `onTrip`,
 reconciliation's awaited state updates, repeated-error intervention work,
-acknowledgement publications, the reclaim marker clear, and the loop ledger
-writes. Those compose as direct async-capable pipelines (`.endAsync` /
+acknowledgement publications, and the loop ledger
+writes. (The reclaim marker clear is SYNCHRONOUS today —
+`clearDeliveryTurnEnd` is a sync DB write consumed by two synchronous
+boolean call sites, so that one pipeline stays on synchronous `.end`;
+review correction PR #2981.) Those compose as direct async-capable pipelines (`.endAsync` /
 awaited effect stages over injected collaborators) so the promises are
 actually awaited; synchronous `decisionRun`/`.end` runners are reserved for
 the PURE classifier cores only. `stagedRun` itself stays reference-only —
@@ -501,19 +504,23 @@ none of these sites needs its compensation machinery.
     decision: ConsecutiveErrorDecision | null;
   }
   ```
-  This is the PER-ERROR decision context. The complete observation pipeline
-  classifies the whole message ONCE, then iterates the deduplicated
-  `classification.errors` rows through these per-error stages, OR-aggregating
-  the `triggered` result exactly as the current loop does
-  (`repeated-tool-error-guardrail.ts:91-119`) — review correction PR #2981:
-  the error-row iteration and `triggered` aggregation are PIPELINE stages;
-  a message containing multiple error blocks (or interleaved success blocks)
-  is one observation, and per-block shell invocation has no way to aggregate
-  multiple errors or preserve classification-once semantics. The iteration
-  THREADS THE UPDATED STATE between rows (review correction PR #2981):
-  today each row's classification reads the state written by the preceding
-  row (`:93-112` live reads), so the write port's result must feed the next
-  row's classification — evaluating every row against the initial snapshot
+  This is the PER-ERROR decision context. The observation stays ONE
+  business operation at the ORCHESTRATION level, with the row loop OUTSIDE
+  the pipeline per ADR 0004's P6 rule ("pipeline as reducer body, never
+  the loop"; review correction PR #2981): the observation body runs the
+  scope gate and classifies the whole message ONCE (its `reset`/`ignore`
+  arms resolved there — never per block), then iterates the deduplicated
+  `classification.errors` rows, invoking this per-row REDUCER pipeline for
+  each and OR-aggregating the `triggered` result exactly as the current
+  loop does (`repeated-tool-error-guardrail.ts:91-119`). Classification-once
+  is preserved (a message with multiple error blocks or interleaved
+  success blocks is one observation — re-classifying per row would change
+  outcomes), while the loop, state threading, and aggregation live in the
+  observation orchestration, not inside one opaque stage. The orchestration
+  THREADS THE UPDATED STATE between rows: today each row's classification
+  reads the state written by the preceding
+  row (`:93-112` live reads), so each reducer invocation receives the state
+  the previous one wrote — evaluating every row against the initial snapshot
   changes outcomes (streak `B × 1` plus errors `A` then `B` at threshold 2
   ends at `B × 1` today, but snapshot-frozen evaluation would see `B × 2`
   on the second row and falsely intervene).
@@ -538,20 +545,25 @@ none of these sites needs its compensation machinery.
   passes through, mirroring `repeated-tool-error-guardrail.ts:78-89` — the
   guardrail classifies BEFORE the per-error loop and immediately `reset()`s
   success blocks or error-free content, so the operation must start there,
-  not at the error rows), then the per-error classification stages followed
+  not at the error rows), then the per-error REDUCER pipeline
+  (classification stages followed
   by effect stages for the keyed `lastInterventionByKey` intervention
   timestamp write (`repeated-tool-error-guardrail.ts:127-132`, read by
   later classifications at `:97-99`; review correction PR #2981: without
   it the same key re-crosses the threshold within
   `interventionCooldownMs` and re-emits evidence/recovery instead of taking
   `cooldown_reset`), state mutation (`this.state.lastError = …`),
-  `reset()`, Forge evidence emission, and recovery-message routing — with
-  the error-row iteration and `triggered` OR-aggregation INSIDE the pipeline
-  (review correction PR #2981: the shell does not retain per-block
-  iteration; a whole message is one observation, so a later block's reset
-  cannot race an earlier row's intervention and multiple errors aggregate);
-  the shell injects a CLOCK FUNCTION, not a frozen timestamp — the
-  pipeline evaluates it per error row (`repeated-tool-error-guardrail.ts:102`)
+  `reset()`, Forge evidence emission, and recovery-message routing) invoked
+  ONCE PER ROW by the observation orchestration, which owns the loop,
+  threads the updated state between rows, and OR-aggregates `triggered`
+  (review correction PR #2981, per ADR 0004 P6 "pipeline as reducer body,
+  never the loop": the row loop is NOT a pipeline stage; classification
+  stays once-per-message, so a later block's reset cannot race an earlier
+  row's intervention and multiple errors still aggregate);
+  the observation injects a CLOCK FUNCTION, not a frozen timestamp — the
+  orchestration evaluates it per error row
+  (`repeated-tool-error-guardrail.ts:102`, passing the fresh value into each
+  reducer invocation)
   and again when recording the intervention timestamp (`:127-131`; review
   correction PR #2981: a single entry-time value freezes cooldown decisions
   across an awaited earlier intervention — a later key whose cooldown
@@ -566,13 +578,13 @@ none of these sites needs its compensation machinery.
   routing or a routing failure escape the guardrail, so the per-stage
   try/catch containment (or equivalent stage-local handlers) is required.
 - **step-by-step migration.** 1) Add gates + effect stages +
-  `decideConsecutiveError` pipeline wrapper; 2) the whole
-  `observeToolResultErrors` body is replaced by ONE pipeline invocation per
-  message — classification-once, in-pipeline error-row iteration, and
-  `triggered` aggregation all inside the single invocation (review
-  correction PR #2981: a per-error call site would leave iteration or
-  aggregation in the guardrail and re-run content classification per row);
-  3) no other callers exist.
+  `decideConsecutiveError` pipeline wrapper; 2) `observeToolResultErrors`
+  becomes the observation ORCHESTRATION: scope gate, classification-once
+  with its `reset`/`ignore` arms, then the row loop invoking the reducer
+  pipeline per row with the threaded state and per-row clock, aggregating
+  `triggered` (review correction PR #2981, per ADR 0004 P6: the loop stays
+  in the orchestration — the pipeline is the per-row reducer; classification
+  never re-runs per row); 3) no other callers exist.
 - **tests.** Existing gates suite passes unchanged. Add: halt row (threshold
   gate fires → final gate not reached), and cooldown row asserting
   `lastInterventionAt === undefined` never trips the cooldown gate.
@@ -640,23 +652,27 @@ none of these sites needs its compensation machinery.
      suite pins it; unlike the disabled/no-threshold arm this gate performs
      NO ledger deletion — an accidentally dispatched `PostToolUse` payload
      for a monitored tool must not advance the ledger or be denied).
-  2. `applyDisabledGate` — `!enabled` or (no threshold and not bash) →
-     `allow` with the passthrough streak (identity advance is not needed;
-     today the disabled path returns `{}` and *deletes* the scope ledger —
-     preserve exactly: model as `action: 'allow', resetLedger: true` or keep
-     the delete in the shell keyed on the same condition; pick the explicit
-     `resetLedger` flag).
-  3. `applyArgKeyStage` — transform: `buildArgKey(toolName, input, cwd)`.
-  4. `applyStreakAdvanceStage` — transform: `advanceLoopStreak` → `streak`.
-  5. `applyBashRingStage` — bash-only transform: `evaluateBashFailureRing`
+  2. `applyDisabledGate` — `!enabled` → `allow` passthrough with NO ledger
+     or ring effects of any kind (review correction PR #2981: the current
+     callback returns at `loop-detector-hook.ts:118` BEFORE deriving a
+     scope or touching either map — a disabled invocation with preexisting
+     state is a no-op, not a mutation; conflating it with the no-threshold
+     branch changes behavior).
+  3. `applyUnmonitoredGate` — enabled but (no threshold and not bash) →
+     `allow` with the passthrough streak and `resetLedger: true` (this and
+     only this branch deletes the scope ledger today,
+     `loop-detector-hook.ts:130-132`).
+  4. `applyArgKeyStage` — transform: `buildArgKey(toolName, input, cwd)`.
+  5. `applyStreakAdvanceStage` — transform: `advanceLoopStreak` → `streak`.
+  6. `applyBashRingStage` — bash-only transform: `evaluateBashFailureRing`
      (pure read of `prevRing`); non-bash rows skip via a guard gate that
      leaves `ring: null`.
-  6. `applyBashDeadLoopGate` — bash and `streak.count >= bash.threshold` and
+  7. `applyBashDeadLoopGate` — bash and `streak.count >= bash.threshold` and
      ring all-failures → `decideBashDeadLoop(...)` mapped into a deny
      decision (delegate to the existing function — it stays exported).
-  7. `applyIdenticalArgsGate` — non-bash, threshold met →
+  8. `applyIdenticalArgsGate` — non-bash, threshold met →
      `decideIdenticalArgsLoop(...)`.
-  8. `applyAllowFinalGate` — decides `allow` with next streak and
+  9. `applyAllowFinalGate` — decides `allow` with next streak and
      `ringExpired`.
 - **shell/effect wiring.** Review correction round 23: the COMPLETE
   loop-admission pipeline performs the state effects as guarded stages —
@@ -701,8 +717,11 @@ none of these sites needs its compensation machinery.
 - **tests.** Gate suites unchanged. Hook suite is the parity proof for the
   callback rewiring. Add pipeline rows: non-PreToolUse payload returns `{}`
   with NO ledger/ring mutation (the event gate runs before any state
-  transform); disabled+non-threshold row resets
-  the ledger; bash row with expired ring both denies-not and reports
+  transform); disabled row is a NO-OP passthrough (no ledger touch) while
+  the enabled no-threshold row resets
+  the ledger (review correction PR #2981: only the no-threshold branch
+  deletes, `loop-detector-hook.ts:130-132`); bash row with expired ring
+  both denies-not and reports
   `ringExpired`; identical-args row where the deny reason embeds
   `summariseArgs` output.
 - **risks/caveats.** This is the only site in the plan on a genuinely
@@ -1215,18 +1234,20 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   enqueued, submitted, AND deferred (review correction) — writes the
   supplied `consumedAt` in the same transactional status-plus-timestamp
   batch (`sdk-message-handler.ts:655-658,691-694`) and publishes ALL
-  THREE events the current handler publishes after changing status:
+  FOUR events the current handler publishes around the status change
+  (`messages.statusChanged` first at `:660-668,696-703`, then):
   `state.sdkMessages.delta`, `sdk.message`, and the tool-result-consumed
   event; restricting SDK-delta publication to the deferred arm makes
   normally yielded messages and tool results disappear from downstream
-  SDK-message consumers. The publication stages keep today's
-  NON-PROPAGATING failure semantics (review correction PR #2981):
-  `handleMessageYielded` is synchronous (`MessageQueue.onMessageYielded`
-  returns `void`, callers do not await), and each publication promise is
-  individually `.catch`-contained today — the async stages carry equivalent
-  stage-local catches (or the handler awaits the pipeline and keeps the
-  void contract) so a publication failure never becomes an unhandled
-  rejection. EVERY successful or already-consumed acknowledgment arm —
+  SDK-message consumers. Failure semantics split by kind (review
+  correction PR #2981): a transactional status/timestamp stage failure
+  PROPAGATES to the queue boundary — `handleMessageYielded` becomes async
+  and `MessageQueue.messageGenerator` awaits it before yielding
+  (`message-queue.ts:347-359`, preserving today's claim-removal and
+  enqueue-rejection on a synchronous throw) — while each individual
+  PUBLICATION promise keeps its today-style `.catch` containment so a
+  publication failure never becomes an unhandled rejection. EVERY
+  successful or already-consumed acknowledgment arm —
   yielded and immediate alike — also sets the
   `acknowledgedPersistedUserThisTurn` state flag as an effect stage
   (`sdk-message-handler.ts:422,445,666,704`; review correction PR #2981):
@@ -1669,23 +1690,27 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   imperatively today — the keyed `lastInterventionByKey` timestamp write
   (`:127-132`, review correction PR #2981), state mutation, `reset()`,
   Forge evidence emission on
-  `intervene`, recovery-message routing, and the error-row iteration with
-  `triggered` OR-aggregation over the deduplicated `classification.errors`
-  (review correction PR #2981: iteration and aggregation are pipeline
-  stages, not shell loops) (each effect carrying today's stage-local
+  `intervene`, recovery-message routing (each effect carrying today's
+  stage-local
   try/catch containment, `repeated-tool-error-guardrail.ts:134-152`, so an
   evidence failure never aborts routing and a routing failure never rejects
-  the observer) — as the complete error-observation pipeline, landed unwired
+  the observer) — as the per-row REDUCER pipeline the observation
+  orchestration invokes (review correction PR #2981, per ADR 0004 P6
+  "pipeline as reducer body, never the loop": the error-row loop,
+  state threading, and `triggered` OR-aggregation over the deduplicated
+  `classification.errors` live in the `observeToolResultErrors`
+  orchestration, not as pipeline stages), landed unwired
   over ctx-injected
   STATE COLLABORATORS (review correction PR #2981: a pipeline operating on a
   state SNAPSHOT can never update the guardrail's real `lastError`, count,
   or intervention map, and passing the live object as a plain snapshot field
   contradicts the snapshot boundary) — the core receives explicit
   write-state / reset / evidence-emission PORTS as deps, so the same stages
-  mutate the real guardrail state once PR 12 injects it — and the per-row
-  iteration THREADS the write port's updated state into the next row's
-  classification (review correction PR #2981: today each row reads the
-  state written by the preceding row, `repeated-tool-error-guardrail.ts:93-112`;
+  mutate the real guardrail state once PR 12 injects it — and each
+  invocation receives the state the PREVIOUS row's invocation wrote (the
+  orchestration threads it; review correction PR #2981: today each row
+  reads the state written by the preceding row,
+  `repeated-tool-error-guardrail.ts:93-112`;
   a frozen initial snapshot falsely intervenes on alternating-streak
   sequences); the guardrail file
   is untouched in this slice.
@@ -1704,16 +1729,21 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 - **scope.**
   `packages/daemon/src/lib/agent/repeated-tool-error-guardrail.ts:74-120`
-  (`observeToolResultErrors`): the WHOLE observation — the scope
+  (`observeToolResultErrors`): the method becomes the observation
+  ORCHESTRATION — the scope
   precondition (`:74-76`), content
   classification with its `reset`/`ignore` arms (`:78-89`), then the
-  error-row iteration with `triggered` aggregation (`:91-119`) — runs the
-  pipeline; the shell injects a CLOCK FUNCTION the pipeline evaluates per
-  error row and at the intervention-timestamp write (review
-  correction PR #2981: scoping the pipeline to error rows only would drop
-  the success-block reset arm, and retaining per-block shell iteration
-  would leave aggregation and multi-error ordering outside the complete
-  operation).
+  error-row loop invoking the per-row reducer pipeline with the threaded
+  state and `triggered` aggregation (`:91-119`; review correction PR
+  #2981, per ADR 0004 P6: the loop stays in the orchestration — the
+  pipeline is the per-row reducer);
+  the shell-level per-block invocation is gone, classification runs once
+  per message, and the observation injects a CLOCK FUNCTION the
+  orchestration evaluates per
+  error row and passes to the intervention-timestamp write (review
+  correction PR #2981: scoping the reducer to error rows only would drop
+  the success-block reset arm, and a frozen entry-time clock falsely takes
+  `cooldown_reset` on later rows).
 - **lands.** State/reset/evidence/recovery effects run inside the same
   pipeline as the three classification arms in production.
 - **excludes.** Any change to the exported decision type.
@@ -1738,8 +1768,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   passes through and the guarded effects
   below always run after classification, keyed on the stamped decision) —
   `applyPreToolUseEventGate`,
-  `applyDisabledGate` (`allow` + explicit `resetLedger`),
-  `applyArgKeyStage`, `applyStreakAdvanceStage`, bash-guarded
+  `applyDisabledGate` (no-op `allow` passthrough, NO ledger effects),
+  `applyUnmonitoredGate` (allow + explicit `resetLedger` — ONLY this arm
+  deletes the ledger; review correction PR #2981), `applyArgKeyStage`,
+  `applyStreakAdvanceStage`, bash-guarded
   `applyBashRingStage`, delegating `applyBashDeadLoopGate` and
   `applyIdenticalArgsGate` (both stay exported), `applyAllowFinalGate`, plus
   the GUARDED STATE-EFFECT stages — ledger delete on `resetLedger`,
@@ -1756,8 +1788,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   stages, per the state-effect list above), and the PostToolUse(Failure)
   `recordBashRingOutcome` callbacks (already pure folds).
 - **tests.** `loop-detector-gates.test.ts` unchanged; new pipeline rows —
-  non-PreToolUse payload returns `{}` with no state mutation, disabled
-  resets the ledger, expired ring reports `ringExpired`, deny reason
+  non-PreToolUse payload returns `{}` with no state mutation, disabled row
+  is a no-op passthrough while the no-threshold row resets the ledger,
+  expired ring reports `ringExpired`, deny reason
   embeds `summariseArgs` output.
 - **depends on.** none — parallel-safe leaf.
 
@@ -1896,7 +1929,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 - **scope.** `agent-session.ts:2732-2744`
   (`reclaimTurnAlreadySucceeded`): runs the complete reclaim pipeline; the
   guarded `clearDeliveryTurnEnd` on `redrive` is a pipeline effect, not
-  caller code.
+  caller code. The pipeline stays SYNCHRONOUS (`.end`, not `.endAsync` —
+  review correction PR #2981): `clearDeliveryTurnEnd` is a synchronous DB
+  write today, and both callers consume the result synchronously in boolean
+  conditions (`agent-session.ts:2034,2073` — an async pipeline's promise
+  would be truthy for every `alreadyConsumed` delivery, misclassifying
+  live/redrive turns as `turn_terminated`).
 - **lands.** The redrive marker-clear DB effect runs inside the reclaim
   operation in production.
 - **excludes.** The payload flip (PR 21).
@@ -2037,18 +2075,25 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   the send-status tests assert that timestamp update — omitting it leaves
   the persisted row at its enqueue time while the published replay carries
   the later yield time, corrupting timestamp-ordered snapshots) and
-  publishes all three events
+  publishes FOUR events — `messages.statusChanged` FIRST in every consumed
+  arm (`:660-668,696-703`; review correction PR #2981: omitting it leaves
+  consumers displaying the row as enqueued/submitted after the DB marked it
+  consumed), then
   (`state.sdkMessages.delta`, `sdk.message`, tool-result-consumed);
   consumption, ownership revalidation, and publications run as stages of the
-  same operation, not an outer imperative handler cascade. The publication
-  stages preserve today's NON-PROPAGATING failure semantics (review
-  correction PR #2981): `handleMessageYielded` is synchronous
-  (`MessageQueue.onMessageYielded` returns `void` and its callers do not
-  await it), and every publication promise is individually
-  `.catch(() => {})`-contained today — each async stage carries an
-  equivalent stage-local catch (or the handler awaits the pipeline and
-  keeps the void contract), so a publication failure can never become an
-  unhandled rejection or escape the handler. Every consumed arm also sets
+  same operation, not an outer imperative handler cascade. Failure
+  semantics split by kind (review
+  correction PR #2981): a transactional status/timestamp stage failure MUST
+  PROPAGATE to the queue boundary — `handleMessageYielded` becomes async
+  and `MessageQueue.messageGenerator` awaits it before yielding
+  (`message-queue.ts:347-359`: today a synchronous throw there removes the
+  claim and rejects the enqueue; an async pipeline swallowed behind the
+  void callback would let the queue move the message into `yielded` despite
+  the failed acknowledgment and leave a rejected promise unhandled) — while
+  the individual PUBLICATION promises keep
+  today's per-publication `.catch` containment, so a publication failure
+  never becomes an unhandled rejection or escapes the handler. Every
+  consumed arm also sets
   the `acknowledgedPersistedUserThisTurn` flag (`:666,704`) as an effect
   stage (review correction PR #2981) — the turn-end batch acknowledgment
   gates on that flag at `:1163`, so dropping the write would consume an
