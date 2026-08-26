@@ -285,8 +285,18 @@ export class ModelSwitchHandler {
 
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
           await this.ctx.queryObject.setModel(resolvedModel);
+          const revokedCompactions = this.ctx.messageQueue.revokeAllInternalCompactions();
+          await this.ctx.reevaluateContextBudgetAfterModelSwitch?.({
+            supersededQueued: revokedCompactions > 0,
+          });
         } else {
-          await lifecycleManager.restart();
+          const revokedCompactions = this.ctx.messageQueue.revokeAllInternalCompactions();
+          await lifecycleManager.restart({
+            beforeStart: () =>
+              this.ctx.reevaluateContextBudgetAfterModelSwitch?.({
+                supersededQueued: revokedCompactions > 0,
+              }),
+          });
           if (clearAcpSessionId && previousAcpSessionId) {
             await this.disposePreviousAcpSession(
               previousAcpSessionId,
@@ -298,11 +308,6 @@ export class ModelSwitchHandler {
 
       const selectedModel = session.config.model;
       contextTracker.setModel(selectedModel);
-      const revokedCompactions = this.ctx.messageQueue.revokeAllInternalCompactions();
-      await this.ctx.reevaluateContextBudgetAfterModelSwitch?.({
-        supersededQueued: revokedCompactions > 0,
-      });
-
       messageHub.event(
         'session.model-switched',
         {

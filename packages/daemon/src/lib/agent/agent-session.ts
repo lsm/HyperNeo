@@ -1317,7 +1317,23 @@ export class AgentSession
         );
       }
     }
-    await this.processInterruptSurvivorReceipt(queryObject, receipt);
+    if (receipt && this.pendingResumeAfterCompaction && !timedOut) {
+      let resolveDeliveryGate: (() => void) | undefined;
+      const deliveryGate = new Promise<void>((resolve) => {
+        resolveDeliveryGate = resolve;
+      });
+      this.messageQueue.setDeliveryGate(deliveryGate);
+      try {
+        const restarted = await this.processInterruptSurvivorReceipt(queryObject, receipt);
+        if (!restarted) {
+          this.enqueueMidTurnCompaction(budgetKey, 'mid-turn');
+        }
+      } finally {
+        resolveDeliveryGate?.();
+      }
+    } else {
+      await this.processInterruptSurvivorReceipt(queryObject, receipt);
+    }
     void interruptPromise.then(
       (lateReceipt) => {
         if (!timedOut || !this.pendingResumeAfterCompaction) return;
@@ -1347,11 +1363,10 @@ export class AgentSession
   private async processInterruptSurvivorReceipt(
     queryObject: QueryLike,
     receipt: { still_queued?: string[] } | undefined
-  ): Promise<void> {
+  ): Promise<boolean> {
     const survivors = receipt?.still_queued ?? [];
-    if (survivors.length === 0) return;
-    if (this.queryObject !== queryObject) return;
-    if (typeof queryObject.cancelAsyncMessage !== 'function') return;
+    if (survivors.length === 0) return false;
+    if (typeof queryObject.cancelAsyncMessage !== 'function') return false;
     let unconfirmedSurvivor = false;
     for (const uuid of survivors) {
       try {
@@ -1400,46 +1415,34 @@ export class AgentSession
     }
     if (unconfirmedSurvivor) {
       await this.finishSurvivorTeardownWithRestart();
+      return true;
     }
+    return false;
   }
 
   private async finishSurvivorTeardownWithRestart(): Promise<void> {
-    if (!this.lifecycleManager) return;
-    if (
-      this.pendingResumeAfterCompaction &&
-      !this.messageQueue.hasOutstandingInternalCompaction()
-    ) {
-      const budgetKey = this.pendingMidTurnBudgetKey;
-      this.contextTracker.markCompactionTriggered(budgetKey);
-      this.messageQueue.clearNonCompactionSentSinceBoundary();
-      this.logger.info(
-        `Daemon context-budget compaction for session ${this.session.id} ` +
-          `(provider=${this.session.config.provider}, reason=mid-turn-restart, ` +
-          `${this.contextTracker.getContextInfo()?.totalUsed ?? 0} >= ${budgetKey ?? 0} tokens)`
+    if (!this.lifecycleManager || !this.pendingResumeAfterCompaction) return;
+
+    const budgetKey = this.pendingMidTurnBudgetKey;
+    let resolveDeliveryGate: (() => void) | undefined;
+    const deliveryGate = new Promise<void>((resolve) => {
+      resolveDeliveryGate = resolve;
+    });
+
+    const beforeStart = async () => {
+      this.pendingResumeAfterCompaction = true;
+      this.pendingMidTurnBudgetKey = budgetKey;
+      this.messageQueue.setDeliveryGate(deliveryGate);
+      this.enqueueMidTurnCompaction(budgetKey, 'mid-turn-restart');
+    };
+
+    const restart = this.lifecycleManager.restart({ beforeStart }).catch((error) => {
+      this.logger.warn(
+        `query restart after unconfirmed survivor cancellation failed for ` +
+          `session ${this.session.id}:`,
+        error
       );
-      void this.messageQueue
-        .enqueue('/compact', true, { durable: true, prepend: true })
-        .catch((error) => {
-          if (this.messageQueue.hasOutstandingInternalCompaction()) {
-            return;
-          }
-          this.logger.warn(
-            `compaction enqueue before restart failed for session ${this.session.id}:`,
-            error
-          );
-          this.contextTracker.clearCompactionCooldown();
-          this.clearPendingResumeAfterCompaction();
-        });
-    }
-    const restart = this.lifecycleManager
-      .restart({ preserveInternalCompactions: true })
-      .catch((error) => {
-        this.logger.warn(
-          `query restart after unconfirmed survivor cancellation failed for ` +
-            `session ${this.session.id}:`,
-          error
-        );
-      });
+    });
     await Promise.race([
       restart,
       new Promise<void>((resolve) => {
@@ -1449,6 +1452,7 @@ export class AgentSession
         }
       }),
     ]);
+    resolveDeliveryGate?.();
   }
 
   private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {
@@ -1512,6 +1516,26 @@ export class AgentSession
       this.contextBudgetFetcher = new ContextFetcher(this.session.id);
     }
     return this.contextBudgetFetcher;
+  }
+
+  private enqueueMidTurnCompaction(budgetKey: number | undefined, reason: string): void {
+    this.contextTracker.markCompactionTriggered(budgetKey);
+    this.messageQueue.clearNonCompactionSentSinceBoundary();
+    this.logger.info(
+      `Daemon context-budget compaction for session ${this.session.id} ` +
+        `(provider=${this.session.config.provider}, reason=${reason}, ` +
+        `${this.contextTracker.getContextInfo()?.totalUsed ?? 0} >= ${budgetKey ?? 0} tokens)`
+    );
+    void this.messageQueue
+      .enqueue('/compact', true, { durable: true, prepend: true })
+      .catch((error) => {
+        if (this.messageQueue.hasOutstandingInternalCompaction()) {
+          return;
+        }
+        this.logger.warn(`compaction enqueue failed for session ${this.session.id}:`, error);
+        this.contextTracker.clearCompactionCooldown();
+        this.clearPendingResumeAfterCompaction();
+      });
   }
 
   resumePendingWorkAfterCompaction(): void {

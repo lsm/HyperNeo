@@ -93,6 +93,7 @@ describe('SDKMessageHandler', () => {
   let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
   let hasYieldedSpy: ReturnType<typeof mock>;
   let acknowledgeYieldedSpy: ReturnType<typeof mock>;
+  let forgetSentPromptSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
@@ -189,6 +190,7 @@ describe('SDKMessageHandler', () => {
     hasPendingOrClaimedSpy = mock(() => false);
     hasYieldedSpy = mock(() => false);
     acknowledgeYieldedSpy = mock(() => false);
+    forgetSentPromptSpy = mock(() => {});
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
       enqueueWithId: mock(async () => {}),
@@ -196,12 +198,12 @@ describe('SDKMessageHandler', () => {
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
+      forgetSentPrompt: forgetSentPromptSpy,
       setDeliveryGate: mock(() => {}),
       hasQueuedMessages: mock(() => false),
       hasOutstandingInternalCompaction: mock(() => false),
       hasCompactionsAwaitingBoundary: mock(() => false),
       acknowledgeCompactionsAwaitingBoundary: mock(() => {}),
-      pruneSentPrompts: mock(() => {}),
       clearNonCompactionSentSinceBoundary: mock(() => {}),
     } as unknown as MessageQueue;
 
@@ -1994,6 +1996,7 @@ describe('SDKMessageHandler', () => {
         ['enqueued-user-uuid'],
         'result-uuid'
       );
+      expect(forgetSentPromptSpy).toHaveBeenCalledWith('enqueued-user-uuid');
       expect(mockDb.updateMessageTimestamp).not.toHaveBeenCalledWith('db-msg-1');
       expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',

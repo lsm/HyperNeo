@@ -183,11 +183,7 @@ export class QueryLifecycleManager {
     );
   }
 
-  async stop(options?: {
-    timeoutMs?: number;
-    catchQueryErrors?: boolean;
-    preserveInternalCompactions?: boolean;
-  }): Promise<void> {
+  async stop(options?: { timeoutMs?: number; catchQueryErrors?: boolean }): Promise<void> {
     const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
     const { messageQueue } = this.ctx;
 
@@ -201,7 +197,7 @@ export class QueryLifecycleManager {
     const queryObject = this.ctx.queryObject;
     const startupTimeoutTimer = this.ctx.startupTimeoutTimer;
 
-    messageQueue.stop({ preserveInternalCompactions: options?.preserveInternalCompactions });
+    messageQueue.stop();
     queryAbortController?.abort();
 
     if (queryObject && typeof queryObject.interrupt === 'function') {
@@ -278,7 +274,7 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restart(options?: { preserveInternalCompactions?: boolean }): Promise<void> {
+  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     const { session, internalEventBus, messageHandler } = this.ctx;
     let reachedSuppressedIdle = false;
 
@@ -287,7 +283,11 @@ export class QueryLifecycleManager {
       this.ctx.resetTaskNotificationRequery?.();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
-      await this.stop({ preserveInternalCompactions: options?.preserveInternalCompactions });
+      await this.stop();
+
+      if (options?.beforeStart) {
+        await options.beforeStart();
+      }
 
       await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
       reachedSuppressedIdle = true;

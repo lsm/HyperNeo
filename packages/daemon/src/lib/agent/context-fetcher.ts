@@ -73,6 +73,14 @@ export class ContextFetcher {
 
   private inFlightUsage: Promise<SDKControlGetContextUsageResponse> | null = null;
 
+  private inFlightUsageStartedAt = 0;
+
+  private usageRequestStaleMs = 10_000;
+
+  overrideUsageRequestStaleMsForTest(ms: number): void {
+    this.usageRequestStaleMs = ms;
+  }
+
   constructor(private sessionId: string) {
     this.logger = new Logger(`ContextFetcher ${sessionId}`);
   }
@@ -84,10 +92,13 @@ export class ContextFetcher {
     modelMetadata?: ContextMetadata
   ): Promise<ContextInfo | null> {
     if (!query?.getContextUsage) return null;
-    if (this.inFlightUsage) return null;
+    if (this.inFlightUsage && Date.now() - this.inFlightUsageStartedAt < this.usageRequestStaleMs) {
+      return null;
+    }
 
     const request = query.getContextUsage();
     this.inFlightUsage = request;
+    this.inFlightUsageStartedAt = Date.now();
     request
       .catch(() => {})
       .finally(() => {

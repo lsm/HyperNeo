@@ -78,10 +78,6 @@ export class MessageQueue {
     }
   }
 
-  pruneSentPrompts(): void {
-    this.recentSentPrompts.clear();
-  }
-
   getSentPromptContent(messageId: string): string | MessageContent[] | undefined {
     return this.recentSentPrompts.get(messageId);
   }
@@ -308,7 +304,6 @@ export class MessageQueue {
     this.clearEpoch += 1;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
-    this.recentSentPrompts.clear();
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -453,18 +448,15 @@ export class MessageQueue {
     return this.generation;
   }
 
-  stop(options?: { preserveInternalCompactions?: boolean }): void {
+  stop(): void {
     this.running = false;
     const hadDeliveredAwaitingBoundary = this.internalCompactionsAwaitingBoundary > 0;
-    if (!options?.preserveInternalCompactions) {
-      this.revokeAllInternalCompactions();
-    }
+    this.revokeAllInternalCompactions();
     this.internalCompactionsAwaitingBoundary = 0;
     if (hadDeliveredAwaitingBoundary && this.onDeliveredCompactionRevoked) {
       this.onDeliveredCompactionRevoked();
     }
     this.nonCompactionSentSinceBoundary = false;
-    this.recentSentPrompts.clear();
     this.wakeWaiters();
   }
 

@@ -522,6 +522,9 @@ export class SDKMessageHandler {
           signalDeliveryConsumed(session.id, uuid);
         }
       }
+      for (const uuid of consumed.uuids) {
+        messageQueue.forgetSentPrompt(uuid);
+      }
       db.updateMessageTimestamp(consumedId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
@@ -1677,7 +1680,6 @@ export class SDKMessageHandler {
           if (sampled) {
             this.ctx.clearPendingResumeAfterCompaction?.();
           }
-          this.ctx.messageQueue.pruneSentPrompts();
         }
       }
     })();

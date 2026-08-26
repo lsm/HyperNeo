@@ -1018,6 +1018,47 @@ describe('ContextFetcher.fetch', () => {
     expect(Date.now() - startedAt).toBeLessThan(15000);
   }, 20000);
 
+  it('de-duplicates concurrent usage requests while one is pending', async () => {
+    let resolveUsage: (value: ReturnType<typeof baseResponse>) => void = () => {};
+    const getContextUsage = mock(
+      () =>
+        new Promise((resolve) => {
+          resolveUsage = resolve;
+        })
+    );
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('dedupe-session');
+    const first = fetcher.fetch(query);
+    const second = await fetcher.fetch(query);
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(second).toBeNull();
+
+    resolveUsage(baseResponse({ totalTokens: 1000, maxTokens: 200000, percentage: 0.5 }));
+    const info = await first;
+    expect(info?.totalUsed).toBe(1000);
+  });
+
+  it('issues a fresh usage request after a pending one goes stale', async () => {
+    const getContextUsage = mock(() => new Promise(() => {}));
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('stale-session');
+    fetcher.overrideUsageRequestStaleMsForTest(20);
+    void fetcher.fetch(query);
+
+    const deduped = await fetcher.fetch(query);
+    expect(deduped).toBeNull();
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const recovered = await fetcher.fetch(query);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(recovered).toBeNull();
+  }, 20000);
+
   describe('capacity mismatch warning', () => {
     it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {
       const getContextUsage = mock(async () =>

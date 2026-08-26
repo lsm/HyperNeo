@@ -407,12 +407,31 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       mockAgentSessionFactory
     );
 
-    await generateTitleWithSdkForTest('glm', 'glm-5.1');
+    const priorEnv = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    };
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'sentinel-haiku';
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'sentinel-sonnet';
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'sentinel-opus';
+
+    try {
+      await generateTitleWithSdkForTest('glm', 'glm-5.1');
+    } finally {
+      for (const [key, value] of Object.entries(priorEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
 
     expect(lastTitleQueryOptions?.model).toBe('default');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('sentinel-haiku');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('sentinel-sonnet');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('sentinel-opus');
     const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');

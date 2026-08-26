@@ -306,7 +306,6 @@ function driveCompactionRefresh(opts: {
     setDeliveryGate: mock(() => {}),
     hasQueuedMessages: mock(() => false),
     hasOutstandingInternalCompaction: mock(() => false),
-    pruneSentPrompts: mock(() => {}),
     hasCompactionsAwaitingBoundary: mock(() => false),
   } as unknown as MessageQueue;
 
