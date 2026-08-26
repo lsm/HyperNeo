@@ -906,7 +906,7 @@ none of these sites needs its compensation machinery.
   `rate-limit-watchdog-gates.test.ts` + `rate-limit-watchdog.test.ts`.
 - **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error, record the
 hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
-`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification (cooldown resolution reading a FRESH clock per `:230`, with `ctx.retryCount` already overwritten by the per-episode reset stage — `:154-159` precedes the `:228` read today; the `surface-billing` and `give-up` arms carry their guarded warning-log effects before returning `false`, `:230-244` — review correction PR #2981) → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
+`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST, each prefix decision point keeping its guarded diagnostic log (the superseded-abort infos, the fallback-switch info, and the chain-exhausted info at `:169-171,179-181,207-214,220-222`; review correction PR #2981: without them asynchronous cancellation and fallback behavior become silent) — then trip classification (cooldown resolution reading a FRESH clock per `:230`, with `ctx.retryCount` already overwritten by the per-episode reset stage and `ctx.hint` re-read from the shared state per `:225-230` — `:154-159` precedes the `:228` read today; the `surface-billing` and `give-up` arms carry their guarded warning-log effects before returning `false`, `:230-244` — review correction PR #2981) → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
 - **input/output snapshot design.**
   ```ts
   interface RateLimitTripCtx {
@@ -934,7 +934,13 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   OVERWRITES `ctx.retryCount` before this stage reads it (the `:154-159`
   reset precedes the `:228` read today — an entry snapshot that survives
   the reset makes a brand-new episode start on a later ladder rung or hit
-  `give-up`); 3)
+  `give-up`). A third freshness rule: `ctx.hint` is RE-READ from the
+  shared watchdog state immediately before gate 1 (review correction PR
+  #2981: today `decideRateLimitTrip` reads `this.lastHint` only AFTER the
+  awaits, `rate-limit-watchdog.ts:225-230` — when two same-episode calls
+  overlap and the later one supplies a structured/billing hint, the
+  generation is unchanged and the earlier run must see the newer
+  classification, not its entry-time copy); 3)
   `applyGiveUpGate` — `!cooldown.freeWait && retryCount >= maxAutoRetries`
   → `give-up`; 4) `applyCooldownFinalGate` — decides `cooldown` with
   `charge: !freeWait`.
@@ -963,7 +969,9 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   `:178-183` after chain resolution, `:206-211` before the
   immediate-fallback launch; review correction PR #2981: without them a
   superseded invocation can add stale `triedKeys`, overwrite the new
-  episode's chain, or launch a fallback after cancellation) —
+  episode's chain, or launch a fallback after cancellation; each prefix
+  decision point keeping its guarded diagnostic log, `:169-171,179-181,
+  207-214,220-222`) —
   `rate-limit-watchdog.ts:142-223`) FIRST, then the trip-classification
   gates plus generation revalidation (`:246-251`), retry charging,
   `scheduleCooldown`,
@@ -1281,11 +1289,16 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   `acknowledgePersistedUserMessage` (`:396-427`) routes through
   `decidePersistedAckRow`, with per-row ownership revalidation immediately
   before every acknowledgement (snapshot-then-await-consume — C3b's Phase 0
-  guarded transition), consuming via the same transactional
-  `withDbChangeBatch` status-plus-`updateMessageTimestamp` write
-  (`:435-438`; review correction PR #2981: the send-status tests assert the
-  timestamp call for all three statuses — omitting it leaves the consumed
-  row ordered at its enqueue time in later timestamp-based snapshots);
+  guarded transition), consuming via a GUARDED repository transition — an
+  atomic primitive verifying the row's expected status and ownership,
+  returning a `superseded` outcome when they changed, applying the
+  status-plus-`updateMessageTimestamp` write only on the verified path —
+  NOT the blind by-DB-ID `updateMessageStatus` batch
+  (`sdk-message-handler.ts:435-438`; review correction PR #2981: the
+  current write is blind to concurrent status/ownership changes — under a
+  snapshot-then-await-consume design it can consume a replacement-owned
+  row and publish a false acknowledgment; the timestamp write must still
+  land for all three statuses per the send-status tests);
   the turn-end batch acknowledgment (`:464-523`) is
   NOT a status-priority cascade — it scans only `enqueued` users, applies
   the durable/yielded/pending ownership filters, expands batch UUIDs,
@@ -1495,7 +1508,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   initialization, the no-user-message gate, and the `lastUserMessage`
   write, chain
   resolution (each of today's generation fences carried in position —
-  `rate-limit-watchdog.ts:168-173,178-183,206-211`), canonical
+  `rate-limit-watchdog.ts:168-173,178-183,206-211` — and each prefix
+  decision point keeping its guarded diagnostic log, `:169-171,179-181,
+  207-214,220-222`; review correction PR #2981), canonical
   resolution, availability, fallback selection (the immediate-fallback
   launch staying FIRE-AND-FORGET per `:217`),
   classification (the `surface-billing` and `give-up` arms keeping their
@@ -2139,11 +2154,15 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   synchronous `try/catch` no longer contains an async rejection); and the
   ADAPTER contracts are threaded too — the registration wrapper must
   return the promise instead of discarding it
-  (`sdk-message-handler.ts:140-142`), and the ACP `onAccepted` void
+  (`sdk-message-handler.ts:140-142`), the ACP `onAccepted` void
   contract (`acp-query-adapter.ts:29`, `acp-client.ts:272`) is updated or
-  its invocation at `acp-client.ts:286` sequenced so a transactional
-  rejection is handled rather than unhandled (review correction PR
-  #2981) — while
+  its invocation at `acp-client.ts:286` sequenced, AND the callback
+  PRODUCER at `acp-query-runner.ts:739-742` returns/awaits the
+  `markMessageAccepted` promise through the chain, setting
+  `accepted = true` only after the acknowledgment settles (review
+  correction PR #2981: otherwise TypeScript is free to discard the
+  promise and a transactional rejection stays unhandled while ACP
+  processing continues as accepted) — while
   the individual PUBLICATION promises keep
   today's per-publication `.catch` containment AND today's
   FIRE-AND-FORGET scheduling (review correction PR #2981: the handler
@@ -2182,9 +2201,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   acknowledgment (`acknowledgePersistedUserMessage`, `:396-427`) routes
   through `decidePersistedAckRow` with per-row ownership revalidation
   immediately before every acknowledgement (snapshot-then-await-consume,
-  C3b's Phase 0 guarded transition), consuming via the same transactional
-  `withDbChangeBatch` status-plus-`updateMessageTimestamp` write
-  (`:435-438`, review correction PR #2981), publishing `messages.statusChanged`,
+  C3b's Phase 0 guarded transition), consuming via a GUARDED repository
+  transition — an atomic primitive verifying expected status and
+  ownership, returning `superseded` when they changed, applying the
+  status-plus-`updateMessageTimestamp` write only on the verified path
+  (NOT the blind by-DB-ID batch at `:435-438`; review correction PR
+  #2981 — a blind write can consume a replacement-owned row under the
+  awaited boundary), publishing `messages.statusChanged`,
   `state.sdkMessages.delta`, `sdk.message`, and tool-result-consumed after
   consumption (`:440-461`) — an effect list of only
   `markDeliveryConsumed*`/`messages.statusChanged`/`signalDeliveryConsumed`
