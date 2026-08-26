@@ -61,7 +61,7 @@ Two structural rules applied throughout:
 | `turn-outcome-classification.ts:decideReconcileAdmission` | Admission stages of the complete `reconcile-stranded-deliveries` pipelines (review correction round 22) | `reconcile-stranded-deliveries` |
 | `limit-error-classifier.ts:assessLimitError` | raw superpipe transform | `limit-error-assess` |
 | `limit-error-classifier.ts:resolveLimitKind`, `isBillingTerminal` | none (leaves) | — |
-| `repeated-tool-error-gates.ts:decideConsecutiveError` | Classification stages of the complete error-observation pipeline from content classification (reset/ignore arms included) through state/reset/evidence/recovery effects with stage-local failure isolation (review corrections round 22 + PR #2981) | `repeated-tool-error-observation` |
+| `repeated-tool-error-gates.ts:decideConsecutiveError` | Classification stages of the complete error-observation pipeline from the leading scope gate through content classification (reset/ignore arms included) and error-row aggregation to state/reset/evidence/recovery effects with stage-local failure isolation (review corrections round 22 + PR #2981) | `repeated-tool-error-observation` |
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | Direct pipeline composing both (new `loop-detector-pipeline.ts`; review correction PR #2981: NOT `decisionRun`, whose per-gate `!hasDecided` halt would stop execution before the ledger/ring/logging/output effect stages) | `tool-call-loop-admission` |
 | `circuit-breaker-transitions.ts:extractErrorPattern` | Ordinary pure helper consumed by the complete circuit-breaker check operation (review correction round 21: no standalone runner) | `breaker-check` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | Plain helper consumed by the complete breaker-check pipeline (review correction round 22) | — |
@@ -170,7 +170,7 @@ none of these sites needs its compensation machinery.
                                        // recoveryPending, manualRecoveryPause, cooldownRetryAt, now,
                                        // kickoffAcknowledged, kickoffAckInvalidated, alreadyConsumed
     turnError: StructuredError | null; // failure-arm stage output (lazy — see gate 3)
-    claimGuardHeld: boolean | undefined; // failure-arm stage output (lazy — see gate 6)
+    claimGuardHeld: boolean | undefined; // failure-arm stage output (lazy — see gate 7)
     detail: string | null;             // side annotation from the detail gate
     decision: TurnCompletionOutcome | null;
   }
@@ -335,7 +335,15 @@ none of these sites needs its compensation machinery.
   `message-delivery.ts:201-203`; wiring settlement there would introduce new
   message-failure behavior); the agent-session path appends the
   submitted-message settlement stage after the same prefix
-  (`agent-session.ts:2884-2905`). The V2-flag predicate is shared.
+  (`agent-session.ts:2884-2905`). The V2-flag predicate is shared. The
+  session-state update and settlement publication effect stages carry
+  today's per-row failure containment (review correction PR #2981:
+  `message-delivery.ts:221-225` and `agent-session.ts:2875-2879` catch each
+  `setQueuedIfIdle` rejection and keep processing later rows;
+  `agent-session.ts:2896-2902` contains each settlement publication
+  rejection) — without stage-local catches, a transient failure would
+  abort the pipeline, skip remaining re-enqueues or settlement, and reject
+  reconciliation where it currently succeeds.
 - **step-by-step migration.** 1) Compose the TWO complete reconciliation
   pipeline variants (admission gates + lock/select/enqueue/update stages;
   the submitted-message settlement stage exists ONLY on the agent-session
@@ -489,8 +497,15 @@ none of these sites needs its compensation machinery.
   3. `applyThresholdGate` — `consecutiveCount >= threshold` → `intervene`.
   4. `applyCountFinalGate` — decides `count` with the new `lastError`.
 - **shell/effect wiring.** Review correction round 22 + PR #2981: compose the
-  COMPLETE error-observation operation as one pipeline — content
-  classification FIRST (`classifyToolResultContent` as a helper/direct entry
+  COMPLETE error-observation operation as one pipeline — the scope
+  precondition FIRST (review correction PR #2981: `applyScopeGate` —
+  `getTaskForSession()` returning no task or a task without
+  `evolutionScopeId` decides the passthrough `false` BEFORE classification,
+  mirroring `repeated-tool-error-guardrail.ts:75-76`; the ctx carries the
+  resolved `evolutionScopeId: string | null`, and without this gate
+  unscoped sessions could mutate the streak and enter intervention effects
+  that require a scoped task), then content
+  classification (`classifyToolResultContent` as a helper/direct entry
   stage whose `reset` arm performs the state reset and whose `ignore` arm
   passes through, mirroring `repeated-tool-error-guardrail.ts:78-89` — the
   guardrail classifies BEFORE the per-error loop and immediately `reset()`s
@@ -812,7 +827,7 @@ none of these sites needs its compensation machinery.
   charging `retryCount`, scheduling cooldown, firing LLM refinement for
   ladder arms). Extracted as pure gates in #2779; pinned by
   `rate-limit-watchdog-gates.test.ts` + `rate-limit-watchdog.test.ts`.
-- **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (episode/generation entry and reset → current-model resolution + `triedKeys` recording → chain resolution → per-entry availability checks → fallback selection with its immediate-fallback arm — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → retry charging → generation revalidation → `scheduleCooldown` → LLM-refinement trigger), as the corrected wiring below prescribes.
+- **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error/hint — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording → chain resolution → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger; revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
 - **input/output snapshot design.**
   ```ts
   interface RateLimitTripCtx {
@@ -836,20 +851,32 @@ none of these sites needs its compensation machinery.
   `charge: !freeWait`.
 - **shell/effect wiring.** Review correction round 22 + PR #2981: compose the
   COMPLETE scheduling operation once — the `scheduleRetry` prefix stages
-  (episode/generation entry and reset, current-model resolution +
-  `triedKeys` recording, `resolveFallbackChain`, per-entry availability
-  checks, `selectNextFallback` with its immediate-fallback arm —
+  (initialization — cancel the cooldown timer, record the error/hint — and
+  the no-user-message early gate that logs and returns `false` before any
+  episode mutation (`rate-limit-watchdog.ts:148-151`); episode/generation
+  entry and reset, current-model resolution +
+  `triedKeys` recording, `resolveFallbackChain`, per-entry canonical
+  model-ID resolution (`resolveModelId`) plus availability checks,
+  `selectNextFallback` with its immediate-fallback arm and the
+  canonical-key selector that lets `triedKeys` exclude the same physical
+  model under an alias (`:187-203`) —
   `rate-limit-watchdog.ts:142-223`) FIRST, then the trip-classification
-  gates plus retry charging, generation revalidation, `scheduleCooldown`,
-  and LLM-refinement triggering as effect stages of the same pipeline;
+  gates plus generation revalidation (`:246-251`), retry charging,
+  `scheduleCooldown`,
+  and LLM-refinement triggering as effect stages of the same pipeline —
+  revalidation runs BEFORE charging, exactly as today, so a superseded
+  invocation aborts without charging the new episode's retry budget;
   leaving the prefix or those effects in the watchdog shell while only the
   classifier is a runner preserves a classifier/effect split (or a
   pipeline-plus-imperative-prefix) for every rate-limit trip — the PR 2/3
   scopes below compose exactly this full path.
 - **step-by-step migration.** 1) Gates + effect stages + complete
-  scheduling pipeline covering the FULL flow — prefix (chain resolve →
-  availability → fallback select) first, then cooldown classification as
-  helper/direct stage logic; 2) `scheduleRetry` invokes it with no
+  scheduling pipeline covering the FULL flow — initialization and
+  no-user-message gate first, then the prefix (chain resolve → canonical
+  resolution → availability → fallback select), then cooldown
+  classification as
+  helper/direct stage logic with generation revalidation BEFORE retry
+  charging; 2) `scheduleRetry` invokes it with no
   imperative prefix remaining (PRs 2–3).
 - **tests.** Existing suites pass unchanged. Add a halt row
   (billing-terminal hint skips cooldown resolution entirely — spy stage) and
@@ -922,8 +949,10 @@ none of these sites needs its compensation machinery.
   indirectly via handler/session tests). Add
   `tests/unit/1-core/agent/message-delivery-payload.test.ts`: validation
   rows (missing ids, bad role, non-string batch members, empty batchUuids
-  omitted, origin default) and reclaim rows (all four input combinations
-  plus precedence — terminalIdle beats successResult).
+  omitted, origin default) and reclaim rows — ALL EIGHT input combinations
+  of the three independent booleans plus the explicit precedence rows
+  (terminalIdle beats successResult; the marker arm with successResult
+  true; review correction PR #2981, matching the PR 18 scope).
 - **risks/caveats.** `asMessageDeliveryPayload` runs on every delivery job
   claim — cheap, but keep the pipeline linear with no per-stage allocation
   beyond the payload itself. The `origin` field is cast, not validated
@@ -1107,7 +1136,14 @@ none of these sites needs its compensation machinery.
   individually `.catch`-contained today — the async stages carry equivalent
   stage-local catches (or the handler awaits the pipeline and keeps the
   void contract) so a publication failure never becomes an unhandled
-  rejection. Parity tests cover enqueued, submitted, and deferred rows. The
+  rejection. EVERY successful or already-consumed acknowledgment arm —
+  yielded and immediate alike — also sets the
+  `acknowledgedPersistedUserThisTurn` state flag as an effect stage
+  (`sdk-message-handler.ts:422,445,666,704`; review correction PR #2981):
+  the later successful result reads it at `:1163` to decide whether the
+  turn-end batch acknowledgment runs, so dropping the write would consume
+  an additional queued user message that was not acknowledged during the
+  turn. Parity tests cover enqueued, submitted, and deferred rows. The
   TWO persisted-path regions are DISTINCT operations (review correction PR
   #2981): the immediate single-message acknowledgment
   `acknowledgePersistedUserMessage` (`:396-427`) routes through
@@ -1254,14 +1290,20 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 - **scope.** `packages/daemon/src/lib/agent/rate-limit-watchdog-gates.ts`: the
   complete `rate-limit-trip` scheduling pipeline, landed unwired — review
   correction (PR #2981): the FULL `scheduleRetry` operation composes, not
-  just its trip tail: the leading chain-resolution (`resolveFallbackChain`),
-  availability, and fallback-selection stages currently at
+  just its trip tail: the initialization stages (cancel cooldown timer,
+  record error/hint) and the no-user-message early gate that logs and
+  returns `false` (`rate-limit-watchdog.ts:148-151`), then the leading
+  chain-resolution (`resolveFallbackChain`), per-entry canonical
+  model-ID resolution, availability, and fallback-selection stages
+  currently at
   `rate-limit-watchdog.ts:142-223` come FIRST, then
   `applyBillingTerminalGate`, `applyCooldownResolutionStage` (calls
   `cooldownFromReset`/`computeCooldown` directly), `applyGiveUpGate`,
-  `applyCooldownFinalGate`, plus effect stages for retry charging, generation
-  revalidation, `scheduleCooldown`, and LLM-refinement triggering expressed
-  over ctx-injected collaborators; `refinedResetAtMs` stays a leaf. An
+  `applyCooldownFinalGate`, plus effect stages for generation revalidation
+  (`:246-251`), retry charging,
+  `scheduleCooldown`, and LLM-refinement triggering expressed
+  over ctx-injected collaborators — revalidation BEFORE charging, exactly
+  as today; `refinedResetAtMs` stays a leaf. An
   imperative prefix left in `scheduleRetry` would split the rate-limit
   recovery business path, contrary to the one-direct-pipeline rule.
 - **lands.** The complete scheduling operation exists as one pipeline, pinned
@@ -1282,9 +1324,11 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 - **scope.** `packages/daemon/src/lib/agent/rate-limit-watchdog.ts:142-267`
   (the FULL `scheduleRetry`, review correction PR #2981): injects the
-  watchdog's collaborators and invokes the complete pipeline — chain
-  resolution, availability, fallback selection, classification, retry
-  charging, generation revalidation, `scheduleCooldown`, and LLM-refinement
+  watchdog's collaborators and invokes the complete pipeline —
+  initialization and the no-user-message gate, chain
+  resolution, canonical resolution, availability, fallback selection,
+  classification, generation revalidation, retry
+  charging, `scheduleCooldown`, and LLM-refinement
   triggering all run as stages of the same operation; no imperative
   interpretation cascade or prefix remains in the shell.
 - **lands.** Every rate-limit trip runs the COMPLETE scheduling operation as
@@ -1438,7 +1482,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   standalone variant — NO settlement stage) with its own snapshot
   (`processingStatus: null` — busy-status stage passes); the
   lock/select/enqueue/update work becomes pipeline stages, not an
-  imperative cascade behind an admission-only runner.
+  imperative cascade behind an admission-only runner; the session-state
+  update stage carries today's per-row catch containment
+  (`message-delivery.ts:221-225` — one rejected row never aborts the
+  remaining re-enqueues).
 - **lands.** The standalone entry point (also invoked from the idle callback)
   runs the complete operation with parity behavior (re-enqueue only).
 - **lands.** The standalone entry point (also invoked from the idle callback)
@@ -1471,7 +1518,11 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 ➕ additive core — prod Δ ≲120, test Δ ≲250
 
 - **scope.** `packages/daemon/src/lib/agent/repeated-tool-error-gates.ts`:
-  a content-classification entry stage running `classifyToolResultContent`
+  a leading scope gate (`applyScopeGate` — `evolutionScopeId` absent →
+  passthrough `false`, mirroring `repeated-tool-error-guardrail.ts:75-76`;
+  review correction PR #2981: unscoped sessions must not mutate streak
+  state or enter intervention effects), a content-classification entry
+  stage running `classifyToolResultContent`
   whose `reset`/`ignore` arms are decided before the per-error gates (review
   correction PR #2981: today the guardrail classifies BEFORE the loop and
   immediately `reset()`s success blocks or error-free content,
@@ -1510,8 +1561,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 - **scope.**
   `packages/daemon/src/lib/agent/repeated-tool-error-guardrail.ts:74-120`
-  (`observeToolResultErrors`): the WHOLE observation — content
-  classification with its `reset`/`ignore` arms (`:78-89`) first, then the
+  (`observeToolResultErrors`): the WHOLE observation — the scope
+  precondition (`:74-76`), content
+  classification with its `reset`/`ignore` arms (`:78-89`), then the
   error-row iteration with `triggered` aggregation (`:91-119`) — runs the
   pipeline; the shell keeps ONLY the injected `Date.now()` (review
   correction PR #2981: scoping the pipeline to error rows only would drop
@@ -1835,7 +1887,11 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `.catch(() => {})`-contained today — each async stage carries an
   equivalent stage-local catch (or the handler awaits the pipeline and
   keeps the void contract), so a publication failure can never become an
-  unhandled rejection or escape the handler.
+  unhandled rejection or escape the handler. Every consumed arm also sets
+  the `acknowledgedPersistedUserThisTurn` flag (`:666,704`) as an effect
+  stage (review correction PR #2981) — the turn-end batch acknowledgment
+  gates on that flag at `:1163`, so dropping the write would consume an
+  additional queued user message later in the turn.
 - **lands.** The yielded acknowledgment business path is one complete
   pipeline in production.
 - **excludes.** The persisted regions (PR 28).
@@ -1869,7 +1925,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `signalDeliveryConsumed`, `messages.statusChanged`,
   `state.sdkMessages.delta`, and tool-result-consumed) — NEVER the persisted
   selector, which would make deferred/submitted/consumed rows eligible
-  where they are currently ignored. ALL publications each region performs
+  where they are currently ignored. The immediate path's consumed AND
+  already-consumed arms set the `acknowledgedPersistedUserThisTurn` flag
+  (`:422,445`) as effect stages (review correction PR #2981) — the
+  turn-end batch itself only READS that flag at `:1163` to decide whether
+  to run, so a missing write would consume an additional queued user
+  message that was not acknowledged during the turn. ALL publications each
+  region performs
   today run as stages of its pipeline.
 - **lands.** Both acknowledgment paths run as complete pipelines; the Chain C
   C3b apply is complete.
