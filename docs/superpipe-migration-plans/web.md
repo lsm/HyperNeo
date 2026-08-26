@@ -366,7 +366,16 @@ anywhere in this plan.
 - **Input/output snapshot design.** Review correction: plain helper signatures, NO per-model decision-run contexts — `inferProviderFromModelId(modelId): string | undefined` and `classifyModelFamily(modelId): string` take/return plain values inside the pipeline's stages (`decisionRun` contexts here would restore two nested runner invocations per model). Helper detail:
   `inferProviderFromModelId` returns `undefined` for no match (ordered rules,
   fall-through); `classifyModelFamily` returns `'sonnet'` as its default.
-  Map pipeline ctx: `{ rawModels, classified: ModelInfo[] }`.
+  Map pipeline ctx: `{ rawModels, rows: Array<{ raw: RawModel; family:
+  string; provider?: string }>, classified: ModelInfo[] }` (codex round 14:
+  the intermediate `rows` array carries each raw model plus its computed
+  family and inferred provider between stages — `classified` is typed as
+  the final assembled `ModelInfo[]` whose fields are all required, so
+  without `rows` the sequence would force casting incomplete `ModelInfo`
+  objects, mutating raw entries, or recomputing the family that
+  `stageInferProvider` itself needs via `PROVIDER_FROM_FAMILY`;
+  `stageClassifyFamily` fills `family`, `stageInferProvider` fills
+  `provider`, `stageAssemble` consumes `rows` to produce `classified`).
 - **Pure core design.** Gates mirror the exact current rule order — the
   regexes (`qwen[\w.-]*:[1-9]\d{2,}b` before the looser `qwen[\w.-]*:`) and
   the `-cloud` suffix check are ordered constraints; each gate owns one rule
@@ -890,9 +899,17 @@ anywhere in this plan.
   Hub | null, request: (hub: Hub, payload) => Promise<{ messageId?: string }>,
   enqueue: (label, executor: () => Promise<void>, options?: {
   executeImmediately?: boolean }) => void, onSendStart, onSendComplete, onError,
-  onMessageAccepted, armTimeout, clearTimeout, toastError, toastInfo }` and
+  onMessageAccepted, armTimeout: () => SendTimeoutHandle, toastError,
+  toastInfo }` and
   `outcome: boolean | null` — all supplied fresh per call from the hook's
   `useCallback` closures (functions pass through gate spreads by reference).
+  `SendTimeoutHandle = { clear(): void; didTimeOut(): boolean }` — the
+  per-call timer PLUS its inspectable timeout state (codex round 14: bare
+  arm/clear ports expose nothing for `stageSendRequest` to inspect after
+  the await, so the stage could not select the late-rejection branch);
+  the armed timeout callback flips the handle's internal flag, the stage
+  calls `handle.clear()` on completion and consults
+  `handle.didTimeOut()` post-await.
   Review correction (codex round 3): `getHub` is a REQUIRED port — `request`
   must NOT be constructed from a hub captured before the run (that recreates
   the explicitly rejected early-read race); `stageSendRequest` resolves the
@@ -902,8 +919,9 @@ anywhere in this plan.
   mirroring `useSendMessage.ts:95-135`, which invokes `request` on the hub
   it obtained; a payload-only port would have to be pre-bound to some hub
   (stale-hub race) or perform its own second lookup (another race). The
-  `armTimeout`/`clearTimeout` ports are PER-CALL: each invocation owns its
-  timer handle (see the concurrency note in risks/caveats). Review
+  `armTimeout` returns a PER-CALL `SendTimeoutHandle`: each invocation owns
+  its timer and timeout state (see the concurrency note in risks/caveats).
+  Review
   correction (codex round 6): the `enqueue` port carries the FULL queued
   executor, not a fire-and-forget label/payload tuple — at execution time
   it performs its own live `getHubIfConnected` read, issues `request` on
@@ -929,7 +947,8 @@ anywhere in this plan.
   `onMessageAccepted`, clear timeout, stamp outcome; review corrections
   codex rounds 2+3 — a settled/generation guard: the armed timeout callback
   flips a per-call `timedOut` flag (a plain mutable cell the hook owns and
-  threads through the `armTimeout` port — never a signal), and BOTH
+  threads through the `armTimeout` handle's `didTimeOut()` accessor —
+  never a signal), and BOTH
   post-await legs consult it. Late SUCCESS: the stage STILL calls
   `onMessageAccepted` — that callback is store reconciliation, not a success
   notification (`ChatContainer.tsx:635-652` records the messageId and
@@ -959,9 +978,10 @@ anywhere in this plan.
   `onSendComplete()`, CLEAR the armed timeout, then stamp a successful
   outcome — never a bare divert mid-sequence, or the send stays marked
   in-flight and the armed timer later emits a false timeout error. Timeout
-  resource stays in the hook per ADR Decision 5 — the pipeline receives
-  per-call `armTimeout`/`clearTimeout` port values (codex round 3: handles
-  tracked per invocation, not one shared ref). Errors (review corrections,
+  resource stays in the hook per ADR Decision 5 — the pipeline receives the
+  per-call `SendTimeoutHandle` returned by `armTimeout` (codex rounds 3+14:
+  timer AND inspectable `didTimeOut()` state per invocation, not one shared
+  ref). Errors (review corrections,
   codex rounds 7+8): `stageSendRequest` handles request rejections INSIDE the
   stage — sanitize through the ORDINARY SHARED CORE extracted in PR 3
   (`normalizeUserError`, the named arm predicates, and `isInternalMessage`
@@ -1041,9 +1061,10 @@ anywhere in this plan.
   sends (`ChatContainer.tsx:653-657`; codex round 3: the second arm
   clobbers the first handle, the first completion clears the SECOND's
   timer, and the first's orphaned timer later fires a FALSE timeout), so
-  timer ownership moves PER CALL: the `armTimeout` port stores each
-  invocation's handle in per-call state, `clearTimeout` clears only that
-  invocation's handle, and the exported `clearSendTimeout` (unmount
+  timer ownership moves PER CALL: each invocation's `armTimeout` returns
+  its own `SendTimeoutHandle` (`clear()` + inspectable `didTimeOut()`,
+  codex round 14) held in per-call state, and the exported
+  `clearSendTimeout` (unmount
   cleanup) clears ALL outstanding handles. The late-completion generation
   guard (codex rounds 2+3+5) changes behavior only where today is defective
   — late success keeps the reconciliation callback AND the `true` return
@@ -1386,7 +1407,11 @@ optional router phase 2. No per-site section is left uncovered.
   `'resolve-node-click'`: `stageIndexExecutions` → `stageMergeActivityMembers`
   → `stageApplyPostApprovalOverride` (returns a fresh map; no shared mutated
   entries across stages) → `stageFinalizeOutcome` (the 4-way outcome
-  precedence stays one stage); ctx extends `ResolveNodeClickArgs` with
+  precedence stays one stage); ctx extends `ResolveNodeClickArgs` with the
+  cross-stage indexes threaded explicitly (codex round 13+14: `liveBySession`,
+  `sessionByExecId`, the slot-order index, `declaredSlotNamesExact` —
+  `stageMergeActivityMembers` consults `sessionByExecId` for authoritative
+  filtering; the finalize/post-approval stages consume the slot state) plus
   `liveSessions` / `unstartedSlots` / `outcome`; `resolveLabel` port and the
   `args.normalizeSlotName ?? normalizeSlotName` resolution stay per-call;
   daemon `as PipelineAPI` cast idiom.
@@ -1497,7 +1522,8 @@ optional router phase 2. No per-site section is left uncovered.
   completion sequence — enqueue, `onSendComplete`, CLEAR the armed timeout,
   successful outcome; the LATE-COMPLETION generation guard, codex rounds
   2+3 — the armed timeout callback flips a per-call `timedOut` cell owned
-  by the hook and threaded through the `armTimeout` port, and BOTH
+  by the hook and threaded through the `armTimeout` handle's
+  `didTimeOut()` accessor (codex round 14), and BOTH
   post-await legs consult it: a late SUCCESS still calls `onMessageAccepted`
   (store reconciliation — `ChatContainer.tsx:635-652` refreshes when the
   accepted message never becomes visible; never suppress it) and stamps the
