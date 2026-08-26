@@ -6556,6 +6556,11 @@ describe('SpaceRuntime external event subscriptions', () => {
         agentSessionId: sessionId,
         startedAt: Date.now(),
       });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
       tam.alive.add(sessionId);
       tam.processingStates.set(sessionId, status);
     }
