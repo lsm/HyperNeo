@@ -21,6 +21,7 @@ const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
 
 interface QueuedMessage {
   id: string;
+  yieldGeneration?: number;
   content: string | MessageContent[];
   timestamp: string;
   queuedAt: number;
@@ -42,6 +43,7 @@ export class MessageQueue {
   private internalCompactionsAwaitingBoundary: number = 0;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
+  private sentPromptsBeforeCompaction = new Set<string>();
 
   overrideTimeoutMsForTest(ms: number): void {
     this.timeoutMs = ms;
@@ -67,9 +69,13 @@ export class MessageQueue {
   private noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
       this.internalCompactionsAwaitingBoundary += 1;
+      for (const id of this.recentSentPrompts.keys()) {
+        this.sentPromptsBeforeCompaction.add(id);
+      }
     } else {
       this.nonCompactionSentSinceBoundary = true;
       this.recentSentPrompts.delete(message.id);
+      this.sentPromptsBeforeCompaction.delete(message.id);
       this.recentSentPrompts.set(message.id, message.content);
       if (this.recentSentPrompts.size > 32) {
         const oldest = this.recentSentPrompts.keys().next().value;
@@ -98,13 +104,17 @@ export class MessageQueue {
 
   forgetSentPrompt(messageId: string): void {
     this.recentSentPrompts.delete(messageId);
+    this.sentPromptsBeforeCompaction.delete(messageId);
   }
 
   acknowledgeCompactionsAwaitingBoundary(): void {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
-    this.recentSentPrompts.clear();
+    for (const id of this.sentPromptsBeforeCompaction) {
+      this.recentSentPrompts.delete(id);
+      this.sentPromptsBeforeCompaction.delete(id);
+    }
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -148,12 +158,13 @@ export class MessageQueue {
 
   setDeliveryGate(gate: Promise<void>): void {
     const previous = this.deliveryGate;
+    const observed = gate.catch(() => {});
     const composed = previous
       ? previous.then(
-          () => gate,
-          () => gate
+          () => observed,
+          () => observed
         )
-      : gate;
+      : observed;
     this.deliveryGate = composed;
     void composed.then(
       () => {
@@ -239,6 +250,11 @@ export class MessageQueue {
     }
     queuedMessage.timeoutId = setTimeout(() => {
       const index = this.queue.indexOf(queuedMessage);
+      if (this.deliveryGate && index !== -1) {
+        queuedMessage.timeoutId = undefined;
+        this.armQueueTimeout(queuedMessage);
+        return;
+      }
       const decision = resolveQueueTimeout({
         pending: index !== -1,
         claimed: this.claimed.has(queuedMessage),
@@ -271,6 +287,7 @@ export class MessageQueue {
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
+    this.sentPromptsBeforeCompaction.clear();
     this.deliveryGate = null;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
@@ -351,7 +368,9 @@ export class MessageQueue {
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
-      this.noteInternalCompactionSent(message);
+      if (this.running && this.generation === (message.yieldGeneration ?? this.generation)) {
+        this.noteInternalCompactionSent(message);
+      }
       message.resolve(message.id);
       return true;
     }
@@ -419,6 +438,9 @@ export class MessageQueue {
   stop(): void {
     this.running = false;
     this.deliveryGate = null;
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.sentPromptsBeforeCompaction.clear();
+    this.nonCompactionSentSinceBoundary = false;
     this.wakeWaiters();
   }
 
@@ -485,6 +507,7 @@ export class MessageQueue {
       }
 
       this.claimed.delete(queuedMessage);
+      queuedMessage.yieldGeneration = myGeneration;
       this.yielded.add(queuedMessage);
       if (!queuedMessage.timeoutId) {
         this.armQueueTimeout(queuedMessage);
@@ -493,7 +516,9 @@ export class MessageQueue {
         message: sdkUserMessage,
         onSent: () => {
           if (this.yielded.delete(queuedMessage)) {
-            this.noteInternalCompactionSent(queuedMessage);
+            if (this.running && this.generation === myGeneration) {
+              this.noteInternalCompactionSent(queuedMessage);
+            }
             queuedMessage.resolve(queuedMessage.id);
           }
         },

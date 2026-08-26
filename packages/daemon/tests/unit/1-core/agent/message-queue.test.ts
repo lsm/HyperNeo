@@ -1336,4 +1336,157 @@ describe('MessageQueue', () => {
       q.stop();
     });
   });
+
+  describe('review-hardening', () => {
+    it('observes a rejecting gate immediately while an earlier gate is pending', async () => {
+      queue.start();
+
+      let releaseFirst: () => void = () => {};
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      queue.setDeliveryGate(firstGate);
+      queue.setDeliveryGate(Promise.reject(new Error('gate failed')));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      releaseFirst();
+      const delivery = queue.enqueueWithId('after-gates', 'work');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      expect((result.value?.message as { uuid?: string }).uuid).toBe('after-gates');
+      result.value.onSent();
+      await delivery;
+      queue.stop();
+    });
+
+    it('does not expire a queued message while a delivery gate is pending', async () => {
+      queue.overrideTimeoutMsForTest(40);
+      queue.start();
+
+      let releaseGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      queue.setDeliveryGate(gate);
+
+      const delivery = queue.enqueueWithId('gated-work-id', 'gated work');
+      const generator = queue.messageGenerator(testSessionId);
+      const pending = generator.next();
+
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      expect(queue.hasPendingOrInFlight('gated-work-id')).toBe(true);
+
+      releaseGate();
+      const result = await pending;
+      expect(result.done).toBe(false);
+      result.value.onSent();
+      await delivery;
+      queue.stop();
+    });
+
+    it('expires a yielded entry despite a pending gate', async () => {
+      queue.overrideTimeoutMsForTest(40);
+      queue.start();
+
+      const rejection = queue.enqueueWithId('yielded-entry', 'work').then(
+        () => 'resolved',
+        (error: Error) => error.message
+      );
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+
+      queue.setDeliveryGate(new Promise<void>(() => {}));
+      await new Promise((resolve) => setTimeout(resolve, 90));
+
+      expect(await rejection).toContain('Message queue timeout');
+      queue.stop();
+    });
+
+    it('does not repopulate compaction lifecycle from a late onSent after stop', async () => {
+      queue.start();
+
+      const compacted = queue.enqueueWithId('late-compact', '/compact', true, { durable: true });
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      expect(queue.hasInFlightInternalCompaction()).toBe(true);
+
+      queue.stop();
+      result.value.onSent();
+      await compacted;
+
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+    });
+
+    it('ignores a late turn-end acknowledgment from a replaced queue generation', async () => {
+      queue.start();
+
+      const compacted = queue.enqueueWithId('stale-compact', '/compact', true, { durable: true });
+      const firstGenerator = queue.messageGenerator(testSessionId);
+      const result = await firstGenerator.next();
+      expect(result.done).toBe(false);
+
+      queue.stop();
+      queue.start();
+
+      expect(queue.acknowledgeYielded('stale-compact')).toBe(true);
+      await compacted;
+      expect(queue.hasCompactionsAwaitingBoundary()).toBe(false);
+      queue.stop();
+    });
+
+    it('forgets only prompts sent before the compact command at boundary acknowledgement', async () => {
+      queue.start();
+
+      const before = queue.enqueueWithId('before-compact', 'early');
+      const generator = queue.messageGenerator(testSessionId);
+      const r1 = await generator.next();
+      r1.value.onSent();
+      await before;
+
+      const compact = queue.enqueueWithId('compact-1', '/compact', true, { durable: true });
+      const r2 = await generator.next();
+      r2.value.onSent();
+      await compact;
+
+      const after = queue.enqueueWithId('after-compact', 'later');
+      const r3 = await generator.next();
+      r3.value.onSent();
+      await after;
+
+      queue.acknowledgeCompactionsAwaitingBoundary();
+
+      expect(queue.getSentPromptContent('before-compact')).toBeUndefined();
+      expect(queue.getSentPromptContent('after-compact')).toBe('later');
+      queue.stop();
+    });
+
+    it('drops a forgotten prompt from the boundary snapshot so a retry survives acknowledgement', async () => {
+      queue.start();
+
+      const first = queue.enqueueWithId('retried-prompt', 'first attempt');
+      const generator = queue.messageGenerator(testSessionId);
+      const r1 = await generator.next();
+      r1.value.onSent();
+      await first;
+
+      const compact = queue.enqueueWithId('compact-1', '/compact', true, { durable: true });
+      const r2 = await generator.next();
+      r2.value.onSent();
+      await compact;
+
+      queue.forgetSentPrompt('retried-prompt');
+      const second = queue.enqueueWithId('retried-prompt', 'second attempt');
+      const r3 = await generator.next();
+      r3.value.onSent();
+      await second;
+
+      queue.acknowledgeCompactionsAwaitingBoundary();
+
+      expect(queue.getSentPromptContent('retried-prompt')).toBe('second attempt');
+      queue.stop();
+    });
+  });
 });
