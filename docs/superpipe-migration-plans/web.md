@@ -530,7 +530,11 @@ anywhere in this plan.
 - **Input/output snapshot design.** Parser ctx: `{ path: string; decision:
   string | null }`; final gate decides `null` (no match) — same null-default
   caveat as task-banner, handled by `?? null` in the wrapper, no terminal
-  gate. Phase-2 classifier ctx: `{ path, search }`, decision
+  gate. Phase-2 ctx: `{ path, search, currentSpaceId: string | null }`
+  (codex round 15: the pre-run snapshot of the CURRENT space — the
+  conditional canonical-route clear needs it to decide whether the routed
+  space differs from the current one; without the declared field the write
+  stage must read the signal directly or clear unconditionally), decision
   `SpaceRouteMatch` union (`session | spaceTask | spaceSession |
   spaceAgentDetail | spaceAgentList | spaceGoals | spaceMemories |
   spaceEvolve | spaceTasks | spaceSessions | spaceConfigure | spaceRoot |
@@ -701,7 +705,13 @@ anywhere in this plan.
   private, `user-error.ts:20-21`): without it, a direct consumer cannot
   distinguish a non-internal message that passes through unchanged
   (`Error('Quota exceeded')`) from an unmatched internal-looking message
-  that must receive the generic fallback (`Error('ERR_FOO')`).
+  that must receive the generic fallback (`Error('ERR_FOO')`). Review
+  correction (codex round 15): the core also exports the ARM-RESULT
+  helpers — the per-arm user-facing strings and the generic tail
+  (`armMessage(kind): string` over the same literals the gates decide)
+  — so a direct consumer can map a matched arm to its final string without
+  invoking the pipeline or duplicating the message literals; the gates and
+  the send stage call the SAME helpers.
 - **Shell/effect wiring.** None. Consumers: `useSendMessage` catch,
   `outbound-queue` flush loop, plus `isAuthError` in `connection-manager`
   (untouched).
@@ -901,7 +911,15 @@ anywhere in this plan.
   executeImmediately?: boolean }) => void, onSendStart, onSendComplete, onError,
   onMessageAccepted, armTimeout: () => SendTimeoutHandle, toastError,
   toastInfo }` and
-  `outcome: boolean | null` — all supplied fresh per call from the hook's
+  `outcome: boolean | null`, AND `payload?: SendMessagePayload` (codex round
+  15: `stageBuildPayload` seeds the explicitly typed
+  `{ sessionId, content, images, deliveryMode? }` field and the effect
+  stages — `stageSendRequest` and the queued executor — consume
+  `ctx.payload`; without the declared field the contract forces rebuilding
+  the payload in the effect stage, mutating an undeclared field behind the
+  casts, or closing over hook state, any of which can make the direct and
+  queued delivery-mode/image behavior diverge) — all supplied fresh per
+  call from the hook's
   `useCallback` closures (functions pass through gate spreads by reference).
   `SendTimeoutHandle = { clear(): void; didTimeOut(): boolean }` — the
   per-call timer PLUS its inspectable timeout state (codex round 14: bare
@@ -992,13 +1010,24 @@ anywhere in this plan.
   `sanitizeUserError` decisionRun wrapper, which would nest the PR 3
   pipeline inside this one and split the send business path across nested
   pipeline boundaries — the identical correction applied to the router
-  helpers and per-model classifiers), then `onError`, toast, `onSendComplete`,
+  helpers and per-model classifiers; codex round 15 adds the ARM-RESULT
+  helpers `armMessage(kind)` so the stage maps a matched arm to its final
+  user-facing string without the pipeline or duplicated literals), then
+  `onError`, toast, `onSendComplete`,
   clear this send's
   timer, stamp `false`, and return normally, so the ordinary failure arm
   belongs to the pipeline and nothing of the send business path remains in
   the shell; when the per-call `timedOut` flag is already set, the
   late-rejection rule applies instead (stamp `false`, swallow, no second
-  error round).
+  error round). Codex round 15: that error handling covers the ENTIRE
+  connected effect sequence, not just the RPC await — a throw from ANY
+  injected port (`onSendStart`, `getHub`, `onMessageAccepted`, the enqueue
+  port) is caught by the same stage-level handling (sanitize via the shared
+  core, report, clear this send's timer, stamp `false`), because the shell
+  catch is gone and an escaping exception would break the unchanged
+  `Promise<boolean>` contract and leave an armed timer live; the
+  characterization set pins at least one throwing callback port
+  (today's `useSendMessage.ts:86-149` try/catch already behaves this way).
 - **Shell/effect wiring.** The hook keeps the exported `clearSendTimeout`
   (now clearing ALL outstanding per-send handles — unmount cleanup paths
   depend on it) and owns the per-call timer/handle state; the
@@ -1239,12 +1268,15 @@ optional router phase 2. No per-site section is left uncovered.
   `'Something went wrong.'`, codex round 10 — then the try/catch JSON
   normalization), the named arm predicates
   (`matchesConnectionLost`, `matchesTimeout`, `matchesEconn`, `matchesFetch`,
-  `matchesFailedToSend`), and `isInternalMessage` (the pass-through
-  discriminator, currently private — codex round 9) — so direct consumers
+  `matchesFailedToSend`), `isInternalMessage` (the pass-through
+  discriminator, currently private — codex round 9), and the ARM-RESULT
+  helpers `armMessage(kind): string` (the per-arm user-facing strings and
+  the generic tail, codex round 15) — so direct consumers
   (the PR 14 send stage)
   compose the same plain building blocks instead of invoking this
-  decisionRun from inside another pipeline (one copy of the mapping logic,
-  no nested runners; the discriminator export preserves both the
+  decisionRun from inside another pipeline (one copy of the mapping logic
+  AND the message literals, no nested runners; the discriminator export
+  preserves both the
   pass-through and the unmatched-internal fallback outcomes).
 - **Budget**: prod Δ ≈ 55; test Δ ≈ 90.
 - **Lands**: the user-facing error mapper runs as a module-scope decisionRun
@@ -1498,7 +1530,10 @@ optional router phase 2. No per-site section is left uncovered.
   overlapping-send path (codex round 3: `ChatContainer.tsx:653-657` passes
   `allowQueueWhileProcessing: true`; pin TODAY's shared-`sendTimeoutRef`
   handle clobbering and the orphaned timer's FALSE timeout on the first
-  send). The
+  send) AND the throwing-callback path (codex round 15: an injected
+  callback port such as `onSendStart` throwing → sanitized error,
+  `onSendComplete`, timer cleared, `false` — today's
+  `useSendMessage.ts:86-149` try/catch already behaves this way). The
   effect ordering is behavior and must be pinned against the UNCHANGED hook
   before any extraction.
 - **Budget**: prod Δ = 0; test Δ ≈ 150.
@@ -1576,7 +1611,9 @@ optional router phase 2. No per-site section is left uncovered.
   the late-SUCCESS row stays green UNCHANGED (`onMessageAccepted` + `true`
   return preserved, codex round 5); a nullish-rejection row
   (`hub.request` rejecting with `null`/`undefined` sanitizes to
-  `'Something went wrong.'` via the core's guard, codex round 10)
+  `'Something went wrong.'` via the core's guard, codex round 10); the
+  throwing-callback row stays green (a throwing injected port is handled by
+  the stage's whole-sequence error handling — codex round 15)
   plus the new pipeline-level admission decision-table test.
 - **Depends on**: PR 1, PR 3, PR 13 (PR 3 is now EXPLICIT — codex round 9:
   the send stage consumes its ordinary sanitization CORE —
