@@ -76,6 +76,7 @@
     "packages/daemon/src/lib/space/runtime/retry-utils.ts": ["exports"],
     "packages/daemon/src/lib/space/workflows/template-hash.ts": ["exports"],
     "packages/daemon/src/storage/repositories/goal-repository.ts": ["exports"],
+    "packages/daemon/src/storage/repositories/space-workspace-repository.ts": ["exports"],
     "packages/daemon/src/storage/repositories/agent-memory-transformers.ts": ["exports"]
   },
   "ignoreDependencies": [
