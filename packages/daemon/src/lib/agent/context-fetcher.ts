@@ -219,10 +219,21 @@ export class ContextFetcher {
       }
     }
 
+    const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
+      isAutocompactCategory(category.name)
+    )?.tokens;
+    const armedAutoCompactWindow =
+      useMetadata && modelMetadata?.provider && positiveInteger(modelMetadata.contextWindow)
+        ? buildProviderSettings(
+            modelMetadata.provider,
+            modelMetadata.contextWindow,
+            modelMetadata.id,
+            modelMetadata.autoCompactPercent
+          )?.autoCompactWindow
+        : undefined;
+    const thresholdCapacity = armedAutoCompactWindow ?? capacity;
+
     if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
-      const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
-        isAutocompactCategory(category.name)
-      )?.tokens;
       const reservedTokens =
         typeof autoCompactReservedTokens === 'number' && autoCompactReservedTokens > 0
           ? autoCompactReservedTokens
@@ -234,7 +245,10 @@ export class ContextFetcher {
         name.toLowerCase().includes('free space')
       );
       if (freeSpaceKey) {
-        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens - reservedTokens);
+        const correctedTokens = Math.max(
+          0,
+          thresholdCapacity - reservedTokens - nonFreeSpaceTokens
+        );
         breakdown[freeSpaceKey] = {
           tokens: correctedTokens,
           percent: Math.round((correctedTokens / capacity) * 1000) / 10,
@@ -270,19 +284,6 @@ export class ContextFetcher {
         ? Math.min(100, Math.max(0, Math.round((response.totalTokens / capacity) * 100)))
         : Math.max(0, Math.round(response.percentage));
     let autoCompactThreshold = response.autoCompactThreshold;
-    const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
-      isAutocompactCategory(category.name)
-    )?.tokens;
-    const armedAutoCompactWindow =
-      useMetadata && modelMetadata?.provider && positiveInteger(modelMetadata.contextWindow)
-        ? buildProviderSettings(
-            modelMetadata.provider,
-            modelMetadata.contextWindow,
-            modelMetadata.id,
-            modelMetadata.autoCompactPercent
-          )?.autoCompactWindow
-        : undefined;
-    const thresholdCapacity = armedAutoCompactWindow ?? capacity;
     if (
       typeof autoCompactReservedTokens === 'number' &&
       autoCompactReservedTokens > 0 &&
