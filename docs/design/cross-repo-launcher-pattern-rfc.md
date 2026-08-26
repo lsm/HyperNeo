@@ -289,7 +289,10 @@ gate's hold lifecycle):
   atomically around gated-task creation and terminal cleanup, since a standalone task
   has no goal link and never occupies the pointer, so this record is the only place its
   identity survives), refreshed as a whole on every
-  change. **Storage prerequisite, stated honestly:** agent memory does not currently
+  change **under record-level CAS semantics** (or handler-side atomic per-hold
+  mutations): the launcher owner and an authorized coordinator can update concurrently,
+  and two read-modify-write refreshes would silently erase one actor's hold or
+  gated-task identity, after which a later release resumes B under an unresolved gate. **Storage prerequisite, stated honestly:** agent memory does not currently
   qualify — the consolidation job's duplicate admission compares content regardless of
   key (so structurally similar per-goal records can merge and lose one goal's state)
   and its TTL prunes a long-lived hold record — so a consolidation-exempt store (or an
@@ -383,7 +386,11 @@ gate's hold lifecycle):
 - **Terminal handling:** a standalone gated task's terminal result is recorded into
   B's rolling state (`update_goal`) at **every** terminal state — success or failure —
   before resuming, completing, rebinding, or recreating (standalone tasks have no goal
-  link or outcome notification, so this record is the only trace); a successful
+  link or outcome notification, so this record is the only trace). Consuming that
+  terminal result must be race-safe — a same-Space actor's `retry_task` can reopen a
+  `done` gate between observation and these calls, and nothing else rejects the stale
+  decision — via a terminal-generation CAS/lease on the task or a combined
+  consume-result-and-`update_goal` operation in the store surface; a successful
   **final** step then completes goal B rather than resuming it — resolving the
   hard-gate hold record in the operational store and discarding any saved cadence state
   as part of completion, so a later reopened goal does not inherit a stale hold.
