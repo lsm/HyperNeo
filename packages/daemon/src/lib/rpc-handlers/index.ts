@@ -989,7 +989,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     message: string,
     replyToSessionId?: string | null,
     explicitMessageId?: string,
-    injectorOptions?: { onConsumed?: () => void }
+    injectorOptions?: {
+      onConsumed?: (settledSessionId: string) => void;
+      lateSettlement?: import('../space/runtime/space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+    }
   ): Promise<SpaceAgentInjectionOutcome> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
     let session = await sessionManagerRef.getSessionAsync(sessionId);
@@ -1030,6 +1033,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
           stateManager: session.stateManager,
           onConsumed: injectorOptions?.onConsumed,
+          lateSettlement: injectorOptions?.lateSettlement,
         },
         {
           sessionId,

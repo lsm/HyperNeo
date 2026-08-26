@@ -91,7 +91,7 @@ const { getProviderRegistry, resetProviderRegistry } = await import(
 const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
 const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider.js');
 const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
-const { deliverSpaceAgentMessage } = await import(
+const { deliverSpaceAgentMessage, SpaceAgentLateSettlements } = await import(
   '../../../../src/lib/space/runtime/space-agent-message-delivery'
 );
 const { AgentMessageRouter } = await import(
@@ -167,10 +167,11 @@ interface IdleCoordinatorHarness {
   db: Database;
   agentSession: AgentSessionType;
   processor: InstanceType<typeof JobQueueProcessor>;
+  lateSettlements: InstanceType<typeof SpaceAgentLateSettlements>;
   escalate: (
     messageId: string,
     text: string,
-    depsOverride?: { onConsumed?: () => void }
+    depsOverride?: { onConsumed?: (settledSessionId: string) => void }
   ) => Promise<SpaceAgentInjectionOutcome>;
 }
 
@@ -216,7 +217,12 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
   );
   processor.start();
 
-  const escalate = (messageId: string, text: string, depsOverride?: { onConsumed?: () => void }) =>
+  const lateSettlements = new SpaceAgentLateSettlements();
+  const escalate = (
+    messageId: string,
+    text: string,
+    depsOverride?: { onConsumed?: (settledSessionId: string) => void }
+  ) =>
     deliverSpaceAgentMessage(
       {
         sdkMessageRepo: db.getSDKMessageRepo(),
@@ -225,6 +231,7 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
         jobQueue,
         stateManager: agentSession.stateManager,
         onConsumed: depsOverride?.onConsumed,
+        lateSettlement: lateSettlements,
       },
       {
         sessionId: SESSION_ID,
@@ -243,6 +250,7 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
     db,
     agentSession,
     processor,
+    lateSettlements,
     escalate,
   };
 }
@@ -293,6 +301,9 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       try {
         harness.db.close();
       } catch {}
+    }
+    for (const harness of harnesses) {
+      harness.lateSettlements.dispose();
     }
     for (const workspace of workspaces) {
       rmSync(workspace, { recursive: true, force: true });

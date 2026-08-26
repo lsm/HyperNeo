@@ -132,6 +132,7 @@ import {
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
   runSpaceAgentPendingDrain,
   type SpaceAgentPendingDrainDeps,
@@ -255,7 +256,10 @@ export interface TaskAgentManagerConfig {
     message: string,
     replyToSessionId?: string | null,
     explicitMessageId?: string,
-    options?: { onConsumed?: () => void }
+    options?: {
+      onConsumed?: (settledSessionId: string) => void;
+      lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+    }
   ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
@@ -353,6 +357,8 @@ export function resolvePostApprovalRouteNodeId(
 }
 
 export class TaskAgentManager {
+  private readonly lateSettlements = new SpaceAgentLateSettlements();
+
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
   }
@@ -1515,18 +1521,18 @@ export class TaskAgentManager {
       const message = formatPendingRowForSpaceAgent(row);
       try {
         const replyTo = resolveReplySession(row);
-        let deliveredSessionId = replyTo || spaceChatSessionId;
-        const settleDelivered = (): void => {
+        const deliveredSessionId = replyTo || spaceChatSessionId;
+        const settleDelivered = (settledSessionId?: string): void => {
           if (repo.getById(row.id)?.status !== 'pending') return;
-          repo.markDelivered(row.id, deliveredSessionId);
-          this.emitPendingDelivered(row.id, deliveredSessionId, row);
+          repo.markDelivered(row.id, settledSessionId ?? deliveredSessionId);
+          this.emitPendingDelivered(row.id, settledSessionId ?? deliveredSessionId, row);
         };
         const outcome = await inject(spaceId, message, replyTo, row.id, {
           onConsumed: settleDelivered,
+          lateSettlement: this.lateSettlements,
         });
-        if (outcome.sessionId) deliveredSessionId = outcome.sessionId;
         if (outcome.state === 'delivered') {
-          settleDelivered();
+          settleDelivered(outcome.sessionId);
         } else if (outcome.state === 'failed') {
           log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}`);
           repo.markAttemptFailed(row.id, outcome.error);
@@ -2657,6 +2663,7 @@ export class TaskAgentManager {
   }
 
   async cleanupAll(): Promise<void> {
+    this.lateSettlements.dispose();
     clearAllRetryableHookActionTimers();
     this.clearDirectSteerState();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {

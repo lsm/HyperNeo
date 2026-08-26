@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { Logger } from '../../logger.ts';
 import {
   awaitDeliveryConsumptionTolerant,
   deliverAndMarkQueued,
@@ -8,12 +9,48 @@ import {
   withSessionResetCoordination,
   type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import { Logger } from '../../logger.ts';
 
 const log = new Logger('space-agent-delivery');
 
+export interface LateSettlementRequest {
+  sessionId: string;
+  messageId: string;
+  onConsumed: (settledSessionId: string) => void;
+}
+
+export interface SpaceAgentLateSettlementOwner {
+  arm(request: LateSettlementRequest): void;
+}
+
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
+
+export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+
+  arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): void {
+    const late = waitForDeliveryConsumption(sessionId, messageId);
+    const expiry = setTimeout(() => late.cancel(), LATE_SETTLE_HORIZON_MS);
+    this.timers.add(expiry);
+    void late.promise.then(() => {
+      clearTimeout(expiry);
+      this.timers.delete(expiry);
+      try {
+        onConsumed(sessionId);
+      } catch (error) {
+        log.warn(
+          `delayed consumption settlement failed for ${sessionId}/${messageId}: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    });
+  }
+
+  dispose(): void {
+    for (const timer of this.timers) clearTimeout(timer);
+    this.timers.clear();
+  }
+}
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
 export type SpaceAgentInjectionOutcome =
   | { state: 'delivered'; messageId: string; sessionId: string }
@@ -40,7 +77,8 @@ export interface SpaceAgentDeliveryDeps {
     setQueuedIfIdle(messageId: string): Promise<boolean>;
     getState(): { status: string };
   };
-  onConsumed?: () => void;
+  onConsumed?: (settledSessionId: string) => void;
+  lateSettlement?: SpaceAgentLateSettlementOwner;
 }
 
 export interface SpaceAgentDeliveryInput {
@@ -124,7 +162,30 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
   if (ctx.consumed) {
     return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
   }
-  const settled = ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+  if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
+    ctx.deps.lateSettlement.arm({
+      sessionId,
+      messageId,
+      onConsumed: ctx.deps.onConsumed,
+    });
+    const armed = readSettledStatus(ctx);
+    if (armed === 'consumed') {
+      return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
+    }
+    if (armed === 'failed') {
+      return {
+        ...ctx,
+        outcome: {
+          state: 'failed',
+          messageId,
+          sessionId,
+          error: 'delivery dead-lettered while awaiting consumption',
+        },
+      };
+    }
+    return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
+  }
+  const settled = readSettledStatus(ctx);
   if (settled === 'consumed') {
     return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
   }
@@ -139,24 +200,11 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
       },
     };
   }
-  const onConsumed = ctx.deps.onConsumed;
-  if (!onConsumed) {
-    return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
-  }
-  const late = waitForDeliveryConsumption(sessionId, messageId);
-  const expiry = setTimeout(() => late.cancel(), LATE_SETTLE_HORIZON_MS);
-  void late.promise.then(() => {
-    clearTimeout(expiry);
-    try {
-      onConsumed();
-    } catch (error) {
-      log.warn(
-        `delayed consumption settlement failed for ${sessionId}/${messageId}: ` +
-          `${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  });
   return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
+}
+
+function readSettledStatus(ctx: SpaceAgentDeliveryCtx): string | undefined {
+  return ctx.deps.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId)?.sendStatus;
 }
 
 async function failDelivery(ctx: SpaceAgentDeliveryCtx): Promise<void> {

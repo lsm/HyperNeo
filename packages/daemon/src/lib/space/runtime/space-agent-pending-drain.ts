@@ -11,6 +11,7 @@ export interface SpaceAgentPendingDrainDeps {
     listPendingForTarget(workflowRunId: string, targetName: string): PendingAgentMessageRecord[];
     getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
+    markAttemptFailed(id: string, error: string): unknown;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string): unknown;
@@ -50,22 +51,36 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
       replyTo && replyTo !== ctx.spaceChatSessionId
         ? [replyTo, ctx.spaceChatSessionId]
         : [ctx.spaceChatSessionId];
-    let resolved = false;
+    let consumedAt: string | null = null;
+    let failedSeen = false;
+    let enqueuedSeen = false;
     for (const sessionId of candidates) {
       const sendStatus = ctx.deps.probeDeliveryStatus(sessionId, row.id);
       if (sendStatus === 'consumed') {
-        if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
-          ctx.deps.repo.markDelivered(row.id, sessionId);
-          ctx.deps.onSettled(row, sessionId);
-        }
-        resolved = true;
+        consumedAt = sessionId;
         break;
       }
-      if (sendStatus === 'enqueued' && !activeDeliveryIds.includes(row.id)) {
-        activeDeliveryIds.push(row.id);
-      }
+      if (sendStatus === 'failed') failedSeen = true;
+      if (sendStatus === 'enqueued') enqueuedSeen = true;
     }
-    if (resolved) settledIds.add(row.id);
+    if (consumedAt) {
+      if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
+        ctx.deps.repo.markDelivered(row.id, consumedAt);
+        ctx.deps.onSettled(row, consumedAt);
+      }
+      settledIds.add(row.id);
+      continue;
+    }
+    if (failedSeen && !enqueuedSeen) {
+      if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
+        ctx.deps.repo.markAttemptFailed(row.id, 'earlier delivery dead-lettered');
+      }
+      settledIds.add(row.id);
+      continue;
+    }
+    if (enqueuedSeen && !activeDeliveryIds.includes(row.id)) {
+      activeDeliveryIds.push(row.id);
+    }
   }
   return { ...ctx, activeDeliveryIds };
 }
@@ -87,9 +102,12 @@ function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx
 }
 
 function listAdmissibleRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
+  const active = new Set(ctx.activeDeliveryIds ?? []);
   return {
     ...ctx,
-    pendingRows: ctx.deps.repo.listPendingForTarget(ctx.workflowRunId, 'space-agent'),
+    pendingRows: ctx.deps.repo
+      .listPendingForTarget(ctx.workflowRunId, 'space-agent')
+      .filter((row) => !active.has(row.id)),
   };
 }
 
