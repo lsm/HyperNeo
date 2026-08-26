@@ -1,11 +1,24 @@
 /// <reference types="vitest" />
 
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 const here = __dirname;
 
+const rawMarkdown = {
+  name: 'raw-markdown',
+  enforce: 'pre' as const,
+  load(id: string) {
+    if (id.endsWith('.md')) {
+      return `export default ${JSON.stringify(readFileSync(id, 'utf8'))}`;
+    }
+    return undefined;
+  },
+};
+
 export default defineConfig({
+  plugins: [rawMarkdown],
   test: {
     environment: 'node',
     globals: true,

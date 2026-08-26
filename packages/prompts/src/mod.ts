@@ -1,5 +1,5 @@
 /// <reference path="./markdown.d.ts" />
-import { buildPromptRegistry } from './loader';
+import { buildPromptRegistry } from './loader.ts';
 import mdagentsLongHorizonSchedulingGuardrail from './agents/long-horizon-scheduling-guardrail.md' with {
   type: 'text',
 };
