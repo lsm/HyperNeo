@@ -288,8 +288,7 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failSessionUnauthorized') {
         return {
-          success:
-            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+          success: delivered.length + queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: `Session target ${decision.target} is not an authorized reply route for '${fromAgentName}'.`,
@@ -300,8 +299,7 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failUnsupported' || decision.action === 'failUnsupportedKind') {
         return {
-          success:
-            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+          success: delivered.length + queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason:
@@ -314,8 +312,7 @@ export class AgentMessageRouter {
       }
       if (decision.action === 'failInvalidWorker') {
         return {
-          success:
-            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+          success: delivered.length + queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: `Invalid worker target ${decision.target}: ${decision.reason}`,
@@ -393,8 +390,7 @@ export class AgentMessageRouter {
           }).routeMessage(messageRecord);
         } catch (err) {
           return {
-            success:
-              delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+            success: delivered.length + queued.length > 0 ? 'partial' : false,
             delivered,
             failed,
             reason: err instanceof Error ? err.message : String(err),
@@ -427,8 +423,7 @@ export class AgentMessageRouter {
           : null;
       if (!permittedChannelTarget) {
         return {
-          success:
-            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+          success: delivered.length + queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: `Channel topology does not permit '${fromAgentName}' to send to: ${target}.`,
@@ -447,8 +442,7 @@ export class AgentMessageRouter {
         );
       } catch (err) {
         return {
-          success:
-            delivered.length > 0 || failed.length > 0 || queued.length > 0 ? 'partial' : false,
+          success: delivered.length + queued.length > 0 ? 'partial' : false,
           delivered,
           failed,
           reason: err instanceof Error ? err.message : String(err),

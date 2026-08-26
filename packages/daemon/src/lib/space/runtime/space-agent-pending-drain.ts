@@ -168,7 +168,7 @@ export function collectActiveSpaceDeliveryIds(args: {
     if (
       candidates.some((sessionId) => {
         const sendStatus = args.probeDeliveryStatus(sessionId, row.id);
-        return sendStatus === 'enqueued' || sendStatus === 'submitted';
+        return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
       })
     ) {
       activeIds.push(row.id);

@@ -359,6 +359,7 @@ export function resolvePostApprovalRouteNodeId(
 
 export class TaskAgentManager {
   private readonly lateSettlements = new SpaceAgentLateSettlements();
+  private readonly spaceAgentDrainsInFlight = new Set<string>();
 
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
@@ -1487,6 +1488,19 @@ export class TaskAgentManager {
   }
 
   async flushPendingMessagesForSpaceAgent(spaceId: string, workflowRunId: string): Promise<void> {
+    const repo = this.config.pendingMessageRepo;
+    const inject = this.config.spaceAgentInjector;
+    if (!repo || !inject) return;
+    if (this.spaceAgentDrainsInFlight.has(workflowRunId)) return;
+    this.spaceAgentDrainsInFlight.add(workflowRunId);
+    try {
+      await this.flushSpaceAgentDrainLocked(spaceId, workflowRunId);
+    } finally {
+      this.spaceAgentDrainsInFlight.delete(workflowRunId);
+    }
+  }
+
+  private async flushSpaceAgentDrainLocked(spaceId: string, workflowRunId: string): Promise<void> {
     const repo = this.config.pendingMessageRepo;
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
