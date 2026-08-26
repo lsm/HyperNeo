@@ -332,8 +332,12 @@ The repo already has several proven pipelines. Use these as the model for each s
      capture keeps its local
      catch, and runs whenever the handler result is NULLISH — `null`
      declined OR `undefined` from the absent optional goal service (review
-     correction PR #2983 round 24). `compensate` is not practical here; wrap the branch in a repo
-     transaction or use a `claimTaskStatus` CAS.
+     correction PR #2983 round 24). `compensate` is not practical here; the
+     branch REQUIRES an expected-`approved` CAS (`claimTaskStatus`) on its
+     direct update — review correction PR #2983 round 33: an ordinary
+     transaction containing an unconditional update can still overwrite a
+     concurrent cancel/reopen with `done`; when the CAS loses, evidence
+     capture is skipped.
   5. Branch `alreadyRouted` → `halt`.
   6. Branch `missingWorkflow`/`emptyInstructions` → `effect` `clear-pending-state`, `halt`.
   7. Branch `proceed` → `effect` `reserve-dispatch` FIRST: an atomic
@@ -610,7 +614,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   ```ts
   interface ReviewGoalOutcomeState {
     args: ReviewGoalOutcomeInput;
-    goalService: SpaceGoalService;
+    goalService: SpaceGoalService | null;
     notifications: SpaceGoalOutcomeNotification[] | null;
     notification: SpaceGoalOutcomeNotification | null;
     goal: SpaceGoal | null;
@@ -1488,10 +1492,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P18 — `refactor(space): run onPublishTask on the publish pipeline`
 
 - 🔧 apply — prod Δ ≲40, test Δ ≲100
-- **Scope**: The `onPublishTask` callback in `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` runs the P15 pipeline (routing + publish effect + emission inside the composition).
+- **Scope**: The `onPublishTask` callback in `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` runs the P15 pipeline (routing + publish effect + emission inside the composition) with a CALLER-SPECIFIC not-draft mapping: the callback currently lets `publishTask` surface the manager's `Invalid status transition from '<from>' to 'published'` error, NOT the route helper's tool-facing wording — preserve that mapping and pin a non-draft callback row (review correction PR #2983 round 33).
 - **Lands**: all three publish caller operations are complete pipelines; no shell duplicates the event emission.
 - **Excludes**: the `space-task-operations.ts` shared-shell question (open question 5).
-- **Tests**: `packages/daemon/tests/unit/5-space/agent/task-agent-manager-*.test.ts`.
+- **Tests**: `packages/daemon/tests/unit/5-space/agent/task-agent-manager-*.test.ts` including the non-draft callback row.
 - **Depends on**: P15.
 
 ### P19 — `feat(space): add complete task archive pipeline core (unwired)`
@@ -1524,7 +1528,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P22 — `feat(handlers): add the one-pipeline spaceTask.update core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
-- **Scope**: ONE direct RPC update pipeline: the P13 validation helpers as early rejection/normalization stages — validated against the SYNTHETIC started snapshot when the request itself transitions the task to `in_progress` (an in-request start locks overrides — review correction PR #2983 round 8) — plus a WORKFLOW-SELECTION-CHANGE normalization stage injecting `workflowModelOverrides: null` when `preferredWorkflowId` changes and overrides are omitted (round 8: retained overrides could seed a reused `nodeId:agentName` key with a stale model); the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner), WITH the RPC's caller-specific limited-status allowance retained — `rate_limited`/`usage_limited` requests proceed into the stop-for-status/set-status arms instead of hitting the shared `limited_direct` rejection (review correction PR #2983 round 12) — AND its NO-OP success retained (only `spaceId`/`taskId` supplied → empty `updateTask`, existing task returned, `space.task.updated` emitted; never the tool-only `no_updatable_fields` error — review correction PR #2983 round 13); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps — each of the three runtime-backed branches (park/recover/stop) behind a RUNTIME-AVAILABILITY rejection gate throwing the exact current `SpaceRuntimeService is unavailable` errors BEFORE any mutation (review correction PR #2983 round 9: the service is optional; without the gate the pipeline dereferences an absent dependency or changes the public error contract), `set_status` retaining its guarded FOLLOW-UP field update (remaining fields persisted via `updateTask` after `setTaskStatus`, with the override-lock recheck — plus the cancellation-reason follow-up write; review correction PR #2983 round 9: ending the arm after `setTaskStatus` silently drops the other requested changes), and the TWO-PHASE dependency-added arm inside `fields_only` GUARDED ON RUNTIME PRESENCE (the whole flow is skipped when `spaceRuntimeService` is absent — the ordinary `updateTask` proceeds, matching the current `spaceRuntimeService && ...` condition; review correction PR #2983 round 10); when present: safe-params update → returned-state check → on `blocked`/`dependency_added` the guarded `stopWorkflowBackedTask` effect stops the active agents, else the pointer-params follow-up write (review correction PR #2983 round 8: a plain `updateTask`-only stage leaves agents running on a blocked task); a fresh-task RESNAPSHOT between the awaited override validation and update routing (review correction PR #2983 round 26: the current handler deliberately re-reads the task after validation — space-task-handlers.ts:258 vs :375/:541 — because another request can change status/workflow state across that await; routing from the initial snapshot could miss a newly required stop/recovery path even when no override field is written; pin a changed-status-during-validation row); a lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary), with their FAILURE CONTRACTS DISTINCT (review correction PR #2983 round 21: the cascaded callback AWAITS each `internalEventBus.publish`, so a rejected cascaded publication propagates from the update path as today, while the FINAL task publication is locally caught best-effort — never apply one blanket rule to both; pin a cascaded-rejection parity row). Parallel-safe leaf.
+- **Scope**: ONE direct RPC update pipeline with the ORDERED `spaceManager.getSpace` → `taskManager.getTask` reads INJECTED AS GUARDED SNAPSHOT STAGES (review correction PR #2983 round 33: space-task-handlers.ts:252-260 — preserving the public `Space not found` precedence ahead of any task read, pinned by a missing-space row; never prepopulated shell state): the P13 validation helpers as early rejection/normalization stages — validated against the SYNTHETIC started snapshot when the request itself transitions the task to `in_progress` (an in-request start locks overrides — review correction PR #2983 round 8) — plus a WORKFLOW-SELECTION-CHANGE normalization stage injecting `workflowModelOverrides: null` when `preferredWorkflowId` changes and overrides are omitted (round 8: retained overrides could seed a reused `nodeId:agentName` key with a stale model); the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner), WITH the RPC's caller-specific limited-status allowance retained — `rate_limited`/`usage_limited` requests proceed into the stop-for-status/set-status arms instead of hitting the shared `limited_direct` rejection (review correction PR #2983 round 12) — AND its NO-OP success retained (only `spaceId`/`taskId` supplied → empty `updateTask`, existing task returned, `space.task.updated` emitted; never the tool-only `no_updatable_fields` error — review correction PR #2983 round 13); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps — each of the three runtime-backed branches (park/recover/stop) behind a RUNTIME-AVAILABILITY rejection gate throwing the exact current `SpaceRuntimeService is unavailable` errors BEFORE any mutation (review correction PR #2983 round 9: the service is optional; without the gate the pipeline dereferences an absent dependency or changes the public error contract), `set_status` retaining its guarded FOLLOW-UP field update (remaining fields persisted via `updateTask` after `setTaskStatus`, with the override-lock recheck — plus the cancellation-reason follow-up write; review correction PR #2983 round 9: ending the arm after `setTaskStatus` silently drops the other requested changes), and the TWO-PHASE dependency-added arm inside `fields_only` GUARDED ON RUNTIME PRESENCE (the whole flow is skipped when `spaceRuntimeService` is absent — the ordinary `updateTask` proceeds, matching the current `spaceRuntimeService && ...` condition; review correction PR #2983 round 10); when present: safe-params update → returned-state check → on `blocked`/`dependency_added` the guarded `stopWorkflowBackedTask` effect stops the active agents, else the pointer-params follow-up write (review correction PR #2983 round 8: a plain `updateTask`-only stage leaves agents running on a blocked task); a fresh-task RESNAPSHOT between the awaited override validation and update routing (review correction PR #2983 round 26: the current handler deliberately re-reads the task after validation — space-task-handlers.ts:258 vs :375/:541 — because another request can change status/workflow state across that await; routing from the initial snapshot could miss a newly required stop/recovery path even when no override field is written; pin a changed-status-during-validation row); a lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary), with their FAILURE CONTRACTS DISTINCT (review correction PR #2983 round 21: the cascaded callback AWAITS each `internalEventBus.publish`, so a rejected cascaded publication propagates from the update path as today, while the FINAL task publication is locally caught best-effort — never apply one blanket rule to both; pin a cascaded-rejection parity row). Parallel-safe leaf.
 - **Lands**: the complete update operation exists as one composition; the handler still runs its old path.
 - **Excludes**: handler rewiring (P23) and the tool's complete update pipeline (P24).
 - **Tests**: branch/parity rows for every `plan.action`, the re-check-lock rows, the in-request-start locks-overrides row, the workflow-switch clears-omitted-overrides row, the dependency-added two-phase stop row (round 8), the limited-status allowance row, and the no-op-update success row (review correction PR #2983 round 13).
@@ -1533,7 +1537,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P23 — `refactor(handlers): run spaceTask.update on its single pipeline`
 
 - 🔧 apply — prod Δ ≲100, test Δ ≸250
-- **Scope**: Rewrite the `spaceTask.update` handler to execute the P22 pipeline; unify the dependency-added blocked-transition logic with the tool's `park_stopped`/`recover_transition` paths; align tool/RPC error wording; preserve the RPC-only preconditions.
+- **Scope**: Rewrite the `spaceTask.update` handler to execute the P22 pipeline (whose ordered space→task snapshot stages carry the `Space not found` precedence — round 33); unify the dependency-added blocked-transition logic with the tool's `park_stopped`/`recover_transition` paths; align tool/RPC error wording; preserve the RPC-only preconditions.
 - **Lands**: the whole update operation runs as one named pipeline.
 - **Excludes**: `space-tool-pipeline.ts` changes (P24).
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
@@ -1679,7 +1683,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P39 — `refactor(goals): run onTaskCompleted on its complete pipeline (admission + enqueue effect)`
 
 - 🔧 apply — prod Δ ≲50, test Δ ≲100
-- **Scope**: `goal-automation-service.ts:onTaskCompleted` gathers inputs, runs the P38 pipeline once, returns its `GoalAutomationEnqueueResult`.
+- **Scope**: `goal-automation-service.ts:onTaskCompleted` passes the TASK ID and dependencies into the P38 pipeline and runs it ONCE — the pipeline performs its own ordered reads (review correction PR #2983 round 33: no eager shell gathering, which would let a goal/scope/cursor/evidence repository failure replace the stable `not_applicable`/`disabled`/`ambiguous_scope`/`missing_scope` returns; a missing task returns before any goal lookup) — and returns its `GoalAutomationEnqueueResult`.
 - **Lands**: the completed-task automation enqueue is one named composition.
 - **Excludes**: `onSelfNag` (P40).
 - **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
@@ -1688,7 +1692,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P40 — `refactor(goals): run onSelfNag on its complete pipeline (admission + enqueue effect)`
 
 - 🔧 apply — prod Δ ≲50, test Δ ≲100
-- **Scope**: `goal-automation-service.ts:onSelfNag` gathers inputs and runs its P38 pipeline; the first-scope fallback contract from P37 is preserved.
+- **Scope**: `goal-automation-service.ts:onSelfNag` passes its identifiers and dependencies into the P38 pipeline, which performs its own ordered reads (round 33); the first-scope fallback contract from P37 is preserved.
 - **Lands**: both automation paths are migrated.
 - **Excludes**: schedule sync (P41, P42).
 - **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
