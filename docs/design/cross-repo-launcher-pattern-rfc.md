@@ -265,13 +265,19 @@ gate's hold lifecycle):
   human-readable condition mirrored in `nextSteps` for visibility (outcome reviews
   replace `nextSteps` wholesale, so a marker recorded only there is erased before
   release revalidates it). Operational state lives as **one keyed record per goal**
-  (holds and saved cadence values in a single payload), refreshed as a whole on every
+  (holds, saved cadence values, and each tracked gated task/proposal ID — updated
+  atomically around gated-task creation and terminal cleanup, since a standalone task
+  has no goal link and never occupies the pointer, so this record is the only place its
+  identity survives), refreshed as a whole on every
   change. **Storage prerequisite, stated honestly:** agent memory does not currently
   qualify — the consolidation job's duplicate admission compares content regardless of
   key (so structurally similar per-goal records can merge and lose one goal's state)
   and its TTL prunes a long-lived hold record — so a consolidation-exempt store (or an
-  explicit exemption) is a **prerequisite enabler** of the launcher template slice,
-  tracked in §7/§8; until it ships, only the zero-code instructions path is usable, with
+  explicit exemption transparently usable through existing memory tools) **with an
+  agent-facing read/write surface** is a **prerequisite enabler** of the launcher
+  template slice — without the surface the template cannot follow its own safety
+  protocol — tracked in §7/§8; until it ships, only the zero-code instructions path is
+  usable, with
   hold/cadence durability limited accordingly. Then
   pause — `pause_goal` only if B is active; an
   already-paused goal instead records the additional hold and marks that this sequence
@@ -296,13 +302,18 @@ gate's hold lifecycle):
   because clearing (`check_in_cron_expression: null`) hard-deletes the schedule and its
   values cannot be recovered from the goal afterwards; resuming reactivates the
   schedule against an empty pointer. Restore it — recreating from the recorded values —
-  only after the next
-  outcome is reviewed, the explicitly triggered replacement's or the retained task's
-  when setup deliberately kept it; resolve this sequence's own hold record in agent
+  only after the explicitly triggered replacement's outcome is reviewed; a retained
+  task's own reviewed outcome counts as the restoration boundary **only when that task
+  still occupies B's active-task pointer across resume** — once terminalization has
+  cleared it, restoring on its review alone re-exposes the empty pointer to a scheduled
+  fire; resolve this sequence's own hold record in agent
   memory **before** revalidating the rest (a stale record surviving future wakes reads
   as an unresolved overlapping gate); revalidate that no other recorded hold
-  remains; resume only when this sequence owns the pause or all other gates are
-  cleared; re-trigger only when the active-task pointer is confirmed empty (with a
+  remains; resume **only when this sequence owns the pause** — a pause owned by an
+  unrecorded actor (a human or another tool) is never released by inference from an
+  empty store; it lifts when its owner clears it or transfers ownership explicitly,
+  which is why pre-existing pauses are persisted in the same per-goal store;
+  re-trigger only when the active-task pointer is confirmed empty (with a
   retained task's terminal outcome already reviewed per the release step above); a
   cross-goal condition still unresolved keeps the cadence cleared, because a scheduled
   fire does not consult `nextSteps`.
@@ -310,7 +321,10 @@ gate's hold lifecycle):
   B's rolling state (`update_goal`) at **every** terminal state — success or failure —
   before resuming, completing, rebinding, or recreating (standalone tasks have no goal
   link or outcome notification, so this record is the only trace); a successful
-  **final** step then completes goal B rather than resuming it — for the Forge shape
+  **final** step then completes goal B rather than resuming it — resolving the
+  hard-gate hold record in the operational store and discarding any saved cadence state
+  as part of completion, so a later reopened goal does not inherit a stale hold — for
+  the Forge shape
   only after that successful outcome is reviewed (completion is itself a
   revision-changing mutation; skipping the review leaves a bare acknowledgement that
   loses the final release result); an unsuccessful Forge
@@ -387,7 +401,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 | Daemon restart mid-loop | Unconsumed notifications persist in the terminal transaction and are recovered at startup; an **acknowledged** notification is terminal and never redelivered — so a restart inside a multi-call sequence (acknowledge-then-cancel, acknowledge-then-trigger) loses the wake with work half-done | Arm a durable reminder **before the first cross-goal mutation** of any multi-call sequence — setup (pause/cancel/create-gate) as well as acknowledge-then-act loops: a pre-start cancellation produces no notification at all, so a restart after it leaves B paused with no pending wake. An interrupted loop then still wakes the launcher to re-derive state from goals and tasks; do not treat any multi-tool sequence as transactionally restart-safe |
 | A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer — unless `autoTriggerNext` had a queued successor, which is auto-created and claimed inside the terminal transaction (§4 disables this; reconcile through the drift sequence if found) | **Dispose the failed outcome first** — acknowledge it with the retry reason as its goal-state update — and inspect and cancel any workflow run the blocked transition left executing (the terminal seam clears the pointer without stopping the run; the old agents would otherwise mutate repo A concurrently with the retry), disposing the resulting outcome — then re-trigger: claiming the replacement task bumps the revision, so a review attempted after the trigger is rejected `stale_revision`. Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). A retained check-in cadence follows the §6 rule — snapshotted to agent memory, cleared before triggering, and kept cleared through the replacement's outcome review, so the goal stays active and directly triggerable; restore the cadence only after that review — **except on the exhaustion branch, where A's cadence is never restored**. If retries are exhausted: (0) ensure A's goal is paused and its cadence left cleared **before** any teardown — A's pointer is empty and a firing check-in would launch a third attempt beyond the limit; (1) drain B's existing outcomes (reconciling a completion racing the pause), then ensure B is paused (a hard gate will have paused it already, and `pauseGoal` accepts only active goals — an existing paused state satisfies this); (2) cancel B's active task (`cancel_workflow_run: true` where applicable) **and the tracked gated task** — a still-open gated task survives the pause and auto-starts if a human later retries A to `done`; (3) dispose every pending notification the cancellations produce — only **started** goal-linked cancellations yield one; a pre-start cancellation is administrative and yields none, so never wait for it; (4) record in `nextSteps` and escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
 | Contract drift after B started | A's follow-up outcome wakes launcher; the revision gate protects **A's** rolling state only when the review carries a goal-state update (§4 requires one) | Validate A first, drain B's existing outcomes, then pause B, cancel its active **and tracked gated** tasks (`cancel_workflow_run: true` for workflow-backed ones), dispose all resulting notifications — consolidating concurrent cancellation outcomes into **one** update-bearing review (two sequential update-bearing claims make each other stale) — record the fresh contract, release per §4's hold-reason rules. Known limitation: the CAS does not extend to B — updating B goes through `update_goal`, which has no observed-revision parameter, so a concurrent human edit to B can be overwritten (last-writer-wins; §7) |
-| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then drain each affected goal's pending outcomes (reconciling completions racing the pause), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle), and only if it still holds pause the goals and escalate to the human; never spin |
+| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then settle each affected goal's active tasks, drain their pending outcomes (reconciling completions racing the pause; anything still racing uses the stale-review resubmission path), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle), and only if it still holds pause the goals and escalate to the human; never spin |
 | Human decision needed | `send_session_message` to the Space chat / coordinator session (checks the **minimum of the Space and launcher-agent autonomy levels — both must be ≥4**; template creation assigns the template's suggested level capped by the creator's, so a fresh launcher can silently be below it); below that: durable high-priority draft task + the decision recorded in goal `nextSteps` | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight". Treat Space and launcher autonomy ≥4 as deployment prerequisites for the messaging path |
 
 Backoff policy: cross-goal re-evaluation rides the launcher's own reminders and the
@@ -404,9 +418,11 @@ the daemon's existing `LONG_HORIZON_AGENT_TEMPLATES` array, contract embedded in
 template's `instructions` (§4; `create_agent_from_template` copies them, and no shared
 session-builder append is needed) — plus a section in #2537's usage doc. One scoped,
 non-orchestration exception is required for safety: the **consolidation-exempt
-operational-state store** of §5 must land before or with the launcher template slice,
-because without it the doctrine has nowhere durable to keep hold ownership and saved
-cadence values (consolidating agent memory silently loses them). It is an enabling
+operational-state store** of §5 — including its launcher-facing read/write surface,
+without which the template cannot follow its own safety protocol — must land before or
+with the launcher template slice, because without it the doctrine has nowhere durable to
+keep hold ownership and saved cadence values (consolidating agent memory silently loses
+them). It is an enabling
 prerequisite tracked in §8, not an orchestration primitive; until it ships only the
 zero-code path is usable, with hold/cadence durability limited accordingly. No new
 pipeline logic is introduced, so the epic's superpipe guidance (ADR 0004) does not
@@ -440,9 +456,10 @@ ADR 0004 applies to new combinators.
 6. **Revision CAS on `update_goal`** (observed-revision parameter, so dependent-goal
    updates get the same staleness protection outcome reviews already have, §6) —
    revisit when concurrent human/agent goal edits cause a real lost update.
-7. **Consolidation-exempt operational state store** for launcher hold records and
-   saved cadence values (§5's storage gap: agent memory's duplicate admission compares
-   content regardless of key and its TTL prunes long-lived holds) — a **prerequisite
+7. **Consolidation-exempt operational state store** for launcher hold records, saved
+   cadence values, and tracked gated-task identities (§5's storage gap: agent memory's
+   duplicate admission compares content regardless of key and its TTL prunes long-lived
+   holds), **with its launcher-facing read/write surface** — a **prerequisite
    enabler** of the template slice rather than a revisit-triggered primitive; it ships
    with the template slice or blocks it.
 
@@ -462,8 +479,9 @@ ADR 0004 applies to new combinators.
 ## 8. Follow-ups (out of scope here)
 
 Implementation issues spawned from this decision: the consolidation-exempt
-operational-state store (§5/§7 prerequisite — lands before or with the template slice),
-the launcher prompt template slice (template registration, mechanical per §7), the
+operational-state store with its launcher-facing read/write surface (§5/§7 prerequisite
+— lands before or with the template slice), the launcher prompt template slice
+(template registration, mechanical per §7), the
 usage-doc section (with #2537), and — only on hitting a §7 revisit trigger — a primitive
 proposal. Nothing in this RFC requires new daemon *orchestration* behavior; the store is
 the one scoped daemon change.
