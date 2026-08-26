@@ -174,10 +174,11 @@ none of these sites needs its compensation machinery.
 - **input/output snapshot design.**
   ```ts
   interface TurnCompletionCtx {
-    input: TurnCompletionInput;        // producedResult, errorResultSubtype, deliveryTurnStalled,
+    input: TurnCompletionInput;        // producedResult, deliveryTurnStalled,
                                        // recoveryPending, manualRecoveryPause, cooldownRetryAt, now,
                                        // kickoffAcknowledged, kickoffAckInvalidated, alreadyConsumed
     turnError: StructuredError | null; // failure-arm stage output (lazy — see gate 3)
+    errorResultSubtype: string | null; // failure-arm stage output (lazy — see gate 3)
     claimGuardHeld: boolean | undefined; // failure-arm stage output (lazy — see gate 7)
     detail: string | null;             // side annotation from the detail gate
     decision: TurnCompletionOutcome | null;
@@ -185,15 +186,22 @@ none of these sites needs its compensation machinery.
   export type TurnCompletionPipelineInput = Omit<TurnCompletionCtx, 'detail' | 'decision'>;
   ```
   The input snapshot carries only cheap, NON-destructive reads (the DB
-  `producedResult`/`errorResultSubtype` queries, the
+  `producedResult` query, the
   `deliveryTurnStalled`/recovery-pending flag reads, the escalation
-  eligibility flags, and the injected `now`). `turnError` and
+  eligibility flags, and the injected `now`). `turnError`,
+  `errorResultSubtype`, and
   `claimGuardHeld` are produced INSIDE the pipeline by failure-arm stages
   over injected collaborators (`consumeTerminalTurnError(turnStartedAt)`,
+  `getErrorTerminalResultSubtypeAfter(...)`,
   `claimGuard()`) — never eagerly in the shell: `consumeTerminalTurnError`
   clears `lastTerminalError` (`agent-session.ts:2545-2549`) and successful
-  turns must not perform that mutation, and the claim guard must not run on
-  the successful arm (review correction PR #2981). Output stays
+  turns must not perform that mutation, the claim guard must not run on
+  the successful arm, and today the subtype query runs only inside the
+  failure arm after the recovery-pending branch returns
+  (`agent-session.ts:2378-2380` — review correction PR #2981: gathering it
+  eagerly makes every successful or parked turn perform an irrelevant DB
+  query whose transient failure can convert a completed or safely parked
+  delivery into an error). Output stays
   `TurnCompletionOutcome`, EXTENDED with the `recovery_pending` arm
   (`{ outcome: 'recovery_pending'; retryAt: number }`) the pipeline now owns
   (see gate 2) — the union is consumed by the shell's
@@ -213,8 +221,10 @@ none of these sites needs its compensation machinery.
      imperative branch outside the "complete" operation.
   3. `applyTurnErrorConsumeStage` — failure-arm effect/transform stage:
      calls the injected `consumeTerminalTurnError(turnStartedAt)` and stores
-     the result in `ctx.turnError` (lazy by construction — only reached when
-     neither gate 1 nor gate 2 decided).
+     the result in `ctx.turnError`, and gathers
+     `ctx.errorResultSubtype` via the injected repo query (lazy by
+     construction — only reached when
+     neither gate 1 nor gate 2 decided; review correction PR #2981).
   4. `applyTurnDetailGate` — computes `detail` from the
      preference chain `turnError.userMessage || turnError.message ||
      subtype-template || stall-template || default` and stores it in `ctx.detail`
@@ -1288,7 +1298,9 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   and EVERY caller sequences the promise
   (`MessageQueue.messageGenerator` per `message-queue.ts:347-359`;
   `QueryRunner.createMessageGeneratorWrapper` per
-  `query-runner.ts:1704-1715`; `markMessageAccepted` before its consumed
+  `query-runner.ts:1704-1715`, requeueing or aborting the already-yielded
+  entry on failure since it moved to `yielded` pre-invocation
+  (`:361-366`); `markMessageAccepted` before its consumed
   query per `sdk-message-handler.ts:551-559`; the registration adapter
   returning the promise per `:140-142` and the ACP `onAccepted` contract
   per `acp-query-adapter.ts:29`/`acp-client.ts:272,286`, with the producer
@@ -1297,9 +1309,11 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   synchronously dispatched notifications (`acp-client.ts:479-483`,
   `:283-287`; review correction PR #2981), and `messageGenerator`
   rechecking claim ownership before `claimed.delete`/`yielded.add`
-  (`:361-362`), coupled to the status transition or restoring the row on
-  failure so a dropped claim never leaves a consumed-but-never-sent
-  prompt — reconciliation scans only `enqueued` rows)) — while each
+  (`:361-362`), via a claim RESERVATION/FINALIZATION protocol or a CAS
+  compensation guarded to this exact transition — the queue claim and the
+  DB transaction cannot be coupled atomically, and a blind restore could
+  overwrite a concurrent defer/delete/status change (review correction PR
+  #2981))) — while each
   individual
   PUBLICATION promise keeps its today-style `.catch` containment AND
   fire-and-forget scheduling (await only the transactional
@@ -1653,11 +1667,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   clear/parking-log effects — leaving it an imperative branch in front of
   the invocation would keep the "complete operation" split), 
   `terminal_error`, and `recoverable_error`. The shell snapshots only the
-  cheap non-destructive inputs; `consumeTerminalTurnError` and `claimGuard`
+  cheap non-destructive inputs; `consumeTerminalTurnError`, the
+  `errorResultSubtype` query, and `claimGuard`
   are invoked by the pipeline's failure-arm stages (behind the
-  produced-result and recovery-pending gates), so routing successful turns
-  through the pipeline does NOT clear `lastTerminalError`
-  (`agent-session.ts:2545-2549`) or invoke the claim guard.
+  produced-result and recovery-pending gates), so routing successful or
+  parked turns through the pipeline performs none of them — no
+  `lastTerminalError` clear (`agent-session.ts:2545-2549`), no claim-guard
+  invocation, no irrelevant subtype query.
   `classifyTurnCompletion` becomes
   a one-line delegate (deleted only once no test imports remain).
 - **lands.** Classification and its recovery effects run as one complete
@@ -2186,16 +2202,32 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   acknowledgment would otherwise resurrect an interrupted prompt into
   `yielded` and feed it to the SDK after its enqueue promise already
   settled). Because the transactional stage has ALREADY marked the row
-  `consumed` by then, the final ownership check must be COUPLED TO THE
-  STATUS TRANSITION — either the ownership/epoch verification rides inside
-  the atomic guarded transition from the start, or a failed check RESTORES
-  the row (review correction PR #2981: reconciliation scans only
-  `enqueued` rows, so suppressing the yield without restoring strands a
-  never-sent prompt as consumed) — and the suppressed-callback wrapper
+  `consumed` by then, and the queue claim lives only in `MessageQueue`
+  while the repository transaction covers only the database (review
+  correction PR #2981: an ownership check INSIDE the atomic transition
+  cannot couple the two states — a `clear()`/`remove()` between that check
+  and the generator's post-await recheck still loses the claim with the
+  row left consumed), the plan requires a CLAIM RESERVATION/FINALIZATION
+  protocol — the queue marks the claim as being-finalized so concurrent
+  `clear()`/`remove()` during the window is refused or deferred and the
+  generator's recheck consults the same reservation — or an EXPLICITLY
+  GUARDED COMPENSATION: a CAS restore tied to this exact transition
+  (status AND epoch must still match what THIS acknowledgment wrote; a
+  blind restore could overwrite a concurrent defer/delete/status change),
+  since reconciliation scans only `enqueued` rows and a stranded
+  consumed-but-never-sent prompt is unrecoverable — and the
+  suppressed-callback wrapper
   performs the equivalent yielded-ownership check after ITS await;
   `QueryRunner.createMessageGeneratorWrapper` — which suppresses the queue
   callback and invokes `onMessageYielded` itself
-  (`query-runner.ts:1704-1715`) — awaits or handles the rejection;
+  (`query-runner.ts:1704-1715`) — awaits or handles the rejection, and
+  because the entry has ALREADY moved to `yielded` before this wrapper's
+  invocation (`message-queue.ts:361-366`), it REQUEUES
+  (`requeueYielded`) or explicitly aborts/rejects the yielded entry before
+  propagating an acknowledgment failure (review correction PR #2981:
+  leaving it in `yielded` strands the prompt with an unsettled enqueue
+  promise until the queue timeout — which resolves rather than reports for
+  durable entries — while the DB row stays retryable);
   `markMessageAccepted` awaits before its consumed-row query for the ACP
   acceptance path (`sdk-message-handler.ts:551-559`, where the current
   synchronous `try/catch` no longer contains an async rejection); and the
