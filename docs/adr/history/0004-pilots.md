@@ -1656,6 +1656,47 @@ sweep were subsumed by #2950's rewrite of that file. knip (files,
 dependencies, exports), oxlint, and `tsc --noEmit` are clean, verified in
 this sweep. No behavior change.
 
+## Pilot 13 — agent-layer chain A: v2 delivery-turn machinery (2026-08-25)
+
+Chain A closed the agent-layer survey (`docs/agent-layer-superpipe-pilot-proposal.md`
+§5/§8.4): the v2 delivery-turn machinery in `packages/daemon/src/lib/agent/` —
+the steer ladder, the delivery job handler's outcome→action mapping, role
+arbitration at `deliverMessage` and the outbox, the stranded-delivery sweep,
+and the queue timeout policy as extracted cores (`delivery-turn-routing.ts`,
+`handler-outcome-routing.ts`, `reconciler-sweep.ts`,
+`message-queue-timeout-policy.ts`), plus the `driveDeliveryTurn` admission
+cascade. Landed as pins A1a–d (#2926, #2915, #2917, #2916), cores A2a–d
+(#2924, #2922, #2956, #2955), apply A3a–c (#2934, #2933, #2962), primitives
+A4a (#2965), and admission A4b (#2977).
+
+**The staged-run outcome: direct composition.** The admission cascade was the
+proposal's flagship `stagedRun` candidate; it landed after the 2026-08-25 ADR
+revision (#2947) as ONE direct superpipe pipeline,
+`delivery-turn-admission-pipeline.ts` (`runDeliveryTurnAdmission`) — named for
+the business operation, mixing gate stages with effect stages, halting via
+`!hasOutcome`, with reverse compensations (fenced batch-narrow restore,
+member unsubmit, observer disarm, turn-end cancel) in its error stage. The
+combinator was not needed: `stagedRun`'s disciplines carried over as plain
+stage structure — full lifecycle/claim/query-identity resnapshot immediately
+after the awaited startup stage and again before admission, guarded writes
+through A4a's claim-fenced batch-update and UUID/claim-keyed admission-reservation
+primitives (`FencedDeliveryBatchWriteResult`, `DeliveryAdmissionReservation`),
+compensation per persistent effect. The session lock and the turn-end race/rearm
+loop stay in the shell (`agent-session.ts` interprets the outcome union); the
+no-claim-token legacy arms (`narrowBatchLegacy`/`submitMembersLegacy`) remain
+for callers without a durable claim.
+
+Closing sweep (this PR): removed the survey's two named production-dead
+leftovers — the module-level `reconcileStrandedDeliveries` in
+`message-delivery.ts` (production reconcile is `AgentSession`'s method over
+`selectStrandedDeliveries`; the standalone copy survived only through its own
+test block, now removed) and the dead `markMessageSubmissionFailed` on
+`SDKMessageHandler`. No other dead inline copies remained: each apply PR had
+replaced its cascade as it landed.
+
+Pilot 13 PRs: #2926, #2915, #2917, #2916, #2924, #2922, #2956, #2955, #2934,
+#2933, #2962, #2965, #2977, plus this closing sweep.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1720,6 +1761,13 @@ this sweep. No behavior change.
   "Family record — tiered external-event delivery" above for the module
   map, the replay-path retirement, and the closing dead-export sweep
   (#1411).
+- **Done (pilot 13, agent-layer chain A):** the v2 delivery-turn machinery —
+  steer ladder, handler outcome routing, role arbitration, reconciler sweep,
+  and queue timeout policy as extracted cores; the `driveDeliveryTurn`
+  admission cascade as one direct superpipe pipeline over A4a's claim-fenced
+  batch-update and admission-reservation primitives — see "Pilot 13" above
+  for the staged-run outcome (direct composition, combinator not needed) and
+  the closing dead-code sweep.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1861,5 +1909,13 @@ this sweep. No behavior change.
   table, store-variant assessment, unification proposals U1–U6):
   `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`. UI pilot 6 PRs:
   #2714, #2716, #2718, #2724, #2756, #2788, plus the closing PR.
+- Pilot 13 (agent-layer chain A) files:
+  `packages/daemon/src/lib/agent/{delivery-turn-routing,
+  handler-outcome-routing,reconciler-sweep,message-queue-timeout-policy,
+  delivery-turn-admission-pipeline}.ts`; interpreter in `agent-session.ts`
+  (`driveDeliveryTurn`); survey and chain plan in
+  `docs/agent-layer-superpipe-pilot-proposal.md`. Pilot 13 PRs: #2926,
+  #2915, #2917, #2916, #2924, #2922, #2956, #2955, #2934, #2933, #2962,
+  #2965, #2977, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

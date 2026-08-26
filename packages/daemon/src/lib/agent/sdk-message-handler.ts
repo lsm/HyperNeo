@@ -595,20 +595,6 @@ export class SDKMessageHandler {
     }
   }
 
-  markMessageSubmissionFailed(messageId: string): void {
-    const { session, db, internalEventBus } = this.ctx;
-    const message = db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
-    if (!message) return;
-    db.updateMessageStatus([message.dbId], 'failed');
-    internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: [message.dbId],
-        status: 'failed',
-      })
-      .catch(() => {});
-  }
-
   markACPDeliveryFailed(messageId: string): void {
     const { session, db, internalEventBus } = this.ctx;
     const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
