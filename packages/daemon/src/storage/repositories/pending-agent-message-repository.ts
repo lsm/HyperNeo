@@ -243,35 +243,19 @@ export class PendingAgentMessageRepository {
     this.notify();
   }
 
-  markLateDeadLetter(id: string, sentinel: string): PendingAgentMessageRecord | null {
+  recordDeliveryAttempt(id: string, error: string | null): PendingAgentMessageRecord | null {
     const now = Date.now();
-    const updated = this.db
+    this.db
       .prepare(
         `UPDATE pending_agent_messages
 				 SET attempts = attempts + 1,
 				     last_attempt_at = ?,
-				     last_error = ?,
-				     status = CASE
-				       WHEN attempts + 1 >= max_attempts THEN 'failed'
-				       ELSE status
-				     END
-				 WHERE id = ? AND status = 'pending'
-				   AND (last_error IS NULL OR last_error <> ?)`
+				     last_error = ?
+				 WHERE id = ? AND status IN ('pending', 'failed')`
       )
-      .run(now, sentinel, id, sentinel);
-    if (updated.changes > 0) this.notify();
-    return this.getById(id);
-  }
-
-  clearLateDeadLetter(id: string): void {
-    this.db
-      .prepare(
-        `UPDATE pending_agent_messages
-				 SET last_error = NULL
-				 WHERE id = ? AND last_error IS NOT NULL`
-      )
-      .run(id);
+      .run(now, error, id);
     this.notify();
+    return this.getById(id);
   }
 
   deferExpiration(ids: string[], ttlMs = DEFAULT_PENDING_MESSAGE_TTL_MS): void {

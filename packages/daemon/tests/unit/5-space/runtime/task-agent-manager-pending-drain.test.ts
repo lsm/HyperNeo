@@ -60,6 +60,8 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
       repo.deferExpiration(ids, ttlMs);
     },
     listByRunAndStatus: (runId: string, status: string) => repo.listByRunAndStatus(runId, status),
+    recordDeliveryAttempt: (id: string, error: string | null) =>
+      repo.recordDeliveryAttempt(id, error),
     clearLateDeadLetter: (id: string) => repo.clearLateDeadLetter(id),
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);

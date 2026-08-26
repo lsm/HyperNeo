@@ -1595,12 +1595,6 @@ export class TaskAgentManager {
       }
       const message = formatPendingRowForSpaceAgent(row);
       const replyTo = resolveReplySession(row);
-      const candidates =
-        replyTo && replyTo !== spaceChatSessionId
-          ? [replyTo, spaceChatSessionId]
-          : [spaceChatSessionId];
-      const probeStatus = (sessionId: string): string | undefined =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
       try {
         const deliveredSessionId = replyTo || spaceChatSessionId;
         const settleDelivered = (settledSessionId?: string): void => {
@@ -1617,12 +1611,18 @@ export class TaskAgentManager {
           lateSettlement: this.lateSettlements,
           disposeSignal: this.lateSettlements.disposeSignal(),
         });
-        repo.clearLateDeadLetter(row.id);
+        const recorded = repo.recordDeliveryAttempt(
+          row.id,
+          outcome.state === 'failed' ? outcome.error : null
+        );
         if (outcome.state === 'delivered') {
           settleDelivered(outcome.sessionId);
         } else if (outcome.state === 'failed') {
           repo.deferExpiration([row.id]);
           scheduleReconciliation();
+          if ((recorded?.attempts ?? 0) >= row.maxAttempts) {
+            repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
+          }
           log.warn(
             `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
               `scheduling reconciliation to charge and retry the attempt`
@@ -1636,11 +1636,9 @@ export class TaskAgentManager {
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        const persistedFailure = candidates.some(
-          (sessionId) => probeStatus(sessionId) === 'failed'
-        );
-        if (!persistedFailure) {
-          repo.markAttemptFailed(row.id, errMsg);
+        const recorded = repo.recordDeliveryAttempt(row.id, errMsg);
+        if ((recorded?.attempts ?? 0) >= row.maxAttempts) {
+          repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
         }
         log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
       }

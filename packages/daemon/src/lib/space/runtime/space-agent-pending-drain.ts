@@ -2,8 +2,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 
-const LATE_DEAD_LETTER_ERROR = 'late delivery dead-lettered';
-
 export type SpaceAgentPendingDrainOutcome =
   | { action: 'skip' }
   | { action: 'drain'; rows: PendingAgentMessageRecord[] };
@@ -14,9 +12,6 @@ export interface SpaceAgentPendingDrainDeps {
     listByRunAndStatus?(workflowRunId: string, status: string): PendingAgentMessageRecord[];
     getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
-    markAttemptFailed(id: string, error: string): unknown;
-    markLateDeadLetter(id: string, sentinel: string): unknown;
-    clearLateDeadLetter(id: string): void;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string, excludeIds?: string[]): unknown;
@@ -59,7 +54,6 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
         : [ctx.spaceChatSessionId];
     let consumedAt: string | null = null;
     let activeSeen = false;
-    let failedSeen = false;
     for (const sessionId of candidates) {
       const sendStatus = ctx.deps.probeDeliveryStatus(sessionId, row.id);
       if (sendStatus === 'consumed') {
@@ -67,7 +61,6 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
         break;
       }
       if (sendStatus === 'enqueued' || sendStatus === 'submitted') activeSeen = true;
-      if (sendStatus === 'failed') failedSeen = true;
     }
     if (consumedAt) {
       if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
@@ -80,12 +73,6 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
     if (activeSeen) {
       if (!activeDeliveryIds.includes(row.id)) activeDeliveryIds.push(row.id);
       ctx.deps.watchActiveDelivery?.(row);
-      continue;
-    }
-    if (failedSeen) {
-      ctx.deps.repo.markLateDeadLetter(row.id, LATE_DEAD_LETTER_ERROR);
-      ctx.deps.repo.deferExpiration([row.id]);
-      settledIds.add(row.id);
       continue;
     }
   }
