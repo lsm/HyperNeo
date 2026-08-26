@@ -171,6 +171,51 @@ describe('decideContextBudgetCompaction', () => {
   });
 });
 
+describe('re-homed handler decision-table rows (from #3058)', () => {
+  test('a disabled SDK does not leapfrog the below-threshold gate', () => {
+    expect(
+      decideContextBudgetCompaction(baseInput({ totalUsed: 230_399, sdkAutoCompactEnabled: false }))
+    ).toEqual({ action: 'none', reason: 'below_threshold' });
+  });
+
+  test('non-positive SDK thresholds are treated as unknown over budget', () => {
+    for (const sdkAutoCompactThreshold of [0, -1]) {
+      expect(
+        decideContextBudgetCompaction(
+          baseInput({ totalUsed: 240_000, sdkAutoCompactEnabled: true, sdkAutoCompactThreshold })
+        )
+      ).toEqual({ action: 'compact', reason: 'over_threshold_sdk_unknown' });
+    }
+  });
+
+  test('a kimi-shaped over-budget window with a later SDK threshold compacts', () => {
+    const kimiWindow = 1_048_576;
+    expect(
+      decideContextBudgetCompaction(
+        baseInput({
+          configuredWindow: kimiWindow,
+          totalUsed: 950_000,
+          sdkAutoCompactEnabled: true,
+          sdkAutoCompactThreshold: kimiWindow - 45_000,
+        })
+      )
+    ).toEqual({ action: 'compact', reason: 'over_threshold_sdk_later' });
+  });
+
+  test('a same-budget cooldown suppresses the compact a later SDK threshold would allow', () => {
+    expect(
+      decideContextBudgetCompaction(
+        baseInput({
+          totalUsed: 240_000,
+          sdkAutoCompactEnabled: true,
+          sdkAutoCompactThreshold: 250_000,
+          cooldownActive: true,
+        })
+      )
+    ).toEqual({ action: 'none', reason: 'cooldown_active' });
+  });
+});
+
 describe('gate pass-through identity', () => {
   const undecided = baseInput({ totalUsed: 240_000 }) as ContextBudgetCtx;
   const ctx = { ...undecided, decision: null };
