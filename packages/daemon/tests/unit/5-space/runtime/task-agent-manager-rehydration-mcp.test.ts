@@ -419,14 +419,18 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     fake.state.session.workspacePath = '/old/workspace';
-    (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo.getTask = () => ({
+    const withTaskWorkspace = {
       id: TASK_ID,
       spaceId: SPACE_ID,
       workflowRunId: RUN_ID,
       status: 'in_progress',
       title: 'Rehydrate MCP task',
       workspacePath: '/task/rehydrate-override',
-    });
+    };
+    const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
+    repo.getTask = () => withTaskWorkspace;
+    repo.listByWorkflowRun = () => [withTaskWorkspace];
+    repo.listByWorkflowRunIncludingArchived = () => [withTaskWorkspace];
     restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
       (() => fake.agentSession) as unknown as typeof AgentSession.restore
     );
