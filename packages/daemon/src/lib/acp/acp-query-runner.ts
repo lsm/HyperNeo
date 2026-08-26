@@ -1024,6 +1024,10 @@ export class AcpQueryRunner {
           : undefined;
 
       if (!recoveryState.rateLimitCooldownScheduled) {
+        if (this.ctx.getQueryGeneration() !== queryGeneration) {
+          logger.warn('ACP terminal error abandoned: a replacement query owns the session.');
+          return;
+        }
         const terminalFence = stateManager.beginTerminalIdle();
         try {
           await errorManager.handleError(

@@ -119,6 +119,7 @@ describe('QueryLifecycleManager', () => {
         getState: getStateSpy,
         releaseIdleWaiters: releaseIdleWaitersSpy,
         isIdleOwnerCurrent: mock(() => true),
+        waitForIdleTransition: mock(() => ({ promise: Promise.resolve(), cancel: () => {} })),
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
@@ -1429,6 +1430,7 @@ describe('QueryLifecycleManager', () => {
         setQueued: setQueuedSpy,
         getState: getStateSpy,
         isIdleOwnerCurrent: mock(() => true),
+        waitForIdleTransition: mock(() => ({ promise: Promise.resolve(), cancel: () => {} })),
       } as unknown as ProcessingStateManager;
       manager = new QueryLifecycleManager(mockContext);
 

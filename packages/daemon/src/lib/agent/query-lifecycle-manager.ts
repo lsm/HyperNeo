@@ -762,6 +762,12 @@ export class QueryLifecycleManager {
     } catch (error) {
       if (error instanceof IdleRestartSupersededError) {
         this.ctx.pendingRestartReason = reason;
+        const waiter = this.ctx.stateManager.waitForIdleTransition();
+        void waiter.promise.then(() => {
+          if (this.ctx.stateManager.isIdleOwnerCurrent(idleOwner)) {
+            void this.executeDeferredRestartIfPending(idleOwner);
+          }
+        });
       }
       return false;
     }
