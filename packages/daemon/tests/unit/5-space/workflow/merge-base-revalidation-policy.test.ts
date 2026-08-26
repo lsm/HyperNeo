@@ -48,7 +48,7 @@ describe('merge-time base revalidation policy (issue #2906)', () => {
       'When the acknowledged head differs, or the base NAME differs'
     );
     expect(EXTERNAL_REVIEW_BOTS_GUIDANCE).toContain(
-      'if the head OR the base NAME is observed to change at ANY point mid-gate'
+      'if the head OR the base NAME is observed to change at ANY point mid-gate — even a change that later reverts — discard'
     );
   });
 
@@ -188,7 +188,7 @@ describe('reviewer contract post-regen base-advance pins (m216)', () => {
       'Capture the baseRefName, baseRefOid, AND headRefOid'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'poll all three on every wait cycle while the gate is live'
+      'immediately before you write the gate artifact, perform a single terminal read of all three, requiring only `headRefOid` and `baseRefName` to be unchanged'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       'if the head OR the base NAME is observed to change at ANY point mid-gate'
@@ -204,7 +204,7 @@ describe('reviewer contract post-regen base-advance pins (m216)', () => {
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('A base-OID excursion alone');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain('recorded, not discarded');
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
-      'when the head never moved and the final pre-artifact `mergeStateStatus` is CLEAN or HAS_HOOKS'
+      'when the head never moved and the final pre-artifact `mergeStateStatus` is CLEAN, HAS_HOOKS, or BLOCKED (only `DIRTY` signals a merge conflict'
     );
     expect(REVIEWER_SYSTEM_CONTRACT).toContain(
       `base branch had advanced (<start baseRefOid>-><finish baseRefOid>); ${AUDIT_ACCEPTANCE_LINE}`
