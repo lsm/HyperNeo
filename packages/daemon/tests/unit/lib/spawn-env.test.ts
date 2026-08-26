@@ -81,6 +81,10 @@ const SOURCE: Record<string, string> = {
   GIT_CONFIG_KEY_1: 'core.hooksPath',
   GIT_CONFIG_VALUE_1: '/tmp/hooks',
   MY_TOOL_FLAG: '1',
+  VIRTUAL_ENV: '/Users/agent/.venv',
+  CONDA_PREFIX: '/Users/agent/miniconda3/envs/prod',
+  CONDA_DEFAULT_ENV: 'prod',
+  CLOUDSDK_CONFIG: '/Users/agent/.config/gcloud',
 };
 
 describe('buildOsBaselineEnv', () => {
@@ -211,6 +215,9 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
     expect(env.CLAUDE_CONFIG_DIR).toBe('/custom/claude-config');
     expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('1');
+    expect(env.VIRTUAL_ENV).toBe(SOURCE.VIRTUAL_ENV);
+    expect(env.CONDA_PREFIX).toBe(SOURCE.CONDA_PREFIX);
+    expect(env.CONDA_DEFAULT_ENV).toBe(SOURCE.CONDA_DEFAULT_ENV);
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -292,11 +299,12 @@ describe('buildWorkflowConditionEnv', () => {
 
   test('rejects inline container and cloud credential configuration', () => {
     const env = buildWorkflowConditionEnv(
-      ['DOCKER_AUTH_CONFIG', 'DOCKER_CONFIG', 'MY_TOOL_FLAG'],
+      ['DOCKER_AUTH_CONFIG', 'DOCKER_CONFIG', 'CLOUDSDK_CONFIG', 'MY_TOOL_FLAG'],
       SOURCE
     );
     expect(env.DOCKER_AUTH_CONFIG).toBeUndefined();
     expect(env.DOCKER_CONFIG).toBeUndefined();
+    expect(env.CLOUDSDK_CONFIG).toBeUndefined();
     expect(env.MY_TOOL_FLAG).toBe('1');
   });
 
