@@ -5,6 +5,8 @@ import {
   awaitDeliveryConsumptionTolerant,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
+  MESSAGE_DELIVERY_PARK_MS,
+  signalDeliveryConsumed,
   waitForDeliveryConsumption,
   withSessionResetCoordination,
   type MessageDeliveryOrigin,
@@ -17,6 +19,7 @@ export interface LateSettlementRequest {
   messageId: string;
   onConsumed: (settledSessionId: string) => void;
   onFailed?: () => void;
+  getSendStatus?: () => string | null | undefined;
 }
 
 export interface SpaceAgentLateSettlementHandle {
@@ -28,11 +31,6 @@ export interface SpaceAgentLateSettlementOwner {
 }
 
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
-
-interface ArmedWatcher {
-  handle: SpaceAgentLateSettlementHandle;
-  release: () => void;
-}
 
 export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
@@ -53,6 +51,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     messageId,
     onConsumed,
     onFailed,
+    getSendStatus,
   }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
     const key = `${sessionId}\u0000${messageId}`;
     this.waiters.get(key)?.release();
@@ -60,55 +59,73 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     const late = waitForDeliveryConsumption(sessionId, messageId);
     let fired = false;
     let expiry: ReturnType<typeof setTimeout> | undefined;
-    const releaseRef = { current: (): void => {} };
-    const watcher: ArmedWatcher = {
-      release: () => releaseRef.current(),
-      handle: {
-        cancel: () => {
-          fired = true;
-          releaseRef.current();
-        },
-      },
-    };
-    releaseRef.current = () => {
+    let statusPoll: ReturnType<typeof setInterval> | undefined;
+
+    const release = (): void => {
+      if (statusPoll) {
+        clearInterval(statusPoll);
+        statusPoll = undefined;
+      }
       clearTimeout(expiry);
       this.timers.delete(expiry!);
-      if (this.waiters.get(key)?.handle === watcher.handle) this.waiters.delete(key);
+      if (this.waiters.get(key)?.handle === handle) this.waiters.delete(key);
       late.cancel();
     };
-    this.timers.add(
-      (expiry = setTimeout(() => {
-        if (!fired) {
-          fired = true;
-        }
-        releaseRef.current();
-        try {
-          onFailed?.();
-        } catch (error) {
-          log.warn(
-            `late dead letter reconciliation failed for ${sessionId}/${messageId}: ` +
-              `${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      }, LATE_SETTLE_HORIZON_MS))
-    );
-    this.waiters.set(key, watcher);
-    void late.promise.then(() => {
-      releaseRef.current();
+
+    const settle = (outcome: 'consumed' | 'failed'): void => {
       if (fired) return;
       fired = true;
+      release();
       try {
-        onConsumed(sessionId);
+        if (outcome === 'consumed') {
+          onConsumed(sessionId);
+        } else {
+          onFailed?.();
+        }
       } catch (error) {
         log.warn(
-          `delayed consumption settlement failed for ${sessionId}/${messageId}: ` +
+          `late settlement ${outcome} failed for ${sessionId}/${messageId}: ` +
             `${error instanceof Error ? error.message : String(error)}`
         );
       }
-    });
-    return watcher.handle;
-  }
+    };
 
+    const handle: SpaceAgentLateSettlementHandle = {
+      cancel: () => {
+        if (fired) return;
+        fired = true;
+        release();
+      },
+    };
+
+    this.timers.add(
+      (expiry = setTimeout(() => {
+        settle('failed');
+      }, LATE_SETTLE_HORIZON_MS))
+    );
+    this.waiters.set(key, { handle, release });
+
+    void late.promise.then(() => settle('consumed'));
+
+    if (getSendStatus) {
+      const check = () => {
+        try {
+          const status = getSendStatus();
+          if (status === 'consumed') {
+            signalDeliveryConsumed(sessionId, messageId);
+          } else if (status === 'failed') {
+            settle('failed');
+          }
+        } catch {
+          settle('failed');
+        }
+      };
+      statusPoll = setInterval(check, MESSAGE_DELIVERY_PARK_MS);
+      check();
+    }
+
+    return handle;
+  }
   dispose(): void {
     this.disposed = true;
     this.disposeController.abort();
@@ -245,6 +262,8 @@ async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDe
       messageId,
       onConsumed: ctx.deps.onConsumed,
       onFailed: ctx.deps.onLateFailure,
+      getSendStatus: () =>
+        ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus,
     });
     const armed = readSettledStatus(ctx);
     if (armed === 'consumed') {

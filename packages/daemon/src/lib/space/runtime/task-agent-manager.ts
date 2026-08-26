@@ -1571,6 +1571,7 @@ export class TaskAgentManager {
                 scheduleReconciliation();
               },
               onFailed: onWatcherFailed,
+              getSendStatus: () => probe(sessionId),
             })
           );
         }
