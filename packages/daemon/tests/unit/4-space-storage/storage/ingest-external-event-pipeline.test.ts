@@ -248,7 +248,7 @@ describe('ingestExternalEvent end-to-end', () => {
     });
     expect(outcome).toEqual({
       action: 'invalid',
-      reason: 'ExternalEvent.topic first segment "github" must equal source "gitlab"',
+      reason: 'ExternalEvent.topic first segment "gitlab" must equal source "github"',
     });
     expect(store.calls).toBe(0);
   });
