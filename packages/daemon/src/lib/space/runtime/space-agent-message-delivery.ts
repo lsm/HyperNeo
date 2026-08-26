@@ -31,17 +31,12 @@ export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly waiters = new Set<{ cancel(): void }>();
-  private readonly abortControllers = new Set<AbortController>();
+  private readonly disposeController = new AbortController();
   private disposed = false;
 
   disposeSignal(): AbortSignal {
-    const controller = new AbortController();
-    if (this.disposed) {
-      controller.abort();
-      return controller.signal;
-    }
-    this.abortControllers.add(controller);
-    return controller.signal;
+    if (this.disposed) this.disposeController.abort();
+    return this.disposeController.signal;
   }
 
   arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
@@ -79,8 +74,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
 
   dispose(): void {
     this.disposed = true;
-    for (const controller of this.abortControllers) controller.abort();
-    this.abortControllers.clear();
+    this.disposeController.abort();
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     for (const waiter of this.waiters) waiter.cancel();

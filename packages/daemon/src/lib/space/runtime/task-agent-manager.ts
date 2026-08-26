@@ -1524,14 +1524,17 @@ export class TaskAgentManager {
             : [spaceChatSessionId];
         const probe = (sessionId: string) =>
           this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
-        if (
-          candidates.some((sessionId) => {
-            const status = probe(sessionId);
-            return status === 'enqueued' || status === 'submitted';
-          })
-        ) {
+        let activeSessionId: string | null = null;
+        for (const sessionId of candidates) {
+          const status = probe(sessionId);
+          if (status === 'enqueued' || status === 'submitted') {
+            activeSessionId = sessionId;
+            break;
+          }
+        }
+        if (activeSessionId) {
           this.lateSettlements.arm({
-            sessionId: replyToSession ?? spaceChatSessionId,
+            sessionId: activeSessionId,
             messageId: row.id,
             onConsumed: (settledSessionId) => {
               if (repo.getById(row.id)?.status !== 'pending') return;
