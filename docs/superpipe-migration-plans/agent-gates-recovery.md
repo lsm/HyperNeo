@@ -51,30 +51,32 @@ Two structural rules applied throughout:
 
 | Site | Combinator | Pipeline name |
 | --- | --- | --- |
-| `turn-outcome-classification.ts:classifyTurnCompletion` | Gates/helpers of the complete delivery-turn completion operation incl. recovery effects (review correction round 22) |
+| `turn-outcome-classification.ts:classifyTurnCompletion` | Gates/helpers of the complete delivery-turn completion operation incl. recovery effects (review correction round 22) | `delivery-turn-completion` |
 | `turn-outcome-classification.ts:decideReconcileAdmission` | Admission stages of the complete `reconcile-stranded-deliveries` pipelines (review correction round 22) | `reconcile-stranded-deliveries` |
 | `limit-error-classifier.ts:assessLimitError` | raw superpipe transform | `limit-error-assess` |
 | `limit-error-classifier.ts:resolveLimitKind`, `isBillingTerminal` | none (leaves) | — |
 | `repeated-tool-error-gates.ts:decideConsecutiveError` | Classification stages of the complete error-observation pipeline incl. state/reset/evidence/recovery effects (review correction round 22) | `repeated-tool-error-observation` |
 | `loop-detector-gates.ts:decideIdenticalArgsLoop`, `decideBashDeadLoop` | `decisionRun` composing both (new `loop-detector-pipeline.ts`) | `tool-call-loop-admission` |
-| `circuit-breaker-transitions.ts:extractErrorPattern` | Ordinary pure helper consumed by the complete circuit-breaker check operation (review correction round 21: no standalone runner) |
+| `circuit-breaker-transitions.ts:extractErrorPattern` | Ordinary pure helper consumed by the complete circuit-breaker check operation (review correction round 21: no standalone runner) | `breaker-check` |
 | `circuit-breaker-transitions.ts:buildTripMessage` | Plain helper consumed by the complete breaker-check pipeline (review correction round 22) | — |
-| `fallback-recovery.ts:extractResetTimestamp` | Ordinary pure helper over inline parse logic (review correction: no separate parse or cooldown pipelines — `computeCooldown` is consumed as a pure helper by `rate-limit-trip`) |
-| `fallback-recovery.ts:computeCooldown` | Ordinary pure helper for `rate-limit-trip`'s cooldown-resolution stage (review correction round 17: `fallback-cooldown` as a separate runner makes every no-hint trip execute a nested pipeline) |
+| `fallback-recovery.ts:extractResetTimestamp` | Ordinary pure helper over inline parse logic (review correction: no separate parse or cooldown pipelines — `computeCooldown` is consumed as a pure helper by `rate-limit-trip`) | — |
+| `fallback-recovery.ts:computeCooldown` | Ordinary pure helper for `rate-limit-trip`'s cooldown-resolution stage (review correction round 17: `fallback-cooldown` as a separate runner makes every no-hint trip execute a nested pipeline) | — |
 | `fallback-recovery.ts:resolveFallbackChain`, `classifyLimitKind` | none (leaves) | — |
-| `rate-limit-watchdog-gates.ts:decideRateLimitTrip` | Classification helper/stages of the complete rate-limit scheduling pipeline (review correction round 22) |
+| `rate-limit-watchdog-gates.ts:decideRateLimitTrip` | Classification helper/stages of the complete rate-limit scheduling pipeline (review correction round 22) | `rate-limit-trip` |
 | `rate-limit-watchdog-gates.ts:refinedResetAtMs` | none (leaf) | — |
-| `message-delivery.ts:classifyReclaimTermination` | Gates of the complete reclaim operation incl. the guarded marker-clear effect (review correction round 22) |
+| `message-delivery.ts:classifyReclaimTermination` | Gates of the complete reclaim operation incl. the guarded marker-clear effect (review correction round 22) | `message-reclaim` |
 | `message-delivery.ts:asMessageDeliveryPayload` | raw superpipe transform | `message-delivery-payload` |
 | `query-runner.ts:parseApiValidationError` | `decisionRun` (after extraction to a module) | `api-validation-parse` |
 | `query-runner.ts:terminalUserMessageFor` | `decisionRun` (after extraction to a module) | `terminal-user-message` |
 | `message-delivery-pipeline.ts:applyFlushFinalGate` | already `decisionRun` (`message-turn-end-flush`) | no change |
-| `ack-selection.ts:selectPersistedAckRow`, `selectYieldedAckRow` | Priority tables as plain helpers/stages of complete yielded/persisted acknowledgment pipelines (review correction round 21: selection-only runners split each ack path at its effect boundary) |
+| `ack-selection.ts:selectPersistedAckRow`, `selectYieldedAckRow` | Priority tables as plain helpers/stages of complete yielded/persisted acknowledgment pipelines (review correction round 21: selection-only runners split each ack path at its effect boundary) | `ack-yielded` / `ack-persisted` |
 
 Overlaps with sibling plans: `query-retry-routing.ts`, the delivery routing
-cores, and the turn-end/ack apply chain belong to
-`docs/superpipe-migration-plans/agent-routing.md` and the pilot proposal's
-Chains A/B/C (`docs/agent-layer-superpipe-pilot-proposal.md`). This plan
+cores, and the turn-end/ack apply chain belong to the agent-routing plan
+(review correction PR #2981: that sibling plan lands as its own PR in the
+same series — lsm/HyperNeo#2980 — it is not a file in THIS PR's tree) and
+the pilot proposal's Chains A/B/C
+(`docs/agent-layer-superpipe-pilot-proposal.md`). This plan
 touches `ack-selection.ts` only for the combinator composition; the
 `sdk-message-handler.ts` apply step is Chain C's C3b and stays gated on it.
 
@@ -127,7 +129,15 @@ plain `superpipe({})(name)` function registry suffices.
 ### `stagedRun` (reference only)
 
 `verified-stop-flow.ts` and `spawn-flow.ts` — async, CAS-guarded,
-compensated. No site in this plan performs effects, so none uses it.
+compensated. Review correction (PR #2981): several planned pipelines in this
+plan DO perform awaited effects — the breaker's async `onTrip`,
+reconciliation's awaited state updates, repeated-error intervention work,
+acknowledgement publications, the reclaim marker clear, and the loop ledger
+writes. Those compose as direct async-capable pipelines (`.endAsync` /
+awaited effect stages over injected collaborators) so the promises are
+actually awaited; synchronous `decisionRun`/`.end` runners are reserved for
+the PURE classifier cores only. `stagedRun` itself stays reference-only —
+none of these sites needs its compensation machinery.
 
 ## Per-site detailed plans
 
@@ -1076,18 +1086,24 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 ➕ additive core — prod Δ ≲150 (types-dominated complete-operation core), test Δ ≲350
 
 - **scope.** `packages/daemon/src/lib/agent/rate-limit-watchdog-gates.ts`: the
-  complete `rate-limit-trip` scheduling pipeline, landed unwired —
+  complete `rate-limit-trip` scheduling pipeline, landed unwired — review
+  correction (PR #2981): the FULL `scheduleRetry` operation composes, not
+  just its trip tail: the leading chain-resolution (`resolveFallbackChain`),
+  availability, and fallback-selection stages currently at
+  `rate-limit-watchdog.ts:142-223` come FIRST, then
   `applyBillingTerminalGate`, `applyCooldownResolutionStage` (calls
   `cooldownFromReset`/`computeCooldown` directly), `applyGiveUpGate`,
   `applyCooldownFinalGate`, plus effect stages for retry charging, generation
   revalidation, `scheduleCooldown`, and LLM-refinement triggering expressed
-  over ctx-injected collaborators; `refinedResetAtMs` stays a leaf;
-  `rate-limit-watchdog.ts` untouched.
+  over ctx-injected collaborators; `refinedResetAtMs` stays a leaf. An
+  imperative prefix left in `scheduleRetry` would split the rate-limit
+  recovery business path, contrary to the one-direct-pipeline rule.
 - **lands.** The complete scheduling operation exists as one pipeline, pinned
   by tests, before any wiring.
-- **excludes.** The `scheduleRetry` rewiring (PR 3), the wider chain-resolve →
-  availability → fallback-select horizon (open question 3), and any
-  pipelining of `refinedResetAtMs`.
+- **excludes.** The `scheduleRetry` rewiring (PR 3) and any pipelining of
+  `refinedResetAtMs`. The chain-resolve → availability → fallback-select
+  prefix is IN scope (review correction PR #2981; open question 3 resolves
+  to: include it).
 - **tests.** Existing `rate-limit-watchdog-gates.test.ts` rows keep passing;
   add the billing-terminal halt row (cooldown resolution never runs) and the
   usable-free-wait-hint row that never reaches `give-up` at
@@ -1098,12 +1114,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 🔧 apply — prod Δ ≲80, test Δ ≲150
 
-- **scope.** `packages/daemon/src/lib/agent/rate-limit-watchdog.ts:211-253`
-  (`scheduleRetry`): injects the watchdog's collaborators and invokes the
-  complete pipeline — classification, retry charging, generation
-  revalidation, `scheduleCooldown`, and LLM-refinement triggering all run as
-  stages of the same operation; no imperative interpretation cascade remains
-  in the shell.
+- **scope.** `packages/daemon/src/lib/agent/rate-limit-watchdog.ts:142-253`
+  (the FULL `scheduleRetry`, review correction PR #2981): injects the
+  watchdog's collaborators and invokes the complete pipeline — chain
+  resolution, availability, fallback selection, classification, retry
+  charging, generation revalidation, `scheduleCooldown`, and LLM-refinement
+  triggering all run as stages of the same operation; no imperative
+  interpretation cascade or prefix remains in the shell.
 - **lands.** Every rate-limit trip runs the COMPLETE scheduling operation as
   one pipeline — never a classifier-only runner with imperative effects.
 - **excludes.** `fireCooldownRetry`/B5d fencing-gap work (pilot proposal
@@ -1185,12 +1202,17 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
-- **scope.** `agent-session.ts:2375-2394` (no-result branch of the delivery
-  turn wait) invokes the complete pipeline with its effect stages;
-  `classifyTurnCompletion` becomes a one-line delegate (deleted only once no
-  test imports remain).
+- **scope.** Review correction (PR #2981): the invocation moves OUTSIDE the
+  `if (!producedResult)` conditional (`agent-session.ts:2363-2401`) — today
+  `classifyTurnCompletion` only runs in the no-result branch while the
+  successful-turn `zeroProgressDeliveryFailures` clearing happens
+  imperatively at `:2402`; wiring only the no-result branch would leave the
+  success arm imperative and the `applyProducedResultGate` + `completed`
+  clearing stages unreachable in production. BOTH outcomes traverse the
+  complete pipeline with its effect stages; `classifyTurnCompletion` becomes
+  a one-line delegate (deleted only once no test imports remain).
 - **lands.** Classification and its recovery effects run as one complete
-  operation in production.
+  operation in production, on successful AND failed turns.
 - **excludes.** The reconcile paths in the same file (PR 10).
 - **tests.** `turn-outcome-classification.test.ts` green; delegate rows keep
   passing.
@@ -1205,12 +1227,20 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `applyRunGate`) as direct stages of the complete
   `reconcile-stranded-deliveries` pipeline — coordinated lock,
   `selectStrandedDeliveries` filtering against active/in-flight UUIDs,
-  enqueue, session-state update, submitted-message settlement — with the
-  shared V2-flag predicate and a `processingStatus: null` pass-through for
-  the status-less entry; `decideReconcileAdmission` stays exported as the
-  narrow delegate.
-- **lands.** The complete reconciliation operation exists, unwired, ready for
-  both invocation paths.
+  enqueue, and session-state update — with the shared V2-flag predicate and
+  a `processingStatus: null` pass-through for the status-less entry;
+  `decideReconcileAdmission` stays exported as the narrow delegate. Review
+  correction (PR #2981): submitted-message SETTLEMENT exists only on the
+  `AgentSession.reconcileStrandedDeliveries` path
+  (`agent-session.ts:2884-2905`); the standalone
+  `message-delivery.ts:205-230` path only re-enqueues stranded `enqueued`
+  rows and its DB interface cannot query or fail `submitted` rows — so there
+  are TWO complete pipelines sharing the admission/select stages: the
+  session variant WITH its settlement stage and the standalone variant
+  WITHOUT it (wiring settlement into the standalone path would introduce new
+  message-failure behavior, not preserve parity).
+- **lands.** Both complete reconciliation operations exist, unwired, each
+  shaped like its real invocation path.
 - **excludes.** Both call-site rewirings (PRs 9–10) and the busy-set
   `ReadonlySet` promotion (open question 4).
 - **tests.** Existing delegate rows keep passing; add `v2_disabled`/
@@ -1223,10 +1253,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 🔧 apply — prod Δ ≲100, test Δ ≲100
 
 - **scope.** `message-delivery.ts:205-215`
-  (`reconcileStrandedDeliveries`): runs the complete pipeline with its own
-  snapshot (`processingStatus: null` — busy-status stage passes); the
-  lock/select/enqueue/update/settle work becomes pipeline stages, not an
+  (`reconcileStrandedDeliveries`): runs its complete pipeline (the
+  standalone variant — NO settlement stage) with its own snapshot
+  (`processingStatus: null` — busy-status stage passes); the
+  lock/select/enqueue/update work becomes pipeline stages, not an
   imperative cascade behind an admission-only runner.
+- **lands.** The standalone entry point (also invoked from the idle callback)
+  runs the complete operation with parity behavior (re-enqueue only).
 - **lands.** The standalone entry point (also invoked from the idle callback)
   runs the complete operation.
 - **excludes.** `agent-session.ts:2852-2859` (PR 10) and Chain B's fencing on
@@ -1261,8 +1294,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `applyThresholdGate`, `applyCountFinalGate`) plus the effect stages the
   guardrail performs imperatively today — state mutation, `reset()`, Forge
   evidence emission on `intervene`, recovery-message routing — as the
-  complete error-observation pipeline, landed unwired over a state snapshot
-  (not `this.state`); the guardrail file is untouched.
+  complete error-observation pipeline, landed unwired over ctx-injected
+  STATE COLLABORATORS (review correction PR #2981: a pipeline operating on a
+  state SNAPSHOT can never update the guardrail's real `lastError`, count,
+  or intervention map, and passing the live object as a plain snapshot field
+  contradicts the snapshot boundary) — the core receives explicit
+  write-state / reset / evidence-emission PORTS as deps, so the same stages
+  mutate the real guardrail state once PR 12 injects it; the guardrail file
+  is untouched in this slice.
 - **lands.** The complete observation operation exists as one pipeline before
   wiring.
 - **excludes.** The guardrail rewiring (PR 12) and the surrounding guardrail
@@ -1298,8 +1337,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   explicit `resetLedger`), `applyArgKeyStage`, `applyStreakAdvanceStage`,
   bash-guarded `applyBashRingStage`, delegating `applyBashDeadLoopGate` and
   `applyIdenticalArgsGate` (both stay exported), `applyAllowFinalGate`, plus
-  the `decideToolCallLoopAdmission` wrapper carrying the next streak and
-  `ringExpired` in the decision. The hook is untouched.
+  the GUARDED STATE-EFFECT stages — ledger delete on `resetLedger`,
+  `set(scope, streak)` on BOTH allow and deny, expired-ring delete,
+  `sweepLedger`, deny logging, and the deny `permissionDecision` hook output
+  — operating over the ledger/ring Maps passed in as deps (shell-owned
+  resources, pipeline-committed mutations; review correction PR #2981). The
+  hook is untouched.
 - **lands.** The PreToolUse admission business path exists as one pipeline;
   the ledger/ring Maps remain the only state, in the hook closure per ADR
   decision 5.
@@ -1316,11 +1359,15 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
 - **scope.** `packages/daemon/src/lib/agent/loop-detector-hook.ts:118-200`
-  (`buildPreToolUseCallback`) shrinks to snapshot → run → interpret:
-  `resetLedger` deletes the scope ledger, `set(scope, decision.streak)` on
-  BOTH allow and deny, expired-ring delete, `sweepLedger`, and the deny log +
-  `permissionDecision` hook output.
-- **lands.** The hook callback is the pipeline's reducer body in production.
+  (`buildPreToolUseCallback`) shrinks to snapshot → run ONLY (review
+  correction PR #2981, matching the corrected site design): the ledger
+  delete/write, expired-ring cleanup, `sweepLedger`, deny logging, and deny
+  hook-output construction are the PIPELINE's guarded state-effect stages
+  (from PR 13), not callback-side interpretation — leaving them in the
+  callback recreates the decision/effect split this migration removes.
+- **lands.** The hook callback is snapshot-and-run only; the complete
+  admission operation — classification AND its state commits — runs as one
+  pipeline in production.
 - **excludes.** PostToolUse(Failure) callbacks (pure state folds, stay
   direct).
 - **tests.** `loop-detector-hook.test.ts` is the rewiring parity proof
@@ -1336,8 +1383,16 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 - **scope.** `packages/daemon/src/lib/agent/api-error-circuit-breaker.ts`:
   the complete breaker-check pipeline, landed unwired — rapid-fire check →
   pattern classification → occurrence recording (`recentErrors`,
-  `messageTimestampsByAgent`, `state`) → `trip()` (async `onTrip`) → cooldown
-  release as mixed stages over ctx-injected collaborators;
+  `messageTimestampsByAgent`, `state`) → `trip()` (async `onTrip`) as mixed
+  stages over ctx-injected collaborators. Review correction (PR #2981):
+  cooldown release is NOT part of `checkMessage` — today only `isTripped()`
+  performs it via `shouldReleaseCooldown` + `reset()`
+  (`api-error-circuit-breaker.ts:132-136`), and folding release into the
+  check pipeline would clear breaker state, recent errors, and rapid-fire
+  timestamps at the WRONG time (e.g. on a check after expiry before
+  `isTripped` is queried) and break the `isTripped` API contract. Release
+  stays a SEPARATE entry-point operation (its own small pipeline or the
+  existing method, per open question 5);
   `circuit-breaker-transitions.ts` `extractErrorPattern` (stderr-scoped
   patterns-then-api-status nesting; whole-message vs stderr-scoped image-size
   inputs) and `buildTripMessage` stay plain helpers its stages call;
@@ -1357,8 +1412,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 🔧 apply — prod Δ ≲60, test Δ ≲50
 
 - **scope.** `api-error-circuit-breaker.ts:43-102` (`checkMessage`) runs the
-  complete pipeline; recording, trip, and cooldown-release effects are its
-  stages, not imperative shell code.
+  complete pipeline; recording and trip effects are its stages, not
+  imperative shell code. Cooldown release stays in `isTripped()` (review
+  correction PR #2981) — it is a separate entry-point operation, never a
+  `checkMessage` stage.
 - **lands.** Every breaker check composes classification with its effects in
   production.
 - **excludes.** `getTripMessage` — rendering stays exactly as-is.
@@ -1388,9 +1445,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 📌 pins — prod Δ = 0, test Δ ≲100
 
 - **scope.** Extends `message-delivery-payload.test.ts`, dimension family
-  "reclaim termination" against the CURRENT `classifyReclaimTermination`
-  (`message-delivery.ts:235-244`): all four input combinations plus
-  terminalIdle-beats-successResult precedence.
+  "reclaim termination" against the CURRENT   `classifyReclaimTermination`
+  (`message-delivery.ts:235-244`): review correction (PR #2981): the function
+  has THREE independent boolean inputs, so enumerate ALL EIGHT combinations
+  (not four) plus the explicit precedence rows — terminalIdle and
+  successResult both true, and the marker-precedence case with
+  successResult true — before the cascade is replaced.
 - **lands.** The reclaim contract the PR 19 gates must preserve is pinned.
 - **excludes.** Payload validation rows (PR 17).
 - **tests.** This slice is the pin table.
@@ -1566,8 +1626,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 🔧 apply — prod Δ ≲100, test Δ ≲300
 
-- **scope.** `sdk-message-handler.ts:400-460`/`:666-710`: the
-  status-flag-driven consumption regions route through
+- **scope.** `sdk-message-handler.ts:400-460` and the turn-end persisted-ack
+  loop `:464-526` only (review correction PR #2981: `:666-710` is inside
+  `handleMessageYielded` — that region belongs to PR 27 in full; reworking it
+  here would rework the yielded handler twice and leave the actual
+  turn-end persisted loop unmigrated): the status-flag-driven consumption
+  regions route through
   `decidePersistedAckRow` with per-row ownership revalidation immediately
   before every acknowledgement (snapshot-then-await-consume, C3b's Phase 0
   guarded transition); `markDeliveryConsumed*`, `messages.statusChanged`
