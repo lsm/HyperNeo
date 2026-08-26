@@ -991,7 +991,7 @@ describe('QueryOptionsBuilder', () => {
       });
       expect(buildProviderSettings('openrouter', 200_000, undefined, 90)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 200_000,
+        autoCompactWindow: 213_000,
       });
     });
 
@@ -1000,9 +1000,20 @@ describe('QueryOptionsBuilder', () => {
         autoCompactEnabled: true,
         autoCompactWindow: 133_000,
       });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 10)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 53_000,
+      });
+    });
+
+    it('should ignore the percent for kimi models and arm the real window', () => {
       expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 50)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 176_072,
+        autoCompactWindow: 262_144,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 90)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 

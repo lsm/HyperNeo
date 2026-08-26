@@ -188,6 +188,40 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.autoCompactThreshold).toBe(238963);
   });
 
+  it('derives the threshold from the armed window for percent-configured endpoints, not raw capacity', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 167000,
+      isAutoCompactEnabled: true,
+      categories: [
+        { name: 'Messages', tokens: 90000, color: 'blue' },
+        { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+        { name: 'Free space', tokens: 77000, color: 'gray-dim' },
+      ],
+    });
+
+    const atFifty = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 50,
+    });
+    expect(atFifty.totalCapacity).toBe(200000);
+    expect(atFifty.autoCompactThreshold).toBe(100000);
+
+    const atNinety = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 90,
+    });
+    expect(atNinety.autoCompactThreshold).toBe(180000);
+  });
+
   it('uses Codex model metadata when SDK reports the Anthropic bridge alias', () => {
     const response = baseResponse({
       totalTokens: 136000,

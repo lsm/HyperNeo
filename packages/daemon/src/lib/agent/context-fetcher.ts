@@ -10,6 +10,7 @@ import type {
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import {
+  buildProviderSettings,
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
 } from './query-options-builder.js';
@@ -17,7 +18,13 @@ import {
 type ContextMetadata =
   | Pick<
       ModelInfo,
-      'id' | 'alias' | 'sdkModelIds' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'
+      | 'id'
+      | 'alias'
+      | 'sdkModelIds'
+      | 'contextWindow'
+      | 'preferContextWindowMetadata'
+      | 'provider'
+      | 'autoCompactPercent'
     >
   | null
   | undefined;
@@ -266,13 +273,23 @@ export class ContextFetcher {
     const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
       isAutocompactCategory(category.name)
     )?.tokens;
+    const armedAutoCompactWindow =
+      useMetadata && modelMetadata?.provider && positiveInteger(modelMetadata.contextWindow)
+        ? buildProviderSettings(
+            modelMetadata.provider,
+            modelMetadata.contextWindow,
+            modelMetadata.id,
+            modelMetadata.autoCompactPercent
+          )?.autoCompactWindow
+        : undefined;
+    const thresholdCapacity = armedAutoCompactWindow ?? capacity;
     if (
       typeof autoCompactReservedTokens === 'number' &&
       autoCompactReservedTokens > 0 &&
-      capacity > 0 &&
-      autoCompactReservedTokens < capacity
+      thresholdCapacity > 0 &&
+      autoCompactReservedTokens < thresholdCapacity
     ) {
-      autoCompactThreshold = capacity - autoCompactReservedTokens;
+      autoCompactThreshold = thresholdCapacity - autoCompactReservedTokens;
     } else if (
       typeof autoCompactThreshold === 'number' &&
       capacity > 0 &&

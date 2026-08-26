@@ -19,7 +19,6 @@ import type {
   ValidationResult,
 } from '@hyperneo/shared';
 import {
-  AUTO_COMPACT_PERCENT_DEFAULT,
   isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
@@ -225,11 +224,13 @@ export function buildProviderSettings(
     return undefined;
   }
 
-  const percent = resolveAutoCompactPercent(autoCompactPercent ?? undefined);
+  const hasExplicitPercent =
+    typeof autoCompactPercent === 'number' && Number.isFinite(autoCompactPercent);
   const autoCompactWindow =
-    percent === AUTO_COMPACT_PERCENT_DEFAULT
+    providerId === 'kimi' || !hasExplicitPercent
       ? contextWindow
-      : Math.floor((contextWindow * percent) / 100) + autoCompactReserveTokens(providerId);
+      : Math.floor((contextWindow * resolveAutoCompactPercent(autoCompactPercent)) / 100) +
+        autoCompactReserveTokens(providerId);
 
   return {
     autoCompactEnabled: true,
