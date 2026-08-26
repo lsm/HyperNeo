@@ -1823,44 +1823,53 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    const deps: ImmediateEventDeliveryDeps = {
-      getTask: (taskId) => this.config.taskRepo.getTask(taskId),
-      getRun: (workflowRunId) => this.config.workflowRunRepo.getRun(workflowRunId),
-      listExecutions: (workflowRunId) =>
-        this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId),
-      isDeliveryInFlight: (key) => this.externalEventDeliveriesInFlight.has(key),
-      isSubscriptionActive: (candidate, topic) => this.isTargetStillSubscribed(candidate, topic),
-      isTargetSpacePaused: (candidate) => {
-        const run = this.config.workflowRunRepo.getRun(candidate.workflowRunId);
-        return !!run && this.pausedSpaceIds.has(run.spaceId);
-      },
-      isTargetSessionLive: (sessionId) => this.isTargetSessionLive(sessionId),
-      isSessionInterruptInProgress: (sessionId) => this.isTargetSessionInterrupted(sessionId),
-      getSessionStatus: (sessionId) =>
-        this.config.taskAgentManager?.getAgentSessionById(sessionId)?.getProcessingState().status ??
-        '',
-      withinRateBudget: () => this.consumeImmediateTierRateBudget(target),
-      setQueuedIfIdle: (sessionId, messageUuid) => {
-        const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
-        return session ? session.stateManager.setQueuedIfIdle(messageUuid) : Promise.resolve(false);
-      },
-      messages: this.getSdkMessageRepo(),
-      jobQueue: this.getJobQueueRepo(),
-      eventStore: store,
-    };
-    const outcome = await deliverImmediateEvent(deps, {
-      event: payload,
-      render,
-      target,
-      deliveryKey,
-    });
-    if (outcome.action === 'skip' && outcome.reason === 'claim_conflict') {
-      this.queueHealthMetrics.recordClaimConflict();
-    }
-    if (outcome.action === 'error') {
+    try {
+      const deps: ImmediateEventDeliveryDeps = {
+        getTask: (taskId) => this.config.taskRepo.getTask(taskId),
+        getRun: (workflowRunId) => this.config.workflowRunRepo.getRun(workflowRunId),
+        listExecutions: (workflowRunId) =>
+          this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId),
+        isDeliveryInFlight: (key) => this.externalEventDeliveriesInFlight.has(key),
+        isSubscriptionActive: (candidate, topic) => this.isTargetStillSubscribed(candidate, topic),
+        isTargetSpacePaused: (candidate) => {
+          const run = this.config.workflowRunRepo.getRun(candidate.workflowRunId);
+          return !!run && this.pausedSpaceIds.has(run.spaceId);
+        },
+        isTargetSessionLive: (sessionId) => this.isTargetSessionLive(sessionId),
+        isSessionInterruptInProgress: (sessionId) => this.isTargetSessionInterrupted(sessionId),
+        getSessionStatus: (sessionId) =>
+          this.config.taskAgentManager?.getAgentSessionById(sessionId)?.getProcessingState()
+            .status ?? '',
+        withinRateBudget: () => this.consumeImmediateTierRateBudget(target),
+        setQueuedIfIdle: (sessionId, messageUuid) => {
+          const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
+          return session
+            ? session.stateManager.setQueuedIfIdle(messageUuid)
+            : Promise.resolve(false);
+        },
+        messages: this.getSdkMessageRepo(),
+        jobQueue: this.getJobQueueRepo(),
+        eventStore: store,
+      };
+      const outcome = await deliverImmediateEvent(deps, {
+        event: payload,
+        render,
+        target,
+        deliveryKey,
+      });
+      if (outcome.action === 'skip' && outcome.reason === 'claim_conflict') {
+        this.queueHealthMetrics.recordClaimConflict();
+      }
+      if (outcome.action === 'error') {
+        log.warn(
+          `SpaceRuntime: immediate-tier delivery for ${payload.eventId} failed at ` +
+            `${outcome.stage}: ${formatCommandError(outcome.error)}`
+        );
+      }
+    } catch (err) {
       log.warn(
-        `SpaceRuntime: immediate-tier delivery for ${payload.eventId} failed at ` +
-          `${outcome.stage}: ${formatCommandError(outcome.error)}`
+        `SpaceRuntime: failed to process immediate-tier event ${payload.eventId} for ` +
+          `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
       );
     }
   }
