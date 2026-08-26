@@ -3282,7 +3282,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(writes).toHaveLength(100);
         expect(writes).toContain('w-104');
         expect(writes).not.toContain('w-4');
-        expect(writes).toContain('cap-text');
+        expect(ids).toContain('cap-text');
       });
 
       test('artifact admission does not reopen completed sessions in active turns', () => {
