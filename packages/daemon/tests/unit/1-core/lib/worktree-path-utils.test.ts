@@ -170,6 +170,13 @@ describe('worktree-path-utils', () => {
       expect(result).toBe(`/home/testuser/.hyperneo/projects/${encoded}/worktrees`);
       expect(collisions.length).toBe(1);
       expect(collisions[0]).toContain('collision');
+      expect(mkdirSyncSpy).toHaveBeenCalledWith(`/home/testuser/.hyperneo/projects/${encoded}`, {
+        recursive: true,
+      });
+      expect(writeFileSyncSpy).toHaveBeenCalledWith(
+        `/home/testuser/.hyperneo/projects/${encoded}/.hyperneo-repo-root`,
+        repoPath
+      );
     });
 
     test('writes sentinel when dir exists but no sentinel (legacy)', () => {

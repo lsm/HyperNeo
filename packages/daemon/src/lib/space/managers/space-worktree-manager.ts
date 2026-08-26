@@ -192,6 +192,11 @@ export class SpaceWorktreeManager {
       this.logger.warn(
         `Failed to remove git worktree at ${record.path} (continuing with cleanup): ${err instanceof Error ? err.message : String(err)}`
       );
+      if (existsSync(record.path)) {
+        try {
+          rmSync(record.path, { recursive: true, force: true });
+        } catch {}
+      }
     }
 
     try {

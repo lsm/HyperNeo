@@ -384,6 +384,26 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     }).toString();
     expect(secondaryWorktreesAfter).not.toContain(slug);
   });
+
+  test('removeTaskWorktree still deletes the checkout directory when the owning repo disappeared', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-dead-repo', 67);
+    const { path } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Dead Repo Task',
+      67,
+      undefined,
+      secondaryDir
+    );
+
+    rmSync(secondaryDir, { recursive: true, force: true });
+    expect(existsSync(path)).toBe(true);
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    expect(existsSync(path)).toBe(false);
+  });
 });
 
 describe('removeTaskWorktree', () => {
