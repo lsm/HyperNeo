@@ -1603,6 +1603,19 @@ export class SDKMessageRepository {
     })();
   }
 
+  getDeliveryMessageIdsByUuids(sessionId: string, uuids: string[]): string[] {
+    if (uuids.length === 0) return [];
+    const uniqueUuids = [...new Set(uuids)];
+    const placeholders = uniqueUuids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid IN (${placeholders})`
+      )
+      .all(sessionId, ...uniqueUuids) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null {
     return this.markDeliveryTransitionByUuid(sessionId, uuid, 'reopen');
   }

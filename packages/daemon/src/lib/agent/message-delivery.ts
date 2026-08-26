@@ -309,7 +309,8 @@ export interface MessageDeliverySession {
     claimGuard?: () => boolean,
     batchUuids?: string[],
     signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver
+    observer?: MessageDeliveryAttemptObserver,
+    deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,

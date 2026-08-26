@@ -142,6 +142,10 @@ import {
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
 import { ContextTracker } from './context-tracker.ts';
+import {
+  runDeliveryTurnAdmission,
+  type DeliveryTurnAdmissionDeps,
+} from './delivery-turn-admission-pipeline.ts';
 import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
 import {
@@ -184,7 +188,6 @@ import { MessageQueue } from './message-queue.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
 import {
-  type EnsureQueryStartedResult,
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
@@ -1999,7 +2002,8 @@ export class AgentSession
     claimGuard?: () => boolean,
     batchUuids?: string[],
     signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver
+    observer?: MessageDeliveryAttemptObserver,
+    deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome> {
     const turnStartedAt = Date.now();
     this.logger.debug(
@@ -2024,163 +2028,23 @@ export class AgentSession
     };
     const started = await withSessionLock(
       this.session.id,
-      async () => {
-        if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
-          return { kind: 'aborted' as const };
-        }
-        if (claimGuard && !claimGuard()) {
-          return { kind: 'aborted' as const };
-        }
-        if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
-          return { kind: 'turn_terminated' as const };
-        }
-        const armedObserver = observer
-          ? { generation: this.getQueryGeneration(), observer, pendingStart: true }
-          : null;
-        if (armedObserver) this.deliveryResponseObserver = armedObserver;
-        const disarmObserver = (): void => {
-          if (armedObserver && this.deliveryResponseObserver === armedObserver) {
-            this.deliveryResponseObserver = null;
+      () =>
+        runDeliveryTurnAdmission(
+          this.buildDeliveryTurnAdmissionDeps(
+            recordTurnEndMarker,
+            claimGuard,
+            deliveryClaimToken ?? undefined
+          ),
+          {
+            messageUuid,
+            content,
+            alreadyConsumed,
+            batchUuids,
+            signal,
+            attemptObserver: observer,
+            claimToken: deliveryClaimToken ?? undefined,
           }
-        };
-        const pendingContentBeforeStart = alreadyConsumed
-          ? null
-          : (this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null);
-        const ensureStartedAt = Date.now();
-        let queryStartResult: EnsureQueryStartedResult;
-        try {
-          queryStartResult = await this.lifecycleManager.ensureQueryStarted(signal);
-        } catch (error) {
-          disarmObserver();
-          throw error;
-        }
-        this.logger.debug(
-          `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
-            `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
-        );
-        if (queryStartResult === 'blocked') {
-          disarmObserver();
-          return { kind: 'blocked' as const };
-        }
-        const queryPromise = this.queryPromise;
-        if (!queryPromise) {
-          disarmObserver();
-          throw new Error('message_delivery: query did not start; cannot drive turn');
-        }
-        if (armedObserver) armedObserver.pendingStart = false;
-        const generation = armedObserver?.generation ?? this.getQueryGeneration();
-        observer?.reportStage('query_ready', { generation });
-        if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
-          disarmObserver();
-          return { kind: 'turn_terminated' as const };
-        }
-        const turnEnd = this.stateManager.waitForIdleTransition(
-          this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker
-        );
-        let acknowledgment: Promise<void> | null = null;
-        let freshFeed = false;
-        let admittedBatchUuids: string[] | undefined;
-        let feedContent: string | MessageContent[] = content;
-        if (!alreadyConsumed) {
-          if (claimGuard && !claimGuard()) {
-            turnEnd.cancel();
-            disarmObserver();
-            return { kind: 'aborted' as const };
-          }
-          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
-          void existing?.acknowledgment.catch(() => {});
-          freshFeed = existing === null;
-          if (freshFeed) {
-            const loaded = this.db
-              .getSDKMessageRepo()
-              .getDeliveryContent(this.session.id, messageUuid);
-            if (
-              this.db.getSession(this.session.id)?.status === 'archived' ||
-              loaded?.sendStatus !== 'enqueued'
-            ) {
-              turnEnd.cancel();
-              disarmObserver();
-              return { kind: 'aborted' as const };
-            }
-            feedContent = loaded.content;
-          }
-          if (batchUuids && batchUuids.length > 1) {
-            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, feedContent, batchUuids);
-            feedContent = rebuilt.content;
-            admittedBatchUuids = rebuilt.admittedUuids;
-            if (freshFeed && !admittedBatchUuids?.includes(messageUuid)) {
-              turnEnd.cancel();
-              disarmObserver();
-              return { kind: 'aborted' as const };
-            }
-            if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
-              let narrowed = false;
-              try {
-                narrowed =
-                  this.db
-                    .getJobQueueRepo()
-                    ?.narrowActiveDeliveryBatchUuids(
-                      this.session.id,
-                      messageUuid,
-                      admittedBatchUuids
-                    ) ?? false;
-              } catch (error) {
-                turnEnd.cancel();
-                disarmObserver();
-                throw new MessageDeliveryRecoverableTurnError(
-                  `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
-                );
-              }
-              if (!narrowed) {
-                turnEnd.cancel();
-                disarmObserver();
-                return { kind: 'aborted' as const };
-              }
-            }
-          }
-          if (freshFeed && pendingContentBeforeStart !== null) {
-            if (!this.deliveryContentMatches(pendingContentBeforeStart, feedContent)) {
-              turnEnd.cancel();
-              disarmObserver();
-              return { kind: 'aborted' as const };
-            }
-            turnEnd.cancel();
-            disarmObserver();
-            throw new MessageDeliveryRecoverableTurnError(
-              'Pending queue entry disappeared before delivery admission'
-            );
-          }
-          if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
-            if (!this.messageQueue.hasYielded(messageUuid)) {
-              this.messageQueue.remove(messageUuid);
-            }
-            turnEnd.cancel();
-            disarmObserver();
-            return { kind: 'aborted' as const };
-          }
-          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
-          if (memberUuids.length > 0) {
-            this.markDeliveryBatchSubmitted(memberUuids);
-          }
-          acknowledgment =
-            existing?.acknowledgment ??
-            this.messageQueue.admitWithId(messageUuid, feedContent, false, {
-              durable: true,
-            });
-        }
-        return {
-          kind: 'driving' as const,
-          queryPromise,
-          turnEnd,
-          acknowledgment,
-          freshFeed,
-          admittedBatchUuids,
-          generation,
-          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
-          responseObserver: armedObserver,
-        };
-      },
+        ),
       signal
     );
     if (started.kind === 'blocked') {
@@ -2401,6 +2265,139 @@ export class AgentSession
     }
     this.zeroProgressDeliveryFailures = null;
     return { outcome: 'completed' };
+  }
+
+  private buildDeliveryTurnAdmissionDeps(
+    recordTurnEndMarker: () => void,
+    claimGuard: (() => boolean) | undefined,
+    claimToken: string | undefined
+  ): DeliveryTurnAdmissionDeps {
+    const jobQueue = this.db.getJobQueueRepo?.();
+    return {
+      logDebug: (message: string): void => {
+        this.logger.debug(message);
+      },
+      sessionArchived: (): boolean => this.db.getSession(this.session.id)?.status === 'archived',
+      loadDeliveryRow: (messageUuid) =>
+        this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid),
+      deliveryValid: (messageUuid, alreadyConsumed) =>
+        this.messageDeliveryValid(messageUuid, alreadyConsumed),
+      hasClaimGuard: (): boolean => claimGuard !== undefined,
+      claimCurrent: (): boolean => claimGuard?.() ?? true,
+      reclaimCheck: (messageUuid) => this.reclaimDeliveryTurnState(messageUuid),
+      recordTurnEndUnguarded: (messageUuid) => this.recordDeliveryTurnEnd(messageUuid),
+      generation: () => this.getQueryGeneration(),
+      cleaningUp: () => this.isCleaningUp(),
+      armResponseObserver: (attemptObserver) => {
+        const armed = {
+          generation: this.getQueryGeneration(),
+          observer: attemptObserver,
+          pendingStart: true,
+        };
+        this.deliveryResponseObserver = armed;
+        return armed;
+      },
+      disarmResponseObserver: (armed) => {
+        if (this.deliveryResponseObserver === armed) this.deliveryResponseObserver = null;
+      },
+      startQuery: (signal) => this.lifecycleManager.ensureQueryStarted(signal),
+      currentQueryPromise: () => this.queryPromise,
+      pendingContentSnapshot: (messageUuid) =>
+        this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null,
+      waitForTurnEnd: () =>
+        this.stateManager.waitForIdleTransition(
+          this.rateLimitWatchdog.getGeneration(),
+          recordTurnEndMarker
+        ),
+      existingQueueEntry: (messageUuid) => this.messageQueue.waitForPendingOrInFlight(messageUuid),
+      removeQueueEntry: (messageUuid) => this.messageQueue.remove(messageUuid),
+      queueEntryYielded: (messageUuid) => this.messageQueue.hasYielded(messageUuid),
+      queueClearEpoch: () => this.messageQueue.getClearEpoch?.() ?? 0,
+      rebuildBatch: (kickoffUuid, kickoffContent, batchUuids) =>
+        this.rebuildBatchDeliveryContent(kickoffUuid, kickoffContent, batchUuids),
+      contentMatches: (queued, expected) => this.deliveryContentMatches(queued, expected),
+      reserveAdmission: jobQueue
+        ? (messageUuid) => {
+            if (!claimToken) return null;
+            return jobQueue.reserveDeliveryAdmission({
+              sessionId: this.session.id,
+              kickoffUuid: messageUuid,
+              claimToken,
+              messageUuid,
+            });
+          }
+        : () => null,
+      narrowBatchFenced: jobQueue
+        ? (kickoffUuid, expectedBatchUuids, batchUuids) => {
+            if (!claimToken) return null;
+            return jobQueue.updateDeliveryBatchUuidsFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              expectedBatchUuids,
+              batchUuids,
+            });
+          }
+        : () => null,
+      narrowBatchLegacy: jobQueue
+        ? (kickoffUuid, admitted) =>
+            jobQueue.narrowActiveDeliveryBatchUuids(this.session.id, kickoffUuid, admitted)
+        : () => false,
+      submitMembersFenced: jobQueue
+        ? (kickoffUuid, uuids) => {
+            if (!claimToken) return [];
+            return jobQueue.transitionDeliverySendStatusFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              uuids,
+              fromStatus: 'enqueued',
+              toStatus: 'submitted',
+            });
+          }
+        : () => [],
+      submitMembersLegacy: (uuids) => this.markDeliveryBatchSubmitted(uuids),
+      restoreBatchFenced: jobQueue
+        ? (kickoffUuid, writtenBatchUuids, priorBatchUuids, priorDroppedBatchUuids) => {
+            if (!claimToken) return false;
+            return jobQueue.updateDeliveryBatchUuidsFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              expectedBatchUuids: writtenBatchUuids,
+              batchUuids: priorBatchUuids,
+              droppedBatchUuids: priorDroppedBatchUuids,
+            }).applied;
+          }
+        : () => false,
+      unsubmitMembersFenced: jobQueue
+        ? (kickoffUuid, uuids) => {
+            if (!claimToken) return [];
+            return jobQueue.transitionDeliverySendStatusFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              uuids,
+              fromStatus: 'submitted',
+              toStatus: 'enqueued',
+            });
+          }
+        : () => [],
+      resolveMessageIds: (uuids) =>
+        this.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(this.session.id, uuids),
+      publishSubmitted: (messageDbIds) => {
+        if (messageDbIds.length === 0) return;
+        void this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: this.session.id,
+            messageIds: messageDbIds,
+            status: 'submitted',
+          })
+          .catch(() => {});
+      },
+      admitToQueue: (messageUuid, feedContent) =>
+        this.messageQueue.admitWithId(messageUuid, feedContent, false, { durable: true }),
+    };
   }
 
   private armDeliveryTurnStall(signal?: AbortSignal, claimGuard?: () => boolean): Promise<void> {
@@ -2735,9 +2732,12 @@ export class AgentSession
     return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
   }
 
-  private reclaimTurnAlreadySucceeded(messageUuid: string): boolean {
+  private reclaimDeliveryTurnState(messageUuid: string): {
+    terminated: boolean;
+    clearedTurnEndMarker: boolean;
+  } {
     const repo = this.db.getSDKMessageRepo();
-    if (!repo) return false;
+    if (!repo) return { terminated: false, clearedTurnEndMarker: false };
     const decision = classifyReclaimTermination({
       successResult: repo.hasTerminalResultAfter(this.session.id, messageUuid),
       markerExists: repo.hasDeliveryTurnEnd(this.session.id, messageUuid),
@@ -2745,8 +2745,9 @@ export class AgentSession
     });
     if (decision === 'redrive') {
       repo.clearDeliveryTurnEnd(this.session.id, messageUuid);
+      return { terminated: false, clearedTurnEndMarker: true };
     }
-    return decision === 'terminated';
+    return { terminated: decision === 'terminated', clearedTurnEndMarker: false };
   }
 
   recordDeliveryTurnEnd(messageUuid: string): void {
