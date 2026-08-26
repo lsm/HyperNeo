@@ -526,7 +526,14 @@ anywhere in this plan.
   match gates → guarded per-arm signal-write stages, all inside `batch()`.
   The signal writes are EFFECT STAGES of the same `apply-space-route`
   pipeline (review correction round 23), not an interpretation switch in
-  the shell; the shell keeps only the `batch()` boundary.
+  the shell; the shell keeps only the `batch()` boundary. Review correction
+  (codex round 4): the `applyPathToSignals` wrapper KEEPS its
+  `string | null` return — the parsed initial session ID for `/session/:id`
+  routes; `initializeRouter` forwards it (`router.ts:893-901`) and
+  `App.tsx:65-88` reapplies it after asynchronous store initialization. The
+  pipeline runner's result is NOT this value (a runner returning its ctx or
+  nothing silently nulls `initialSessionId` while signal-write tests still
+  pass); the wrapper derives and returns the parsed ID exactly as today.
 - **Step-by-step migration.**
   1. Confirm `src/lib/__tests__/router.test.ts`,
      `router-space-slug.test.ts`, `router-lifecycle-recovery.test.ts`,
@@ -727,7 +734,13 @@ anywhere in this plan.
   `normalizeTargetName` helper stays module-scope.
 - **Pure core design.** Stages: `stageFilterCandidates` (owns
   `matchesNodeAndName` verbatim as a local predicate — it is a compound
-  matcher, not a cascade; do not decompose further) → `stageSelectCurrent`
+  matcher, not a cascade; do not decompose further) → empty-candidate HALT
+  (review correction, codex round 4: `useTargetSessionContext.ts:73-74`
+  returns `null` immediately when a non-null target has zero matching
+  members — halt with `resolved: null` before selection, or make
+  `stageSelectCurrent` explicitly resolve `null` on an empty list; without
+  it `?? candidates[0]` yields `undefined` and the `.sessionId` dereference
+  throws) → `stageSelectCurrent`
   (post-approval preference, `sessionId ?? null`) → `stageApplyExecOverride`
   (stamps `resolved`). Wrapper returns `ctx.resolved`; null-target early-out
   stays in the wrapper.
@@ -737,9 +750,10 @@ anywhere in this plan.
   1. `src/hooks/__tests__/useTargetSessionContext.test.ts` exists — audit for
      the override rule (disagreeing `nodeExecutionSessionId` wins when target
      has no `nodeExecutionId`), the exact-name requirement for post-approval
-     members, cancelled/pending exclusion, and the no-session candidate row
+     members, cancelled/pending exclusion, the no-session candidate row
      (matching member with `sessionId === null` must NOT trigger the
-     override). Add rows first.
+     override), and the empty-candidate row (non-null target with zero
+     matching members resolves `null` — codex round 4). Add rows first.
   2. Extract stages; compose `'resolve-target-session'`; wrapper unchanged.
 - **Tests.** Suite above; keep hook-level tests green.
 - **Risks/caveats.** The `?? candidates[0]` head-selection and the override's
@@ -799,7 +813,8 @@ anywhere in this plan.
   `send` with a hub that has since dropped, or queue when a hub is about to
   appear). The hub race stays a dynamic stage after the startup effects (see
   pure core design). Step 2 extends ctx with ports: `{ getHub: () =>
-  Hub | null, request: (payload) => Promise<{ messageId?: string }>, enqueue:
+  Hub | null, request: (hub: Hub, payload) => Promise<{ messageId?: string }>,
+  enqueue:
   (label, payload, immediate) => void, onSendStart, onSendComplete, onError,
   onMessageAccepted, armTimeout, clearTimeout, toastError, toastInfo }` and
   `outcome: boolean | null` — all supplied fresh per call from the hook's
@@ -807,7 +822,12 @@ anywhere in this plan.
   Review correction (codex round 3): `getHub` is a REQUIRED port — `request`
   must NOT be constructed from a hub captured before the run (that recreates
   the explicitly rejected early-read race); `stageSendRequest` resolves the
-  live hub through the port immediately after the startup effects. The
+  live hub through the port immediately after the startup effects. Review
+  correction (codex round 4): the `request` port takes the hub as its FIRST
+  argument and dispatches on exactly the hub the stage just looked up —
+  mirroring `useSendMessage.ts:95-135`, which invokes `request` on the hub
+  it obtained; a payload-only port would have to be pre-bound to some hub
+  (stale-hub race) or perform its own second lookup (another race). The
   `armTimeout`/`clearTimeout` ports are PER-CALL: each invocation owns its
   timer handle (see the concurrency note in risks/caveats).
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
@@ -834,9 +854,13 @@ anywhere in this plan.
   skipping it can strand a late-accepted message whose live update was also
   missed) — but stamps the timed-out outcome rather than success, so the
   user sees exactly one terminal report. Late REJECTION: the guard
-  intercepts the throw inside the stage and swallows it — the shell's
+  intercepts the throw inside the stage, STAMPS the timed-out failure
+  outcome (`false`) FIRST, then swallows it — the shell's
   unconditional catch must not run a second
-  `onError`/toast/`onSendComplete` round on top of the timeout triple. One
+  `onError`/toast/`onSendComplete` round on top of the timeout triple, and
+  the wrapper must still resolve `false` per its unchanged boolean contract
+  (codex round 4: swallowing without stamping leaves `outcome` null and the
+  hook returns `undefined` instead of `false`). One
   send, one terminal failure report; acceptance reconciliation always
   runs).
   Review correction on
@@ -850,7 +874,8 @@ anywhere in this plan.
   per-call `armTimeout`/`clearTimeout` port values (codex round 3: handles
   tracked per invocation, not one shared ref). Errors: `stageSendRequest`
   throws propagate out of `.endAsync` EXCEPT when the per-call `timedOut`
-  flag is already set — a late rejection is intercepted inside the stage so
+  flag is already set — a late rejection is intercepted inside the stage,
+  stamps the timed-out failure outcome (`false`), and is swallowed so
   the shell's catch cannot run a second `onError`/toast/`onSendComplete`
   round; otherwise the shell (the `useCallback` body) keeps the existing
   catch and performs sanitize/toast/complete/clear interpretation.
@@ -1200,9 +1225,12 @@ optional router phase 2. No per-site section is left uncovered.
   (the override rule: disagreeing `nodeExecutionSessionId` wins only when
   the target has no `nodeExecutionId`; exact-name requirement for
   post-approval members; cancelled/pending exclusion; a matching member with
-  `sessionId === null` must NOT trigger the override), then the steer-style
+  `sessionId === null` must NOT trigger the override; empty-candidate row —
+  codex round 4: zero matching members resolves `null`, no throw), then the steer-style
   direct pipeline `'resolve-target-session'`: `stageFilterCandidates` (owns
   `matchesNodeAndName` verbatim, not decomposed further) →
+  empty-candidate HALT (`useTargetSessionContext.ts:73-74` semantics,
+  codex round 4) →
   `stageSelectCurrent` → `stageApplyExecOverride`; wrapper keeps the
   null-target early-out, returns `ctx.resolved`, and the override guard
   keeps the `resolved` truthiness operand (review correction) — copy it and
@@ -1335,7 +1363,9 @@ optional router phase 2. No per-site section is left uncovered.
   post-await legs consult it: a late SUCCESS still calls `onMessageAccepted`
   (store reconciliation — `ChatContainer.tsx:635-652` refreshes when the
   accepted message never becomes visible; never suppress it) but stamps the
-  timed-out outcome, and a late REJECTION is intercepted inside the stage so
+  timed-out outcome, and a late REJECTION is intercepted inside the stage —
+  stamping the timed-out failure outcome (`false`) first (codex round 4: the
+  wrapper must still resolve `false`, never `undefined`) — so
   the shell's catch adds no second `onError`/toast/`onSendComplete` round),
   with queue/reject arms stamping `outcome`
   behind a
@@ -1343,7 +1373,8 @@ optional router phase 2. No per-site section is left uncovered.
   ports (`getHub`, `request`, `enqueue`, per-call timeout and callback/toast
   functions) are
   injected fresh per call (`getHub` is the live hub lookup — `request` is
-  never pre-bound to an early-captured hub, codex round 3); the hook keeps
+  never pre-bound to an early-captured hub and takes the hub it dispatches
+  on as its first argument, codex rounds 3+4); the hook keeps
   per-invocation timer handles (the single shared ref is replaced —
   overlapping sends admitted via `allowQueueWhileProcessing: true` must not
   clobber each other's timers; `clearSendTimeout` clears all outstanding
@@ -1369,7 +1400,8 @@ optional router phase 2. No per-site section is left uncovered.
   green; the PR 13 late-completion and overlapping-send rows are UPDATED
   here to the guarded expectations — late resolution after a fired timer
   STILL calls `onMessageAccepted` but yields the timed-out outcome, a late
-  rejection adds no second error round, and overlapping sends each keep
+  rejection adds no second error round AND resolves `false` (assert the
+  returned boolean, codex round 4), and overlapping sends each keep
   their own timer with no false timeout — as the deliberate divergences)
   plus the new pipeline-level admission decision-table test.
 - **Depends on**: PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
@@ -1396,7 +1428,12 @@ optional router phase 2. No per-site section is left uncovered.
   conditional canonical-route clear (`setCurrentSpaceRouteId` reads
   `currentSpaceIdSignal.value` before clearing) becomes a snapshot input
   captured by the shell plus a port call, preserving the conditional
-  behavior. `handlePopState`'s overlay short-circuit stays untouched.
+  behavior. The wrapper KEEPS returning the parsed initial session ID
+  (`string | null` — `initializeRouter` forwards it and `App.tsx:65-88`
+  reapplies it after async store init; codex round 4: a runner returning
+  its context or nothing silently nulls `initialSessionId` while
+  signal-write tests still pass).
+  `handlePopState`'s overlay short-circuit stays untouched.
 - **Budget**: prod Δ likely ≈ 150+ on first authoring — the expected
   over-budget slice; the permitted split is ➕ (the pipeline module landed
   unwired with a route-union decision table: `/` → spacesList, unknown →
@@ -1409,7 +1446,9 @@ optional router phase 2. No per-site section is left uncovered.
 - **Tests**: the four router suites from PR 5 stay green; the route-union
   decision table; a redirect-from-nonzero-depth row (legacy URL entered
   after prior in-app navigation preserves `__hyperneoInAppHistoryDepth`, so
-  `navigateBack` still dispatches `history.back`); manual nav smoke via
+  `navigateBack` still dispatches `history.back`); an `initializeRouter()`
+  session-route assertion (returns the parsed session id — codex round 4);
+  manual nav smoke via
   `make dev` (walk every route, back/forward, overlay open/close).
 - **Depends on**: PR 5; open question 3.
 
