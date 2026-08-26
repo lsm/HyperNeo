@@ -963,6 +963,15 @@ describe('MessageQueue', () => {
       await expect(promise).rejects.toThrow('Message queue timeout');
     });
 
+    it('a timed-out feed rejects with the policy error name lifecycle handlers match on', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      const error = await q.enqueueWithId('msg-named-timeout', 'hello').catch((err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.name).toBe('MessageQueueTimeoutError');
+      expect(error.message).toContain('msg-named-timeout');
+    });
+
     it('a DURABLE feed that was never yielded stays pending (timeout arms only once a consumer yields it)', async () => {
       const q = new MessageQueue();
       q.overrideTimeoutMsForTest(40);

@@ -1,30 +1,4 @@
-export {
-  buildDeferredEventDigestEnvelopeText,
-  buildExternalEventDigestMessage,
-  buildSyntheticExternalEventMessage,
-  DEFERRED_EXTERNAL_EVENT_ROW_CAP,
-  type DeferredDeliveryRow,
-  type DeferredEventDigestFlushResult,
-  type DeferredEventDigestRowOps,
-  type DeferredExternalEventEntry,
-  type DeferredExternalEventPartition,
-  deferredExternalEventEntryEvents,
-  type ExternalEventEssenceEntry,
-  foldDeferredExternalEventOverflow,
-  foldDeferredExternalEventsAtFlush,
-  isDigestTierEntry,
-  parseDeferredDeliveryRow,
-  parseDeferredExternalEventText,
-  partitionDeferredExternalEventRows,
-  planDeferredExternalEventOverflow,
-} from './deferred-event-digest.ts';
 export { formatExternalEventEssence } from './event-essence.ts';
-export {
-  classifyExternalEventTier,
-  EXTERNAL_EVENT_TOPIC_TIERS,
-  type ExternalEventDeliveryTier,
-  externalEventTopicSuffix,
-} from './event-tiers.ts';
 export {
   ExternalEventExtensionConfigStore,
   ensureExternalEventExtensionConfigTables,

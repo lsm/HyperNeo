@@ -1,4 +1,4 @@
-export type ExternalEventDeliveryTier = 'digest' | 'direct';
+type ExternalEventDeliveryTier = 'digest' | 'direct';
 
 export const EXTERNAL_EVENT_TOPIC_TIERS: Readonly<Record<string, ExternalEventDeliveryTier>> = {
   review_comment_polled: 'digest',
@@ -19,12 +19,12 @@ export function classifyExternalEventTier(topic: string): ExternalEventDeliveryT
 
 export type DirectSteerEventClass = 'review' | 'check' | 'merge_conflict';
 
-export const DIRECT_STEER_REVIEW_VERDICT_STATES: ReadonlySet<string> = new Set([
+const DIRECT_STEER_REVIEW_VERDICT_STATES: ReadonlySet<string> = new Set([
   'APPROVED',
   'CHANGES_REQUESTED',
 ]);
 
-export const DIRECT_STEER_NON_FAILURE_CONCLUSIONS: ReadonlySet<string> = new Set([
+const DIRECT_STEER_NON_FAILURE_CONCLUSIONS: ReadonlySet<string> = new Set([
   'cancelled',
   'canceled',
   'skipped',
@@ -32,14 +32,14 @@ export const DIRECT_STEER_NON_FAILURE_CONCLUSIONS: ReadonlySet<string> = new Set
   'neutral',
 ]);
 
-export interface DirectSteerClassificationInput {
+interface DirectSteerClassificationInput {
   topic: string;
   state?: string;
   actor?: string;
   conclusion?: string;
 }
 
-export function isBotActorLogin(actor: string | undefined): boolean {
+function isBotActorLogin(actor: string | undefined): boolean {
   return typeof actor === 'string' && actor.endsWith('[bot]');
 }
 

@@ -35,8 +35,8 @@ export class SpaceGoalRepository {
 					id, space_id, title, description, status, type, priority, labels, metrics,
 					summary, progress, next_steps, preferred_workflow_id, auto_trigger_next,
 					pending_next_run, active_task_id, last_task_id, last_check_in_at,
-					next_check_in_at, created_at, updated_at, completed_at, revision
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					next_check_in_at, created_at, updated_at, completed_at, workspace_path, revision
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -61,6 +61,7 @@ export class SpaceGoalRepository {
         now,
         now,
         null,
+        params.workspacePath ?? null,
         1
       );
     this.reactiveDb?.notifyChange('space_goals');
@@ -120,6 +121,7 @@ export class SpaceGoalRepository {
     if (params.preferredWorkflowId !== undefined) {
       add('preferred_workflow_id', params.preferredWorkflowId ?? null);
     }
+    if (params.workspacePath !== undefined) add('workspace_path', params.workspacePath ?? null);
     if (params.autoTriggerNext !== undefined)
       add('auto_trigger_next', params.autoTriggerNext ? 1 : 0);
     if (params.pendingNextRun !== undefined) add('pending_next_run', params.pendingNextRun ? 1 : 0);
@@ -215,6 +217,7 @@ export class SpaceGoalRepository {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
       completedAt: (row.completed_at as number | null) ?? null,
+      workspacePath: (row.workspace_path as string | null) ?? null,
       revision: (row.revision as number) ?? 0,
     };
   }

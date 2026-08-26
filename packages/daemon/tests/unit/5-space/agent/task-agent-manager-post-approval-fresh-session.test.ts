@@ -336,6 +336,92 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
   });
 
+  function stubFreshCreateSpawnPath(tam: TaskAgentManager): void {
+    (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;
+    (tam.config as unknown as Record<string, unknown>).workflowRunRepo = { getRun: () => null };
+    (tam.config as unknown as Record<string, unknown>).spaceAgentManager = {
+      getById: () => ({
+        id: 'agent-reviewer',
+        name: REVIEWER_AGENT,
+        customPrompt: 'merge the approved PR',
+        model: 'm',
+        tools: [],
+      }),
+    };
+    (tam.config as unknown as Record<string, unknown>).spaceRuntimeService = {
+      buildMemberSpaceToolsMcpServer: () => ({}),
+      reattachMemberSpaceTools: async () => {},
+    };
+    (
+      tam as unknown as { buildNodeAgentMcpServerForSession: () => unknown }
+    ).buildNodeAgentMcpServerForSession = () => ({});
+    (
+      tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureNodeAgentAttached = async () => {};
+    (
+      tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
+    ).injectMessageIntoSession = async () => 'msg-id';
+  }
+
+  function minimalWorkflow(): SpaceWorkflow {
+    return {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      name: 'Coding',
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      gates: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+  }
+
+  async function spawnAndCaptureInit(tam: TaskAgentManager): Promise<Record<string, unknown>> {
+    await tam.spawnPostApprovalSubSession({
+      task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+    return fromInitSpy.mock.calls[0][0] as unknown as Record<string, unknown>;
+  }
+
+  test('restart-safe: empty in-memory cache + persisted space_worktrees row resolves the persisted worktree (#2519)', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    const persistedWorktree = '/persisted/worktrees/task-850';
+    (tam.config as unknown as Record<string, unknown>).worktreeManager = {
+      getTaskWorktreePathSync: (spaceId: string, taskId: string) =>
+        spaceId === SPACE_ID && taskId === TASK_ID ? persistedWorktree : null,
+    };
+    const internal = tam as unknown as { taskWorktreePaths: Map<string, string> };
+    expect(internal.taskWorktreePaths.size).toBe(0);
+
+    const init = await spawnAndCaptureInit(tam);
+
+    expect(init.workspacePath).toBe(persistedWorktree);
+    expect(internal.taskWorktreePaths.get(TASK_ID)).toBe(persistedWorktree);
+  });
+
+  test('no space_worktrees row keeps the space.workspacePath fallback (no behavior change)', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    (tam.config as unknown as Record<string, unknown>).worktreeManager = {
+      getTaskWorktreePathSync: () => null,
+    };
+
+    const init = await spawnAndCaptureInit(tam);
+
+    expect(init.workspacePath).toBe('/tmp/ws');
+  });
+
   test('CREATE branch attaches space-agent-tools before first turn + wires self-heal (#852)', async () => {
     const tam = makeManager([]);
     (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;

@@ -2,6 +2,7 @@ import type { UUID } from 'crypto';
 import type { MessageContent, ToolResultContent } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { generateUUID } from '@hyperneo/shared';
+import { buildQueueTimeoutError, resolveQueueTimeout } from './message-queue-timeout-policy.ts';
 
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
   return content.type === 'tool_result' && 'tool_use_id' in content;
@@ -124,28 +125,28 @@ export class MessageQueue {
       clearTimeout(queuedMessage.timeoutId);
     }
     queuedMessage.timeoutId = setTimeout(() => {
-      const timeoutError = new Error(
-        `Message queue timeout: SDK did not consume message ${queuedMessage.id} within ${this.timeoutMs / 1000}s. ` +
-          `This usually indicates an SDK internal error. Please try again or create a new session.`
-      );
-      timeoutError.name = 'MessageQueueTimeoutError';
       const index = this.queue.indexOf(queuedMessage);
-      if (index !== -1) {
+      const decision = resolveQueueTimeout({
+        pending: index !== -1,
+        claimed: this.claimed.has(queuedMessage),
+        yielded: this.yielded.has(queuedMessage),
+        durable: queuedMessage.durable === true,
+      });
+      if (decision.action === 'none') return;
+      if (decision.removeFrom === 'pending') {
         this.queue.splice(index, 1);
-        queuedMessage.reject(timeoutError);
+      } else if (decision.removeFrom === 'claimed') {
+        this.claimed.delete(queuedMessage);
+      } else {
+        this.yielded.delete(queuedMessage);
+      }
+      if (decision.action === 'resolve') {
+        queuedMessage.resolve(queuedMessage.id);
         return;
       }
-      if (this.claimed.delete(queuedMessage)) {
-        queuedMessage.reject(timeoutError);
-        return;
-      }
-      if (this.yielded.delete(queuedMessage)) {
-        if (queuedMessage.durable) {
-          queuedMessage.resolve(queuedMessage.id);
-        } else {
-          queuedMessage.reject(timeoutError);
-        }
-      }
+      queuedMessage.reject(
+        buildQueueTimeoutError({ messageId: queuedMessage.id, timeoutMs: this.timeoutMs })
+      );
     }, this.timeoutMs);
   }
 

@@ -19,6 +19,7 @@ import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
 import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import {
@@ -246,7 +247,6 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     messageHandler: {
       markMessageSubmitted: mock(() => true),
       markMessageAccepted: mock(() => {}),
-      markMessageSubmissionFailed: mock(() => {}),
       markACPDeliveryFailed: mock(() => {}),
     } as never,
     queryObject: null,
@@ -262,6 +262,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     incrementQueryGeneration: () => ++queryGeneration,
     getQueryGeneration: () => queryGeneration,
     isCleaningUp: () => false,
+    attemptTokens: new QueryAttemptRegistry(),
     onSDKMessage,
     onSlashCommandsFetched: mock(async () => {}),
     onModelsFetched: mock(async () => {}),

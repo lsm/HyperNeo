@@ -166,19 +166,21 @@ describe('migration space reclaim', () => {
     const reclaim = reclaimPendingMigrationSpace(db, retryPending);
     expect(reclaim).toEqual({
       kind: 'reclaimed',
-      vacuumed: true,
       freelistBefore: freelistBefore.freelist_count,
       reclaimedMigrations: 3,
     });
-    expect(db.prepare('PRAGMA main.freelist_count').get()).toEqual({ freelist_count: 0 });
-    const acknowledgmentCheckpoint = db.prepare('PRAGMA main.wal_checkpoint(PASSIVE)').get() as {
-      busy: number;
-      log: number;
-      checkpointed: number;
-    };
-    expect(acknowledgmentCheckpoint.busy).toBe(0);
-    expect(acknowledgmentCheckpoint.checkpointed).toBe(acknowledgmentCheckpoint.log);
-    expect(acknowledgmentCheckpoint.log).toBeLessThan(10);
+    expect(db.prepare('PRAGMA main.freelist_count').get()).toEqual(freelistBefore);
+    expect(
+      db
+        .prepare(
+          `SELECT migration_key FROM migration_space_reclaims WHERE migration_key IN ('migration_183', 'migration_211', 'migration_212') ORDER BY migration_key`
+        )
+        .all()
+    ).toEqual([
+      { migration_key: 'migration_183' },
+      { migration_key: 'migration_211' },
+      { migration_key: 'migration_212' },
+    ]);
     expect(
       db
         .prepare(`
@@ -204,12 +206,17 @@ describe('migration space reclaim', () => {
 
     db.prepare(`DELETE FROM migration_space_reclaims WHERE migration_key = ?`).run('migration_183');
     expect(runMigrations(db, () => {})).toEqual([{ migrationKey: 'migration_183' }]);
-    const noVacuum = reclaimPendingMigrationSpace(db, [{ migrationKey: 'migration_183' }]);
-    expect(noVacuum).toEqual({
+    const freelistAfterSkip = db.prepare('PRAGMA main.freelist_count').get() as {
+      freelist_count: number;
+    };
+    const reclaimWithoutVacuum = reclaimPendingMigrationSpace(db, [
+      { migrationKey: 'migration_183' },
+    ]);
+    expect(reclaimWithoutVacuum).toEqual({
       kind: 'reclaimed',
-      vacuumed: false,
-      freelistBefore: 0,
+      freelistBefore: freelistAfterSkip.freelist_count,
       reclaimedMigrations: 1,
     });
+    expect(db.prepare('PRAGMA main.freelist_count').get()).toEqual(freelistAfterSkip);
   });
 });

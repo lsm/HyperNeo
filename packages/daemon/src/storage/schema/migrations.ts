@@ -26,6 +26,10 @@ import { runMigration209 } from './m209-drop-inbox-agent-fk.ts';
 import { runMigration213 } from './m213-inactivity-watchdog.ts';
 import { runMigration214 } from './m214-backfill-session-agent-provenance.ts';
 import { runMigration215 } from './m215-space-agent-model-pool.ts';
+import { runMigration216 } from './m216-restamp-reviewer-base-advance-policy.ts';
+import { runMigration217 } from './m217-space-workspaces.ts';
+import { runMigration218 } from './m218-space-goals-workspace-path.ts';
+import { runMigration219 } from './m219-space-tasks-workspace-path.ts';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
 import {
   findPendingMigrationSpaceReclaims,
@@ -487,6 +491,14 @@ export function runMigrations(
   run(migrationMarkerKey(214), () => runMigration214(db));
 
   run(migrationMarkerKey(215), () => runMigration215(db));
+
+  run(migrationMarkerKey(216), () => runMigration216(db));
+
+  run(migrationMarkerKey(217), () => runMigration217(db));
+
+  run(migrationMarkerKey(218), () => runMigration218(db));
+
+  run(migrationMarkerKey(219), () => runMigration219(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
@@ -7972,7 +7984,12 @@ export function runMigration211(db: BunDatabase): void {
   db.exec(createReclaims);
 }
 
-export function runMigration212(db: BunDatabase): void {
+const MIGRATION_212_COPY_CHUNK_ROWS = 200_000;
+
+export function runMigration212(
+  db: BunDatabase,
+  copyChunkRows: number = MIGRATION_212_COPY_CHUNK_ROWS
+): void {
   if (!tableExists(db, 'sdk_messages')) return;
   const storedSql = tableCreateSql(db, 'sdk_messages');
   if (!!storedSql && /\bseq\s+INTEGER\s+PRIMARY KEY\b/i.test(storedSql)) return;
@@ -8002,30 +8019,73 @@ export function runMigration212(db: BunDatabase): void {
     )
     .replace(/\bid\s+TEXT\s+PRIMARY\s+KEY\b/i, 'seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE');
 
+  let resumeFrom: number | null = null;
+  if (tableExists(db, 'sdk_messages_m212_new')) {
+    const partialColumns = (
+      db.prepare(`PRAGMA table_xinfo('sdk_messages_m212_new')`).all() as Array<{
+        name: string;
+        hidden: number;
+      }>
+    )
+      .filter((column) => column.hidden === 0)
+      .map((column) => column.name);
+    if (
+      partialColumns.length === columnNames.length + 1 &&
+      partialColumns[0] === 'seq' &&
+      partialColumns.slice(1).join(' ') === columnNames.join(' ')
+    ) {
+      resumeFrom =
+        (
+          db.prepare(`SELECT MAX(seq) AS maxSeq FROM sdk_messages_m212_new`).get() as
+            | { maxSeq: number | null }
+            | undefined
+        )?.maxSeq ?? 0;
+    } else {
+      db.exec(`DROP TABLE sdk_messages_m212_new`);
+    }
+  }
+  if (resumeFrom === null) {
+    db.exec(newSql);
+    resumeFrom = 0;
+  }
+
   const foreignKeys = (
     db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
   )?.foreign_keys;
   db.exec('PRAGMA foreign_keys = OFF');
-  db.exec('BEGIN');
   try {
-    db.exec(newSql);
-    db.exec(`
+    const insertChunk = db.prepare(`
       INSERT INTO sdk_messages_m212_new (seq, ${columnNames.join(', ')})
       SELECT rowid, ${columnNames.join(', ')}
       FROM sdk_messages
+      WHERE rowid > ? AND rowid <= ?
     `);
-    db.exec(`DROP TABLE sdk_messages`);
-    db.exec(`ALTER TABLE sdk_messages_m212_new RENAME TO sdk_messages`);
-    for (const index of indexRows) {
-      db.exec(index.sql);
+    const maxRowid =
+      (
+        db.prepare(`SELECT MAX(rowid) AS maxRowid FROM sdk_messages`).get() as
+          | { maxRowid: number | null }
+          | undefined
+      )?.maxRowid ?? 0;
+    let lastCopied = resumeFrom;
+    while (lastCopied < maxRowid) {
+      insertChunk.run(lastCopied, lastCopied + copyChunkRows);
+      lastCopied += copyChunkRows;
     }
-    for (const trigger of triggerRows) {
-      db.exec(trigger.sql);
+    db.exec('BEGIN');
+    try {
+      db.exec(`DROP TABLE sdk_messages`);
+      db.exec(`ALTER TABLE sdk_messages_m212_new RENAME TO sdk_messages`);
+      for (const index of indexRows) {
+        db.exec(index.sql);
+      }
+      for (const trigger of triggerRows) {
+        db.exec(trigger.sql);
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
     }
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
   } finally {
     db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
   }
