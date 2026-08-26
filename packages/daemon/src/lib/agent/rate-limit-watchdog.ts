@@ -103,6 +103,7 @@ export class RateLimitWatchdog {
   private retryCallbackInFlight = false;
   private retryCallbackInFlightOwner: number | null = null;
   private fallbackAttemptSeq = 0;
+  private cooldownRetryAttemptSeq = 0;
 
   constructor(
     sessionId: string,
@@ -478,13 +479,16 @@ export class RateLimitWatchdog {
     }
     const entryGeneration = this.generation;
     const armedQueryGeneration = this.cooldownQueryGeneration;
+    const attemptId = ++this.cooldownRetryAttemptSeq;
     this.retryCallbackInFlight = true;
     this.retryCallbackInFlightOwner = entryGeneration;
     try {
       await this.runCooldownRetry(errorMessage, entryGeneration, armedQueryGeneration);
     } finally {
-      if (this.retryCallbackInFlightOwner === entryGeneration) {
+      if (this.cooldownRetryAttemptSeq === attemptId) {
         this.retryCallbackInFlight = false;
+      }
+      if (this.retryCallbackInFlightOwner === entryGeneration) {
         this.retryCallbackInFlightOwner = null;
       }
     }
@@ -666,18 +670,21 @@ export class RateLimitWatchdog {
                 'surfacing a manual-retry pause instead of abandoning the request.'
             );
             this.limitKind = this.lastHint.kind ?? 'usage_limit';
-            this.startupExhausted = true;
-            await this.stateManager.setRateLimitCooldown({
-              retryCount: this.retryCount,
-              maxRetries: this.config.maxAutoRetries,
-              retryAt: Date.now(),
-            });
+            await this.stateManager.setRateLimitCooldown(
+              {
+                retryCount: this.retryCount,
+                maxRetries: this.config.maxAutoRetries,
+                retryAt: Date.now(),
+              },
+              queryGeneration
+            );
             if (episodeGeneration !== this.generation || querySuperseded()) {
               this.logger.info(
                 'Episode superseded during billing pause state write; not publishing pause.'
               );
               return;
             }
+            this.startupExhausted = true;
             this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
             this.billingPauseSurfaced = true;
           } else {

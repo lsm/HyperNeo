@@ -995,7 +995,9 @@ export class AcpQueryRunner {
           exitPromise,
           new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
         ]);
-        this.ctx.resetProcessExitedPromise();
+        if (this.ctx.processExitedPromise === exitPromise) {
+          this.ctx.resetProcessExitedPromise();
+        }
       }
       if (this.ctx.getQueryGeneration() !== queryGeneration) {
         logger.warn('ACP retry abandoned before recursion: a replacement query owns the session.');

@@ -906,6 +906,20 @@ export class SDKMessageHandler {
             invocationGeneration ?? undefined
           )) ?? false;
         if (this.isInvocationStale(invocationGeneration)) {
+          if (limitEngaged) {
+            const resultUuid = (message as SDKResultMessage).uuid;
+            if (resultUuid) {
+              try {
+                db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
+                  session.id,
+                  resultUuid,
+                  limitBillingTerminal
+                );
+              } catch (error) {
+                this.logger.warn('Failed to mark intercepted limit result:', error);
+              }
+            }
+          }
           return;
         }
       }

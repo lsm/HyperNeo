@@ -307,6 +307,14 @@ export class ModelSwitchHandler {
           session: { config: session.config },
         });
 
+        if (querySuperseded()) {
+          logger.info(
+            'Model switch was committed but superseded before session-file maintenance; ' +
+              'the replacement query inherits the switched model.'
+          );
+          return { success: true, model: resolvedModel };
+        }
+
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
