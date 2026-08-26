@@ -29,7 +29,10 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
 
   arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): void {
     const late = waitForDeliveryConsumption(sessionId, messageId);
-    const expiry = setTimeout(() => late.cancel(), LATE_SETTLE_HORIZON_MS);
+    const expiry = setTimeout(() => {
+      late.cancel();
+      this.timers.delete(expiry);
+    }, LATE_SETTLE_HORIZON_MS);
     this.timers.add(expiry);
     void late.promise.then(() => {
       clearTimeout(expiry);

@@ -422,6 +422,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           failed: result.failed,
           queued: result.queued,
           notFoundAgentNames: result.notFoundAgentNames,
+          ...(result.unauthorizedAgentNames
+            ? { unauthorizedAgentNames: result.unauthorizedAgentNames }
+            : {}),
+          ...(result.permittedTargets ? { permittedTargets: result.permittedTargets } : {}),
           ...(result.reason ? { reason: result.reason } : {}),
           message:
             `Message ${summaryParts.join('; ')}.` +

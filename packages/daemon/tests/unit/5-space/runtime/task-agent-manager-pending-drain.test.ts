@@ -59,6 +59,7 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
       calls.push(`defer:${ids.join(',')}`);
       repo.deferExpiration(ids, ttlMs);
     },
+    listByRunAndStatus: (runId: string, status: string) => repo.listByRunAndStatus(runId, status),
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);
       repo.markDelivered(id, sessionId);
@@ -357,7 +358,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId }]]);
+    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId, excludeIds: [] }]]);
     expect(h.spyRepo.expireArgs).toEqual([[h.runId]]);
     expect(h.spyRepo.calls.slice(0, 2)).toEqual(['enforceRetention', 'expireStale']);
     expect(h.spyRepo.calls[2]).toMatch(/^list:/);

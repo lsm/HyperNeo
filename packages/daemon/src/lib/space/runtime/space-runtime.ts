@@ -141,6 +141,9 @@ import {
   isTransientSpawnError,
   MissingWorkflowAgentError,
 } from './workflow-node-execution-validation.ts';
+import { extractReplyToSessionId } from '../agent-message-envelope.ts';
+import { formatPendingRowForSpaceAgent } from './pending-envelope.ts';
+import { collectActiveSpaceDeliveryIds } from './space-agent-pending-drain.ts';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 import { selectWorkflow } from './workflow-selector.ts';
 import { decideRunTickAdmission, selectTimedOutExecutions } from './run-tick-admission-gates.ts';
@@ -4967,7 +4970,17 @@ export class SpaceRuntime {
     if (executions.length === 0) return 'skipped';
 
     const pendingMessageRepo = this.config.pendingMessageRepo;
-    pendingMessageRepo?.enforceRetention({ runId: run.id });
+    pendingMessageRepo?.enforceRetention({
+      runId: run.id,
+      excludeIds: collectActiveSpaceDeliveryIds({
+        repo: pendingMessageRepo,
+        workflowRunId: run.id,
+        spaceChatSessionId: `space:chat:${run.spaceId}`,
+        resolveReplySession: (row) => extractReplyToSessionId(formatPendingRowForSpaceAgent(row)),
+        probeDeliveryStatus: (sessionId, messageId) =>
+          this.sdkMessageRepo?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      }),
+    });
     const hasQueuedNodeHandoff =
       pendingMessageRepo
         ?.listPendingForRun(run.id)

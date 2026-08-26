@@ -381,17 +381,15 @@ export class PendingAgentMessageRepository {
           ? this.db.prepare(
               `UPDATE pending_agent_messages
 								 SET status = 'expired'
-								 WHERE status = 'pending'${excludePredicate} AND expires_at <= ?`
+								 WHERE status = 'pending'${excludePredicate}`
             )
           : this.db.prepare(
               `UPDATE pending_agent_messages
 								 SET status = 'expired'
-								 WHERE status = 'pending'${excludePredicate} AND expires_at <= ?
-								   AND workflow_run_id = ?`
+								 WHERE status = 'pending'${excludePredicate} AND workflow_run_id = ?`
             );
-      changes += (
-        runId === null ? capStmt.run(...excludeIds, now) : capStmt.run(...excludeIds, now, runId)
-      ).changes;
+      changes += (runId === null ? capStmt.run(...excludeIds) : capStmt.run(...excludeIds, runId))
+        .changes;
     }
 
     const capStmt =
@@ -408,7 +406,6 @@ export class PendingAgentMessageRepository {
 							            ) AS queue_rank
 							     FROM pending_agent_messages
 							     WHERE status = 'pending'${excludePredicate}
-							       AND expires_at <= ?
 							   )
 							   WHERE queue_rank > ?
 							 )`
@@ -424,17 +421,15 @@ export class PendingAgentMessageRepository {
 							              ORDER BY created_at DESC, rowid DESC
 							            ) AS queue_rank
 							     FROM pending_agent_messages
-							     WHERE status = 'pending'${excludePredicate}
-							       AND expires_at <= ?
-							       AND workflow_run_id = ?
+							     WHERE status = 'pending'${excludePredicate} AND workflow_run_id = ?
 							   )
 							   WHERE queue_rank > ?
 							 )`
           );
     changes += (
       runId === null
-        ? capStmt.run(...excludeIds, now, maxPerTarget)
-        : capStmt.run(...excludeIds, now, runId, maxPerTarget)
+        ? capStmt.run(...excludeIds, maxPerTarget)
+        : capStmt.run(...excludeIds, runId, maxPerTarget)
     ).changes;
     if (changes > 0) this.notify();
     return changes;

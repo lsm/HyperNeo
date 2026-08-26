@@ -134,6 +134,7 @@ import {
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
+  collectActiveSpaceDeliveryIds,
   runSpaceAgentPendingDrain,
   type SpaceAgentPendingDrainDeps,
 } from './space-agent-pending-drain.ts';
@@ -1404,7 +1405,10 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
-    repo.enforceRetention({ runId: workflowRunId });
+    repo.enforceRetention({
+      runId: workflowRunId,
+      excludeIds: this.activeSpaceDeliveryIdsForRun(workflowRunId),
+    });
     repo.expireStale(workflowRunId);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
@@ -1490,14 +1494,8 @@ export class TaskAgentManager {
     if (!repo || !inject) return;
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
-    const registry = this.config.replyRoutingRegistry;
-    const resolveReplySession = (row: PendingAgentMessageRecord): string | null => {
-      const message = formatPendingRowForSpaceAgent(row);
-      return (
-        extractReplyToSessionId(message) ??
-        (registry && row.taskId ? registry.get(row.taskId) : null)
-      );
-    };
+    const resolveReplySession = (row: PendingAgentMessageRecord): string | null =>
+      this.resolveSpaceAgentReplySession(row);
     const drainDeps: SpaceAgentPendingDrainDeps = {
       repo,
       resolveReplySession,
@@ -1537,6 +1535,7 @@ export class TaskAgentManager {
           log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}`);
           repo.markAttemptFailed(row.id, outcome.error);
         } else {
+          repo.deferExpiration([row.id]);
           log.info(
             `TaskAgentManager: Space Agent delivery for ${row.id} queued pending consumption ` +
               `by ${spaceChatSessionId}; the pending row settles when consumption completes`
@@ -1548,6 +1547,27 @@ export class TaskAgentManager {
         repo.markAttemptFailed(row.id, errMsg);
       }
     }
+  }
+
+  activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
+    const repo = this.config.pendingMessageRepo;
+    if (!repo) return [];
+    return collectActiveSpaceDeliveryIds({
+      repo,
+      workflowRunId,
+      spaceChatSessionId: `space:chat:${this.config.workflowRunRepo?.getRun?.(workflowRunId)?.spaceId ?? ''}`,
+      resolveReplySession: (row) => this.resolveSpaceAgentReplySession(row),
+      probeDeliveryStatus: (sessionId, messageId) =>
+        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+    });
+  }
+
+  private resolveSpaceAgentReplySession(row: PendingAgentMessageRecord): string | null {
+    const message = formatPendingRowForSpaceAgent(row);
+    const registry = this.config.replyRoutingRegistry;
+    return (
+      extractReplyToSessionId(message) ?? (registry && row.taskId ? registry.get(row.taskId) : null)
+    );
   }
 
   private emitPendingDelivered(
