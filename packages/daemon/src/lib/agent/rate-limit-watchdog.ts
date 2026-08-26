@@ -272,6 +272,7 @@ export class RateLimitWatchdog {
       return true;
     }
 
+    const retryCountBeforeCharge = this.retryCount;
     if (trip.charge) {
       this.retryCount++;
     }
@@ -283,6 +284,19 @@ export class RateLimitWatchdog {
       undefined,
       queryGeneration
     );
+
+    if (
+      !armed &&
+      trip.charge &&
+      querySuperseded() &&
+      entryGeneration === this.generation &&
+      this.retryCount === retryCountBeforeCharge + 1
+    ) {
+      this.retryCount = retryCountBeforeCharge;
+      this.logger.info(
+        'Refunded the retry charge: cooldown ownership moved to a replacement query.'
+      );
+    }
 
     if (
       armed &&

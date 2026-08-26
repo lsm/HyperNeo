@@ -1255,7 +1255,7 @@ describe('QueryLifecycleManager', () => {
         manager = new QueryLifecycleManager(mockContext);
         const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
 
-        await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBeUndefined();
+        await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBe('aborted');
 
         expect(startStreamingCalled).toBe(false);
         expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();

@@ -794,13 +794,13 @@ export class AgentSession
     messageContent: string | MessageContent[],
     episodeGeneration?: number,
     options?: { prepend?: boolean; queryGeneration?: number }
-  ): Promise<void> {
+  ): Promise<'started' | 'aborted'> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
-    await this.lifecycleManager.startQueryAndEnqueue(
+    return await this.lifecycleManager.startQueryAndEnqueue(
       messageId,
       messageContent,
       episodeGeneration,
@@ -1079,12 +1079,18 @@ export class AgentSession
         return false;
       }
 
-      await this.startQueryAndEnqueue(
+      const retryOutcome = await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,
         episodeGeneration,
         { prepend: true, queryGeneration }
       );
+      if (retryOutcome === 'aborted') {
+        this.logger.info(
+          'Rate limit auto-retry aborted during re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
