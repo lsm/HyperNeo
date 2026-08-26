@@ -1933,6 +1933,7 @@ export class SpaceRuntime {
     if (
       !task ||
       task.status === 'stopped' ||
+      isRateOrUsageLimited(task.status) ||
       evaluateRequeueTaskLifecycle(task, { topic: '', source: '' }) !== null
     ) {
       return null;
