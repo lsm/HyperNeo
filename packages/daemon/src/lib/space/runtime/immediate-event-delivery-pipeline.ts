@@ -19,6 +19,7 @@ import {
   applyTaskAdmissionGate,
   applyTerminalGate,
   type ExternalEventDeliveryCtx,
+  type ExternalEventDeliveryDecision,
 } from './external-event-delivery-pipeline.ts';
 
 export type ImmediateEventMechanics = 'steer' | 'turn';
@@ -41,9 +42,15 @@ export interface ImmediateEventDeliveryDeps {
   listExecutions(workflowRunId: string): readonly NodeExecution[];
   isDeliveryInFlight(deliveryKey: string): boolean;
   isSubscriptionActive(target: WorkflowTargetKey, topic: string): boolean;
+  isTargetSpacePaused(target: WorkflowTargetKey): boolean;
+  isTargetSessionLive(sessionId: string): boolean;
   getSessionStatus(sessionId: string): string;
   withinRateBudget(sessionId: string): boolean;
-  messages: Pick<SDKMessageRepository, 'getUserMessageByUuid' | 'saveUserMessage'>;
+  setQueuedIfIdle(sessionId: string, messageUuid: string): Promise<boolean>;
+  messages: Pick<
+    SDKMessageRepository,
+    'getDeliveryContent' | 'saveUserMessage' | 'reopenDeliveryByUuid'
+  >;
   jobQueue: Pick<JobQueueRepository, 'getActiveDeliveryRole' | 'enqueue'>;
   eventStore: Pick<
     ExternalEventStore,
@@ -51,6 +58,7 @@ export interface ImmediateEventDeliveryDeps {
     | 'markDeliveryDelivered'
     | 'markDeliveryFailed'
     | 'markEventDeliveredIfAllDeliveriesDelivered'
+    | 'markEventFailedIfAllDeliveriesTerminal'
   >;
 }
 
@@ -96,8 +104,26 @@ export function resolveTarget(ctx: ImmediateEventDeliveryCtx): ImmediateEventDel
   return { ...ctx, sessionId: resolved.sessionId };
 }
 
+const ROUTING_GATES: ReadonlyArray<(ctx: ExternalEventDeliveryCtx) => ExternalEventDeliveryCtx> = [
+  applyTerminalGate,
+  applyClaimConflictGate,
+  applySubscriptionGate,
+  applyTaskAdmissionGate,
+];
+
+function firstRoutingDecision(
+  input: ExternalEventDeliveryCtx
+): ExternalEventDeliveryDecision | null {
+  let ctx = input;
+  for (const gate of ROUTING_GATES) {
+    if (ctx.decision !== null) break;
+    ctx = gate(ctx);
+  }
+  return ctx.decision;
+}
+
 export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
-  const deliveryCtx: ExternalEventDeliveryCtx = {
+  const decision = firstRoutingDecision({
     deliveryTerminal: ctx.deps.eventStore.isDeliveryTerminal(ctx.event.eventId, ctx.deliveryKey),
     deliveryInFlight: ctx.deps.isDeliveryInFlight(ctx.deliveryKey),
     subscriptionActive: ctx.deps.isSubscriptionActive(ctx.target, ctx.event.topic),
@@ -111,12 +137,13 @@ export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
     targetSpacePaused: false,
     executionPendingActivation: false,
     decision: null,
-  };
-  const gated = applyTaskAdmissionGate(
-    applySubscriptionGate(applyClaimConflictGate(applyTerminalGate(deliveryCtx)))
-  );
-  const decision = gated.decision;
-  if (decision === null) return ctx;
+  });
+  if (decision === null) {
+    if (ctx.deps.isTargetSpacePaused(ctx.target)) {
+      return settled(ctx, { action: 'deferred', reason: 'space_paused' });
+    }
+    return ctx;
+  }
   if (decision.action === 'skip') {
     return settled(ctx, { action: 'skip', reason: 'delivery_terminal' });
   }
@@ -128,6 +155,7 @@ export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
       terminal: true,
       reason: decision.reason,
     });
+    ctx.deps.eventStore.markEventFailedIfAllDeliveriesTerminal(ctx.event.eventId);
     return settled(ctx, { action: 'failed', reason: decision.reason });
   }
   return settled(ctx, { action: 'deferred', reason: 'task_stopped' });
@@ -135,6 +163,9 @@ export function routingGates(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
 
 export function pickMechanics(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
   if (!ctx.sessionId) return settled(ctx, { action: 'deferred', reason: 'no_active_session' });
+  if (!ctx.deps.isTargetSessionLive(ctx.sessionId)) {
+    return settled(ctx, { action: 'deferred', reason: 'stale_session' });
+  }
   if (!ctx.deps.withinRateBudget(ctx.sessionId)) {
     return settled(ctx, { action: 'deferred', reason: 'rate_budget' });
   }
@@ -154,10 +185,15 @@ export function buildHandoff(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
   };
 }
 
-export function persistAndEnqueue(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
+export async function persistAndEnqueue(
+  ctx: ImmediateEventDeliveryCtx
+): Promise<ImmediateEventDeliveryCtx> {
   try {
-    if (!ctx.deps.messages.getUserMessageByUuid(ctx.sessionId!, ctx.messageUuid!)) {
-      ctx.deps.messages.saveUserMessage(ctx.sessionId!, ctx.message!, 'enqueued');
+    const existing = ctx.deps.messages.getDeliveryContent(ctx.sessionId!, ctx.messageUuid!);
+    if (!existing) {
+      ctx.deps.messages.saveUserMessage(ctx.sessionId!, ctx.message!, 'enqueued', 'system');
+    } else if (existing.sendStatus === 'failed') {
+      ctx.deps.messages.reopenDeliveryByUuid(ctx.sessionId!, ctx.messageUuid!);
     }
     const deliveryRole = deliverMessage(
       ctx.deps.jobQueue as JobQueueRepository,
@@ -168,6 +204,9 @@ export function persistAndEnqueue(ctx: ImmediateEventDeliveryCtx): ImmediateEven
         ...(ctx.mechanics === 'steer' ? { role: 'steer' as const } : {}),
       }
     );
+    if (deliveryRole === 'turn') {
+      await ctx.deps.setQueuedIfIdle(ctx.sessionId!, ctx.messageUuid!).catch(() => {});
+    }
     return { ...ctx, deliveryRole };
   } catch (error) {
     return settled(ctx, { action: 'error', stage: 'persistAndEnqueue', error });
@@ -206,13 +245,13 @@ const run = (
   .pipe(persistAndEnqueue, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(markLedger, 'ctx', 'ctx')
-  .end('ctx') as (input: ImmediateEventDeliveryCtx) => ImmediateEventDeliveryCtx;
+  .endAsync('ctx') as (input: ImmediateEventDeliveryCtx) => Promise<ImmediateEventDeliveryCtx>;
 
-export function deliverImmediateEvent(
+export async function deliverImmediateEvent(
   deps: ImmediateEventDeliveryDeps,
   input: ImmediateEventDeliveryInput
-): ImmediateEventDeliveryOutcome {
-  const ctx = run({ ...input, deps });
+): Promise<ImmediateEventDeliveryOutcome> {
+  const ctx = await run({ ...input, deps });
   return (
     ctx.outcome ?? { action: 'error', stage: 'markLedger', error: new Error('missing outcome') }
   );

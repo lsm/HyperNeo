@@ -11,6 +11,7 @@ import {
   pickMechanics,
 } from '../../../../src/lib/space/runtime/immediate-event-delivery-pipeline';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import type { SendStatus } from '../../../../src/storage/repositories/sdk-message-repository';
 
 const SPACE_ID = 'space-1';
 const RUN_ID = 'run-1';
@@ -68,19 +69,32 @@ function execution(): NodeExecution {
 }
 
 interface Recording {
-  saved: Array<{ sessionId: string; uuid: string; sendStatus: string; text: string }>;
+  saved: Array<{ sessionId: string; uuid: string; sendStatus: string; origin: string }>;
+  reopened: string[];
   jobs: Array<{ sessionId: string; messageUuid: string; role: string; origin: string }>;
+  queuedIfIdle: string[];
   delivered: Array<[string, string]>;
   failed: Array<{ eventId: string; deliveryKey: string; failure: DeliveryFailure }>;
-  rollups: string[];
+  eventRollups: string[];
+  eventFailureRollups: string[];
 }
 
 function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
   deps: ImmediateEventDeliveryDeps;
   rec: Recording;
+  rowStatus: Map<string, SendStatus>;
 } {
-  const rec: Recording = { saved: [], jobs: [], delivered: [], failed: [], rollups: [] };
-  const savedUuids = new Set<string>();
+  const rec: Recording = {
+    saved: [],
+    reopened: [],
+    jobs: [],
+    queuedIfIdle: [],
+    delivered: [],
+    failed: [],
+    eventRollups: [],
+    eventFailureRollups: [],
+  };
+  const rowStatus = new Map<string, SendStatus>();
   const activeRoles = new Map<string, 'turn' | 'steer'>();
   const deps: ImmediateEventDeliveryDeps = {
     getTask: () => task(),
@@ -88,18 +102,29 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
     listExecutions: () => [execution()],
     isDeliveryInFlight: () => false,
     isSubscriptionActive: () => true,
+    isTargetSpacePaused: () => false,
+    isTargetSessionLive: () => true,
     getSessionStatus: () => 'idle',
     withinRateBudget: () => true,
+    setQueuedIfIdle: (_sessionId, messageUuid) => {
+      rec.queuedIfIdle.push(messageUuid);
+      return Promise.resolve(true);
+    },
     messages: {
-      getUserMessageByUuid: (_sessionId, uuid) =>
-        savedUuids.has(uuid) ? { uuid, timestamp: 1, content: RENDER } : undefined,
-      saveUserMessage: (sessionId, message, sendStatus = 'enqueued') => {
+      getDeliveryContent: (_sessionId, uuid) => {
+        const sendStatus = rowStatus.get(uuid);
+        return sendStatus === undefined ? null : { content: RENDER, sendStatus };
+      },
+      saveUserMessage: (sessionId, message, sendStatus = 'enqueued', origin) => {
         const uuid = String(message.uuid);
-        savedUuids.add(uuid);
-        const content = (message as { message: { content: Array<{ text: string }> } }).message
-          .content;
-        rec.saved.push({ sessionId, uuid, sendStatus, text: content.map((b) => b.text).join('') });
+        rowStatus.set(uuid, sendStatus);
+        rec.saved.push({ sessionId, uuid, sendStatus, origin: origin ?? 'null' });
         return `db-${rec.saved.length}`;
+      },
+      reopenDeliveryByUuid: (_sessionId, uuid) => {
+        rowStatus.set(uuid, 'enqueued');
+        rec.reopened.push(uuid);
+        return `db-reopened-${rec.reopened.length}`;
       },
     },
     jobQueue: {
@@ -126,62 +151,68 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
       markDeliveryDelivered: (eventId, deliveryKey) => rec.delivered.push([eventId, deliveryKey]),
       markDeliveryFailed: (eventId, deliveryKey, failure) =>
         rec.failed.push({ eventId, deliveryKey, failure }),
-      markEventDeliveredIfAllDeliveriesDelivered: (eventId) => rec.rollups.push(eventId),
+      markEventDeliveredIfAllDeliveriesDelivered: (eventId) => rec.eventRollups.push(eventId),
+      markEventFailedIfAllDeliveriesTerminal: (eventId) => rec.eventFailureRollups.push(eventId),
     },
     ...overrides,
   };
-  return { deps, rec };
+  return { deps, rec, rowStatus };
 }
 
-function deliver(
+async function deliver(
   depsOverrides: Partial<ImmediateEventDeliveryDeps> = {},
   inputOverrides: Partial<ImmediateEventDeliveryInput> = {}
 ) {
-  const { deps, rec } = makeDeps(depsOverrides);
-  return { outcome: deliverImmediateEvent(deps, input(inputOverrides)), rec };
+  const { deps, rec, rowStatus } = makeDeps(depsOverrides);
+  return { outcome: await deliverImmediateEvent(deps, input(inputOverrides)), rec, rowStatus };
 }
 
 describe('deliver-immediate-event pipeline', () => {
-  it('delivers to an idle session as a turn with the row render text', () => {
-    const { outcome, rec } = deliver();
+  it('delivers to an idle session as a turn with system origin and render text', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const { outcome, rec } = await deliver();
     expect(outcome).toEqual({
       action: 'delivered',
       mechanics: 'turn',
       deliveryRole: 'turn',
-      messageUuid: buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY),
+      messageUuid: uuid,
     });
     expect(rec.saved).toEqual([
-      {
-        sessionId: SESSION_ID,
-        uuid: buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY),
-        sendStatus: 'enqueued',
-        text: RENDER,
-      },
+      { sessionId: SESSION_ID, uuid, sendStatus: 'enqueued', origin: 'system' },
     ]);
     expect(rec.jobs).toEqual([
-      {
-        sessionId: SESSION_ID,
-        messageUuid: buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY),
-        role: 'turn',
-        origin: 'space_inject',
-      },
+      { sessionId: SESSION_ID, messageUuid: uuid, role: 'turn', origin: 'space_inject' },
     ]);
+    expect(rec.queuedIfIdle).toEqual([uuid]);
     expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
-    expect(rec.rollups).toEqual([EVENT_ID]);
+    expect(rec.eventRollups).toEqual([EVENT_ID]);
   });
 
-  it('steers into a session whose status is exactly processing', () => {
-    const { outcome, rec } = deliver({ getSessionStatus: () => 'processing' });
+  it('steers into a session whose status is exactly processing', async () => {
+    const { outcome, rec } = await deliver({ getSessionStatus: () => 'processing' });
     expect(outcome.action).toBe('delivered');
     if (outcome.action !== 'delivered') return;
     expect(outcome.mechanics).toBe('steer');
     expect(outcome.deliveryRole).toBe('steer');
     expect(rec.jobs[0].role).toBe('steer');
+    expect(rec.queuedIfIdle).toEqual([]);
   });
 
-  it('skips without effects when the delivery is already terminal', () => {
-    const { outcome, rec } = deliver({
-      eventStore: { ...makeDeps().deps.eventStore, isDeliveryTerminal: () => true },
+  it('keeps the first routing decision when later gate inputs also hold', async () => {
+    const { outcome, rec } = await deliver({
+      isDeliveryInFlight: () => true,
+      isSubscriptionActive: () => false,
+      getTask: () => task('done'),
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'claim_conflict' });
+    expect(rec.failed).toEqual([]);
+    expect(rec.saved).toEqual([]);
+  });
+
+  it('skips without effects when the delivery is already terminal', async () => {
+    const base = makeDeps();
+    const { outcome, rec } = await deliver({
+      eventStore: { ...base.deps.eventStore, isDeliveryTerminal: () => true },
     });
     expect(outcome).toEqual({ action: 'skip', reason: 'delivery_terminal' });
     expect(rec.saved).toEqual([]);
@@ -190,15 +221,8 @@ describe('deliver-immediate-event pipeline', () => {
     expect(rec.failed).toEqual([]);
   });
 
-  it('skips when another delivery claim is in flight', () => {
-    const { outcome, rec } = deliver({ isDeliveryInFlight: () => true });
-    expect(outcome).toEqual({ action: 'skip', reason: 'claim_conflict' });
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
-  });
-
-  it('fails the ledger when the subscription is no longer active', () => {
-    const { outcome, rec } = deliver({ isSubscriptionActive: () => false });
+  it('fails the ledger and rolls the failure up to the event when the subscription is gone', async () => {
+    const { outcome, rec } = await deliver({ isSubscriptionActive: () => false });
     expect(outcome).toEqual({ action: 'failed', reason: 'subscription_no_longer_active' });
     expect(rec.failed).toEqual([
       {
@@ -207,35 +231,54 @@ describe('deliver-immediate-event pipeline', () => {
         failure: { terminal: true, reason: 'subscription_no_longer_active' },
       },
     ]);
+    expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
     expect(rec.saved).toEqual([]);
     expect(rec.jobs).toEqual([]);
   });
 
-  it('fails the ledger when the target task is terminal', () => {
-    const { outcome, rec } = deliver({ getTask: () => task('done') });
+  it('fails the ledger when the target task is terminal', async () => {
+    const { outcome, rec } = await deliver({ getTask: () => task('done') });
     expect(outcome).toEqual({ action: 'failed', reason: 'target_task_terminal' });
     expect(rec.failed[0].failure).toEqual({ terminal: true, reason: 'target_task_terminal' });
+    expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
     expect(rec.saved).toEqual([]);
   });
 
-  it('defers a stopped task leaving the ledger pending', () => {
-    const { outcome, rec } = deliver({ getTask: () => task('stopped') });
+  it('defers a stopped task leaving the ledger pending', async () => {
+    const { outcome, rec } = await deliver({ getTask: () => task('stopped') });
     expect(outcome).toEqual({ action: 'deferred', reason: 'task_stopped' });
     expect(rec.failed).toEqual([]);
     expect(rec.delivered).toEqual([]);
     expect(rec.saved).toEqual([]);
   });
 
-  it('defers when the target has no active session', () => {
-    const { outcome, rec } = deliver({ listExecutions: () => [] });
+  it('defers while the target space is paused leaving the ledger pending', async () => {
+    const { outcome, rec } = await deliver({ isTargetSpacePaused: () => true });
+    expect(outcome).toEqual({ action: 'deferred', reason: 'space_paused' });
+    expect(rec.saved).toEqual([]);
+    expect(rec.jobs).toEqual([]);
+    expect(rec.failed).toEqual([]);
+    expect(rec.delivered).toEqual([]);
+  });
+
+  it('defers when the target has no active session', async () => {
+    const { outcome, rec } = await deliver({ listExecutions: () => [] });
     expect(outcome).toEqual({ action: 'deferred', reason: 'no_active_session' });
     expect(rec.saved).toEqual([]);
     expect(rec.jobs).toEqual([]);
     expect(rec.delivered).toEqual([]);
   });
 
-  it('treats rate budget overflow as a deferral, not a failure', () => {
-    const { outcome, rec } = deliver({ withinRateBudget: () => false });
+  it('defers when the resolved session is no longer live', async () => {
+    const { outcome, rec } = await deliver({ isTargetSessionLive: () => false });
+    expect(outcome).toEqual({ action: 'deferred', reason: 'stale_session' });
+    expect(rec.saved).toEqual([]);
+    expect(rec.jobs).toEqual([]);
+    expect(rec.delivered).toEqual([]);
+  });
+
+  it('treats rate budget overflow as a deferral, not a failure', async () => {
+    const { outcome, rec } = await deliver({ withinRateBudget: () => false });
     expect(outcome).toEqual({ action: 'deferred', reason: 'rate_budget' });
     expect(rec.failed).toEqual([]);
     expect(rec.saved).toEqual([]);
@@ -243,17 +286,17 @@ describe('deliver-immediate-event pipeline', () => {
     expect(rec.delivered).toEqual([]);
   });
 
-  it('defers when the row carries no render block', () => {
-    const { outcome, rec } = deliver({}, { render: null });
+  it('defers when the row carries no render block', async () => {
+    const { outcome, rec } = await deliver({}, { render: null });
     expect(outcome).toEqual({ action: 'deferred', reason: 'render_missing' });
     expect(rec.saved).toEqual([]);
     expect(rec.jobs).toEqual([]);
   });
 
-  it('replaying the same input reuses the same row and job without duplicates', () => {
+  it('replaying the same input reuses the same row and job without duplicates', async () => {
     const { deps, rec } = makeDeps();
-    const first = deliverImmediateEvent(deps, input());
-    const second = deliverImmediateEvent(deps, input());
+    const first = await deliverImmediateEvent(deps, input());
+    const second = await deliverImmediateEvent(deps, input());
     expect(first.action).toBe('delivered');
     expect(second.action).toBe('delivered');
     if (second.action !== 'delivered' || first.action !== 'delivered') return;
@@ -263,9 +306,21 @@ describe('deliver-immediate-event pipeline', () => {
     expect(rec.jobs[0].messageUuid).toBe(first.messageUuid);
   });
 
-  it('reports a persist error and leaves the ledger pending', () => {
+  it('reopens a previously failed row instead of skipping it silently', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const { deps, rec, rowStatus } = makeDeps();
+    rowStatus.set(uuid, 'failed');
+    const outcome = await deliverImmediateEvent(deps, input());
+    expect(outcome.action).toBe('delivered');
+    expect(rec.reopened).toEqual([uuid]);
+    expect(rec.saved).toEqual([]);
+    expect(rec.jobs.length).toBe(1);
+    expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
+  });
+
+  it('reports a persist error and leaves the ledger pending', async () => {
     const base = makeDeps();
-    const { outcome, rec } = deliver({
+    const { outcome, rec } = await deliver({
       messages: {
         ...base.deps.messages,
         saveUserMessage: () => {
@@ -280,9 +335,9 @@ describe('deliver-immediate-event pipeline', () => {
     expect(rec.failed).toEqual([]);
   });
 
-  it('reports a ledger-marking error after the mailbox accepted the row and job', () => {
+  it('reports a ledger-marking error after the mailbox accepted the row and job', async () => {
     const base = makeDeps();
-    const { outcome, rec } = deliver({
+    const { outcome, rec } = await deliver({
       eventStore: {
         ...base.deps.eventStore,
         markDeliveryDelivered: () => {
