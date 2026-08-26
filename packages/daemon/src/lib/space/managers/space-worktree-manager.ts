@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -9,6 +10,15 @@ import { Logger } from '../../logger.ts';
 import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
+import { buildGitCommandEnv, buildGitSshEnv } from '../../spawn-env.ts';
+import {
+  GIT_PROBE_MAX_BUFFER_BYTES,
+  LFS_ATTR_PATHSPEC,
+  indexContainsLfsPointer,
+} from '../../worktree-lfs.ts';
+import { LFS_PULL_TIMEOUT_MS, runWorktreeLfsHydration } from '../../worktree-lfs-hydration.ts';
+
+const execFileAsync = promisify(execFile);
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -62,6 +72,7 @@ export class SpaceWorktreeManager {
         execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
           cwd: space.workspacePath,
           timeout: 30_000,
+          env: buildGitCommandEnv(),
         });
       } catch {
         rmSync(worktreePath, { recursive: true, force: true });
@@ -72,6 +83,7 @@ export class SpaceWorktreeManager {
       execFileSync('git', ['worktree', 'prune'], {
         cwd: space.workspacePath,
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
     } catch {}
 
@@ -80,12 +92,14 @@ export class SpaceWorktreeManager {
         cwd: space.workspacePath,
         encoding: 'utf8',
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
       if (branches.trim().length > 0) {
         this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
         execFileSync('git', ['branch', '-D', branchName], {
           cwd: space.workspacePath,
           timeout: 30_000,
+          env: buildGitCommandEnv(),
         });
       }
     } catch (err) {
@@ -105,6 +119,7 @@ export class SpaceWorktreeManager {
                 cwd: space.workspacePath,
                 timeout: 30_000,
                 stdio: 'pipe',
+                env: { ...buildGitCommandEnv(), GIT_LFS_SKIP_SMUDGE: '1' },
               }
             )
           ),
@@ -136,6 +151,30 @@ export class SpaceWorktreeManager {
       );
     }
 
+    try {
+      await this.hydrateWorktreeLfs(worktreePath);
+    } catch (err) {
+      try {
+        execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
+          cwd: space.workspacePath,
+          timeout: 30_000,
+          env: buildGitCommandEnv(),
+        });
+      } catch {
+        rmSync(worktreePath, { recursive: true, force: true });
+      }
+      try {
+        execFileSync('git', ['branch', '-D', branchName], {
+          cwd: space.workspacePath,
+          timeout: 30_000,
+          env: buildGitCommandEnv(),
+        });
+      } catch {}
+      throw new Error(
+        `Failed to hydrate Git LFS objects for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
     this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
 
     this.logger.info(
@@ -160,6 +199,7 @@ export class SpaceWorktreeManager {
       execFileSync('git', ['worktree', 'remove', record.path, '--force'], {
         cwd: space.workspacePath,
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
     } catch (err) {
       this.logger.warn(
@@ -172,6 +212,7 @@ export class SpaceWorktreeManager {
       execFileSync('git', ['branch', '-D', branchName], {
         cwd: space.workspacePath,
         timeout: 30_000,
+        env: buildGitCommandEnv(),
       });
     } catch (err) {
       this.logger.warn(
@@ -185,6 +226,49 @@ export class SpaceWorktreeManager {
 
   markTaskWorktreeCompleted(spaceId: string, taskId: string): void {
     this.worktreeRepo.markCompleted(spaceId, taskId);
+  }
+
+  private async hydrateWorktreeLfs(worktreePath: string): Promise<void> {
+    const outcome = await runWorktreeLfsHydration({
+      listLfsTrackedFiles: async () =>
+        (
+          await execFileAsync('git', ['lfs', 'ls-files'], {
+            cwd: worktreePath,
+            encoding: 'utf8',
+            timeout: 60_000,
+            maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+            env: buildGitSshEnv(),
+          })
+        ).stdout,
+      listAttrLfsPaths: async () =>
+        (
+          await execFileAsync('git', ['ls-files', '-z', '--', LFS_ATTR_PATHSPEC], {
+            cwd: worktreePath,
+            encoding: 'utf8',
+            timeout: 60_000,
+            maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+            env: buildGitCommandEnv(),
+          })
+        ).stdout,
+      indexHasLfsPointer: () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv()),
+      pullLfsObjects: async () => {
+        await execFileAsync('git', ['lfs', 'pull'], {
+          cwd: worktreePath,
+          encoding: 'utf8',
+          timeout: LFS_PULL_TIMEOUT_MS,
+          maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+          env: buildGitSshEnv(),
+        });
+      },
+    });
+    if (outcome.action === 'skipped') {
+      this.logger.warn(`Git LFS hydration skipped for ${worktreePath}: ${outcome.cause}`);
+    }
+    if (outcome.action === 'failed') {
+      throw new Error(
+        `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${outcome.cause}`
+      );
+    }
   }
 
   async reapExpiredWorktrees(ttlMs: number = 7 * 24 * 60 * 60 * 1000): Promise<void> {
@@ -235,6 +319,7 @@ export class SpaceWorktreeManager {
             execFileSync('git', ['branch', '-D', branchName], {
               cwd: space.workspacePath,
               timeout: 30_000,
+              env: buildGitCommandEnv(),
             });
           } catch {}
         }
@@ -250,6 +335,7 @@ export class SpaceWorktreeManager {
         execFileSync('git', ['worktree', 'prune'], {
           cwd: space.workspacePath,
           timeout: 30_000,
+          env: buildGitCommandEnv(),
         });
       } catch (err) {
         this.logger.warn(

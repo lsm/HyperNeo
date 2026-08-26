@@ -74,7 +74,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
 HASH_SPLIT_SPECS=(
-	"5-space|2|5-space/*.test.ts;5-space/agent/*.test.ts;5-space/goals/*.test.ts;5-space/other/*.test.ts;5-space/tools/*.test.ts;5-space/workflow/*.test.ts;5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts;5-space/workspaces/*.test.ts|scripts/shard-weights.tsv"
+	"5-space|2|5-space/*.test.ts;5-space/agent/*.test.ts;5-space/goals/*.test.ts;5-space/other/*.test.ts;5-space/tools/*.test.ts;5-space/workflow/*.test.ts;5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts|scripts/shard-weights.tsv"
 )
 
 # Map a hash-split shard's suffix letter to a 0-based bucket index (a→0 … z→25).
@@ -365,7 +365,10 @@ shard_paths() {
 			"$TEST_ROOT/lib/acp" \
 			"$TEST_ROOT/lib/job-handlers" \
 			"$TEST_ROOT/lib/runtime-server.test.ts" \
-			"$TEST_ROOT/lib/runtime-spawn.test.ts"
+			"$TEST_ROOT/lib/runtime-spawn.test.ts" \
+			"$TEST_ROOT/lib/spawn-env.test.ts" \
+			"$TEST_ROOT/lib/worktree-lfs.test.ts" \
+			"$TEST_ROOT/lib/worktree-lfs-hydration.test.ts"
 		migration_shard_paths 0
 		;;
 	handlers-migrations)

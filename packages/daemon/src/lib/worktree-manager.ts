@@ -2,6 +2,8 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
+import { LFS_ATTR_PATHSPEC, indexContainsLfsPointer } from './worktree-lfs.ts';
+import { LFS_PULL_TIMEOUT_MS, runWorktreeLfsHydration } from './worktree-lfs-hydration.ts';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -19,6 +21,8 @@ import type {
 import { Logger } from './logger.ts';
 import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils.ts';
 import { gitStatusKind, parseNumstatMap, parsePorcelainStatus } from './worktree-git-output.ts';
+import { buildGitCommandEnv, buildGitSshEnv } from './spawn-env.ts';
+import { buildGitHubLookupEnv } from './space/runtime/gh-lookup-helpers.ts';
 
 export interface WorktreeInfo {
   path: string;
@@ -43,6 +47,22 @@ function literalPathspec(path: string): string {
   return `:(literal)${path}`;
 }
 
+async function hydrateLfsObjects(git: SimpleGit, worktreePath: string): Promise<void> {
+  const outcome = await runWorktreeLfsHydration({
+    listLfsTrackedFiles: () => git.raw(['lfs', 'ls-files']),
+    listAttrLfsPaths: () => git.raw(['ls-files', '-z', '--', LFS_ATTR_PATHSPEC]),
+    indexHasLfsPointer: () => indexContainsLfsPointer(worktreePath, buildGitCommandEnv()),
+    pullLfsObjects: async () => {
+      await git.raw(['lfs', 'pull']);
+    },
+  });
+  if (outcome.action === 'failed') {
+    throw new Error(
+      `Repository tracks Git LFS files but 'git lfs ls-files' failed: ${outcome.cause}`
+    );
+  }
+}
+
 const EMPTY_REVIEW: GitReviewSummary = {
   files: [],
   totalAdditions: 0,
@@ -57,7 +77,7 @@ export class WorktreeManager {
 
   private getGit(repoPath: string): SimpleGit {
     if (!this.gitCache.has(repoPath)) {
-      this.gitCache.set(repoPath, simpleGit(repoPath));
+      this.gitCache.set(repoPath, simpleGit(repoPath).env(buildGitCommandEnv()));
     }
     return this.gitCache.get(repoPath)!;
   }
@@ -544,7 +564,13 @@ export class WorktreeManager {
       execFile(
         'gh',
         args,
-        { cwd, encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+        {
+          cwd,
+          encoding: 'utf8',
+          timeout: GH_TIMEOUT_MS,
+          maxBuffer: 4 * 1024 * 1024,
+          env: buildGitHubLookupEnv(),
+        },
         (error, stdout, stderr) => {
           const output = typeof stdout === 'string' ? stdout.trim() : '';
           if (output) {
@@ -716,6 +742,7 @@ export class WorktreeManager {
     const safeSessionId = sessionId.replace(/:/g, '-');
     const worktreePath = join(worktreesDir, safeSessionId);
     let branchName = customBranchName || `session/${safeSessionId}`;
+    let branchProvisioned = false;
 
     try {
       if (existsSync(worktreePath)) {
@@ -735,13 +762,24 @@ export class WorktreeManager {
         }
       }
 
-      await git.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
+      const worktreeAddGit = simpleGit(gitRoot).env({
+        ...buildGitCommandEnv(),
+        GIT_LFS_SKIP_SMUDGE: '1',
+      });
+      await worktreeAddGit.raw(['worktree', 'add', worktreePath, '-b', branchName, baseBranch]);
+      branchProvisioned = true;
 
+      const networkGit = simpleGit(worktreePath, { timeout: { block: 300_000 } }).env(
+        buildGitSshEnv()
+      );
       try {
-        const worktreeGit = this.getGit(worktreePath);
-        await worktreeGit.raw(['submodule', 'update', '--init', '--recursive']);
+        await networkGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */
       } catch {}
+      const lfsPullGit = simpleGit(worktreePath, {
+        timeout: { block: LFS_PULL_TIMEOUT_MS },
+      }).env(buildGitSshEnv());
+      await hydrateLfsObjects(lfsPullGit, worktreePath);
 
       return {
         isWorktree: true,
@@ -758,6 +796,12 @@ export class WorktreeManager {
         } catch (cleanupError) {
           this.logger.error(' Failed to clean up worktree:', cleanupError);
         }
+      }
+
+      if (branchProvisioned) {
+        try {
+          await git.branch(['-D', branchName]);
+        } catch {}
       }
 
       throw new Error(
@@ -916,7 +960,7 @@ export class WorktreeManager {
   }
 
   async getCurrentBranch(worktreePath: string): Promise<string | null> {
-    const git = simpleGit(worktreePath);
+    const git = simpleGit(worktreePath).env(buildGitCommandEnv());
 
     try {
       const branch = (await git.raw(['branch', '--show-current'])).trim();

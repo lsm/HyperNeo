@@ -5,18 +5,29 @@ import { Logger } from '../../../../src/lib/logger';
 import type { Session } from '@hyperneo/shared';
 import type { SimpleGit } from 'simple-git';
 
-const gitMocks = vi.hoisted(() => ({
-  raw: vi.fn(async () => ''),
-  revparse: vi.fn(async () => ''),
-  branch: vi.fn(async () => ({})),
-}));
+const gitMocks = vi.hoisted(() => {
+  const mocks = {
+    env: vi.fn(() => mocks),
+    raw: vi.fn(async () => ''),
+    revparse: vi.fn(async () => ''),
+    branch: vi.fn(async () => ({})),
+  };
+  return mocks;
+});
+const simpleGitCalls = vi.hoisted(() => ({ list: [] as unknown[][] }));
 const mockGitRaw = gitMocks.raw;
 const mockGitRevparse = gitMocks.revparse;
 const mockGitBranch = gitMocks.branch;
 
 vi.mock('simple-git', () => ({
-  default: () => gitMocks,
-  simpleGit: () => gitMocks,
+  default: (...args: unknown[]) => {
+    simpleGitCalls.list.push(args);
+    return gitMocks;
+  },
+  simpleGit: (...args: unknown[]) => {
+    simpleGitCalls.list.push(args);
+    return gitMocks;
+  },
 }));
 
 const fsOsMocks = vi.hoisted(() => ({
@@ -54,6 +65,62 @@ vi.mock('node:os', async (importOriginal) => {
   };
 });
 
+const childProcessMocks = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFile: passthrough(childProcessMocks.execFile, actual.execFile),
+    spawn: passthrough(childProcessMocks.spawn, actual.spawn),
+  };
+});
+
+interface FakeChild {
+  stdout: { on: (event: 'data', listener: (chunk: Buffer) => void) => void };
+  on: (event: 'close' | 'error', listener: (arg: never) => void) => void;
+  kill: () => void;
+}
+
+function stubLsFilesListing(listing: Buffer): void {
+  stubSpawnGit({ lsFiles: listing });
+}
+
+function stubSpawnGit(opts: { lsFiles?: Buffer; catFile?: Buffer }): void {
+  childProcessMocks.spawn.mockImplementation((_file: string, args: string[]) => {
+    const dataListeners: Array<(chunk: Buffer) => void> = [];
+    const closeListeners: Array<(code: number | null) => void> = [];
+    const errorListeners: Array<(error: Error) => void> = [];
+    const child: FakeChild = {
+      stdout: {
+        on: (_event, listener) => {
+          dataListeners.push(listener);
+        },
+      },
+      on: (event, listener) => {
+        if (event === 'close') closeListeners.push(listener as (code: number | null) => void);
+        if (event === 'error') errorListeners.push(listener as (error: Error) => void);
+      },
+      kill: () => undefined,
+    };
+    const payload =
+      args[0] === 'ls-files' ? opts.lsFiles : args[0] === 'cat-file' ? opts.catFile : undefined;
+    queueMicrotask(() => {
+      if (payload === undefined) {
+        for (const listener of errorListeners) {
+          listener(new Error(`unexpected spawn: ${args.join(' ')}`));
+        }
+        return;
+      }
+      if (payload.length > 0) {
+        for (const listener of dataListeners) listener(payload);
+      }
+      for (const listener of closeListeners) listener(0);
+    });
+    return child;
+  });
+}
+
 let existsSyncResults: Map<string, boolean>;
 const mkdirSyncSpy = fsOsMocks.mkdirSync;
 const writeFileSyncSpy = fsOsMocks.writeFileSync;
@@ -67,10 +134,13 @@ describe('WorktreeManager', () => {
   beforeEach(() => {
     manager = new WorktreeManager();
     existsSyncResults = new Map();
+    simpleGitCalls.list.length = 0;
 
     mockGitRaw.mockReset();
     mockGitRevparse.mockReset();
     mockGitBranch.mockReset();
+    childProcessMocks.execFile.mockReset();
+    stubLsFilesListing(Buffer.alloc(0));
 
     mockGitRaw.mockResolvedValue('');
     mockGitRevparse.mockResolvedValue('');
@@ -352,6 +422,334 @@ describe('WorktreeManager', () => {
 
       expect(result?.branch).toBe('task/task-42-implement-feature');
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
+    });
+
+    it('should delete the created branch when LFS hydration fails', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs' && args[1] === 'ls-files') return 'asset.bin';
+        if (args[0] === 'lfs' && args[1] === 'pull') throw new Error('lfs download failed');
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
+    it('should give the LFS pull its own extended command timeout', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.worktreePath).toBeTruthy();
+      expect(
+        simpleGitCalls.list.some(
+          (args) =>
+            (args[1] as { timeout?: { block?: number } } | undefined)?.timeout?.block === 1_800_000
+        )
+      ).toBe(true);
+    });
+
+    it('should fail worktree creation when LFS detection fails in an LFS-declaring repo', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return 'asset.bin';
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Repository tracks Git LFS files');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
+    it('should fail worktree creation when the LFS attribute proof itself errors', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs' || args[0] === 'ls-files') {
+          throw new Error('git unavailable');
+        }
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
+    it('should skip LFS hydration when only commented-out LFS attributes exist', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(null, { stdout: '', stderr: '' })
+      );
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '';
+        return '';
+      });
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.branch).toBe('session/session-123');
+    });
+
+    it('should fail worktree creation when index blobs carry the LFS pointer signature', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      stubSpawnGit({
+        lsFiles: Buffer.from(`100644 ${'c'.repeat(64)} 0\tasset.bin\0`),
+        catFile: Buffer.from(
+          `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234`
+        ),
+      });
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(
+            null,
+            args[0] === 'grep'
+              ? { stdout: Buffer.from('asset.bin\0', 'binary'), stderr: '' }
+              : { stdout: '', stderr: '' }
+          )
+      );
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '';
+        return '';
+      });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
+    });
+
+    it('should skip LFS hydration when the pointer signature appears only in documentation', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      stubSpawnGit({
+        lsFiles: Buffer.from(`100644 ${'c'.repeat(64)} 0\tdocs/lfs.md\0`),
+        catFile: Buffer.from(
+          'See version https://git-lfs.github.com/spec/v1 for the pointer format used by LFS.'
+        ),
+      });
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(
+            null,
+            args[0] === 'grep'
+              ? { stdout: Buffer.from('docs/lfs.md\0', 'binary'), stderr: '' }
+              : { stdout: '', stderr: '' }
+          )
+      );
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '';
+        return '';
+      });
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.branch).toBe('session/session-123');
+    });
+
+    it('should skip LFS hydration when a pointer-like blob has trailing text', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      stubSpawnGit({
+        lsFiles: Buffer.from(`100644 ${'c'.repeat(64)} 0\tfixture.bin\0`),
+        catFile: Buffer.from(
+          `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234\nThis file documents the pointer format.`
+        ),
+      });
+      childProcessMocks.execFile.mockImplementation(
+        (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
+          cb(
+            null,
+            args[0] === 'grep'
+              ? { stdout: Buffer.from('fixture.bin\0', 'binary'), stderr: '' }
+              : { stdout: '', stderr: '' }
+          )
+      );
+      mockGitRaw.mockImplementation(async (args: string[]) => {
+        if (args[0] === 'lfs') throw new Error('git: "lfs" is not a git command');
+        if (args[0] === 'ls-files') return '';
+        return '';
+      });
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.branch).toBe('session/session-123');
+    });
+
+    it('should not delete a pre-existing fallback branch when worktree add fails', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      mockGitBranch
+        .mockRejectedValueOnce(new Error('branch checked out elsewhere'))
+        .mockResolvedValue({});
+      mockGitRaw
+        .mockResolvedValueOnce('  custom-branch\n')
+        .mockImplementation(async (args: string[]) => {
+          if (args[0] === 'worktree') throw new Error('fatal: a branch named already exists');
+          return '';
+        });
+
+      await expect(
+        manager.createWorktree({
+          sessionId: 'session-123',
+          repoPath: '/test/repo',
+          branchName: 'custom-branch',
+        })
+      ).rejects.toThrow('Failed to create worktree');
+
+      expect(mockGitBranch).toHaveBeenCalledTimes(1);
+      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'custom-branch']);
     });
 
     it('should fall back to UUID branch name when branch -D is rejected (branch checked out elsewhere)', async () => {
