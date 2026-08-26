@@ -352,6 +352,16 @@ export class RateLimitWatchdog {
           }
         } catch (err) {
           this.logger.warn('LLM refinement cooldown scheduling threw; reconciling state:', err);
+          const querySupersededOnReconcile =
+            queryGeneration !== undefined &&
+            this.deps.getQueryGeneration != null &&
+            this.deps.getQueryGeneration() !== queryGeneration;
+          if (querySupersededOnReconcile) {
+            this.logger.info(
+              'Refinement reconciliation aborted: the originating query was superseded.'
+            );
+            return;
+          }
           rollbackHintAndKind();
           if (this.cooldownTimer === timerAtFire && this.currentRetryAt !== null) {
             await this.stateManager
@@ -498,20 +508,18 @@ export class RateLimitWatchdog {
       this.logger.info('Cooldown retry completed but episode was superseded; aborting.');
       return;
     }
+    if (started) {
+      this.startupRetries = 0;
+      this.startupExhausted = false;
+      this.notifyResume();
+      return;
+    }
     const querySupersededAfterCallback =
       queryGeneration !== undefined &&
       this.deps.getQueryGeneration != null &&
       this.deps.getQueryGeneration() !== queryGeneration;
     if (querySupersededAfterCallback) {
-      this.logger.info(
-        'Cooldown retry completed but the originating query was superseded; aborting.'
-      );
-      return;
-    }
-    if (started) {
-      this.startupRetries = 0;
-      this.startupExhausted = false;
-      this.notifyResume();
+      this.logger.info('Cooldown retry failed but the originating query was superseded; aborting.');
       return;
     }
 
