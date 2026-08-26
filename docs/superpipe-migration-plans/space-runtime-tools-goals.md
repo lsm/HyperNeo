@@ -75,7 +75,9 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:deliverDirectSteerUnderCoordination`
 
 - **Current summary**: Flushes a buffered list of direct-steer entries for a session. It checks session liveness, parent-task rate limit, deferred row presence, partitions `steerEssences`/`passengerEssences`, optionally saves a passenger message, re-checks session state, saves a steer message, enqueues delivery, and marks the original rows `consumed`. It has an in-memory compensation `discardPassengerCopy` for the passenger save.
-- **Proposed combinator**: `stagedRun`.
+
+  Review correction (PR #2983): this site has ALREADY been migrated — `deliverDirectSteerUnderCoordination` is now a thin wrapper around `runDirectSteerFlush` in `direct-steer-flush-pipeline.ts` (a direct raw `superpipe` pipeline with an outcome-halt dep), with dedicated pipeline and manager tests. The long hand-rolled cascade this section described no longer exists, and a `stagedRun` conversion is NOT required (the landed raw pipeline already satisfies ADR 0004 and the one-direct-pipeline rule; converting it would churn a green path for no composition gain). The remaining `DirectSteerFlushOutcome` contract stays exactly as landed.
+- **Proposed combinator**: none — keep the landed `direct-steer-flush-pipeline.ts` as-is; no second version is ever added.
 - **Input snapshot design**:
   ```ts
   interface DirectSteerFlushState {
@@ -102,7 +104,11 @@ The repo already has several proven pipelines. Use these as the model for each s
   - `proceed`
 - **Shell/effect wiring**: The `TaskAgentManager` calls `runDirectSteerFlush({ sessionId, bufferedEntries })`. Effects call `db.getUserMessagesByStatus`, `db.saveUserMessage`, `deliverMessage`, `db.updateMessageStatus`, `publishMessageStatusChanged`. `passengerDbId` is a shared mutable box, similar to `SpawnAttemptBox` in `spawn-flow.ts`, because it must be visible to later effect/resnapshot stages. The saved steer row gets its OWN external mutable box for the same reason (review correction round 22: a `stagedRun` effect cannot return the row or persist a `steerDbId` assignment on its copied view).
 - **Step-by-step migration**:
-  1. Move `deliverDirectSteerUnderCoordination` into `stagedRun('direct-steer-flush', (s) => [...])`.
+  1. Superseded (review correction PR #2983): steps 2-13 below predate the
+     landed `direct-steer-flush-pipeline.ts` and are KEPT FOR HISTORY ONLY —
+     do NOT implement them; they would add a second version of an operation
+     that is already wired. The only permissible follow-up is a pins-only
+     slice if a coverage gap in the existing suites is demonstrated.
   2. First `snapshot` gathers session, processing status, parent-task limited, deferred rows, and partitions entries.
   3. `decide` stages express the admission branches DIRECTLY (review
      correction: no separately executed `decideDirectSteerFlush` `decisionRun`
@@ -942,10 +948,10 @@ The repo already has several proven pipelines. Use these as the model for each s
    - `validateWorkflowModelOverrides` (plain validation helpers destined for the `spaceTask.update` pipeline)
    - `task-target-resolution-pipeline.ts` (for `get_task` / `get_task_detail` / `list_task_members`)
 
-2. **Phase 1 — Shared task mutation decision/pipeline modules**
-   - Extract `task-update-routing-pipeline.ts`, `task-publish-pipeline.ts`, `task-archive-pipeline.ts`.
-   - Unify `spaceTask.update`, `spaceTask.publish`, `spaceTask.approvePendingCompletion`, and their tool counterparts on the new shared cores.
-   - Update `space-tool-pipeline.ts` to consume the shared `decideTaskUpdate`.
+2. **Phase 1 — Complete per-caller task pipelines over shared plain routing logic**
+   - KEEP `routeTaskUpdate`/`routePublishTask`/`routeArchiveTask` as ordinary pure shared helpers in `task-transition-routing.ts` — no `task-update-routing-pipeline.ts` or other new runner modules (review correction PR #2983: the old extraction bullets reintroduced the nested composition boundary the corrected design removed).
+   - Compose each caller's COMPLETE operation pipeline (validation + routing gates as stages → mutation effect → `space.task.updated` emission): `spaceTask.update`, `spaceTask.publish`, `spaceTask.approvePendingCompletion`, `publish_task`/`archive_task` tools, and the `onPublishTask`/`onArchiveTask` callbacks.
+   - `space-tool-pipeline.ts` keeps its gates as plain logic consumed by the tool's own complete pipeline — no shared `decideTaskUpdate` runner to invoke.
 
 3. **Phase 2 — Staged effect flows with clear atomicity**
    - `approve-pending-completion-pipeline.ts`
@@ -1031,7 +1037,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P7 — `refactor(space): wire the message router to in-pipeline node-agent target resolution`
 
 - 🔧 apply — prod Δ ≲60, test Δ ≲100
-- **Scope**: `agent-message-router.ts` (and test callers) consume the P6 stages inside the one message-routing pipeline; the hand-rolled resolver body is deleted; the deprecated re-export remains until P67.
+- **Scope**: `agent-message-router.ts` (and test callers) consume the P6 stages inside the one message-routing pipeline; the hand-rolled resolver body is deleted; the deprecated re-export remains until P64.
 - **Lands**: `send`'s generic delivery path resolves targets inside its single pipeline; one nested runner per target is never introduced.
 - **Excludes**: `decideGenericAddressRouting` (already final per P4).
 - **Tests**: `agent-message-routing-gates.test.ts`, `agent-message-routing-pipeline.test.ts`, `agent-message-router.test.ts`.
@@ -1060,7 +1066,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - 🔧 apply — prod Δ ≲100, test Δ ≲150
 - **Scope**: In `packages/daemon/src/lib/space/tools/space-agent-tools.ts`: `get_task_detail` runs the P9 `decisionRun` and maps its decision to `jsonResult`; `list_task_members` composes the shared target-resolution gates INTO its ONE complete `list-task-members` pipeline, with the workflow-run branch (null run → `success: true, executions: []` plus the existing `task_id` and the `This task has no associated workflow run.` message) and the `nodeExecutionRepo.listByWorkflowRun` read as STAGES — no admission-only fragment with a shell-side execution read (review correction round 23).
 - **Lands**: both lookup tools share one admission core, and `list_task_members` is a single complete pipeline; P8 pins stay green.
-- **Excludes**: `send_message_to_task` (P59–P61) and the node-agent tool (P11).
+- **Excludes**: `send_message_to_task` (P56–P58) and the node-agent tool (P11).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts` (missing identifier / not found / space mismatch rows).
 - **Depends on**: P9.
 
@@ -1114,7 +1120,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P16 — `feat(space): add complete task publish pipeline core (unwired)`
 
 - ➕ additive core — prod Δ ≲100, test Δ ≸200
-- **Scope**: One complete mixed publish pipeline (admission stages running `routePublishTask` as shared plain logic → `publishTask` effect stage → `space.task.updated` emission stage INSIDE the pipeline before its halt, all in the same composition, deps injected). NOT an admission-only runner with publications left in shells (review corrections rounds 21/23 — a shell effect would let callers skip the emission). Parallel-safe leaf.
+- **Scope**: One complete mixed publish pipeline (admission stages running `routePublishTask` as shared plain logic → `publishTask` effect stage → `space.task.updated` emission stage INSIDE the pipeline before its halt, all in the same composition, deps injected). NOT an admission-only runner with publications left in shells (review corrections rounds 21/23 — a shell effect would let callers skip the emission). Review correction (PR #2983): the emission stage is BEST-EFFORT with a local `.catch(...)` + log, matching today's publish-then-notify paths — the task is already committed, so an event-bus failure must NOT turn a successful mutation into a failed request (callers would retry an operation that now rejects because the task is no longer a draft). The same best-effort emission rule applies to the archive, approval, and update pipelines' publication stages. Parallel-safe leaf.
 - **Lands**: the complete publish operation exists as a named pipeline; no caller wired.
 - **Excludes**: RPC/tool/callback wiring (P17–P19).
 - **Tests**: branch rows (reject not-found / not-in-space / not-draft; publish effect + emission ordering).
@@ -1278,7 +1284,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P34 — `feat(goals): add synchronous atomic claim pipeline (unwired)`
 
 - ➕ additive core — prod Δ ≲120, test Δ ≲250
-- **Scope**: Direct sync `superpipe` pipeline with `.end` shaped to run inside the existing `runAtomic` (never `stagedRun` — `endAsync` would commit the transaction early): gather loads notification/goal/`authorizedAgentIds`; decide runs the already-applied gate then the authorization/identity/revision gates IMPORTED directly from `claim-admission-gates.ts` (no `claimAdmissionRun` nesting), halting ONLY on `deny` (a blanket `!decided` halt would no-op every admitted claim); guarded effect `apply-goal-update` (when `admit` and `mutatesGoalState`); `update-notification-status` guarded to `admit` only. Parallel-safe leaf.
+- **Scope**: Direct sync `superpipe` pipeline with `.end` shaped to run inside the existing `runAtomic` (never `stagedRun` — `endAsync` would commit the transaction early): gather loads notification/goal/`authorizedAgentIds`; decide runs authorization → identity gates IMPORTED directly from `claim-admission-gates.ts` (no `claimAdmissionRun` nesting), THEN the already-applied return for retries whose notification already carries `dispositionStatus` — which intentionally SKIPS revision validation — and the unsuperseded/revision gates run only on PENDING claims (review correction PR #2983: already-applied-first would classify an unauthorized retry as `already_applied`, and revision-before-already-applied would deny an authorized idempotent retry after the goal revision advances as `stale_revision`), halting ONLY on `deny` (a blanket `!decided` halt would no-op every admitted claim); guarded effect `apply-goal-update` (when `admit` and `mutatesGoalState`); `update-notification-status` guarded to `admit` only. Parallel-safe leaf.
 - **Lands**: the atomic claim pipeline exists; `goal-service.ts` still runs its inline path.
 - **Excludes**: wiring inside `runAtomic` (P35).
 - **Tests**: gate-order rows, admit/deny/already-applied arms, no-redundant-write row.
@@ -1289,7 +1295,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - 🔧 apply — prod Δ ≲60, test Δ ≲100
 - **Scope**: The `runAtomic` block in `goal-service.ts` executes the P34 pipeline; `params.apply` is not awaited if synchronous.
 - **Lands**: the claim runs as one atomic named composition; P33 pins stay green.
-- **Excludes**: `handleTaskTerminal` (P55–P57).
+- **Excludes**: `handleTaskTerminal` (P52–P54).
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`.
 - **Depends on**: P34.
 
@@ -1323,7 +1329,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P39 — `feat(goals): add goal-automation admission pipelines with enqueue effects (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types-dominated cap), test Δ ≲300
-- **Scope**: New `goal-automation-admission-pipeline.ts` with TWO complete mixed pipelines: `onTaskCompleted` (snapshot reads evidence/cursor inputs; admission gates `notApplicable`, `disabled`, `ambiguousScope` (ambiguity flag snapshotted separately, winning over `missingScope`), `missingScope`, `belowThreshold` (carries `count`), `proceed`; guarded `enqueue` effect stage in the SAME composition) and `onSelfNag` (gates `disabled`, `missingScope`, `notApplicable`, `proceed`; guarded `enqueue` stage). No admission-only variant with an imperative `if (proceed) enqueue` outside (review corrections). Parallel-safe leaf.
+- **Scope**: New `goal-automation-admission-pipeline.ts` with TWO complete DIRECT SYNCHRONOUS `superpipe` pipelines using `.end` (review correction PR #2983: `onTaskCompleted` is invoked synchronously inside `handleTaskTerminal`'s `runAtomic` block and P53 keeps it a synchronous best-effort effect — a `stagedRun`/`.endAsync` composition would return a Promise the transaction never awaits, enqueueing after commit with rejections bypassing the surrounding try/catch; same discipline as the schedule-sync and goal-service sections): `onTaskCompleted` (snapshot reads evidence/cursor inputs; admission gates `notApplicable`, `disabled`, `ambiguousScope` (ambiguity flag snapshotted separately, winning over `missingScope`), `missingScope`, `belowThreshold` (carries `count`), `proceed`; guarded `enqueue` effect stage in the SAME composition) and `onSelfNag` (gates `disabled`, `missingScope`, `notApplicable`, `proceed`; guarded `enqueue` stage). No admission-only variant with an imperative `if (proceed) enqueue` outside (review corrections). Parallel-safe leaf.
 - **Lands**: both automation operations exist as one-pipeline compositions with their job-queue effects.
 - **Excludes**: service rewiring (P40, P41).
 - **Tests**: the P38 admission tables re-run against the pipelines, independent of the job queue.
@@ -1379,10 +1385,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P45 — `feat(space): add claimPostApprovalDispatch reservation CAS primitive (unwired)`
 
 - ➕ additive core — prod Δ ≲80, test Δ ≲200
-- **Scope**: New task-repo primitive `claimPostApprovalDispatch`: a conditional update where `status = 'approved'` AND `postApprovalSessionId` is either NULL or the EXACT dead session ID observed by the caller's liveness probe (so dead-session retries do not lose the CAS forever); plus the conditional (token-scoped) release. Parallel-safe leaf.
+- **Scope**: New task-repo primitive `claimPostApprovalDispatch`: a conditional update where `status = 'approved'` AND `postApprovalSessionId` is either NULL or the EXACT dead session ID observed by the caller's liveness probe (so dead-session retries do not lose the CAS forever); plus the conditional (token-scoped) release. Review correction (PR #2983): the reservation token must be stored in a SEPARATE durable field (e.g. `post_approval_dispatch_token` + expiry) with its schema migration — NEVER in `postApprovalSessionId`: a token stored there is observed by concurrent callers as a session with no live process, satisfies the "exact dead session ID" replacement condition, and lets the second caller overwrite the first claim and spawn a second session — the exact race this primitive closes. Reservation-form values are ineligible for dead-session replacement by construction.
 - **Lands**: the reservation primitive the route pipeline requires exists and is tested in isolation.
 - **Excludes**: any caller.
-- **Tests**: CAS unit rows: win, lose, dead-ID clear-and-claim, token-scoped release.
+- **Tests**: CAS unit rows: win, lose, dead-ID clear-and-claim, token-scoped release, and a row proving a LIVE reservation token is NOT treated as a dead session ID (no replacement while the claim is in flight).
 - **Depends on**: P44.
 
 ### P46 — `feat(space): add post-approval route stages for admission and reservation (unwired)`
@@ -1408,7 +1414,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - 🔧 apply — prod Δ ≲80, test Δ ≲150
 - **Scope**: The `PostApprovalRouter` shell gathers the snapshot and executes the P47 pipeline with its deps; the imperative if-cascade is deleted.
 - **Lands**: the most effect-heavy routing site is one named composition; P44 pins stay green.
-- **Excludes**: changes to `goalService.handleTaskTerminal` itself (P55–P57).
+- **Excludes**: changes to `goalService.handleTaskTerminal` itself (P52–P54).
 - **Tests**: `post-approval-router.test.ts`, `post-approval-routing-integration.test.ts`.
 - **Depends on**: P47.
 
@@ -1426,7 +1432,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲300
 - **Scope**: New `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts` hosting the COMPLETE `activateTargetSessionsForMessage` operation as ONE mixed/resnapshot pipeline (reset, workflow activation, resnapshot, and spawn effects included); `decideActivationRouting` is RETAINED as the exported plain classification helper the pipeline's stages call (with the dead-worker `reset_pending_and_continue` behavior) — no standalone `activation-routing` `decisionRun` executing three nested runners. The normalized-to-`null` `existing` fact is preserved in the input snapshot.
 - **Lands**: the complete activation business path exists as one composition.
-- **Excludes**: `TaskAgentManager` wiring (P51); the `activateNode` effect inside `send_message_to_task` (P59–P61).
+- **Excludes**: `TaskAgentManager` wiring (P51); the `activateNode` effect inside `send_message_to_task` (P56–P58).
 - **Tests**: stage rows for reset/activation/spawn arms reusing the P49 table.
 - **Depends on**: P49.
 
@@ -1435,38 +1441,11 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - 🔧 apply — prod Δ ≲80, test Δ ≲150
 - **Scope**: `task-agent-manager.ts` activation logic delegates to the P50 pipeline; the imperative outer cascade is deleted.
 - **Lands**: activation is one named composition; the P49 pins stay green.
-- **Excludes**: direct-steer flush (P52–P54).
+- **Excludes**: direct-steer flush (already migrated — no slices; review correction PR #2983).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts` extended to the wired operation.
 - **Depends on**: P50.
 
-### P52 — `test(space): pin direct-steer flush contract`
-
-- 📌 pins — prod Δ = 0, test Δ ≲250
-- **Scope**: Pin `deliverDirectSteerUnderCoordination` (`#1398 continuation`): the resnapshot between passenger save and steer save; passenger preservation when the session leaves `processing`; the consumed-row `messages.statusChanged` publication on that race branch; the failed-row publication on enqueue throw; the `recordDirectSteerEnqueued`/per-class metric counters; the `{ enqueued: true, eventCount }` result. Parallel-safe leaf.
-- **Lands**: the exact resnapshot timing and publication contract is pinned.
-- **Excludes**: production changes.
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts`.
-- **Depends on**: none.
-
-### P53 — `feat(space): add direct-steer-flush staged core (unwired)`
-
-- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
-- **Scope**: `stagedRun('direct-steer-flush')` per the per-site steps: admission branches (`sessionMissing`, `sessionNotProcessing`, `parentTaskLimited`, `noDeferredRows`, `noSteerEssences`, `proceed`) as direct decide stages; `save-passenger-copy` with the `discardPassengerCopy` compensation; resnapshot; the second decide aborting only AFTER a guarded `consume-passenger-copy` cleanup effect (including the consumed row's publication — `stagedRun` does not unwind compensations on a successful halt); `save-steer-row` writing into its OWN external mutable box with a resnapshot so failure handling consumes the SAVED row; `enqueue-steer-delivery` marking/publishing the failed row on throw and triggering the passenger compensation; `consume-source-rows`; `record-steer-metrics`; `publish-status-transitions`. No retries (ADR).
-- **Lands**: the complete flush flow exists as one staged composition.
-- **Excludes**: manager wiring (P54); the outer flush loop (stays outside).
-- **Tests**: per-stage rows with mocked `saveUserMessage`, `deliverMessage`, `updateMessageStatus`, covering the race branch and both publication points.
-- **Depends on**: P52.
-
-### P54 — `refactor(space): run deliverDirectSteerUnderCoordination on the staged pipeline`
-
-- 🔧 apply — prod Δ ≲80, test Δ ≲200
-- **Scope**: `task-agent-manager.ts` runs the P53 pipeline via `runDirectSteerFlush({ sessionId, bufferedEntries })`; add the parity harness `task-agent-manager-direct-steer-pipeline.test.ts`.
-- **Lands**: the `#1398` flow is one named composition with identical timing and telemetry.
-- **Excludes**: retry logic (forbidden).
-- **Tests**: `task-agent-manager-direct-steer.test.ts` plus the new parity/per-stage suite.
-- **Depends on**: P53.
-
-### P55 — `test(goals): pin handleTaskTerminal contract`
+### P52 — `test(goals): pin handleTaskTerminal contract`
 
 - 📌 pins — prod Δ = 0, test Δ ≲300
 - **Scope**: Pin `handleTaskTerminal` in `goal-service.ts`: foreign-space goal returns `null` before `runAtomic`; nonterminal transitions return the structured result (current goal, `nextTask: null`, `terminalGeneration`, `notification: null`); an existing `terminalGeneration` notification makes the retry return BEFORE clearing the active task or repeating any bookkeeping; Forge evidence capture and goal automation are best-effort with local catches; post-commit `emitTaskCreated`/`onOutcomeNotification` honoring `deferPostCommitEffects`. Parallel-safe leaf.
@@ -1475,25 +1454,25 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts`, `packages/daemon/tests/unit/5-space/runtime/goal-outcome-wake-flip.test.ts`.
 - **Depends on**: none.
 
-### P56 — `feat(goals): add synchronous handleTaskTerminal pipeline core (unwired)`
+### P53 — `feat(goals): add synchronous handleTaskTerminal pipeline core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
 - **Scope**: Direct sync `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effects, shaped to run inside `runAtomic` — never `stagedRun`): admission gates (missing task/goal halt; goal-space mismatch returns `null`; nonterminal stamps the structured result BEFORE halting); the PLAIN terminal-status check as the decide stage (NOT `decideReportableTerminal`, which is invoked only at the notification stage); `update-task` → resnapshot → `already-notified` halt → `clear-active-task`, `record-goal-event`, best-effort `capture-evidence`/`run-automation` (local catch boundaries retained), best-effort `create-next-task`, resnapshot, `record-outcome-notification`; state carries `deferPostCommitEffects`.
 - **Lands**: the complete terminal bookkeeping chain exists as one sync composition.
-- **Excludes**: wiring inside `runAtomic` and the post-commit shell (P57); any `runAtomic` async conversion (off the table).
+- **Excludes**: wiring inside `runAtomic` and the post-commit shell (P54); any `runAtomic` async conversion (off the table).
 - **Tests**: stage rows for every arm, the idempotent-retry halt, and the best-effort catch boundaries.
-- **Depends on**: P55.
+- **Depends on**: P52.
 
-### P57 — `refactor(goals): run handleTaskTerminal on the sync atomic pipeline`
+### P54 — `refactor(goals): run handleTaskTerminal on the sync atomic pipeline`
 
 - 🔧 apply — prod Δ ≲80, test Δ ≸200
-- **Scope**: The `runAtomic` block executes the P56 pipeline using transaction-bound repo methods; the post-commit shell keeps `emitTaskCreated` and `onOutcomeNotification` with the `setImmediate` deferral when `transition.deferPostCommitEffects` is set.
+- **Scope**: The `runAtomic` block executes the P53 pipeline using transaction-bound repo methods; the post-commit shell keeps `emitTaskCreated` and `onOutcomeNotification` with the `setImmediate` deferral when `transition.deferPostCommitEffects` is set.
 - **Lands**: terminal transitions are one atomic named composition; migrated goal progress keeps waking subscribers.
 - **Excludes**: in-flow retries.
 - **Tests**: `space-goal-service.test.ts`, `goal-outcome-wake-flip.test.ts`, plus nonterminal and already-notified parity rows.
-- **Depends on**: P56.
+- **Depends on**: P53.
 
-### P58 — `test(tools): pin send_message_to_task delivery arms`
+### P55 — `test(tools): pin send_message_to_task delivery arms`
 
 - 📌 pins — prod Δ = 0, test Δ ≲350 (split by family: target-resolution arms vs delivery-mode arms)
 - **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: target disambiguation (`task_id`/`task_number`), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the caught `activateNode` failure returning `{ success: false, error }`, and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on. Parallel-safe leaf.
@@ -1502,34 +1481,34 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
 - **Depends on**: none.
 
-### P59 — `feat(tools): add deliver-task-message target-admission core (unwired)`
+### P56 — `feat(tools): add deliver-task-message target-admission core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲250
 - **Scope**: First half of the ONE `deliver-task-message` pipeline: `DeliverTaskMessageState`; snapshot stages running the target parse (`ParsedAddress`), handle resolution, and execution resolution; the target-admission gates (`task_id`/`task_number`, space, archived, target presence, workflow run) as direct inline stages; and the effect recording `replyRoutingRegistry.set(...)` BEFORE all worker delivery branches.
 - **Lands**: the admission half of the delivery business path exists as pipeline stages.
-- **Excludes**: delivery-mode gates and effect arms (P60); tool wiring (P61).
+- **Excludes**: delivery-mode gates and effect arms (P57); tool wiring (P58).
 - **Tests**: admission rows plus the reply-routing parity pin.
-- **Depends on**: P58.
+- **Depends on**: P55.
 
-### P60 — `feat(tools): add deliver-task-message delivery-mode stages and compose the pipeline (unwired)`
+### P57 — `feat(tools): add deliver-task-message delivery-mode stages and compose the pipeline (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≸350
 - **Scope**: Remaining stages plus the single composed `deliver-task-message` pipeline (ONE pipeline — no nested `decisionRun`s): self-guarding delivery-mode gates (`injectLive`, `activateAndInject`, `queue`, `deliverLongTerm`, first match wins); guarded effect arms `deliverToSpaceAgent`, `injectLive` (a stale-live-session throw diverts into activation via an `inject-failed` branch or in-stage catch), `activate` with an explicit caught-failure branch, `resnapshot` after activation, `injectAfterActivation`, `queue`; `halt` returning `DeliverTaskMessageResult`. Activation is not compensable — current fallback semantics are preserved.
 - **Lands**: the complete delivery pipeline exists unwired.
-- **Excludes**: folding `AgentMessageRouter` into the pipeline (long-term delivery keeps delegating); tool wiring (P61).
+- **Excludes**: folding `AgentMessageRouter` into the pipeline (long-term delivery keeps delegating); tool wiring (P58).
 - **Tests**: arm rows for inject/activate/queue fallback and the stale-live-session divert.
-- **Depends on**: P59.
+- **Depends on**: P56.
 
-### P61 — `refactor(tools): run send_message_to_task on the deliver-task-message pipeline`
+### P58 — `refactor(tools): run send_message_to_task on the deliver-task-message pipeline`
 
 - 🔧 apply — prod Δ ≲100, test Δ ≲150
-- **Scope**: The tool handler executes the P60 pipeline; `auditing` and `jsonResult` mapping stay in the shell.
-- **Lands**: the tool's if-cascade is one named composition; P58 pins stay green.
+- **Scope**: The tool handler executes the P57 pipeline; `auditing` and `jsonResult` mapping stay in the shell.
+- **Lands**: the tool's if-cascade is one named composition; P55 pins stay green.
 - **Excludes**: the task-lookup admission core (already final in P10/P11).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
-- **Depends on**: P60.
+- **Depends on**: P57.
 
-### P62 — `test(events): pin deferred fold behaviors`
+### P59 — `test(events): pin deferred fold behaviors`
 
 - 📌 pins — prod Δ = 0, test Δ ≲250
 - **Scope**: Pin both folds in `packages/daemon/src/lib/external-events/deferred-event-digest.ts`: the no-digest-rows halt; deterministic-UUID idempotency (a re-run finds the existing fold row); the supersede-then-save-then-mark ordering; the overflow cap boundary; fold-vs-raw selection. Parallel-safe leaf.
@@ -1538,52 +1517,52 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`.
 - **Depends on**: none.
 
-### P63 — `feat(events): add fold-deferred-at-flush staged core (unwired)`
+### P60 — `feat(events): add fold-deferred-at-flush staged core (unwired)`
 
 - ➕ additive core — prod Δ ≲120, test Δ ≲250
 - **Scope**: `stagedRun('fold-deferred-at-flush')` with `FlushFoldState`: `partitionDeferredExternalEventRows` as the first decide stage (halts `no-fold` on empty `digestRows`); effects `supersede-stale-folds` → `save-fold-row` (idempotent, deterministic UUID, return stored via an EXTERNAL MUTABLE BOX followed by a `resnapshot` — `stagedRun` effects return only `void`/`won`/`superseded` and receive a shallow-copied view) → `mark-sources-superseded`; `halt` returns `DeferredEventDigestFlushResult`.
 - **Lands**: the flush fold exists as one staged composition.
-- **Excludes**: wiring (P64); the optional single `foldDeferredRows` repo primitive (open question 4).
+- **Excludes**: wiring (P61); the optional single `foldDeferredRows` repo primitive (open question 4).
 - **Tests**: staged rows — no digest rows, duplicate deterministic UUID, failure after save before mark.
-- **Depends on**: P62.
+- **Depends on**: P59.
 
-### P64 — `refactor(events): run flush folding on the staged pipeline`
+### P61 — `refactor(events): run flush folding on the staged pipeline`
 
 - 🔧 apply — prod Δ ≲60, test Δ ≲100
-- **Scope**: `foldDeferredExternalEventsAtFlush` executes the P63 pipeline with `DeferredEventDigestRowOps` injected as a dep; the flush loop stays outside.
-- **Lands**: the flush fold is one named composition; P62 pins stay green.
-- **Excludes**: the overflow fold (P65, P66).
+- **Scope**: `foldDeferredExternalEventsAtFlush` executes the P60 pipeline with `DeferredEventDigestRowOps` injected as a dep; the flush loop stays outside.
+- **Lands**: the flush fold is one named composition; P59 pins stay green.
+- **Excludes**: the overflow fold (P62, P63).
 - **Tests**: `deferred-event-digest.test.ts` including the overflow interaction row.
-- **Depends on**: P63.
+- **Depends on**: P60.
 
-### P65 — `feat(events): add fold-deferred-overflow staged core (unwired)`
+### P62 — `feat(events): add fold-deferred-overflow staged core (unwired)`
 
 - ➕ additive core — prod Δ ≲100, test Δ ≸200
-- **Scope**: `stagedRun('fold-deferred-overflow')` with `OverflowFoldState`: `planDeferredExternalEventOverflow` as the decide stage (`noOverflow` halts with `null`); `save-overflow-envelope` storing the saved envelope (`dbId` + UUID-adjusted message) in an external mutable box declared OUTSIDE the run; `mark-overflow-superseded`; a `resnapshot` copying the saved envelope back into ctx; `halt` returns `DeferredEventOverflowFoldResult`.
+- **Scope**: `stagedRun('fold-deferred-overflow')` with `OverflowFoldState`: `planDeferredExternalEventOverflow` as the decide stage (`noOverflow` halts with `null`); `save-overflow-envelope` storing the saved envelope (`dbId` + UUID-adjusted message) in an external mutable box ALLOCATED PER INVOCATION — created inside the exported per-call shell and captured by that invocation's closure, NEVER at module scope (review correction PR #2983: a reusable runner shares a module-scope box across concurrent folds, so two sessions folding at once overwrite each other between save and resnapshot and one result returns the other's `dbId`/message); `mark-overflow-superseded`; a `resnapshot` copying the saved envelope back into ctx; `halt` returns `DeferredEventOverflowFoldResult`.
 - **Lands**: the overflow fold exists as one staged composition with the same external-box discipline.
-- **Excludes**: wiring (P66).
+- **Excludes**: wiring (P63).
 - **Tests**: cap-boundary and fold-vs-raw rows.
-- **Depends on**: P63 (shares the box pattern and module).
+- **Depends on**: P60 (shares the box pattern and module).
 
-### P66 — `refactor(events): run overflow folding on the staged pipeline`
+### P63 — `refactor(events): run overflow folding on the staged pipeline`
 
 - 🔧 apply — prod Δ ≲50, test Δ ≲80
-- **Scope**: `foldDeferredExternalEventOverflow` executes the P65 pipeline.
-- **Lands**: both deferred folds are named compositions; P62 pins stay green.
+- **Scope**: `foldDeferredExternalEventOverflow` executes the P62 pipeline.
+- **Lands**: both deferred folds are named compositions; P59 pins stay green.
 - **Excludes**: the transactional repo primitive (open question 4).
 - **Tests**: `deferred-event-digest.test.ts`.
-- **Depends on**: P65.
+- **Depends on**: P62.
 
 **Trailing cleanup**
 
-### P67 — `chore(space): remove migration shims and superseded helpers`
+### P64 — `chore(space): remove migration shims and superseded helpers`
 
 - cleanup — prod Δ ≲100, test Δ ≲50
 - **Scope**: Delete the deprecated `resolveNodeAgentTargets` re-export, the superseded `validateWorkflowModelOverrides` body, and any imperative remnants the applies left behind (e.g. `validateSubscriptionTargetTask` if still exported); sweep for orphaned helpers. Add an ADR note only if one of the doc's open questions (4 or 5) resolves into a decision during implementation.
 - **Lands**: only the pipeline-based paths remain.
 - **Excludes**: behavior changes.
 - **Tests**: full affected suites stay green.
-- **Depends on**: P57, P61, P66 (the last applies in each file family).
+- **Depends on**: the FINAL apply slice for every helper it removes — P7 (resolver consumers), P24 (`validateWorkflowModelOverrides` callers), P32 (subscription wiring), P54 (`handleTaskTerminal`), P58 (schedule sync), P63 (overflow fold) — not merely the last heavyweight slices (review correction PR #2983; numbering after the direct-steer slices' removal).
 
 ---
 
@@ -1595,4 +1574,4 @@ The slices follow the `Suggested migration order` phases and together cover ever
 4. **Deferred digest atomic primitive**: Should `foldDeferredExternalEventsAtFlush` and `foldDeferredExternalEventOverflow` be backed by a single `foldDeferredRows` repository primitive that supersedes and inserts under one transaction, rather than a multi-effect `stagedRun`?
 5. **Unification of tool and RPC shells**: Several task flows (`publish`, `approve`, `archive`, `update`) are duplicated between `space-agent-tools.ts`, `node-agent-tools.ts`, `space-task-handlers.ts`, and `task-agent-manager.ts`. Do we create a `space-task-operations.ts` module with shared shells, or keep the pipeline in one place and call it from each handler?
 6. ~~**Hot-path `decideGenericAddressRouting`**~~ Resolved by review: it stays an ordinary pure helper called inline in the per-target loop — no runner, so there is no overhead question.
-7. **Mid-turn steer resnapshot timing**: `deliverDirectSteerUnderCoordination` has a critical resnapshot between passenger save and steer save. How do we represent the `discardPassengerCopy` compensation in `stagedRun` so that it runs on any later stage failure, not just the steer save?
+7. ~~**Mid-turn steer resnapshot timing**~~ Resolved by review (PR #2983): moot — `deliverDirectSteerUnderCoordination` already runs the landed `direct-steer-flush-pipeline.ts` raw pipeline; no `stagedRun` conversion (and therefore no `stagedRun` compensation modeling) is planned for this site.
