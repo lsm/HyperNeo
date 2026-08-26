@@ -207,6 +207,10 @@ async function deliverAndAwaitConsumption(
     messageUuid: messageId,
     timeoutMs: deliveryConsumptionTimeoutMs(ctx.provider),
     signal: ctx.deps.disposeSignal,
+    getSendStatus:
+      ctx.provider === 'acp'
+        ? () => ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus
+        : undefined,
     deliver: () =>
       withSessionResetCoordination(sessionId, async () =>
         deliverAndMarkQueued({

@@ -1634,6 +1634,7 @@ export class TaskAgentManager {
       this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
     };
     repo.recordDeliveryAttempt(row.id, null);
+    repo.deferExpiration([row.id]);
     try {
       const outcome = await inject(spaceId, message, replyTo, row.id, {
         onConsumed: settleDelivered,

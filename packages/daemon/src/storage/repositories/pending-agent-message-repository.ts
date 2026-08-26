@@ -275,7 +275,7 @@ export class PendingAgentMessageRepository {
     this.db
       .prepare(
         `UPDATE pending_agent_messages
-				 SET expires_at = ?
+				 SET expires_at = MAX(expires_at, ?)
 				 WHERE id IN (${placeholders}) AND status = 'pending'`
       )
       .run(Date.now() + ttlMs, ...ids);

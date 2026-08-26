@@ -383,18 +383,36 @@ export async function awaitDeliveryConsumptionTolerant(args: {
   deliver: () => Promise<void>;
   timeoutMs?: number;
   signal?: AbortSignal;
+  getSendStatus?: () => string | null | undefined;
 }): Promise<{ consumed: boolean }> {
   const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  let statusPoll: ReturnType<typeof setInterval> | undefined;
   let onAbort: (() => void) | undefined;
-  const aborted = new Promise<boolean>((resolve) => {
+  const aborted = new Promise<{ consumed: boolean }>((resolve) => {
     if (!args.signal) return;
     if (args.signal.aborted) {
-      resolve(false);
+      resolve({ consumed: false });
       return;
     }
-    onAbort = () => resolve(false);
+    onAbort = () => resolve({ consumed: false });
     args.signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const terminal = new Promise<{ consumed: boolean }>((resolve) => {
+    if (!args.getSendStatus) return;
+    const check = () => {
+      const status = args.getSendStatus!();
+      if (status === 'consumed') {
+        signalDeliveryConsumed(args.sessionId, args.messageUuid);
+        if (statusPoll) clearInterval(statusPoll);
+        resolve({ consumed: true });
+      } else if (status === 'failed') {
+        if (statusPoll) clearInterval(statusPoll);
+        resolve({ consumed: false });
+      }
+    };
+    statusPoll = setInterval(check, MESSAGE_DELIVERY_PARK_MS);
+    check();
   });
   try {
     if (!args.signal?.aborted) {
@@ -410,18 +428,20 @@ export async function awaitDeliveryConsumptionTolerant(args: {
     }
     if (args.signal?.aborted) return { consumed: false };
     const won = await Promise.race([
-      consumed.promise.then(() => true as const),
-      new Promise<boolean>((resolve) => {
+      consumed.promise.then(() => ({ consumed: true }) as const),
+      new Promise<{ consumed: boolean }>((resolve) => {
         consumptionTimeout = setTimeout(
-          () => resolve(false),
+          () => resolve({ consumed: false }),
           deliveryConsumptionTimeoutOrDefault(args.timeoutMs)
         );
       }),
       aborted,
+      terminal,
     ]);
-    return { consumed: won };
+    return won;
   } finally {
     if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    if (statusPoll) clearInterval(statusPoll);
     if (onAbort && args.signal) args.signal.removeEventListener('abort', onAbort);
     consumed.cancel();
   }
