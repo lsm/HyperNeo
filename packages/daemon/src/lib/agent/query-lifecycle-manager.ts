@@ -592,6 +592,16 @@ export class QueryLifecycleManager {
 
     if (options?.prepend) {
       await stateManager.setQueued(messageId);
+      if (
+        options.queryGeneration !== undefined &&
+        this.ctx.getQueryGeneration?.() !== options.queryGeneration
+      ) {
+        messageQueue.remove(messageId);
+        this.logger.info(
+          `startQueryAndEnqueue: aborted prepend re-enqueue of ${messageId} (the originating query was superseded).`
+        );
+        return;
+      }
       void messageQueue
         .enqueueWithId(messageId, messageContent, false, { prepend: true })
         .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
@@ -644,6 +654,16 @@ export class QueryLifecycleManager {
     }
 
     if (options?.prepend) {
+      if (
+        options.queryGeneration !== undefined &&
+        this.ctx.getQueryGeneration?.() !== options.queryGeneration
+      ) {
+        messageQueue.remove(messageId);
+        this.logger.info(
+          `startQueryAndEnqueue: aborted prepend re-enqueue of ${messageId} (the originating query was superseded).`
+        );
+        return;
+      }
       internalEventBus.publish('message.sent', { sessionId: session.id }).catch((error) => {
         this.logger.warn('Failed to emit message.sent event', error);
       });

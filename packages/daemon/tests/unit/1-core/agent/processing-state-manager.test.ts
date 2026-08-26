@@ -801,7 +801,7 @@ describe('ProcessingStateManager', () => {
       waiterB.cancel();
     });
 
-    test('an enclosing drain resolves a carried fence from a later generation by its own owner', async () => {
+    test('an enclosing drain leaves a later-generation carried waiter pending for its own settle', async () => {
       let releaseCallback!: () => void;
       manager.setOnIdleCallback(
         () =>
@@ -832,7 +832,8 @@ describe('ProcessingStateManager', () => {
       await settleA;
       await waiterA.promise;
 
-      expect(resolvedB).toBe(true);
+      expect(resolvedB).toBe(false);
+      waiterB.cancel();
     });
 
     test('a rate-limit cooldown bound to a stale generation is not persisted', async () => {

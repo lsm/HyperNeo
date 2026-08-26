@@ -1018,7 +1018,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKAssistantMessage(message) && !this.isInvocationStale(invocationGeneration)) {
-      await this.handleAssistantMessage(message);
+      await this.handleAssistantMessage(message, invocationGeneration);
     }
 
     if (isSDKStatusMessage(message) && !this.isInvocationStale(invocationGeneration)) {
@@ -1587,7 +1587,10 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleAssistantMessage(message: SDKMessage): Promise<void> {
+  private async handleAssistantMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
     if (!isSDKAssistantMessage(message)) return;
@@ -1601,6 +1604,10 @@ export class SDKMessageHandler {
         timestamp: Date.now(),
       });
       this.repeatedToolErrorGuardrail.recordToolUse(toolCall.id, toolCall.name);
+      if (this.isInvocationStale(invocationGeneration)) {
+        this.logger.warn('Skipping remaining assistant tool publications: query replaced.');
+        return;
+      }
     }
     if (toolCalls.length > 0) {
       session.metadata = {

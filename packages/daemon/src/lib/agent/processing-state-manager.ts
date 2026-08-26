@@ -317,7 +317,8 @@ export class ProcessingStateManager {
             this.suppressedFenceCarries.some(
               (c) =>
                 c.queryGeneration === w.owner!.queryGeneration && c.turnToken === w.owner!.turnToken
-            )
+            ) &&
+            w.owner.queryGeneration === transitionOwner.queryGeneration
           ) {
             return true;
           }
@@ -404,12 +405,21 @@ export class ProcessingStateManager {
     if (ownerGeneration !== undefined && this.queryOwnerGeneration !== ownerGeneration) {
       return;
     }
+    const previousState = this.processingState;
     await this.setState({
       status: 'rate_limit_cooldown',
       retryCount: state.retryCount,
       maxRetries: state.maxRetries,
       retryAt: state.retryAt,
     });
+    if (
+      ownerGeneration !== undefined &&
+      this.queryOwnerGeneration !== ownerGeneration &&
+      this.processingState.status === 'rate_limit_cooldown' &&
+      (this.processingState as { retryAt?: number }).retryAt === state.retryAt
+    ) {
+      await this.setState(previousState);
+    }
   }
 
   isWaitingForInput(): boolean {

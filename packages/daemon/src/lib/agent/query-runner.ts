@@ -1300,9 +1300,15 @@ export class QueryRunner {
           const { getProviderService: getProviderServiceRestore } = await import(
             '../provider-service.ts'
           );
-          const providerServiceRestore = getProviderServiceRestore();
-          providerServiceRestore.restoreEnvVars(originalEnvVars);
-          this.ctx.originalEnvVars = {};
+          if (this.ctx.getQueryGeneration() !== queryGeneration) {
+            logger.warn(
+              'Skipping finalizer env restoration: a replacement query owns the session.'
+            );
+          } else {
+            const providerServiceRestore = getProviderServiceRestore();
+            providerServiceRestore.restoreEnvVars(originalEnvVars);
+            this.ctx.originalEnvVars = {};
+          }
         }
 
         if (
@@ -1324,8 +1330,10 @@ export class QueryRunner {
           this.ctx.queryAbortController = null;
         }
 
-        this._lastConsumedUserMessage = null;
-        this._turnConsumedUserMessages = [];
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this._lastConsumedUserMessage = null;
+          this._turnConsumedUserMessages = [];
+        }
         this._consumedUserMessages.delete(queryGeneration);
 
         if (this.ctx.queryPromise === queryPromiseBeforeFinalizerIdle) {
