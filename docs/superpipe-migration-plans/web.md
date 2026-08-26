@@ -262,15 +262,16 @@ anywhere in this plan.
 - **Input/output snapshot design.** Ctx =
   `{ latestMessage: SDKMessage | null; isProcessing: boolean; isCompacting?:
   boolean; streamingPhase?: StreamingPhase; streamingStartedAt?: number;
-  decision: string | 'fallback' | 'none' | null }`. Wrapper maps `'none'` →
-  `undefined`, `'fallback'` → `getNextFallbackAction()` (rotation stays in the
-  module, outside the pipeline), string → string. Superseded by review
-  correction, codex round 7: drop the `'fallback'` sentinel — the decision
-  union is `string | 'none' | null`, the TERMINAL gate itself calls
-  `getNextFallbackAction()` and decides the rotated label, and the wrapper
-  maps only `'none'` → `undefined`, so the whole business path (rotation
-  included) lives in the pipeline.
-- **Pure core design.** Gates: `gateNotProcessing` (decides `'none'`) →
+  decision: string | undefined | null }`. Superseded by review
+  corrections: codex round 7 dropped the `'fallback'` sentinel (the
+  TERMINAL gate itself calls `getNextFallbackAction()` and decides the
+  rotated label); codex round 21 drops the `'none'` sentinel too — the
+  decision union is `string | undefined | null`, `gateNotProcessing`
+  decides `undefined` DIRECTLY (non-null, so `decisionRun` treats it as
+  settled per `decision-pipeline.ts:10-15`), and the wrapper only returns
+  `ctx.decision`: no result mapping outside the composition.
+- **Pure core design.** Gates: `gateNotProcessing` (decides `undefined`,
+  codex round 21) →
   `gateCompacting` → `gateMessageAction` (decides
   `extractActionFromMessage(latestMessage)` when non-null) → `gatePhaseAction`
   (decides `getPhaseAction(...)`) → `gateFallback` (terminal — decides the
@@ -286,9 +287,10 @@ anywhere in this plan.
   1. Extend `src/lib/__tests__/status-actions.test.ts` with gate-order rows
      (not-processing beats everything; compacting beats message; message
      beats phase; phase beats fallback) and elapsed-seconds formatting cases.
-  2. Introduce the two-value decision union; extract gates; compose with
-     `decisionRun('current-action', [...])`; wrapper maps only
-     `'none'` → `undefined`.
+  2. Introduce the decision union (`string | undefined | null`); extract
+     gates; compose with `decisionRun('current-action', [...])`; the wrapper
+     only returns `ctx.decision` (codex round 21: `gateNotProcessing`
+     decides `undefined` directly).
 - **Tests.** Characterization above + a test asserting consecutive fallback
   results rotate in order (the terminal gate drives the rotator, preserving
   the rotation sequence across calls).
@@ -442,7 +444,16 @@ anywhere in this plan.
   index, `declaredSlotNamesExact`, plus the terminal
   `liveSessions: NodeLiveSession[]`, `unstartedSlots: string[]`,
   `outcome: NodeClickOutcome | null`. The `normalize` resolution
-  (`args.normalizeSlotName ?? normalizeSlotName`) happens in the wrapper.
+  slot-order index, `declaredSlotNamesExact`, plus the terminal
+  `liveSessions: NodeLiveSession[]`, `unstartedSlots: string[]`,
+  `outcome: NodeClickOutcome | null`. The `normalize` resolution is a
+  LEADING stage (codex round 21: `stageResolveNormalizer` stamps the
+  resolved normalizer onto ctx — `args.normalizeSlotName ??
+  normalizeSlotName` — and every later stage consumes `ctx.normalize`;
+  leaving that load-bearing choice in the wrapper keeps declared-slot
+  filtering, post-approval matching, and slot ordering outside the
+  composition, so its stages could never be exercised as the complete
+  operation).
 - **Pure core design.** Stages (each `(ctx) => ctx`, pure):
   `stageIndexExecutions` (phase 1, builds both maps, keeps the
   `declaredSlotNamesExact` set on ctx), `stageMergeActivityMembers` (phase 2),
@@ -1441,12 +1452,14 @@ optional router phase 2. No per-site section is left uncovered.
 - **Scope**: `packages/web/src/lib/status-actions.ts` — gate-order rows
   FIRST (not-processing beats everything; compacting beats message; message
   beats phase; phase beats fallback; elapsed-seconds formatting), then gates
-  `gateNotProcessing` → `gateCompacting` → `gateMessageAction` →
-  `gatePhaseAction` → `gateFallback` with the two-value decision union
+  `gateNotProcessing` (decides `undefined` directly — codex round 21) →
+  `gateCompacting` → `gateMessageAction` →
+  `gatePhaseAction` → `gateFallback` with the decision union
+  `string | undefined | null`
   (`Date.now()` stays inside `gatePhaseAction`; the fallback rotation owned
   by the TERMINAL gate calling `getNextFallbackAction()` — codex round 7,
-  reached only when every higher gate fell through; wrapper maps only
-  `'none'` → `undefined`; `extractActionFromMessage` stays a helper
+  reached only when every higher gate fell through; the wrapper only
+  returns `ctx.decision`; `extractActionFromMessage` stays a helper
   with its `as unknown as` narrowing).
 - **Budget**: prod Δ ≈ 55; test Δ ≈ 80.
 - **Lands**: the first cadence-sensitive site (streaming ticks) runs as a
@@ -1548,7 +1561,9 @@ optional router phase 2. No per-site section is left uncovered.
   `stageMergeActivityMembers` consults `sessionByExecId` for authoritative
   filtering; the finalize/post-approval stages consume the slot state) plus
   `liveSessions` / `unstartedSlots` / `outcome`; `resolveLabel` port and the
-  `args.normalizeSlotName ?? normalizeSlotName` resolution stay per-call;
+  a LEADING `stageResolveNormalizer` stamping the resolved normalizer onto
+  ctx (`args.normalizeSlotName ?? normalizeSlotName` — codex round 21);
+  `resolveLabel` port and the resolution stay per-call;
   daemon `as PipelineAPI` cast idiom.
 - **Budget**: prod Δ ≈ 110 — over the soft line because the four phases are
   meaty; if it will not fit, split as ➕ (exported stages unwired, imported
