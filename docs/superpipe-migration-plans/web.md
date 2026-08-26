@@ -415,7 +415,15 @@ anywhere in this plan.
   A pure `decisionRun` would force the map-building into gates awkwardly;
   direct composition matches the ADR default.
 - **Input/output snapshot design.** `ResolveNodeClickArgs` is already a pure
-  snapshot (arrays + two label/normalize function ports). Ctx extends it with
+  snapshot (arrays + two label/normalize function ports). Ctx extends it
+  with the cross-stage indexes built in phase 1 and threaded explicitly
+  (codex round 13: listing only the finalized arrays loses the state
+  later stages consume — `stageMergeActivityMembers` must consult
+  `sessionByExecId` to filter cancelled/pending/session-mismatched
+  executions against `liveBySession`, and the finalize/post-approval
+  stages need the slot order and declared-slot set): `liveBySession`
+  (the exec-authoritative session map), `sessionByExecId`, the slot-order
+  index, `declaredSlotNamesExact`, plus the terminal
   `liveSessions: NodeLiveSession[]`, `unstartedSlots: string[]`,
   `outcome: NodeClickOutcome | null`. The `normalize` resolution
   (`args.normalizeSlotName ?? normalizeSlotName`) happens in the wrapper.
@@ -584,9 +592,15 @@ anywhere in this plan.
      interpretation switch. This change ALSO performs the parser
      conversions deferred from step 2 (codex round 12): the exported
      `getSpaceIdFromPath` / `getSpaceEvolveFromPath` /
-     `getSpaceTasksTabFromPath` names remain, composed over the SAME gates
-     and pattern constants the pipeline uses — the pipeline calls the gates
-     directly, never the exported wrappers (round 6), so no runner nests
+     `getSpaceTasksTabFromPath` names remain, composed over separately
+     typed PARSER gates that share the pattern constants and ordinary pure
+     match helpers with the pipeline (codex round 13: the parsers decide
+     different shapes — `string`, `{ spaceId, tab }` — while the pipeline
+     decides a `SpaceRouteMatch`, so literally sharing gate functions would
+     rely on casts that can return the wrong shape at runtime; share the
+     CONSTANTS and helpers, never the gates) — the pipeline calls its own
+     route-match gates directly, never the exported wrappers (round 6), so
+     no runner nests
      inside the routing path once the imperative consumer is gone.
 - **Tests.** Parser suites stay green unchanged; phase 2 adds a
   `classifySpaceRoute` decision-table test (path → union member, including
@@ -1575,11 +1589,17 @@ optional router phase 2. No per-site section is left uncovered.
   `handlePopState`'s overlay short-circuit stays untouched. This slice ALSO
   performs the parser conversions deferred from PR 5 (codex round 12):
   `getSpaceIdFromPath`, `getSpaceEvolveFromPath`, and
-  `getSpaceTasksTabFromPath` become decisionRun compositions over the SAME
-  gates and pattern constants this pipeline uses — the exported names and
-  signatures remain for their own callers, and the pipeline calls the gates
-  directly, never the exported wrappers (round 6), so no runner nests
-  inside the routing path once the imperative consumer is gone.
+  `getSpaceTasksTabFromPath` become decisionRun compositions over
+  separately typed parser gates that share the pattern constants and
+  ordinary pure match helpers with the pipeline (codex round 13: the
+  parsers decide different shapes — `string`, `{ spaceId, tab }` — while
+  the pipeline decides a `SpaceRouteMatch`; share the CONSTANTS and
+  helpers, never the gate functions, or the casts can return the wrong
+  shape at runtime) — the exported names and
+  signatures remain for their own callers, and the pipeline calls its own
+  route-match gates directly, never the exported wrappers (round 6), so no
+  runner nests inside the routing path once the imperative consumer is
+  gone.
 - **Budget**: prod Δ likely ≈ 150+ on first authoring — the expected
   over-budget slice; the permitted split is ➕ (the pipeline module landed
   unwired with a route-union decision table: `/` → spacesList, unknown →
@@ -1615,8 +1635,12 @@ optional router phase 2. No per-site section is left uncovered.
    version? The pipeline migration is only worth it if the lib version
    survives this decision.
 3. **Router phase 2 appetite.** Is restructuring `applyPathToSignals` around
-   a `classifySpaceRoute` union wanted at all, or do the migrated parsers
-   (plus tests) suffice? The else-if signal cascade is the largest remaining
+   a `classifySpaceRoute` union wanted at all, or do the parser-matrix PINS
+   (plus tests) suffice — with the parsers kept as ordinary pure helpers
+   (codex round 13: absent phase 2 there are no migrated parsers; choosing
+   a conversion-only option would nest their runners inside the imperative
+   `applyPathToSignals` the round-12 correction forbids)? The else-if
+   signal cascade is the largest remaining
    hand-rolled gate chain in web, but it is also stable and fully covered;
    the rewrite touches the routing spine for modest readability gain.
 4. **`getCurrentAction` purity.** The streaming-duration `Date.now()` is the
