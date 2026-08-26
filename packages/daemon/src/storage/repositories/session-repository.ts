@@ -60,7 +60,10 @@ export class SessionRepository {
     return !!owner;
   }
 
-  createSession(session: Session, options?: { enforceWorkspaceOwnership?: boolean }): void {
+  createSession(
+    session: Session,
+    options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
+  ): void {
     const stmt = this.db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -94,15 +97,15 @@ export class SessionRepository {
     ];
 
     const spaceId = session.context?.spaceId;
-    const registeredPath = session.worktree?.mainRepoPath ?? session.workspacePath;
+    const ownershipPath = options?.ownershipPath;
     if (
       options?.enforceWorkspaceOwnership &&
       spaceId &&
-      registeredPath &&
+      ownershipPath &&
       this.workspaceTablesExist()
     ) {
       const tx = this.db.transaction(() => {
-        this.guardSpaceWorkspaceOwnership(spaceId, registeredPath);
+        this.guardSpaceWorkspaceOwnership(spaceId, ownershipPath);
         stmt.run(...values);
       });
       tx();

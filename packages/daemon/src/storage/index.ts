@@ -191,7 +191,10 @@ export class Database {
     }
   }
 
-  createSession(session: Session, options?: { enforceWorkspaceOwnership?: boolean }): void {
+  createSession(
+    session: Session,
+    options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
+  ): void {
     this.sessionRepo.createSession(session, options);
   }
 

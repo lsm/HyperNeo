@@ -446,7 +446,6 @@ describe('SessionLifecycle', () => {
         expect.objectContaining({
           status: 'pending_worktree_choice',
         }),
-        expect.anything(),
         expect.anything()
       );
     });
@@ -2063,5 +2062,37 @@ describe('SessionLifecycle - setWorkspace', () => {
     await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
 
     expect(mockDb.isWorkspaceRegisteredToSpace).not.toHaveBeenCalled();
+  });
+
+  it('re-checks registration after worktree creation and discards the worktree if it lapsed', async () => {
+    const lifecycleWithWorktrees = new SessionLifecycle(
+      mockDb,
+      mockWorktreeManager,
+      mockSessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      { ...config, disableWorktrees: false },
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+    (mockDb.isWorkspaceRegisteredToSpace as ReturnType<typeof mock>)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    (mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockResolvedValue({
+      isWorktree: true,
+      worktreePath: '/worktrees/test-session-id',
+      mainRepoPath: '/some/workspace',
+      branch: `session/${SESSION_ID}`,
+    });
+
+    const agentSession = makeAgentSession({ context: { spaceId: 'space-1' } });
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await expect(
+      lifecycleWithWorktrees.setWorkspace(SESSION_ID, '/some/workspace', 'worktree')
+    ).rejects.toThrow('no longer registered to space space-1');
+
+    expect(mockWorktreeManager.removeWorktree).toHaveBeenCalled();
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 });
