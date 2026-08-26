@@ -1078,6 +1078,28 @@ export class SDKMessageRepository {
     return { messages, total: countRow ? countRow.count : messages.length };
   }
 
+  listUserMessagesByUuidPrefix(
+    sessionId: string,
+    prefix: string,
+    limit = 100
+  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, sdk_message, timestamp FROM sdk_messages
+	       WHERE session_id = ?
+	         AND message_type = 'user'
+	         AND sdk_uuid LIKE ? || '%'
+	       ORDER BY timestamp DESC, rowid DESC
+	       LIMIT ?`
+      )
+      .all(sessionId, prefix, limit) as Array<{
+      id: string;
+      sdk_message: string;
+      timestamp: string;
+    }>;
+    return rows.map(inflatePersistedMessage);
+  }
+
   getMessageByStatusAndUuid(
     sessionId: string,
     status: SendStatus,

@@ -143,14 +143,13 @@ export function aggregateRender(ctx: RenderPendingDigestCtx): RenderPendingDiges
   return { ...ctx, digestText: buildExternalEventDigestMessage(ctx.essences ?? []) };
 }
 
+export const DETERMINISTIC_DIGEST_UUID_PREFIX = 'digest-';
+
 function deterministicDigestUuid(eventIds: string[]): string {
   const digest = createHash('sha256')
     .update([...eventIds].sort().join('\u0000'))
     .digest('hex');
-  return `digest-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(
-    16,
-    20
-  )}-${digest.slice(20, 32)}`;
+  return `${DETERMINISTIC_DIGEST_UUID_PREFIX}${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
 }
 
 export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {

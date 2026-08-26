@@ -127,6 +127,7 @@ import {
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
 import {
+  DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,
   type RenderPendingDigestOutcome,
   runRenderPendingDigest,
@@ -718,6 +719,7 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
+  private readonly immediateDispatchesInFlight = new Set<string>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1840,7 +1842,7 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    this.externalEventDeliveriesInFlight.add(deliveryKey);
+    this.immediateDispatchesInFlight.add(deliveryKey);
     try {
       const deps: ImmediateEventDeliveryDeps = {
         getTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -1890,7 +1892,7 @@ export class SpaceRuntime {
           `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
       );
     } finally {
-      this.externalEventDeliveriesInFlight.delete(deliveryKey);
+      this.immediateDispatchesInFlight.delete(deliveryKey);
     }
   }
 
@@ -1957,10 +1959,26 @@ export class SpaceRuntime {
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
         .flatMap((entry) => deferredExternalEventEntryEvents(entry).map((event) => event.eventId))
     );
+    for (const row of messages.listUserMessagesByUuidPrefix(
+      sessionId,
+      DETERMINISTIC_DIGEST_UUID_PREFIX
+    )) {
+      const membership = (row as { externalEventIds?: unknown }).externalEventIds;
+      if (Array.isArray(membership)) {
+        for (const eventId of membership) {
+          if (typeof eventId === 'string') durableEventIds.add(eventId);
+        }
+      }
+    }
     const claimedRows: ExternalEventDeliveryRecord[] = [];
     for (const row of scopedPending()) {
       if (claimedRows.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
-      if (this.externalEventDeliveriesInFlight.has(row.deliveryKey)) continue;
+      if (
+        this.externalEventDeliveriesInFlight.has(row.deliveryKey) ||
+        this.immediateDispatchesInFlight.has(row.deliveryKey)
+      ) {
+        continue;
+      }
       if (durableEventIds.has(row.eventId)) continue;
       const record = store.getById(row.eventId);
       if (
@@ -1998,7 +2016,19 @@ export class SpaceRuntime {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
-        const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        const membership = [
+          ...new Set(
+            claimedRows
+              .filter((row) => store.getById(row.eventId) !== null)
+              .map((row) => row.eventId)
+          ),
+        ];
+        const dbId = messages.saveUserMessage(
+          targetSessionId,
+          { ...message, externalEventIds: membership } as typeof message,
+          'deferred',
+          'system'
+        );
         return { dbId, replayed: false };
       },
       appendDigest: async (targetSessionId, message) => {
