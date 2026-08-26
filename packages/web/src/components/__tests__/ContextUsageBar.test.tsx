@@ -604,6 +604,21 @@ describe('ContextUsageBar', () => {
       expect(bufferZone).toBeTruthy();
     });
 
+    it('should render buffer zone when the daemon backstop owns the threshold', () => {
+      const usage: ContextInfo = {
+        ...usageWithAutoCompact,
+        isAutoCompactEnabled: false,
+        daemonBackstopActive: true,
+      };
+      const { container } = render(<ContextUsageBar contextUsage={usage} />);
+
+      const clickable = container.querySelector('[title="Click for context details"]')!;
+      fireEvent.click(clickable);
+
+      const bufferZone = container.querySelector('[data-testid="autocompact-buffer-zone"]');
+      expect(bufferZone).toBeTruthy();
+    });
+
     it('should size the buffer zone using (capacity - threshold) / capacity', () => {
       const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
 

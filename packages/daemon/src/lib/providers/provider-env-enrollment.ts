@@ -7,7 +7,11 @@ export const PROVIDER_ENV_READER_ROLES = [
   'anthropic-copilot.credentials',
 ] as const;
 
-export const PROVIDER_ENV_OWNER_ROLES = ['anthropic.loadModelsFromSdk', 'query-runner'] as const;
+export const PROVIDER_ENV_OWNER_ROLES = [
+  'anthropic.loadModelsFromSdk',
+  'acp.query',
+  'query-runner',
+] as const;
 
 export const providerEnvCoordinator = new ProviderEnvCoordinator();
 
