@@ -241,6 +241,34 @@ describe('ContextTracker', () => {
     });
   });
 
+  describe('compaction cooldown scope', () => {
+    it('a triggered mark suppresses re-arming for every threshold within the cooldown', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompactAt(217_144, 60_000)).toBe(false);
+      expect(tracker.shouldCompactAt(150_000, 60_000)).toBe(false);
+    });
+
+    it('every threshold re-arms once the cooldown elapses', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompactAt(217_144, 0)).toBe(true);
+      expect(tracker.shouldCompactAt(150_000, 0)).toBe(true);
+    });
+  });
+
   describe('reserveBasedThreshold', () => {
     it('returns 0 for invalid context windows', () => {
       expect(reserveBasedThreshold(0)).toBe(0);

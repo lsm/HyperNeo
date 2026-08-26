@@ -8,6 +8,7 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import {
   buildProviderSettings,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
   shouldUseHyperNeoCompactFallback,
 } from '../../../../src/lib/agent/query-options-builder';
@@ -198,6 +199,22 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
 describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
   it('PROVIDER_NO_SDK_AUTO_COMPACT is empty (no provider uses the async /compact fallback)', () => {
     expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
+  });
+
+  it('the four native context-window providers are exactly the documented set', () => {
+    expect([...NATIVE_CONTEXT_WINDOW_PROVIDER_IDS].sort()).toEqual(
+      ['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm'].sort()
+    );
+  });
+
+  it.each([
+    ['anthropic', 200_000],
+    ['anthropic-copilot', 200_000],
+    ['anthropic-codex', 272_000],
+    ['glm', 1_000_000],
+  ] as const)('%s ignores the configured window entirely (SDK keeps its own compaction)', (providerId, window) => {
+    expect(buildProviderSettings(providerId, window)).toBeUndefined();
+    expect(buildProviderSettings(providerId, window, 'any-model')).toBeUndefined();
   });
 
   it.each([
@@ -620,6 +637,44 @@ describe('N4: literal /compact never enters the transcript or provider request',
     const replay = (runner as unknown as { _lastConsumedUserMessage: { content: unknown } | null })
       ._lastConsumedUserMessage;
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
+  });
+
+  it('a custom provider near capacity does NOT enqueue /compact (daemon adds no backstop while the SDK stays armed)', async () => {
+    const TEST_PROVIDER = 'test-budget-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'budget-model',
+              name: 'Budget Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'budget-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
+    expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(buildProviderSettings(TEST_PROVIDER, 200_000, 'budget-model')).toEqual({
+      autoCompactEnabled: true,
+      autoCompactWindow: 200_000,
+    });
   });
 
   it('when the dormant fallback fires, the handler enqueues /compact as internal (production call site)', async () => {
