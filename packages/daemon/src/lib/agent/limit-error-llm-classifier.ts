@@ -248,7 +248,7 @@ export class LimitErrorLlmClassifier {
         providerId,
         models.providerModelId
       );
-      const originalEnv = await raceWithDeadline(applyTask, deadline);
+      let originalEnv = await raceWithDeadline(applyTask, deadline);
       if (!originalEnv) {
         applyTask.then(
           (lateEnv) => providerService.restoreEnvVars(lateEnv),
@@ -264,6 +264,9 @@ export class LimitErrorLlmClassifier {
         if (!providerEnvVars) return null;
         const query =
           this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
+        const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string>);
+        providerService.restoreEnvVars(originalEnv);
+        originalEnv = {};
         const agentQuery = query({
           prompt: buildPrompt(rawText, now),
           options: {
@@ -277,7 +280,7 @@ export class LimitErrorLlmClassifier {
             pathToClaudeCodeExecutable: resolveSDKCliPath(),
             executable: isRunningUnderBun() ? 'bun' : undefined,
             settings: withSdkTranscriptRetention(),
-            env: mergeProviderEnvVars(providerEnvVars as Record<string, string>),
+            env: mergedEnv,
             thinking:
               providerId === 'kimi'
                 ? KimiProvider.resolveKimiTitleThinkingConfig(models.providerModelId)

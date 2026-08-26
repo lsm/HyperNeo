@@ -60,6 +60,8 @@ export async function selectWorkflowWithLlmDefault(
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const providerEnvVars = await providerService.getEnvVarsForModel(modelId, provider);
     const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
+    providerService.restoreEnvVars(originalEnv);
+    originalEnv = {};
     const cliPath = resolveSDKCliPath();
 
     const agentQuery = query({
