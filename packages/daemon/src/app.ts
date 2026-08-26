@@ -531,10 +531,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
                 db.providers.updateProvider(record.id, { configJson: stripped });
               }
             }
-            if (outcome === 'refreshed') {
-              const { refreshModels } = await import('./lib/model-service.js');
-              refreshModels().catch(() => {});
-            }
           }
         } catch (error) {
           logError(
@@ -542,8 +538,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             error
           );
         }
-        const { clearModelsCache } = await import('./lib/model-service.js');
+        const { clearModelsCache, refreshModels } = await import('./lib/model-service.js');
         clearModelsCache();
+        if (outcome === 'refreshed') {
+          refreshModels().catch(() => {});
+        }
         internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
       },
     });
