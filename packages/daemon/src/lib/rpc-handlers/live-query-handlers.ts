@@ -2112,7 +2112,7 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt,
     sm.rowid AS insOrder,
     json_extract(b.value, '$.name') AS toolName,
     json_extract(b.value, '$.input.file_path') AS filePath
@@ -2143,10 +2143,25 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
           json_type(b.value, '$.input.file_path') = 'text'
           AND EXISTS (
             SELECT 1 FROM json_each(b.value, '$.input.edits') me
-            WHERE json_type(me.value, '$.old_string') = 'text'
-              AND json_type(me.value, '$.new_string') = 'text'
+            WHERE CASE
+              WHEN json_valid(me.value)
+                THEN CASE
+                  WHEN json_type(me.value) = 'object'
+                    THEN CASE
+                      WHEN json_type(me.value, '$.old_string') = 'text'
+                        THEN json_type(me.value, '$.new_string') = 'text'
+                      ELSE 0
+                    END
+                  ELSE 0
+                END
+              ELSE 0
+            END
           )
       END
+    )
+    AND (
+      json_extract(b.value, '$.name') != 'TodoWrite'
+      OR json_type(b.value, '$.input.todos') = 'array'
     )
 ),
 artifact_state_rows AS (
@@ -2284,7 +2299,7 @@ ${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
     sm.sdk_message AS content,
     sm.origin AS origin,
     ${SPACE_TASK_DELIVERY_STATE_CASE}
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
     sm.is_terminal AS isTerminal,

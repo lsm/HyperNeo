@@ -3277,6 +3277,34 @@ describe('NAMED_QUERY_REGISTRY', () => {
             ],
           },
         });
+        insertSdkMessageAt('bad-multiedit', sessionId, now + 1150, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-bad-multiedit',
+                name: 'MultiEdit',
+                input: { file_path: '/b.txt', edits: ['bad'] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('bad-todo', sessionId, now + 1200, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-bad-todo',
+                name: 'TodoWrite',
+                input: {},
+              },
+            ],
+          },
+        });
         for (let i = 0; i < 3; i += 1) {
           insertSdkMessageAt(
             `m-anchor-${i}`,
@@ -3294,6 +3322,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const ids = queryCompact(taskId, 1).map((r) => r.id as string);
         expect(ids).toContain('good-write');
         expect(ids).not.toContain('bad-edit');
+        expect(ids).not.toContain('bad-multiedit');
+        expect(ids).not.toContain('bad-todo');
       });
 
       test('caps pinned artifact rows at the newest paths', () => {
