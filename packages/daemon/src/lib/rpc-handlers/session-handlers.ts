@@ -842,6 +842,7 @@ export function setupSessionHandlers(
           provider: m.provider,
           contextWindow: m.contextWindow,
           context_window: m.contextWindow,
+          autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
           type: 'model' as const,
         })),
