@@ -4885,16 +4885,24 @@ export class TaskAgentManager {
           spaceWorkspacePath: resolveTaskWorkspace(space, task),
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
+          const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
           existing.updateMetadata({ workspacePath: reuseWorkspacePath });
-          await this.reinjectNodeAgentMcpServer(existing, {
-            taskId,
-            subSessionId: existingSessionId,
-            agentName: matchedSlot.name,
-            spaceId,
-            workflowRunId: task.workflowRunId ?? '',
-            workspacePath: reuseWorkspacePath,
-            workflowNodeId: matchedNodeId,
-          });
+          try {
+            await this.reinjectNodeAgentMcpServer(existing, {
+              taskId,
+              subSessionId: existingSessionId,
+              agentName: matchedSlot.name,
+              spaceId,
+              workflowRunId: task.workflowRunId ?? '',
+              workspacePath: reuseWorkspacePath,
+              workflowNodeId: matchedNodeId,
+            });
+          } catch (err) {
+            if (previousReuseWorkspacePath !== null) {
+              existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+            }
+            throw err;
+          }
         }
         await this.injectMessageIntoSession(existing, kickoffMessage);
       });
