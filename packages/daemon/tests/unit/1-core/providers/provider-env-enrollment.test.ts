@@ -18,9 +18,10 @@ describe('provider env enrollment', () => {
     }
   });
 
-  it('enrolls the Anthropic model loader as the owning path', () => {
-    expect(PROVIDER_ENV_OWNER_ROLES).toEqual(['anthropic.loadModelsFromSdk']);
+  it('enrolls the Anthropic model loader and the QueryRunner window as owning paths', () => {
+    expect(PROVIDER_ENV_OWNER_ROLES).toEqual(['anthropic.loadModelsFromSdk', 'query-runner']);
     expect(providerEnvCoordinator.roleOf('anthropic.loadModelsFromSdk')).toBe('owner');
+    expect(providerEnvCoordinator.roleOf('query-runner')).toBe('owner');
   });
 
   it('admits enrolled readers through the shared coordinator and leaves it free', async () => {

@@ -17,6 +17,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
@@ -557,6 +558,270 @@ export class QueryRunner {
     };
   }
 
+  private async prepareQueryRunOptions(
+    queryGeneration: number,
+    askUserQuestionHook: HookCallback
+  ): Promise<Options> {
+    const { session, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+
+    const assertSetupOwned = (afterAwait: string): void => {
+      if (
+        this.ctx.getQueryGeneration() === queryGeneration &&
+        !this.ctx.isCleaningUp() &&
+        stateManager.getState().status !== 'interrupted'
+      ) {
+        return;
+      }
+      const superseded = new Error(
+        `provider-env lease: setup superseded after ${afterAwait} for session ${session.id}`
+      );
+      superseded.name = 'AbortError';
+      throw superseded;
+    };
+
+    const { getProviderService } = await import('../provider-service.ts');
+    assertSetupOwned('provider-service-load');
+    const { initializeProviders, waitForOptionalProviderRegistration } = await import(
+      '../providers/factory.js'
+    );
+    const providerRegistry = initializeProviders();
+    await waitForOptionalProviderRegistration();
+    assertSetupOwned('provider-registration');
+    const modelId = session.config.model || 'sonnet';
+    const explicitProviderId = session.config.provider as string | undefined;
+    const provider = explicitProviderId
+      ? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
+      : providerRegistry.get('anthropic');
+
+    if (provider?.isAvailable) {
+      const isProviderAvailable = await provider.isAvailable();
+      assertSetupOwned('provider-availability');
+      if (!isProviderAvailable) {
+        const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
+        assertSetupOwned('provider-auth-status');
+        const errorMsg = authStatus?.error || 'Please configure credentials.';
+        const authError = new Error(
+          `Provider ${provider.displayName} is not available. ${errorMsg}`
+        );
+        await errorManager.handleError(
+          session.id,
+          authError,
+          ErrorCategory.PROVIDER_AUTH_ERROR,
+          `Provider ${provider.displayName} is not available. Please configure credentials to continue.`,
+          stateManager.getState(),
+          { providerId: provider.id, providerName: provider.displayName }
+        );
+        throw authError;
+      }
+    }
+    if (provider?.getAuthStatus) {
+      const authStatus = await provider.getAuthStatus();
+      assertSetupOwned('auth-status-refresh');
+      if (authStatus.needsRefresh) {
+        logger.warn(
+          `Provider ${provider.displayName} token needs refresh. Attempting to continue.`
+        );
+      }
+    }
+
+    if (!provider?.isAvailable) {
+      const providerService = getProviderService();
+
+      const hasAnthropicAuth = !!(
+        process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
+      );
+      const hasGlmAuth = await providerService.isGlmAvailable();
+      assertSetupOwned('fallback-auth-probe');
+      const hasAuth = hasAnthropicAuth || hasGlmAuth;
+
+      if (!hasAuth) {
+        const authError = new Error(
+          'No authentication configured. Please set up API key for Anthropic or Z.ai.'
+        );
+        await errorManager.handleError(
+          session.id,
+          authError,
+          ErrorCategory.AUTHENTICATION,
+          undefined,
+          stateManager.getState()
+        );
+        throw authError;
+      }
+    }
+
+    if (session.workspacePath) {
+      const fs = await import('fs/promises');
+      await fs.mkdir(session.workspacePath, { recursive: true });
+      assertSetupOwned('workspace-dir');
+    }
+
+    optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
+    let queryOptions = await optionsBuilder.build({ askUserQuestionHook: askUserQuestionHook });
+    assertSetupOwned('query-options-build');
+
+    if (provider?.setSessionThinkingConfig) {
+      const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
+      provider.setSessionThinkingConfig(session.id, effectiveThinkingLevel);
+    }
+
+    queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
+
+    const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+    const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
+      taskRepo: this.ctx.db.getSpaceTaskRepo(),
+    });
+    const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
+    const sessionTaskId = session.context?.taskId as string | undefined;
+    const snapshotPayload = {
+      event: 'query.mcp.snapshot',
+      sessionId: session.id,
+      sessionType: session.type,
+      role: spacePolicy.role,
+      owner: spacePolicy.owner,
+      ...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
+      ...(sessionTaskId ? { taskId: sessionTaskId } : {}),
+      ...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
+      mcpServers: mcpServerNames,
+    };
+    logger.info(
+      `QueryRunner.start(): session ${session.id} mcp servers visible at first turn: ` +
+        `[${mcpServerNames.join(', ')}]` +
+        (isWorkflowSubSession ? ' (workflow sub-session)' : '') +
+        ` ${JSON.stringify(snapshotPayload)}`
+    );
+
+    queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions, askUserQuestionHook);
+    assertSetupOwned('space-chat-mcp-invariant');
+    if (isWorkflowSubSession) {
+      const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
+      const missingServers = missingMcpServers(
+        queryOptions.mcpServers as Record<string, unknown> | undefined,
+        requiredServers
+      );
+
+      if (missingServers.length > 0) {
+        const diagnosticPayload = {
+          event: 'workflow.mcp.missing',
+          sessionId: session.id,
+          spaceId: spacePolicy.spaceId,
+          sessionType: session.type,
+          role: spacePolicy.role,
+          owner: spacePolicy.owner,
+          requiredServers,
+          missingServers,
+          presentServers: mcpServerNames,
+          liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+          selfHealAttempted: !!this.ctx.onMissingWorkflowMcpServers,
+        };
+
+        logger.error(
+          `QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
+            `Missing: [${missingServers.join(', ')}]. ` +
+            `Present: [${mcpServerNames.join(', ')}]. ` +
+            `Live SDK servers: [${diagnosticPayload.liveSdkServers.join(', ')}]. ` +
+            `Self-heal attempted: ${diagnosticPayload.selfHealAttempted}. ` +
+            `Attempting self-heal via onMissingWorkflowMcpServers callback... ` +
+            `${JSON.stringify(diagnosticPayload)}`
+        );
+
+        if (this.ctx.onMissingWorkflowMcpServers) {
+          try {
+            await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missingServers);
+            logger.info(
+              `QueryRunner.start(): self-heal callback completed for session ${session.id}. ` +
+                `${JSON.stringify(diagnosticPayload)}`
+            );
+          } catch (err) {
+            logger.error(
+              `QueryRunner.start(): self-heal callback FAILED for session ${session.id}: ` +
+                `${err instanceof Error ? err.message : String(err)}. ` +
+                `The session will start without required MCP servers — expect "No such tool available" failures at runtime.`
+            );
+          }
+        }
+        assertSetupOwned('workflow-mcp-self-heal');
+
+        const currentMcpServers =
+          (session.config?.mcpServers as Record<string, unknown> | undefined) ?? {};
+        const currentServerNames = Object.keys(currentMcpServers);
+        const stillMissing = requiredServers.filter((name) => !currentServerNames.includes(name));
+        if (stillMissing.length > 0) {
+          logger.error(
+            `QueryRunner.start(): workflow sub-session ${session.id} servers still missing after self-heal. ` +
+              `Still absent: [${stillMissing.join(', ')}]. ` +
+              `Present: [${currentServerNames.join(', ')}]. ` +
+              `Live SDK servers: [${this.getLiveSdkMcpServerNames({ mcpServers: currentMcpServers } as Options).join(', ')}]. ` +
+              `Refusing to start.`
+          );
+          throw new Error(
+            `[MCP invariant] Workflow sub-session ${session.id} still missing required ` +
+              `MCP servers after self-heal: [${stillMissing.join(', ')}]. ` +
+              `Refusing to start — fix the injection logic.`
+          );
+        }
+
+        queryOptions = await optionsBuilder.build({ askUserQuestionHook: askUserQuestionHook });
+        assertSetupOwned('workflow-mcp-rebuild');
+        queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
+        const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+        logger.info(
+          `QueryRunner.start(): rebuilt query options after MCP self-heal for session ${session.id}. ` +
+            `Present: [${repairedServerNames.join(', ')}]. ` +
+            `${JSON.stringify({
+              event: 'workflow.mcp.self_heal.rebuilt_query_options',
+              sessionId: session.id,
+              sessionType: session.type,
+              requiredServers,
+              presentServers: repairedServerNames,
+              liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
+            })}`
+        );
+      }
+    }
+
+    queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions, askUserQuestionHook);
+    assertSetupOwned('member-space-mcp-invariant');
+
+    const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
+    const refreshAutoCompactWindow = true;
+    let extraProviderManagedEnvVars: string[] = [];
+    const providerService = getProviderService();
+    const providerSession = {
+      ...session,
+      config: {
+        ...session.config,
+        model: modelId,
+        provider: resolvedProviderId as Session['config']['provider'],
+      },
+    };
+    await providerService.ensureSessionProviderBridges(providerSession);
+    assertSetupOwned('session-provider-bridges');
+    const providerEnvVars = providerService.getProviderEnvVars(providerSession);
+    extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
+      (key) => providerEnvVars[key] !== undefined
+    );
+    applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
+    const originalEnvVars = providerService.applyEnvVarsToProcessForSession(providerSession);
+    this.ctx.originalEnvVars = originalEnvVars;
+
+    queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
+      refreshAutoCompactWindow,
+      clearProviderManaged: true,
+      preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
+      preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
+      skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
+      extraProviderManagedEnvVars,
+    }) as Record<string, string>;
+
+    if (Object.keys(originalEnvVars).length > 0) {
+      providerService.restoreEnvVars(originalEnvVars);
+      this.ctx.originalEnvVars = {};
+    }
+
+    return queryOptions;
+  }
+
   private async runQuery(
     queryGeneration: number,
     retryAttempt = 0,
@@ -586,227 +851,9 @@ export class QueryRunner {
     let isAbortError = false;
 
     try {
-      const { initializeProviders, waitForOptionalProviderRegistration } = await import(
-        '../providers/factory.js'
+      const queryOptions = await providerEnvCoordinator.runWithLease('query-runner', () =>
+        this.prepareQueryRunOptions(queryGeneration, attemptHook)
       );
-      const providerRegistry = initializeProviders();
-      await waitForOptionalProviderRegistration();
-      const modelId = session.config.model || 'sonnet';
-      const explicitProviderId = session.config.provider as string | undefined;
-      const provider = explicitProviderId
-        ? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
-        : providerRegistry.get('anthropic');
-
-      if (provider?.isAvailable && !(await provider.isAvailable())) {
-        const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
-        const errorMsg = authStatus?.error || 'Please configure credentials.';
-        const authError = new Error(
-          `Provider ${provider.displayName} is not available. ${errorMsg}`
-        );
-        await errorManager.handleError(
-          session.id,
-          authError,
-          ErrorCategory.PROVIDER_AUTH_ERROR,
-          `Provider ${provider.displayName} is not available. Please configure credentials to continue.`,
-          stateManager.getState(),
-          { providerId: provider.id, providerName: provider.displayName }
-        );
-        throw authError;
-      }
-      if (provider?.getAuthStatus) {
-        const authStatus = await provider.getAuthStatus();
-        if (authStatus.needsRefresh) {
-          logger.warn(
-            `Provider ${provider.displayName} token needs refresh. Attempting to continue.`
-          );
-        }
-      }
-
-      if (!provider?.isAvailable) {
-        const { getProviderService } = await import('../provider-service.ts');
-        const providerService = getProviderService();
-
-        const hasAnthropicAuth = !!(
-          process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY
-        );
-        const hasGlmAuth = await providerService.isGlmAvailable();
-        const hasAuth = hasAnthropicAuth || hasGlmAuth;
-
-        if (!hasAuth) {
-          const authError = new Error(
-            'No authentication configured. Please set up API key for Anthropic or Z.ai.'
-          );
-          await errorManager.handleError(
-            session.id,
-            authError,
-            ErrorCategory.AUTHENTICATION,
-            undefined,
-            stateManager.getState()
-          );
-          throw authError;
-        }
-      }
-
-      if (session.workspacePath) {
-        const fs = await import('fs/promises');
-        await fs.mkdir(session.workspacePath, { recursive: true });
-      }
-
-      optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      let queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
-
-      if (provider?.setSessionThinkingConfig) {
-        const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
-        provider.setSessionThinkingConfig(session.id, effectiveThinkingLevel);
-      }
-
-      queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
-
-      const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-      const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
-        nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
-        taskRepo: this.ctx.db.getSpaceTaskRepo(),
-      });
-      const isWorkflowSubSession = spacePolicy.isWorkflowWorker;
-      const sessionTaskId = session.context?.taskId as string | undefined;
-      const snapshotPayload = {
-        event: 'query.mcp.snapshot',
-        sessionId: session.id,
-        sessionType: session.type,
-        role: spacePolicy.role,
-        owner: spacePolicy.owner,
-        ...(spacePolicy.spaceId ? { spaceId: spacePolicy.spaceId } : {}),
-        ...(sessionTaskId ? { taskId: sessionTaskId } : {}),
-        ...(isWorkflowSubSession ? { workflowSubSession: true } : {}),
-        mcpServers: mcpServerNames,
-      };
-      logger.info(
-        `QueryRunner.start(): session ${session.id} mcp servers visible at first turn: ` +
-          `[${mcpServerNames.join(', ')}]` +
-          (isWorkflowSubSession ? ' (workflow sub-session)' : '') +
-          ` ${JSON.stringify(snapshotPayload)}`
-      );
-
-      queryOptions = await this.ensureSpaceChatMcpInvariant(queryOptions, attemptHook);
-      if (isWorkflowSubSession) {
-        const requiredServers = SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS;
-        const missingServers = missingMcpServers(
-          queryOptions.mcpServers as Record<string, unknown> | undefined,
-          requiredServers
-        );
-
-        if (missingServers.length > 0) {
-          const diagnosticPayload = {
-            event: 'workflow.mcp.missing',
-            sessionId: session.id,
-            spaceId: spacePolicy.spaceId,
-            sessionType: session.type,
-            role: spacePolicy.role,
-            owner: spacePolicy.owner,
-            requiredServers,
-            missingServers,
-            presentServers: mcpServerNames,
-            liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
-            selfHealAttempted: !!this.ctx.onMissingWorkflowMcpServers,
-          };
-
-          logger.error(
-            `QueryRunner.start(): workflow sub-session ${session.id} is MISSING required MCP servers. ` +
-              `Missing: [${missingServers.join(', ')}]. ` +
-              `Present: [${mcpServerNames.join(', ')}]. ` +
-              `Live SDK servers: [${diagnosticPayload.liveSdkServers.join(', ')}]. ` +
-              `Self-heal attempted: ${diagnosticPayload.selfHealAttempted}. ` +
-              `Attempting self-heal via onMissingWorkflowMcpServers callback... ` +
-              `${JSON.stringify(diagnosticPayload)}`
-          );
-
-          if (this.ctx.onMissingWorkflowMcpServers) {
-            try {
-              await this.ctx.onMissingWorkflowMcpServers(this.ctx as AgentSession, missingServers);
-              logger.info(
-                `QueryRunner.start(): self-heal callback completed for session ${session.id}. ` +
-                  `${JSON.stringify(diagnosticPayload)}`
-              );
-            } catch (err) {
-              logger.error(
-                `QueryRunner.start(): self-heal callback FAILED for session ${session.id}: ` +
-                  `${err instanceof Error ? err.message : String(err)}. ` +
-                  `The session will start without required MCP servers — expect "No such tool available" failures at runtime.`
-              );
-            }
-          }
-
-          const currentMcpServers =
-            (session.config?.mcpServers as Record<string, unknown> | undefined) ?? {};
-          const currentServerNames = Object.keys(currentMcpServers);
-          const stillMissing = requiredServers.filter((name) => !currentServerNames.includes(name));
-          if (stillMissing.length > 0) {
-            logger.error(
-              `QueryRunner.start(): workflow sub-session ${session.id} servers still missing after self-heal. ` +
-                `Still absent: [${stillMissing.join(', ')}]. ` +
-                `Present: [${currentServerNames.join(', ')}]. ` +
-                `Live SDK servers: [${this.getLiveSdkMcpServerNames({ mcpServers: currentMcpServers } as Options).join(', ')}]. ` +
-                `Refusing to start.`
-            );
-            throw new Error(
-              `[MCP invariant] Workflow sub-session ${session.id} still missing required ` +
-                `MCP servers after self-heal: [${stillMissing.join(', ')}]. ` +
-                `Refusing to start — fix the injection logic.`
-            );
-          }
-
-          queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
-          queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
-          const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
-          logger.info(
-            `QueryRunner.start(): rebuilt query options after MCP self-heal for session ${session.id}. ` +
-              `Present: [${repairedServerNames.join(', ')}]. ` +
-              `${JSON.stringify({
-                event: 'workflow.mcp.self_heal.rebuilt_query_options',
-                sessionId: session.id,
-                sessionType: session.type,
-                requiredServers,
-                presentServers: repairedServerNames,
-                liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
-              })}`
-          );
-        }
-      }
-
-      queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions, attemptHook);
-
-      const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
-      const refreshAutoCompactWindow = true;
-      let extraProviderManagedEnvVars: string[] = [];
-      {
-        const { getProviderService } = await import('../provider-service.ts');
-        const providerService = getProviderService();
-        const providerSession = {
-          ...session,
-          config: {
-            ...session.config,
-            model: modelId,
-            provider: resolvedProviderId as Session['config']['provider'],
-          },
-        };
-        await providerService.ensureSessionProviderBridges(providerSession);
-        const providerEnvVars = providerService.getProviderEnvVars(providerSession);
-        extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
-          (key) => providerEnvVars[key] !== undefined
-        );
-        applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);
-        const originalEnvVars = providerService.applyEnvVarsToProcessForSession(providerSession);
-        this.ctx.originalEnvVars = originalEnvVars;
-      }
-
-      queryOptions.env = refreshQueryEnvFromProcess(queryOptions.env, process.env, {
-        refreshAutoCompactWindow,
-        clearProviderManaged: true,
-        preserveAnthropicAuthToken: resolvedProviderId === 'anthropic',
-        preserveAnthropicOAuthToken: resolvedProviderId === 'anthropic',
-        skipAmbientAnthropicApiKey: resolvedProviderId !== 'anthropic',
-        extraProviderManagedEnvVars,
-      }) as Record<string, string>;
 
       const originalSpawn = queryOptions.spawnClaudeCodeProcess;
       queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
