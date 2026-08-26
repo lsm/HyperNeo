@@ -394,8 +394,10 @@ gate's hold lifecycle):
   decision — via a terminal-generation CAS/lease on the task or a combined
   consume-result-and-`update_goal` operation in the store surface. Consumption is
   persisted per gated shape (the standalone task ID, or the Forge proposal/task pair)
-  so a later `retry_task` on the consumed gate is rejected or routed through the
-  launcher instead of rerunning the release under a completed goal; a successful
+  and enforced in the shared task-transition path — every reopening route
+  (`retry_task`, `update_task(status: 'in_progress')`, any future tool) checks it — so
+  a consumed gate cannot be reopened to rerun the release under a completed goal
+  except through launcher coordination; a successful
   **final** step then completes goal B rather than resuming it — resolving the
   hard-gate hold record in the operational store and discarding any saved cadence state
   as part of completion, so a later reopened goal does not inherit a stale hold.
@@ -409,7 +411,9 @@ gate's hold lifecycle):
   revision-changing mutation; skipping the review leaves a bare acknowledgement that
   loses the final release result); an unsuccessful Forge
   outcome is reviewed while B stays paused, before rebinding, recreating, or otherwise
-  mutating the goal.
+  mutating the goal — and the failed gate's own workflow run is cancelled
+  (`cancel_workflow_run: true`) with any superseding cancellation outcome disposed
+  before recreation, since settlement clears bookkeeping but not the run.
 
 The plain goal tools have **no atomic creation path**: `trigger_goal_task` accepts only
 `goal_id`, while `create_standalone_task` accepts `depends_on` but creates a task with
@@ -438,7 +442,11 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   `create_task_from_forge_proposal(depends_on=[A's task])` persists `goalId` and
   `dependsOn` in one transaction, so the gated task reports outcomes through the goal
   loop. It does **not** claim the goal's single active-task pointer — acceptable for a
-  hard-gated side step, which should not occupy the goal's serial slot anyway.
+  hard-gated side step, which should not occupy the goal's serial slot anyway. Because
+  a **pre-start** administrative cancellation of this shape emits no outcome
+  notification (`startedAt: null`), the launcher keeps an arm-before-inspect reminder
+  on the Forge dependent until it starts or terminalizes — the goal link alone is no
+  wake source before first start.
 - **Rebinding on retry:** dependencies bind to a specific task ID — and a **pre-start**
   cancellation of A produces no outcome wake at all (the reportable-terminal predicate
   treats a `startedAt: null` cancellation as administrative), so with the pattern's
@@ -573,11 +581,18 @@ ADR 0004 applies to new combinators.
    (c) the attributable pause operation (combined hold-and-pause transaction or pause
    caller token — §6);
    (d) race-safe terminal handling — a terminal-generation CAS/lease for consuming
-   standalone results and a recoverable completion-intent reconciliation (§5);
+   standalone results and a recoverable completion-intent reconciliation (§5), plus
+   **tracked-gate mutation protection**: while a gate task sits behind an unmet
+   prerequisite, dependency replacement/removal and terminal-status transitions on it
+   are restricted to the launcher or authorized coordinator (an unrelated actor could
+   otherwise clear `depends_on` to make the release dispatch early or forge a `done`
+   that the protocol consumes as success);
    (e) **hold- and authority-enforcing goal handlers** — `resume_goal` currently checks
    only goal membership, so an unrelated agent can lift a launcher hold before
-   reminder-based reconciliation re-pauses it; resume/trigger handlers must reject work
-   under an unresolved launcher hold except for the authorized owner/coordinator, **and
+   reminder-based reconciliation re-pauses it; hold enforcement covers every reactivation route at the shared goal-mutation seam —
+   `resume_goal` **and** `update_goal(status: 'active')`, whose handler reactivates the
+   linked schedule after only a membership check — rejecting work under an unresolved
+   launcher hold except for the authorized owner/coordinator, **and
    pattern-goal triggers stay launcher-only even when no hold is recorded** — including
    scheduled check-in fires, which create and claim goal tasks directly through
    `task-schedule-fire.handler` and bypass `trigger_goal_task`, so the firing path
@@ -585,13 +600,18 @@ ADR 0004 applies to new combinators.
    to none) — and Forge automation, whose enqueue paths (`onExternalEventPublished`,
    `onSelfNag` → `createReviewTask`) create pointerless goal-linked tasks outside the
    trigger handler, so pattern goals either disable Forge automation or every
-   automation enqueue/execution path applies the same launcher-authority check. Sole trigger authority holds throughout the objective, not only during
+   automation enqueue/execution path applies the same launcher-authority check, as
+   does **manual** proposal/task creation (`create_forge_task_proposal` →
+   `create_task_from_forge_proposal`, currently membership-checked only). Sole trigger authority holds throughout the objective, not only during
    holds; plus
    dependency-reopen leases so a retried `done` prerequisite stops its started
    dependents and wakes the launcher instead of silently revoking the gate, and
-   **retry rejection or launcher coordination for consumed gates** (`retry_task` on a
-   consumed standalone/Forge gate after B completed must not silently reopen the old
-   release workflow; consumption persists per gated shape) (§5).
+   **consumption enforcement on every reopening path** — `update_task(status:
+   'in_progress')` permits `done → in_progress` just as `retry_task` does, so a
+   consumed standalone/Forge gate is guarded in the shared task-transition logic
+   (consumption persisted per gated shape, checked before any reopen) rather than
+   tool-by-tool; a reopen after B completed must be rejected or coordinated through
+   the launcher instead of silently rerunning the old release workflow (§5).
 
 **Rejected alternatives.**
 
