@@ -43,6 +43,7 @@ export interface ImmediateEventDeliveryDeps {
   isSubscriptionActive(target: WorkflowTargetKey, topic: string): boolean;
   isTargetSpacePaused(target: WorkflowTargetKey): boolean;
   isTargetSessionLive(sessionId: string): boolean;
+  isSessionInterruptInProgress(sessionId: string): boolean;
   getSessionStatus(sessionId: string): string;
   withinRateBudget(sessionId: string): boolean;
   setQueuedIfIdle(sessionId: string, messageUuid: string): Promise<boolean>;
@@ -136,6 +137,8 @@ export function settleRoutingDecision(ctx: ImmediateEventDeliveryCtx): Immediate
     return ctx;
   }
   if (decision.action === 'skip') {
+    ctx.deps.eventStore.markEventDeliveredIfAllDeliveriesDelivered(ctx.event.eventId);
+    ctx.deps.eventStore.markEventFailedIfAllDeliveriesTerminal(ctx.event.eventId);
     return settled(ctx, { action: 'skip', reason: 'delivery_terminal' });
   }
   if (decision.action === 'skipClaimConflict') {
@@ -156,6 +159,9 @@ export function pickMechanics(ctx: ImmediateEventDeliveryCtx): ImmediateEventDel
   if (!ctx.sessionId) return settled(ctx, { action: 'deferred', reason: 'no_active_session' });
   if (!ctx.targetSessionLive) {
     return settled(ctx, { action: 'deferred', reason: 'stale_session' });
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return settled(ctx, { action: 'deferred', reason: 'session_interrupted' });
   }
   if (!ctx.deps.withinRateBudget(ctx.sessionId)) {
     return settled(ctx, { action: 'deferred', reason: 'rate_budget' });

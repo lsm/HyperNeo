@@ -105,6 +105,7 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
     isSubscriptionActive: () => true,
     isTargetSpacePaused: () => false,
     isTargetSessionLive: () => true,
+    isSessionInterruptInProgress: () => false,
     getSessionStatus: () => 'idle',
     withinRateBudget: () => true,
     setQueuedIfIdle: (_sessionId, messageUuid) => {
@@ -211,12 +212,13 @@ describe('deliver-immediate-event pipeline', () => {
     expect(rec.saved).toEqual([]);
   });
 
-  it('skips without effects when the delivery is already terminal', async () => {
-    const base = makeDeps();
-    const { outcome, rec } = await deliver({
-      eventStore: { ...base.deps.eventStore, isDeliveryTerminal: () => true },
-    });
+  it('skips when the delivery is already terminal but still reconciles the event', async () => {
+    const { deps, rec } = makeDeps();
+    deps.eventStore.isDeliveryTerminal = () => true;
+    const outcome = await deliverImmediateEvent(deps, input());
     expect(outcome).toEqual({ action: 'skip', reason: 'delivery_terminal' });
+    expect(rec.eventRollups).toEqual([EVENT_ID]);
+    expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
     expect(rec.saved).toEqual([]);
     expect(rec.jobs).toEqual([]);
     expect(rec.delivered).toEqual([]);
@@ -274,6 +276,14 @@ describe('deliver-immediate-event pipeline', () => {
   it('defers when the resolved session is no longer live', async () => {
     const { outcome, rec } = await deliver({ isTargetSessionLive: () => false });
     expect(outcome).toEqual({ action: 'deferred', reason: 'stale_session' });
+    expect(rec.saved).toEqual([]);
+    expect(rec.jobs).toEqual([]);
+    expect(rec.delivered).toEqual([]);
+  });
+
+  it('defers while the target session has an interrupt still in progress', async () => {
+    const { outcome, rec } = await deliver({ isSessionInterruptInProgress: () => true });
+    expect(outcome).toEqual({ action: 'deferred', reason: 'session_interrupted' });
     expect(rec.saved).toEqual([]);
     expect(rec.jobs).toEqual([]);
     expect(rec.delivered).toEqual([]);
