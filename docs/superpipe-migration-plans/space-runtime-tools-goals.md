@@ -616,12 +616,17 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: Effects: `goalService.listClaimableOutcomeNotifications`, `goalService.claimOutcomeNotification` (or, after migration, an inline effect that invokes the same sync claim pipeline).
 - **Step-by-step migration**:
   1. Define `stagedRun('review-goal-outcome', ...)`.
-  2. The MODE IS DECIDED FIRST (step 3 below) — a call with no
-     `notification_id`, disposition, or updates is ordinary DISCOVERY and
-     lists notifications, never reaching the claim-only validations (review
-     correction PR #2983 round 26: matching the corrected P35 scope; the
-     previous ordering validated `hasGoalUpdate` vs `disposition` in the
-     initial snapshot before choosing `discover`).
+  2. The MODE IS DECIDED FIRST, branching on `notification_id` PRESENCE
+     ALONE (review correction PR #2983 round 27): a call WITHOUT
+     `notification_id` enters discovery admission — where goal-update fields
+     without one return the exact current `goal-state updates require
+     notification_id; call without update fields to discover pending
+     notifications` rejection (space-agent-tools.ts:3063-3069), and a bare
+     call lists notifications — never reaching the claim-only gates with
+     their misleading missing-identifier response (review correction
+     PR #2983 round 26: matching the corrected P35 scope; the previous
+     ordering validated `hasGoalUpdate` vs `disposition` in the initial
+     snapshot before choosing `discover`).
   3. `decide` mode: `discover` or `claim`. ON THE CLAIM PATH ONLY:
      validate `hasGoalUpdate` vs `disposition`, then the REQUIRED-IDENTIFIER
      gate (missing `goal_id`/
@@ -1118,16 +1123,18 @@ The repo already has several proven pipelines. Use these as the model for each s
      a rethrown error (review correction PR #2983 round 9: the synchronous
      public contract is a result object; an escaping exception after rollback
      changes that contract).
-  8. Review correction PR #2983 round 5 — `redispatch` IS the pipeline's FINAL
-     GUARDED EFFECT, with an IN-STAGE catch/log boundary that swallows its
-     errors: an earlier correction moved it to a post-pipeline shell step
-     because a throw after `persist-subscription` would unwind the persist
-     rollback, but an in-stage catch removes that failure path entirely
-     while keeping the delivery nudge inside the ONE registration operation
-     (a shell step would let a future direct caller of `registerSubscriptionRun`
-     persist a subscription without nudging retained events). It stays a
-     best-effort nudge, never a consistency write: its catch logs and
-     returns, so the persist rollback can never be triggered by it. Review
+  8. Review correction PR #2983 rounds 5/27 — `redispatch` IS the pipeline's FINAL
+     EFFECT, kept inside the ONE registration operation (a shell step would
+     let a future direct caller of `registerSubscriptionRun` persist a
+     subscription without nudging retained events), and its errors PROPAGATE
+     as they do today (space-runtime.ts:966-968 → :1380-1389): review
+     correction round 27 — the earlier swallow-and-log wording was an
+     UNDECLARED contract change, since the current `registerSubscription`
+      call propagates redispatch exceptions to its synchronous caller. With
+     the persist rollback now settled inside the persist stage's own catch
+     (round 20), a propagating redispatch throw can no longer corrupt any
+     rollback — the subscription stays persisted and in the trie; the test
+     row asserts exactly that (exception surfaces, state intact). Review
      correction PR #2983 round 14: the effect is GUARDED TO DYNAMIC
      SUBSCRIPTIONS (`subscriptionKind === 'dynamic'`, matching
      space-runtime.ts:966-967) — static interest registration must not
@@ -1563,16 +1570,16 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P30 — `feat(space): add synchronous registration pipeline and target gates (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types-dominated cap), test Δ ≲300
-- **Scope**: New `packages/daemon/src/lib/space/runtime/subscription-target-gates.ts` exporting `decideSubscriptionTarget` (`invalidTopic`, `missingRun`, `invalidTask` — DYNAMIC subscriptions only; static ones deliberately skip the task gate so terminal-task rebuilds succeed, review correction PR #2983 round 14 — `limitReached`, `proceed` — extracted from `validateSubscriptionTargetTask`, as direct branches not a separate runner), plus the direct SYNCHRONOUS `registerSubscriptionRun` (`superpipe` + `.end`; NOT `stagedRun`, which is async-only and would change the sync contract) with READS STAGED BEHIND VALIDATION GATES (review correction PR #2983 round 22: topic validation runs FIRST; the run lookup is a guarded stage after it; the TASK read is DYNAMIC-ONLY — static subscriptions never touch the task repo, so an unavailable task repo cannot break `registerRunInterests`'s static rebuild — and the displaced/count reads run as guarded stages after their gates, so repository/trie failures can never replace a stable `invalidTopic`/`missingRun` result); then stages `remove-existing-trie-entry` → `insert-trie-entry` → `persist-subscription` whose OWN caught-failure branch performs the IN-PIPELINE ROLLBACK (remove the inserted trie entry, re-insert `displaced`) and then maps the failure to the `{ success: false, error: 'Failed to persist subscription.' }` RESULT (review corrections PR #2983 rounds 9/20: the rollback lives INSIDE the named pipeline's persist stage — not in a shell hook — so any direct caller of `registerSubscriptionRun` receives the mapped failure with the trie already restored; the sync public contract is a result, never an escaping throw) → the FINAL `redispatch-retained-events` effect GUARDED TO `subscriptionKind === 'dynamic'` with an IN-STAGE catch/log that swallows its errors (review corrections PR #2983 rounds 5/14: the nudge belongs to the one registration operation but never fires per static entry while the trie rebuilds); `.end` returns `{ success: false, error }` for every validation branch and `limitReached` throws after rollback. Parallel-safe leaf.
+- **Scope**: New `packages/daemon/src/lib/space/runtime/subscription-target-gates.ts` exporting `decideSubscriptionTarget` (`invalidTopic`, `missingRun`, `invalidTask` — DYNAMIC subscriptions only; static ones deliberately skip the task gate so terminal-task rebuilds succeed, review correction PR #2983 round 14 — `limitReached`, `proceed` — extracted from `validateSubscriptionTargetTask`, as direct branches not a separate runner), plus the direct SYNCHRONOUS `registerSubscriptionRun` (`superpipe` + `.end`; NOT `stagedRun`, which is async-only and would change the sync contract) with READS STAGED BEHIND VALIDATION GATES (review correction PR #2983 round 22: topic validation runs FIRST; the run lookup is a guarded stage after it; the TASK read is DYNAMIC-ONLY — static subscriptions never touch the task repo, so an unavailable task repo cannot break `registerRunInterests`'s static rebuild — and the displaced/count reads run as guarded stages after their gates, so repository/trie failures can never replace a stable `invalidTopic`/`missingRun` result); then stages `remove-existing-trie-entry` → `insert-trie-entry` → `persist-subscription` whose OWN caught-failure branch performs the IN-PIPELINE ROLLBACK (remove the inserted trie entry, re-insert `displaced`) and then maps the failure to the `{ success: false, error: 'Failed to persist subscription.' }` RESULT (review corrections PR #2983 rounds 9/20: the rollback lives INSIDE the named pipeline's persist stage — not in a shell hook — so any direct caller of `registerSubscriptionRun` receives the mapped failure with the trie already restored; the sync public contract is a result, never an escaping throw) → the FINAL `redispatch-retained-events` effect GUARDED TO `subscriptionKind === 'dynamic'` (round 14) whose errors PROPAGATE as today's caller contract requires (review correction PR #2983 round 27: the nudge belongs to the one registration operation — rounds 5/14 — but it is not swallow-and-log; a redispatch throw surfaces after persist has settled and cannot corrupt any rollback); `.end` returns `{ success: false, error }` for every validation branch and `limitReached` throws after rollback. Parallel-safe leaf.
 - **Lands**: the sync registration pipeline and its target gates exist unwired.
 - **Excludes**: wiring `space-runtime.ts` (P31).
-- **Tests**: gate table rows (including the static-skips-the-task-gate and static-no-redispatch rows — round 14) plus limit/replacement rows and a redispatch-throw row (swallowed in-stage; subscription stays persisted and in the trie).
+- **Tests**: gate table rows (including the static-skips-the-task-gate and static-no-redispatch rows — round 14) plus limit/replacement rows and a redispatch-throw row (the exception PROPAGATES as today while the subscription stays persisted and in the trie — round 27).
 - **Depends on**: P29.
 
 ### P31 — `refactor(space): run registerSubscription on the sync registration pipeline`
 
 - 🔧 apply — prod Δ ≲60, test Δ ≲150
-- **Scope**: `space-runtime.ts:registerSubscription` executes the P30 pipeline — including its final in-stage-caught `redispatch-retained-events` effect — with the rollback performed INSIDE the pipeline's persist-stage catch (trie restore before result mapping, round 20), mapping a persistence failure to the `{ success: false, error: 'Failed to persist subscription.' }` RESULT (review correction PR #2983 round 9) and the redispatch as the pipeline's own final guarded effect (review correction PR #2983 round 5).
+- **Scope**: `space-runtime.ts:registerSubscription` executes the P30 pipeline — including its final `redispatch-retained-events` effect whose errors propagate as today (round 27) — with the rollback performed INSIDE the pipeline's persist-stage catch (trie restore before result mapping, round 20), mapping a persistence failure to the `{ success: false, error: 'Failed to persist subscription.' }` RESULT (review correction PR #2983 round 9) and the redispatch as the pipeline's own final guarded effect (review correction PR #2983 round 5).
 - **Lands**: registration stays synchronous with its exception contract (throws only for `limitReached`); a redispatch throw can no longer leave a persisted-but-trie-missing subscription, and no caller can skip the nudge.
 - **Excludes**: CAS-guarding `workflowEventSubscriptionRepo.upsert` beyond current behavior.
 - **Tests**: the P29 suites plus a redispatch-throw row (subscription stays persisted and in the trie).
