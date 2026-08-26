@@ -226,6 +226,16 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('live reuse syncs the session workspace to task.workspacePath before injection', async () => {
     const tam = makeManager();
     const live = seedLiveSession(tam);
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () =>
+        ({
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+          title: 'Task 850',
+          workspacePath: '/task/reuse-override',
+        }) as unknown as SpaceTask,
+    };
     const reinjectCtx: Array<Record<string, unknown>> = [];
     (
       tam as unknown as {

@@ -2399,6 +2399,7 @@ export class TaskAgentManager {
       }
       const live = this.getSubSession(sessionId);
       if (!live) return;
+      if (task.spaceId !== space.id) return;
       const workspacePath = resolveSpawnWorkspace({
         cachedTaskWorktreePath: this.getTaskWorktreePath(task.id),
         hasWorktreeManager: false,
@@ -4918,10 +4919,11 @@ export class TaskAgentManager {
           );
           return;
         }
+        const currentTask = this.config.taskRepo.getTask(taskId) ?? task;
         const reuseWorkspacePath = resolveSpawnWorkspace({
           cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
           hasWorktreeManager: false,
-          spaceWorkspacePath: resolveTaskWorkspace(space, task),
+          spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
