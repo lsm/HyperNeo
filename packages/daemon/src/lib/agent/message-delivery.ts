@@ -397,7 +397,16 @@ export async function awaitDeliveryConsumptionTolerant(args: {
     args.signal.addEventListener('abort', onAbort, { once: true });
   });
   try {
-    await args.deliver();
+    await Promise.race([
+      args.deliver(),
+      aborted.then(() => {
+        throw new DOMException('Aborted', 'AbortError');
+      }),
+    ]).catch((err: unknown) => {
+      if (args.signal?.aborted) return;
+      throw err;
+    });
+    if (args.signal?.aborted) return { consumed: false };
     const won = await Promise.race([
       consumed.promise.then(() => true as const),
       new Promise<boolean>((resolve) => {

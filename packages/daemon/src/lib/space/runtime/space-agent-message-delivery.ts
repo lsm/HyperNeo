@@ -31,7 +31,10 @@ export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 
 export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
-  private readonly waiters = new Set<{ cancel(): void }>();
+  private readonly waiters = new Map<
+    string,
+    { handle: SpaceAgentLateSettlementHandle; release: () => void }
+  >();
   private readonly disposeController = new AbortController();
   private disposed = false;
 
@@ -46,30 +49,44 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     onConsumed,
     onFailed,
   }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
+    const key = `${sessionId}\u0000${messageId}`;
+    this.waiters.get(key)?.release();
     if (this.disposed) return { cancel: () => {} };
     const late = waitForDeliveryConsumption(sessionId, messageId);
-    this.waiters.add(late);
     let fired = false;
-    const expiry = setTimeout(() => {
-      late.cancel();
-      this.timers.delete(expiry);
-      this.waiters.delete(late);
-      if (fired) return;
-      fired = true;
-      try {
-        onFailed?.();
-      } catch (error) {
-        log.warn(
-          `late dead letter reconciliation failed for ${sessionId}/${messageId}: ` +
-            `${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }, LATE_SETTLE_HORIZON_MS);
-    this.timers.add(expiry);
-    void late.promise.then(() => {
+    let expiry: ReturnType<typeof setTimeout> | undefined;
+    const release = () => {
       clearTimeout(expiry);
-      this.timers.delete(expiry);
-      this.waiters.delete(late);
+      this.timers.delete(expiry!);
+      this.waiters.delete(key);
+      late.cancel();
+    };
+    this.timers.add(
+      (expiry = setTimeout(() => {
+        this.waiters.delete(key);
+        if (fired) return;
+        fired = true;
+        try {
+          onFailed?.();
+        } catch (error) {
+          log.warn(
+            `late dead letter reconciliation failed for ${sessionId}/${messageId}: ` +
+              `${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }, LATE_SETTLE_HORIZON_MS))
+    );
+    this.waiters.set(key, {
+      release,
+      handle: {
+        cancel: () => {
+          fired = true;
+          release();
+        },
+      },
+    });
+    void late.promise.then(() => {
+      release();
       if (fired) return;
       fired = true;
       try {
@@ -81,15 +98,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
         );
       }
     });
-    return {
-      cancel: () => {
-        fired = true;
-        clearTimeout(expiry);
-        late.cancel();
-        this.timers.delete(expiry);
-        this.waiters.delete(late);
-      },
-    };
+    return this.waiters.get(key)!.handle;
   }
 
   dispose(): void {
@@ -97,7 +106,9 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     this.disposeController.abort();
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
-    for (const waiter of this.waiters) waiter.cancel();
+    for (const [, watcher] of this.waiters) {
+      watcher.handle.cancel();
+    }
     this.waiters.clear();
   }
 }

@@ -359,6 +359,8 @@ export function resolvePostApprovalRouteNodeId(
   return workflow.nodes.find((n) => n.agents.some((a) => a.name === targetAgent))?.id;
 }
 
+const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
+
 export class TaskAgentManager {
   private readonly lateSettlements = new SpaceAgentLateSettlements();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
@@ -1549,7 +1551,9 @@ export class TaskAgentManager {
           this.emitPendingDelivered(row.id, settledSessionId, row);
         };
         const scheduleReconciliation = () => {
-          void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+          setTimeout(() => {
+            void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+          }, SPACE_AGENT_RETRY_DELAY_MS);
         };
         const onWatcherFailed = () => {
           if (done) return;
@@ -1612,8 +1616,10 @@ export class TaskAgentManager {
   }): Promise<void> {
     const { repo, inject, spaceId, workflowRunId, spaceChatSessionId, resolveReplySession, row } =
       args;
-    if (row.attempts >= row.maxAttempts) {
-      repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
+    const current = repo.getById(row.id);
+    if (!current || current.status !== 'pending' || current.expiresAt <= Date.now()) return;
+    if (current.attempts >= current.maxAttempts) {
+      repo.markFailed(row.id, `space-agent delivery attempts exhausted (${current.maxAttempts})`);
       return;
     }
     const message = formatPendingRowForSpaceAgent(row);
