@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
@@ -8,7 +8,8 @@ import { worktreeSlug } from '../worktree-slug.ts';
 import { Logger } from '../../logger.ts';
 import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
-import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
+import { getProjectShortKey, getWorktreeBaseDir } from '../../worktree-path-utils.ts';
+import { getDataDir } from '../../data-dir.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -27,26 +28,48 @@ export class SpaceWorktreeManager {
   }
 
   private resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
+    let cwdRoot = repoRoot;
     try {
-      const cwdRoot = realpathSync(repoRoot);
-      const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-        cwd: cwdRoot,
-        encoding: 'utf8',
-        timeout: 30_000,
-      }).trim();
-      if (!topLevel) throw new Error('empty toplevel');
+      cwdRoot = realpathSync(repoRoot);
+    } catch {
+      return { commandCwd: repoRoot, dirKey: repoRoot };
+    }
+    let commonDir = '';
+    try {
       const commonDirRaw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
         cwd: cwdRoot,
         encoding: 'utf8',
         timeout: 30_000,
       }).trim();
-      const commonDir =
-        commonDirRaw && !isAbsolute(commonDirRaw) ? resolve(cwdRoot, commonDirRaw) : commonDirRaw;
-      const dirKey = commonDir || topLevel;
-      return { commandCwd: topLevel, dirKey };
-    } catch {
-      return { commandCwd: repoRoot, dirKey: repoRoot };
+      if (commonDirRaw) {
+        commonDir = isAbsolute(commonDirRaw) ? commonDirRaw : resolve(cwdRoot, commonDirRaw);
+      }
+    } catch {}
+    if (!commonDir) {
+      return { commandCwd: cwdRoot, dirKey: cwdRoot };
     }
+    try {
+      const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: cwdRoot,
+        encoding: 'utf8',
+        timeout: 30_000,
+      }).trim();
+      return { commandCwd: topLevel || cwdRoot, dirKey: commonDir };
+    } catch {
+      return { commandCwd: cwdRoot, dirKey: commonDir };
+    }
+  }
+
+  private legacyWorktreeDirs(
+    repoRoot: string,
+    commandCwd: string,
+    currentProjectDir: string
+  ): string[] {
+    const base = process.env.TEST_WORKTREE_BASE_DIR ?? join(getDataDir(), 'projects');
+    const candidates = Array.from(
+      new Set([repoRoot, commandCwd].map((root) => join(base, getProjectShortKey(root))))
+    );
+    return candidates.filter((dir) => dir !== currentProjectDir && existsSync(dir));
   }
 
   private isLiveRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
@@ -83,9 +106,17 @@ export class SpaceWorktreeManager {
       writeFileSync(join(worktreesDir, '..', '.hyperneo-repo-cwd'), repo.commandCwd);
     } catch {}
 
+    const slugPrefixes = [
+      `${worktreesDir}${sep}`,
+      ...this.legacyWorktreeDirs(
+        repoRoot ?? space.workspacePath,
+        repo.commandCwd,
+        dirname(worktreesDir)
+      ).map((dir) => join(dir, 'worktrees') + sep),
+    ];
     const existingSlugs = [
       ...this.worktreeRepo.listSlugs(spaceId),
-      ...this.worktreeRepo.listSlugsUnderPath(`${worktreesDir}/`),
+      ...slugPrefixes.flatMap((prefix) => this.worktreeRepo.listSlugsUnderPath(prefix)),
     ];
     const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
 

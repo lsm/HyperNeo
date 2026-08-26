@@ -749,6 +749,104 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     expect(existsSync(second.path)).toBe(true);
     expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBe(second.path);
   });
+
+  test('bare repository spellings canonicalize to one project dir and slug scope', async () => {
+    const bareDir = join(TMP_ROOT, `bare-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const seedDir = join(TMP_ROOT, `bareseed-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    execSync(`git -c init.defaultBranch=main init "${seedDir}"`, { stdio: 'pipe' });
+    execSync('git config user.name "Test User"', { cwd: seedDir });
+    execSync('git config user.email "test@example.com"', { cwd: seedDir });
+    writeFileSync(join(seedDir, 'README.md'), '# test\n');
+    execSync('git add .', { cwd: seedDir });
+    execSync('git commit -m "initial commit"', { cwd: seedDir });
+    execSync(`git -c init.defaultBranch=main init --bare "${bareDir}"`, { stdio: 'pipe' });
+    execSync(`git -C "${seedDir}" push "${bareDir}" main:main`, { stdio: 'pipe' });
+
+    const bareAlias = join(
+      TMP_ROOT,
+      `barealias-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    symlinkSync(bareDir, bareAlias);
+
+    const otherSpaceId = `space-ws11-bare-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(otherSpaceId, bareAlias, `Space ${otherSpaceId}`, otherSpaceId, Date.now(), Date.now());
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-bare-a', 83);
+    const taskB = seedTask(db, otherSpaceId, 'task-ws11-bare-b', 84);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Bare Title',
+      83,
+      undefined,
+      bareDir
+    );
+    const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Bare Title', 84);
+
+    expect(b.slug).not.toBe(a.slug);
+    expect(b.path).toContain(getProjectShortKey(realpathSync(bareDir)));
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+
+    const bareBranches = execSync('git branch --list', { cwd: bareDir }).toString();
+    expect(bareBranches).toContain(`space/${a.slug}`);
+    expect(bareBranches).toContain(`space/${b.slug}`);
+
+    rmSync(bareAlias, { force: true });
+    rmSync(bareDir, { recursive: true, force: true });
+    rmSync(seedDir, { recursive: true, force: true });
+  });
+
+  test('legacy worktree directories keep contributing to slug scoping', async () => {
+    const legacySpaceId = `space-ws11-legacy-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(
+      legacySpaceId,
+      secondaryDir,
+      `Space ${legacySpaceId}`,
+      legacySpaceId,
+      Date.now(),
+      Date.now()
+    );
+
+    const legacyTitle = 'Legacy Title';
+    const legacySlug = worktreeSlug(legacyTitle, 1);
+    const legacyDir = join(testBaseDir, getProjectShortKey(secondaryDir), 'worktrees');
+    mkdirSync(legacyDir, { recursive: true });
+    execSync(`git branch "space/${legacySlug}" HEAD`, { cwd: secondaryDir });
+    db.prepare(
+      `INSERT INTO space_worktrees (id, space_id, task_id, slug, path, created_at)
+	       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      `wt-legacy-${Math.random().toString(36).slice(2)}`,
+      legacySpaceId,
+      seedTask(db, legacySpaceId, 'task-ws11-legacy-old', 86),
+      legacySlug,
+      join(legacyDir, legacySlug),
+      Date.now()
+    );
+
+    const taskNew = seedTask(db, spaceId, 'task-ws11-legacy-new', 85);
+    const created = await manager.createTaskWorktree(
+      spaceId,
+      taskNew,
+      legacyTitle,
+      85,
+      undefined,
+      secondaryDir
+    );
+
+    expect(created.slug).not.toBe(legacySlug);
+    expect(existsSync(created.path)).toBe(true);
+  });
 });
 
 describe('removeTaskWorktree', () => {
