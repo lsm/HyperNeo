@@ -469,7 +469,12 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   detect it by inspecting the returned task's id/status, since the MCP response does not
   expose a creation flag.
 
-The tempting alternative — `trigger_goal_task` on B, then attaching `depends_on` with
+One further runtime gap bounds what doctrine can promise: when another actor retries
+a **completed** prerequisite (`retry_task` reopens `done` as `in_progress`), started
+dependents are neither re-blocked nor is any wake emitted — the gate silently stops
+being enforced until the launcher happens to observe it (§7's dependency-reopen lease
+is the fix). The tempting alternative — `trigger_goal_task` on B, then attaching
+`depends_on` with
 `update_task` — is **rejected as unsafe**: if dispatch already started the task, adding
 an unmet dependency transitions it to terminal `blocked` (`dependency_added`), which
 fires the goal terminal seam, clears the goal's `activeTaskId`, and records a **false
@@ -551,16 +556,24 @@ ADR 0004 applies to new combinators.
 6. **Revision CAS on `update_goal`** (observed-revision parameter, so dependent-goal
    updates get the same staleness protection outcome reviews already have, §6) —
    revisit when concurrent human/agent goal edits cause a real lost update.
-7. **Consolidation-exempt operational state store** for launcher hold records, saved
-   cadence values, and tracked gated-task identities (§5's storage gap: agent memory's
-   duplicate admission compares content regardless of key and its TTL prunes long-lived
-   holds), **with its launcher-facing read/write surface**; plus the crash-safe
-   gated-task creation change (`create_standalone_task` idempotency key / combined
-   create-and-record, Forge-path atomicity or reconciliation — §5); plus the
-   **attributable pause operation** (combined hold-and-pause transaction or pause
-   caller token — §6) — all three are **prerequisite enablers** of the template slice
-   rather than revisit-triggered primitives; they ship with the template slice or block
-   it.
+7. **Launcher operational-state machinery**, a bundle of scoped daemon changes that
+   are **prerequisite enablers** of the template slice rather than revisit-triggered
+   primitives — they ship with the template slice or block it:
+   (a) the consolidation-exempt store for hold records, saved cadence values, and
+   tracked gated-task identities, with its owner/coordinator-scoped read/write surface
+   (§5's storage gap: agent memory merges by content and TTL-prunes long-lived holds);
+   (b) crash-safe gated-task creation (`create_standalone_task` idempotency key /
+   combined create-and-record, Forge-path atomicity or reconciliation — §5);
+   (c) the attributable pause operation (combined hold-and-pause transaction or pause
+   caller token — §6);
+   (d) race-safe terminal handling — a terminal-generation CAS/lease for consuming
+   standalone results and a recoverable completion-intent reconciliation (§5);
+   (e) **hold-enforcing resume/trigger handlers** — `resume_goal` currently checks only
+   goal membership, so an unrelated agent can lift a launcher hold before
+   reminder-based reconciliation re-pauses it; handlers must reject work under an
+   unresolved launcher hold except for its authorized owner/coordinator, together with
+   dependency-reopen leases so a retried `done` prerequisite stops its started
+   dependents and wakes the launcher instead of silently revoking the gate (§5).
 
 **Rejected alternatives.**
 
@@ -577,11 +590,11 @@ ADR 0004 applies to new combinators.
 
 ## 8. Follow-ups (out of scope here)
 
-Implementation issues spawned from this decision: the consolidation-exempt
-operational-state store with its launcher-facing read/write surface, the crash-safe
-gated-task creation change, and the attributable pause operation (§5/§7 prerequisites —
-all three land before or with the template slice and block it otherwise), the launcher
+Implementation issues spawned from this decision: the launcher operational-state
+machinery bundle (store + surface, crash-safe creation, attributable pause,
+race-safe terminal handling, hold-enforcing handlers — §5/§7 prerequisites landing
+before or with the template slice and blocking it otherwise), the launcher
 prompt template slice (template registration, mechanical per §7), the
 usage-doc section (with #2537), and — only on hitting a §7 revisit trigger — a primitive
-proposal. Nothing in this RFC requires new daemon *orchestration* behavior; the store
-and the crash-safe creation change are the scoped daemon prerequisites.
+proposal. Nothing in this RFC requires new daemon *orchestration* behavior; the
+operational-state machinery bundle is the scoped daemon prerequisite set.
