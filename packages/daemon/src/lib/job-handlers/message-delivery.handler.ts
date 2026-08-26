@@ -119,22 +119,22 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         job.claimToken
       );
       const result = await turn;
+      if (
+        result.outcome === 'blocked' &&
+        deps.isResumeChoiceResolved?.(payload.sessionId) === true
+      ) {
+        const retryAt = Date.now();
+        deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
+        log.info(
+          `message_delivery: resume choice already resolved for ${payload.messageUuid}; retrying immediately`
+        );
+        return { parked: 'sdk_resume_choice', retryAt };
+      }
       const route = routeDriveTurnOutcome(result, {
         parkCount: result.outcome === 'blocked' ? deps.jobQueue.getParkCount(job.id) : 0,
         now: Date.now(),
       });
       if ('deadLetter' in route) {
-        if (
-          result.outcome === 'blocked' &&
-          deps.isResumeChoiceResolved?.(payload.sessionId) === true
-        ) {
-          const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-          deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
-          log.info(
-            `message_delivery: resume choice resolved mid-flight for ${payload.messageUuid}; parking once more instead of dead-lettering`
-          );
-          return { parked: 'sdk_resume_choice', retryAt };
-        }
         throw new DeadLetterImmediatelyError(route.deadLetter);
       }
       if (route.reclaimSkip) {
