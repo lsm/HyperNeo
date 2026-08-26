@@ -334,6 +334,56 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     expect(result.path).toBe(expectedPath);
     expect(existsSync(result.path)).toBe(true);
   });
+
+  test('removeTaskWorktree cleans up in the owning secondary repo and spares primary branches', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-rm', 65);
+    const { path, slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Remove Secondary',
+      65,
+      undefined,
+      secondaryDir
+    );
+    execSync(`git branch "space/${slug}" HEAD`, { cwd: repoDir });
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(existsSync(path)).toBe(false);
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).not.toContain(`space/${slug}`);
+    const primaryBranches = execSync('git branch --list', { cwd: repoDir }).toString();
+    expect(primaryBranches).toContain(`space/${slug}`);
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+  });
+
+  test('cleanupOrphaned deletes the branch in the owning secondary repo when the dir is gone', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-orphan', 66);
+    const { path, slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Orphan Secondary',
+      66,
+      undefined,
+      secondaryDir
+    );
+
+    rmSync(path, { recursive: true, force: true });
+    const secondaryWorktreesBefore = execSync('git worktree list', {
+      cwd: secondaryDir,
+    }).toString();
+    expect(secondaryWorktreesBefore).toContain(slug);
+
+    await manager.cleanupOrphaned(spaceId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).not.toContain(`space/${slug}`);
+    const secondaryWorktreesAfter = execSync('git worktree list', {
+      cwd: secondaryDir,
+    }).toString();
+    expect(secondaryWorktreesAfter).not.toContain(slug);
+  });
 });
 
 describe('removeTaskWorktree', () => {

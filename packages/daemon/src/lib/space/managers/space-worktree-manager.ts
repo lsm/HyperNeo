@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
@@ -146,6 +146,29 @@ export class SpaceWorktreeManager {
     return { path: worktreePath, slug };
   }
 
+  private resolveWorktreeRepoRoot(worktreePath: string, fallback: string): string {
+    const gitLink = join(worktreePath, '.git');
+    if (existsSync(gitLink)) {
+      try {
+        const raw = readFileSync(gitLink, 'utf8').trim();
+        const gitdir = raw.startsWith('gitdir:') ? raw.slice('gitdir:'.length).trim() : '';
+        if (gitdir) {
+          const absolute = isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir);
+          const repoRoot = dirname(dirname(dirname(absolute)));
+          if (repoRoot && repoRoot !== '.') return repoRoot;
+        }
+      } catch {}
+    }
+    const sentinel = join(dirname(dirname(worktreePath)), '.hyperneo-repo-root');
+    if (existsSync(sentinel)) {
+      try {
+        const stored = readFileSync(sentinel, 'utf8').trim();
+        if (stored) return stored;
+      } catch {}
+    }
+    return fallback;
+  }
+
   async removeTaskWorktree(spaceId: string, taskId: string): Promise<void> {
     const record = this.worktreeRepo.getByTaskId(spaceId, taskId);
     if (!record) {
@@ -158,9 +181,11 @@ export class SpaceWorktreeManager {
       return;
     }
 
+    const gitRoot = this.resolveWorktreeRepoRoot(record.path, space.workspacePath);
+
     try {
       execFileSync('git', ['worktree', 'remove', record.path, '--force'], {
-        cwd: space.workspacePath,
+        cwd: gitRoot,
         timeout: 30_000,
       });
     } catch (err) {
@@ -172,7 +197,7 @@ export class SpaceWorktreeManager {
     const branchName = `space/${record.slug}`;
     try {
       execFileSync('git', ['branch', '-D', branchName], {
-        cwd: space.workspacePath,
+        cwd: gitRoot,
         timeout: 30_000,
       });
     } catch (err) {
@@ -228,14 +253,17 @@ export class SpaceWorktreeManager {
   async cleanupOrphaned(spaceId: string): Promise<void> {
     const records = this.worktreeRepo.listBySpace(spaceId);
     const space = this.spaceRepo.getSpace(spaceId);
+    const pruneRoots = new Set<string>(space ? [space.workspacePath] : []);
 
     for (const record of records) {
       if (!existsSync(record.path)) {
         if (space) {
+          const gitRoot = this.resolveWorktreeRepoRoot(record.path, space.workspacePath);
+          pruneRoots.add(gitRoot);
           const branchName = `space/${record.slug}`;
           try {
             execFileSync('git', ['branch', '-D', branchName], {
-              cwd: space.workspacePath,
+              cwd: gitRoot,
               timeout: 30_000,
             });
           } catch {}
@@ -247,15 +275,15 @@ export class SpaceWorktreeManager {
       }
     }
 
-    if (space) {
+    for (const gitRoot of pruneRoots) {
       try {
         execFileSync('git', ['worktree', 'prune'], {
-          cwd: space.workspacePath,
+          cwd: gitRoot,
           timeout: 30_000,
         });
       } catch (err) {
         this.logger.warn(
-          `git worktree prune failed for space ${spaceId}: ${err instanceof Error ? err.message : String(err)}`
+          `git worktree prune failed for space ${spaceId} in ${gitRoot}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
