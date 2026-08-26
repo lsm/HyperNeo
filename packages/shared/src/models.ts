@@ -19,7 +19,7 @@ export interface ModelInfo {
 }
 
 export const AUTO_COMPACT_PERCENT_DEFAULT = 90;
-export const AUTO_COMPACT_PERCENT_MIN = 50;
+export const AUTO_COMPACT_PERCENT_MIN = 10;
 export const AUTO_COMPACT_PERCENT_MAX = 100;
 
 export function resolveAutoCompactPercent(raw?: number | null): number {

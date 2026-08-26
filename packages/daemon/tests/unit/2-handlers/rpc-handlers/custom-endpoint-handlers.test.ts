@@ -191,10 +191,11 @@ describe('Custom Endpoint RPC handlers', () => {
           })),
         },
       });
+      await handler(withPercent(10), {});
       await handler(withPercent(50), {});
       await handler(withPercent(90), {});
       await handler(withPercent(100), {});
-      await expect(handler(withPercent(49), {})).rejects.toThrow(/autoCompactPercent/);
+      await expect(handler(withPercent(9), {})).rejects.toThrow(/autoCompactPercent/);
       await expect(handler(withPercent(101), {})).rejects.toThrow(/autoCompactPercent/);
       await expect(handler(withPercent(99.9), {})).rejects.toThrow(/autoCompactPercent/);
     });

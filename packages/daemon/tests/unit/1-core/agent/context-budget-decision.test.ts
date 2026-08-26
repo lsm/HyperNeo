@@ -81,13 +81,13 @@ describe('decideContextBudgetCompaction', () => {
   });
 
   test('out-of-range percents clamp before computing the threshold', () => {
-    const low = { autoCompactPercent: 30 };
-    expect(contextBudgetThreshold(WINDOW, low.autoCompactPercent)).toBe(128_000);
-    expect(decideContextBudgetCompaction(baseInput({ ...low, totalUsed: 127_999 }))).toEqual({
+    const low = { autoCompactPercent: 3 };
+    expect(contextBudgetThreshold(WINDOW, low.autoCompactPercent)).toBe(25_600);
+    expect(decideContextBudgetCompaction(baseInput({ ...low, totalUsed: 25_599 }))).toEqual({
       action: 'none',
       reason: 'below_threshold',
     });
-    expect(decideContextBudgetCompaction(baseInput({ ...low, totalUsed: 128_000 }))).toEqual({
+    expect(decideContextBudgetCompaction(baseInput({ ...low, totalUsed: 25_600 }))).toEqual({
       action: 'compact',
       reason: 'over_threshold_sdk_unknown',
     });
@@ -213,7 +213,7 @@ describe('scaledAutoCompactWindow', () => {
   });
 
   test('junk percents clamp first', () => {
-    expect(scaledAutoCompactWindow(100_000, 10)).toBe(50_000);
+    expect(scaledAutoCompactWindow(100_000, 2)).toBe(10_000);
     expect(scaledAutoCompactWindow(100_000, 250)).toBe(100_000);
   });
 });
