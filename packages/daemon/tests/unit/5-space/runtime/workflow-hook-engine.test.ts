@@ -9,6 +9,7 @@ import {
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 import type {
   WorkflowHook,
   WorkflowHookResult,
@@ -2106,7 +2107,7 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
   });
 
   test('github connector auth keys inject only when github is permitted', async () => {
-    process.env.GH_TOKEN = 'gh-secret';
+    _setStartupEnvBaselineForTesting({ ...process.env, GH_TOKEN: 'gh-secret' });
     const executor = new HookExecutor({ workspacePath: '/tmp' });
     const source = 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_TOKEN:-missing}\\" }"';
 
@@ -2139,15 +2140,18 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
       { ...baseContext, permittedExternalLookups: [] }
     );
 
-    delete process.env.GH_TOKEN;
+    _setStartupEnvBaselineForTesting(process.env);
 
     expect(permitted.result.message).toBe('gh-secret');
     expect(denied.result.message).toBe('missing');
   });
 
   test('non-TOKEN connector keys (GH_HOST/GH_CONFIG_DIR) are denied unless permitted', async () => {
-    process.env.GH_HOST = 'gh.enterprise.example';
-    process.env.GH_CONFIG_DIR = '/nonexistent/custom-gh';
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      GH_HOST: 'gh.enterprise.example',
+      GH_CONFIG_DIR: '/nonexistent/custom-gh',
+    });
     const executor = new HookExecutor({ workspacePath: '/tmp' });
     const source =
       'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${GH_HOST:-missing}|${GH_CONFIG_DIR:-missing}\\" }"';
@@ -2179,11 +2183,220 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
       { ...baseContext, permittedExternalLookups: ['github'] }
     );
 
-    delete process.env.GH_HOST;
-    delete process.env.GH_CONFIG_DIR;
+    _setStartupEnvBaselineForTesting(process.env);
 
     expect(denied.result.message).toBe('missing|missing');
     expect(permitted.result.message).toContain('gh.enterprise.example');
+  });
+
+  test('proxy env vars inject only when external lookups are permitted', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      HTTPS_PROXY: 'http://user:secret@proxy.corp.example:8080',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const source =
+      'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${HTTPS_PROXY:-missing}\\" }"';
+    const scriptValidator = {
+      kind: 'script' as const,
+      interpreter: 'bash' as const,
+      source,
+    };
+    const baseContext = {
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'hook-script',
+      methodName: 'send_message',
+      params: {},
+      nodeId: 'node-1',
+      nodeName: 'Coding',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: {},
+      currentArtifacts: [],
+    };
+
+    const denied = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: [] }
+    );
+    const permitted = await executor.execute(
+      makeHook({ id: 'hook-script', classification: 'validation', validator: scriptValidator }),
+      { ...baseContext, permittedExternalLookups: ['github'] }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(denied.result.message).toBe('missing');
+    expect(permitted.result.message).toBe('http://user:secret@proxy.corp.example:8080');
+  });
+
+  test('windows runtime and locale variables stay available to hook scripts', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      SystemRoot: 'C:\\Windows',
+      TEMP: 'C:\\Users\\agent\\AppData\\Local\\Temp',
+      USERPROFILE: 'C:\\Users\\agent',
+      AppData: 'C:\\Users\\agent\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\agent\\AppData\\Local',
+      HOMEDRIVE: 'C:',
+      HOMEPATH: '\\Users\\agent',
+      LC_ALL: 'en_US.UTF-8',
+      LC_CTYPE: 'en_US.UTF-8',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source:
+            'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${SystemRoot:-missing}|${TEMP:-missing}|${USERPROFILE:-missing}|${AppData:-missing}|${LOCALAPPDATA:-missing}|${HOMEDRIVE:-missing}|${HOMEPATH:-missing}|${LC_ALL:-missing}|${LC_CTYPE:-missing}\\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe(
+      'C:\\Windows|C:\\Users\\agent\\AppData\\Local\\Temp|C:\\Users\\agent|C:\\Users\\agent\\AppData\\Roaming|C:\\Users\\agent\\AppData\\Local|C:|\\Users\\agent|en_US.UTF-8|en_US.UTF-8'
+    );
+  });
+
+  test('JAVA_HOME stays available to hook scripts for JVM-based validators', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      JAVA_HOME: '/Library/Java/JavaVirtualMachines/jdk-21/Contents/Home',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source: 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${JAVA_HOME:-missing}\\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe('/Library/Java/JavaVirtualMachines/jdk-21/Contents/Home');
+  });
+
+  test('NODE_ENV stays available to hook scripts for Node-based validators', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      NODE_ENV: 'production',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source: 'echo "{ \\"type\\": \\"allow\\", \\"message\\": \\"${NODE_ENV:-missing}\\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe('production');
+  });
+
+  test('windows installation roots stay available to hook scripts', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source:
+            'echo "{ \"type\": \"allow\", \"message\": \"${ProgramFiles:-missing}|$(printenv "ProgramFiles(x86)" || echo missing)|${ProgramW6432:-missing}\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe(
+      'C:\\Program Files|C:\\Program Files (x86)|C:\\Program Files'
+    );
   });
 
   test('process group is killed after successful script exit', async () => {

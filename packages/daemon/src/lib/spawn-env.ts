@@ -26,7 +26,7 @@ const OS_ENV_KEYS = [
   'HOMEPATH',
 ] as const;
 
-const PROXY_TLS_ENV_KEYS = [
+export const PROXY_TLS_ENV_KEYS = [
   'HTTPS_PROXY',
   'https_proxy',
   'HTTP_PROXY',
