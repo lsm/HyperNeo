@@ -367,13 +367,25 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Pure core design**: ONE direct pipeline `deliver-task-message`
   (review correction: a `stagedRun` containing two separately executed
   `decisionRun`s splits this delivery business path across three composition
-  boundaries). Its gate groups run inline: the target-admission gates
+  boundaries). Its gate groups run inline: the AVAILABILITY gate FIRST
+  (no `taskAgentManager` configured → the exact `Task agent communication is
+  not available in this context.` failure BEFORE task identification —
+  review correction PR #2983 round 7), the target-admission gates
   (`task_id`/`task_number`, space, archived, the DEPRECATED `task-agent`
   target rejection — `target`/`node_id === 'task-agent'` returns the exact
   `Target "task-agent" is no longer supported. Use a worker target or
   node_id.` error at its current precedence, after the space/archived gates
   and before target presence/resolution — review correction PR #2983
-  round 5, target presence, workflow run)
+  round 5, target presence, workflow run), the AMBIGUOUS-HANDLE terminal
+  gates (a task-scoped `@handle` resolving to a long-horizon agent → the
+  audited `ambiguous_long_horizon_target` error (unless a `node_id` override
+  resolves to an execution, which is itself the disagree rejection); an
+  `ambiguous` resolution across worker and persistent actor → the audited
+  `ambiguous_target` error UNLESS the supplied `node_id` matches the handle's
+  node, which then overrides — review correction PR #2983 round 7: these
+  rejections run before ANY long-term or worker delivery effect, so a task
+  message can never be delivered to the persistent actor callers must reach
+  via `send_session_message` instead)
   followed by the delivery-mode gates (`injectLive`, `activateAndInject`,
   `queue`, `deliverLongTerm`), self-guarding so first match wins.
 - **Shell/effect wiring** (review correction): ON THE NODE-EXECUTION DELIVERY
@@ -1422,10 +1434,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P36 — `refactor(tools): run review_goal_outcome on its staged pipeline`
 
 - 🔧 apply — prod Δ ≲60, test Δ ≲100
-- **Scope**: The `review_goal_outcome` handler in `space-agent-tools.ts` executes the P35 pipeline; atomicity stays inside the service's `runAtomic`.
-- **Lands**: both tool modes run one named composition.
+- **Scope**: The `review_goal_outcome` handler in `space-agent-tools.ts` executes the P35 pipeline; atomicity stays inside the service's `runAtomic`; the tool shell RETAINS its success audit on `claimed`/`already_applied` — `logAudit('review_goal_outcome', { notification_id, goal_id, disposition, has_goal_update, status }, task_id)` (review correction PR #2983 round 7, same discipline as the publish/archive/approve slices).
+- **Lands**: both tool modes run one named composition with the outcome-claim audit trail intact.
 - **Excludes**: changes to the service's claim internals (already final in P34).
-- **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`, `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`, `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts` including an audit-retention row.
 - **Depends on**: P35.
 
 ### P37 — `test(goals): pin goal-automation admission and schedule-sync behavior`
@@ -1586,7 +1598,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P54 — `test(tools): pin send_message_to_task delivery arms`
 
 - 📌 pins — prod Δ = 0, test Δ ≲350 (split by family: target-resolution arms vs delivery-mode arms)
-- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: target disambiguation (`task_id`/`task_number`), the DEPRECATED `task-agent` target rejection for BOTH input forms (`target === 'task-agent'` and `node_id === 'task-agent'`, at its current precedence after the space/archived gates — review correction PR #2983 round 5), the `target`/`node_id` DISAGREEMENT rejection (both supplied, different executions, including the long-horizon-handle conflict case, before any registry write or delivery — review correction PR #2983 round 6), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the MISSING-ACTIVATION-CALLBACK arm (no live session and no `activateNode` configured → the specific `activation_callback_missing` failure with no activation attempt and no queueing — review correction PR #2983 round 3), the caught `activateNode` failure returning `{ success: false, error }`, the OPTIONAL-DEPENDENCY FALLBACKS (an `@handle`/`@role` target without the long-term resolver/delivery dependencies → the `long_term_agent_messaging_unavailable` failure; activation with no session and no `pendingMessageQueue` → SUCCESS with `queued: false` and the `Retry after the node starts.` message — review correction PR #2983 round 4), and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on — INCLUDING that it is written only on the node-execution arms and NOT on the long-term `@handle`/`@role` arm, whose replies ride the envelope's `replyToSessionId`/`replyTargetHandle` instead (review correction PR #2983 round 2). Parallel-safe leaf.
+- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: the MANAGER-AVAILABILITY gate (no `taskAgentManager` configured → the `Task agent communication is not available in this context.` failure BEFORE task identification — review correction PR #2983 round 7), target disambiguation (`task_id`/`task_number`), the DEPRECATED `task-agent` target rejection for BOTH input forms (`target === 'task-agent'` and `node_id === 'task-agent'`, at its current precedence after the space/archived gates — review correction PR #2983 round 5), the `target`/`node_id` DISAGREEMENT rejection (both supplied, different executions, including the long-horizon-handle conflict case, before any registry write or delivery — review correction PR #2983 round 6), the AMBIGUOUS-HANDLE rejections (`ambiguous_long_horizon_target` and `ambiguous_target`, each with its `node_id`-override escape, before any long-term or worker delivery — review correction PR #2983 round 7), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the MISSING-ACTIVATION-CALLBACK arm (no live session and no `activateNode` configured → the specific `activation_callback_missing` failure with no activation attempt and no queueing — review correction PR #2983 round 3), the caught `activateNode` failure returning `{ success: false, error }`, the OPTIONAL-DEPENDENCY FALLBACKS (an `@handle`/`@role` target without the long-term resolver/delivery dependencies → the `long_term_agent_messaging_unavailable` failure; activation with no session and no `pendingMessageQueue` → SUCCESS with `queued: false` and the `Retry after the node starts.` message — review correction PR #2983 round 4), and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on — INCLUDING that it is written only on the node-execution arms and NOT on the long-term `@handle`/`@role` arm, whose replies ride the envelope's `replyToSessionId`/`replyTargetHandle` instead (review correction PR #2983 round 2). Parallel-safe leaf.
 - **Lands**: every delivery arm — especially the reply-routing pin — is characterized before the cascade is replaced.
 - **Excludes**: production changes.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
@@ -1595,10 +1607,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P55 — `feat(tools): add deliver-task-message target-admission core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲250
-- **Scope**: First half of the ONE `deliver-task-message` pipeline: `DeliverTaskMessageState`; snapshot stages running the target parse (`ParsedAddress`), handle resolution, and execution resolution; the target-admission gates (`task_id`/`task_number`, space, archived, the deprecated `task-agent` target rejection at its pinned precedence for both input forms — review correction PR #2983 round 5, target presence, workflow run) as direct inline stages, FOLLOWED by the TARGET-AGREEMENT gate: when BOTH `target` and `node_id` are supplied and resolve to different executions (including the long-horizon-handle conflict case), reject with the exact current `target and node_id disagree` response BEFORE the reply-registry write or any delivery effect (review correction PR #2983 round 6: selecting one resolution and delivering would send the message to an unintended worker while silently ignoring the conflicting identifier); and the effect recording `replyRoutingRegistry.set(...)` on the NODE-EXECUTION path only — after the node-resolution gates, before the `injectLive`/activation/`queue` arms, and never on the `deliverLongTerm` arm where `resolved` is null and replies ride the envelope's reply handle (review correction PR #2983 round 2).
+- **Scope**: First half of the ONE `deliver-task-message` pipeline: `DeliverTaskMessageState`; snapshot stages running the target parse (`ParsedAddress`), handle resolution, and execution resolution; the AVAILABILITY gate first (no `taskAgentManager` → the exact `Task agent communication is not available in this context.` response before task identification — review correction PR #2983 round 7); the target-admission gates (`task_id`/`task_number`, space, archived, the deprecated `task-agent` target rejection at its pinned precedence for both input forms — review correction PR #2983 round 5, target presence, workflow run) as direct inline stages, FOLLOWED by the TARGET-AGREEMENT gate: when BOTH `target` and `node_id` are supplied and resolve to different executions (including the long-horizon-handle conflict case), reject with the exact current `target and node_id disagree` response BEFORE the reply-registry write or any delivery effect (review correction PR #2983 round 6: selecting one resolution and delivering would send the message to an unintended worker while silently ignoring the conflicting identifier); and the AMBIGUOUS-HANDLE terminal gates (`ambiguous_long_horizon_target` for a task-scoped handle resolving to a long-horizon agent — `node_id` override or reject; `ambiguous_target` for an ambiguous worker/persistent resolution — `node_id`-matches-handle override or reject — review correction PR #2983 round 7); and the effect recording `replyRoutingRegistry.set(...)` on the NODE-EXECUTION path only — after the node-resolution gates, before the `injectLive`/activation/`queue` arms, and never on the `deliverLongTerm` arm where `resolved` is null and replies ride the envelope's reply handle (review correction PR #2983 round 2).
 - **Lands**: the admission half of the delivery business path exists as pipeline stages.
 - **Excludes**: delivery-mode gates and effect arms (P56); tool wiring (P57).
-- **Tests**: admission rows (including both deprecated `task-agent` input forms and the `target`/`node_id` disagreement rows) plus the reply-routing parity pin (node arms write the registry; the long-term arm does not).
+- **Tests**: admission rows (including both deprecated `task-agent` input forms, the `target`/`node_id` disagreement rows, the manager-unavailable precedence row, and both ambiguous-handle rejection/override rows) plus the reply-routing parity pin (node arms write the registry; the long-term arm does not).
 - **Depends on**: P54.
 
 ### P56 — `feat(tools): add deliver-task-message delivery-mode stages and compose the pipeline (unwired)`
