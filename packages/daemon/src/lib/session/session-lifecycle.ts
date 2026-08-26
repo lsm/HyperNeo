@@ -958,7 +958,7 @@ export class SessionLifecycle {
       return null;
     }
 
-    const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
+    let originalEnv = await providerService.applyEnvVarsToProcessForProvider(
       provider,
       titleModels.providerModelId
     );
@@ -974,6 +974,9 @@ export class SessionLifecycle {
       const cliPath = resolveSDKCliPath();
 
       const mergedEnv = buildSdkQueryEnv(providerEnvVars);
+
+      providerService.restoreEnvVars(originalEnv);
+      originalEnv = {};
 
       const agentQuery = query({
         prompt,
