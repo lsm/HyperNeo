@@ -688,15 +688,16 @@ characterizes those dimensions).
   `persistAndEnqueueDelivery` is the outbox's complete
   persist/enqueue/post-commit flow at `:37-91`; its pipeline begins with
   preflight stages (`validateMessageUuid` at `:40-42`, `arbitrateDeliveryRole`
-  at `:43-58`), then `admit`, then an `admit` stage, then an `atomic` stage: `saveUserMessage` calls
+  at `:43-58`), then `admit`, then an `atomic` stage: `saveUserMessage` calls
   a new transaction-owning repository primitive `saveUserMessageWithAdmission`
   (wrapping `withBusyRetry(() => db.transaction(() =>
-  saveUserMessageCoreWithAdmission(...)))`); `persistAndEnqueueDelivery` uses its
-  existing `db.transaction(...)` body calling the accessible
-  `saveUserMessageCoreWithAdmission` in-transaction helper and then
-  `jobQueue.enqueue` with the UNIQUE-conflict fallback. The helper is exposed as
-  a public or package-internal method so `message-delivery-outbox.ts` can call
-  it; the public `saveUserMessageCore` stays a compatibility wrapper that calls
+  saveUserMessageCoreWithAdmission(...)))`); `persistAndEnqueueDelivery` calls
+  a new transaction-owning outbox primitive `persistAndEnqueueAdmittedUserMessage`
+  that wraps the existing `db.transaction(...)` body, calling
+  `saveUserMessageCoreWithAdmission` and then `jobQueue.enqueue` with the
+  UNIQUE-conflict fallback. The helper is exposed as a public or package-internal
+  method so `message-delivery-outbox.ts` can call it; the public
+  `saveUserMessageCore` stays a compatibility wrapper that calls
   `decideMessageAdmission` and then the helper, so existing tests and callers
   continue to work.
 - **Lands**: Both user-message save/delivery paths run as complete named
