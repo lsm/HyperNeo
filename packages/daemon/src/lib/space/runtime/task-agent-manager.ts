@@ -1664,6 +1664,7 @@ export class TaskAgentManager {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       repo.recordDeliveryError(row.id, errMsg);
+      repo.deferExpiration([row.id]);
       const latest = repo.getById(row.id);
       if ((latest?.attempts ?? 0) >= (latest?.maxAttempts ?? Infinity)) {
         repo.markFailed(row.id, `space-agent delivery attempts exhausted (${latest?.maxAttempts})`);

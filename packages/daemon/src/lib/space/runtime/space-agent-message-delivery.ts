@@ -60,17 +60,17 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     const late = waitForDeliveryConsumption(sessionId, messageId);
     let fired = false;
     let expiry: ReturnType<typeof setTimeout> | undefined;
-    let release: () => void = () => {};
+    const releaseRef = { current: (): void => {} };
     const watcher: ArmedWatcher = {
-      release,
+      release: () => releaseRef.current(),
       handle: {
         cancel: () => {
           fired = true;
-          release();
+          releaseRef.current();
         },
       },
     };
-    release = () => {
+    releaseRef.current = () => {
       clearTimeout(expiry);
       this.timers.delete(expiry!);
       if (this.waiters.get(key)?.handle === watcher.handle) this.waiters.delete(key);
@@ -81,7 +81,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
         if (!fired) {
           fired = true;
         }
-        release();
+        releaseRef.current();
         try {
           onFailed?.();
         } catch (error) {
@@ -94,7 +94,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     );
     this.waiters.set(key, watcher);
     void late.promise.then(() => {
-      release();
+      releaseRef.current();
       if (fired) return;
       fired = true;
       try {
