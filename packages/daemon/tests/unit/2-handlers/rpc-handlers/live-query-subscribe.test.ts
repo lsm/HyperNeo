@@ -168,6 +168,52 @@ function createDb() {
 			result TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS node_executions (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			workflow_node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			agent_id TEXT,
+			agent_session_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			result TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_agents (
+			id TEXT PRIMARY KEY,
+			name TEXT
+		);
+		CREATE TABLE IF NOT EXISTS space_github_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source TEXT NOT NULL,
+			delivery_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			action TEXT NOT NULL,
+			repo_owner TEXT NOT NULL,
+			repo_name TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			pr_url TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL DEFAULT '',
+			external_id TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			raw_payload TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'received',
+			matched_by TEXT,
+			confidence TEXT,
+			route_note TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)
 	`);
   return db;
