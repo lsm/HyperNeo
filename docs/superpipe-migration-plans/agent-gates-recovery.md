@@ -828,7 +828,13 @@ none of these sites needs its compensation machinery.
   #2981) → pattern
   classification → occurrence recording (`recentErrors`,
   `messageTimestampsByAgent`, `state`) → `trip()` (with its async `onTrip`
-  effect) as ONE mixed business operation, instead of swapping only the
+  effect — the injected callback's rejection CAUGHT AND LOGGED INSIDE the
+  stage, `api-error-circuit-breaker.ts:109-115`, pinned by
+  `api-error-circuit-breaker.test.ts:642-651`: `checkMessage()` still
+  resolves `true` with the breaker tripped; review correction PR #2981:
+  plain `.endAsync` propagation would reject `checkMessage()` and abort
+  SDK-message processing after the breaker state already changed) as ONE
+  mixed business operation, instead of swapping only the
   classifiers for runners while leaving recording/transitions/trip
   imperative (that splits every breaker check at its central effects).
   Cooldown release is NOT a `checkMessage` stage (review correction PR
@@ -1102,12 +1108,15 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   indirectly via handler/session tests). Add
   `tests/unit/1-core/agent/message-delivery-payload.test.ts`: validation
   rows (missing ids, bad role, non-string batch members, empty batchUuids
-  omitted, origin default) and reclaim rows — ALL EIGHT input combinations
-  of the three independent booleans plus the explicit precedence rows
-  (terminalIdle beats successResult; success wins over the marker when
-  both are true and `terminalIdleInFlight: false` → `terminated`, with the
-  marker arm firing only when `successResult: false`; review correction
-  PR #2981, matching the PR 18 scope).
+  omitted, origin default). Reclaim rows are covered by the EXISTING
+  direct suite at
+  `tests/unit/4-space-storage/storage/sdk-message-repository.test.ts:3519-3621`
+  (all eight combinations plus precedence) — extend or MOVE that table
+  rather than duplicating it here (review correction
+  PR #2981, matching the PR 18 scope); the precedence that must survive:
+  terminalIdle beats
+  successResult; success wins over the marker when both are true and
+  `terminalIdleInFlight: false` → `terminated`.
 - **risks/caveats.** `asMessageDeliveryPayload` runs on every delivery job
   claim — cheap, but keep the pipeline linear with no per-stage allocation
   beyond the payload itself. The `origin` field is cast, not validated
@@ -1284,9 +1293,11 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   PRs touching `sdk-message-handler.ts`). When it lands:
   `handleMessageYielded` replaces its probe chain with row snapshots →
   `decideYieldedAckRow` → per-arm interpretation. EVERY consumed arm —
-  enqueued, submitted, AND deferred (review correction) — writes the
-  supplied `consumedAt` in the same transactional status-plus-timestamp
-  batch (`sdk-message-handler.ts:655-658,691-694`) and publishes ALL
+  enqueued, submitted, AND deferred (review correction) — consumes via the
+  same GUARDED repository transition as the immediate arm (expected
+  status/ownership verification, `superseded` outcome, timestamp on the
+  verified path, `sdk-message-handler.ts:655-658,691-694`; review
+  correction PR #2981) and publishes ALL
   FOUR events the current handler publishes around the status change
   (`messages.statusChanged` first at `:660-668,696-703`, then):
   `state.sdkMessages.delta`, `sdk.message`, and the tool-result-consumed
@@ -1918,7 +1929,11 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   message-text extraction with its empty-text false-return gate
   (`:69-73`, flattened-string input; review correction PR #2981) →
   pattern classification → occurrence recording (`recentErrors`,
-  `messageTimestampsByAgent`, `state`) → `trip()` (async `onTrip`) as mixed
+  `messageTimestampsByAgent`, `state`) → `trip()` (async `onTrip` with
+  today's catch-and-log containment — an injected-callback rejection never
+  rejects `checkMessage()`, `:109-115`, pinned by
+  `api-error-circuit-breaker.test.ts:642-651`; review correction PR
+  #2981) as mixed
   stages over ctx-injected collaborators. Review correction (PR #2981):
   cooldown release is NOT part of `checkMessage` — today only `isTripped()`
   performs it via `shouldReleaseCooldown` + `reset()`
@@ -1981,16 +1996,19 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 
 - **scope.** Extends `message-delivery-payload.test.ts`, dimension family
   "reclaim termination" against the CURRENT   `classifyReclaimTermination`
-  (`message-delivery.ts:235-244`): review correction (PR #2981): the function
-  has THREE independent boolean inputs, so enumerate ALL EIGHT combinations
-  (not four) plus the explicit precedence rows — terminalIdle and
-  successResult both true, and the success-wins-over-marker row
+  (`message-delivery.ts:235-244`): review correction (PR #2981): a direct
+  `classifyReclaimTermination` suite ALREADY EXISTS at
+  `tests/unit/4-space-storage/storage/sdk-message-repository.test.ts:3519-3621`
+  covering all eight boolean combinations and the success-over-marker
+  precedence case — REUSE or MOVE that table rather than duplicating it
+  (two copies would have to be updated together on every contract change);
+  this slice keeps the new file focused on the genuinely uncovered payload
+  validation rows. The precedence that must survive the move: terminalIdle
+  beats successResult, and success wins over the marker
   (`successResult && markerExists`, `terminalIdleInFlight: false` →
-  `terminated`: the success check precedes the marker arm,
-  `message-delivery.ts:235-244`, and the marker arm fires only when
-  `successResult: false` — review correction PR #2981: expecting
-  `redrive` there would teach the replacement to clear the marker and
-  rerun a completed delivery) — before the cascade is replaced.
+  `terminated`; the marker arm fires only when `successResult: false` —
+  expecting `redrive` there would teach the replacement to clear the
+  marker and rerun a completed delivery).
 - **lands.** The reclaim contract the PR 19 gates must preserve is pinned.
 - **excludes.** Payload validation rows (PR 17).
 - **tests.** This slice is the pin table.
@@ -2171,14 +2189,17 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `packages/daemon/src/lib/agent/sdk-message-handler.ts:647-660`
   (`handleMessageYielded`): probe chain replaced by row snapshots →
   `decideYieldedAckRow` → per-arm interpretation where EVERY consumed arm —
-  enqueued, submitted, AND deferred — carries the supplied `consumedAt`
-  through the transactional status-plus-timestamp batch
-  (`withDbChangeBatch` writing `updateMessageStatus` AND
-  `updateMessageTimestamp(dbId, consumedAt)`,
+  enqueued, submitted, AND deferred — consumes via a GUARDED repository
+  transition carrying the supplied `consumedAt` (an atomic primitive
+  verifying expected status and ownership, returning `superseded` when
+  they changed, applying the status-plus-`updateMessageTimestamp(dbId,
+  consumedAt)` write only on the verified path,
   `sdk-message-handler.ts:655-658,691-694`; review correction PR #2981:
-  the send-status tests assert that timestamp update — omitting it leaves
-  the persisted row at its enqueue time while the published replay carries
-  the later yield time, corrupting timestamp-ordered snapshots) and
+  stage boundaries can allow a defer, failure, or ownership change AFTER
+  row selection, and the blind by-ID batch would overwrite the newer
+  status, mark an ineligible prompt consumed, and publish a false
+  acknowledgment — matching PR 28's immediate-arm requirement; the
+  send-status timestamp assertion holds on the verified path) and
   publishes FOUR events — `messages.statusChanged` FIRST in every consumed
   arm (`:660-668,696-703`; review correction PR #2981: omitting it leaves
   consumers displaying the row as enqueued/submitted after the DB marked it
