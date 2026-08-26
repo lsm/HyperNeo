@@ -656,6 +656,7 @@ export class QueryLifecycleManager {
     if (options?.prepend) {
       if (
         options.queryGeneration !== undefined &&
+        queryStartResult !== 'started' &&
         this.ctx.getQueryGeneration?.() !== options.queryGeneration
       ) {
         messageQueue.remove(messageId);
@@ -674,6 +675,7 @@ export class QueryLifecycleManager {
 
     if (
       options?.queryGeneration !== undefined &&
+      queryStartResult !== 'started' &&
       this.ctx.getQueryGeneration?.() !== options.queryGeneration
     ) {
       messageQueue.remove(messageId);

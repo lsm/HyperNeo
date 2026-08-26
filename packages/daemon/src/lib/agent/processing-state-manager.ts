@@ -333,7 +333,15 @@ export class ProcessingStateManager {
           this.idleWaiters.delete(w.id);
           w.endOnce();
         }
-        this.suppressedFenceCarries = [];
+        this.suppressedFenceCarries = this.suppressedFenceCarries.filter(
+          (c) =>
+            !drained.some(
+              (w) =>
+                w.owner != null &&
+                w.owner.queryGeneration === c.queryGeneration &&
+                w.owner.turnToken === c.turnToken
+            )
+        );
       }
       if (!suppressDrain && this.isIdleOwnerCurrent(transitionOwner)) {
         this.lastIdleTransitionOwner = transitionOwner;

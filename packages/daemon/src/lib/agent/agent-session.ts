@@ -1088,7 +1088,9 @@ export class AgentSession
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
-      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      if (queryGeneration === undefined || this.getQueryGeneration() === queryGeneration) {
+        await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      }
       return false;
     }
   }

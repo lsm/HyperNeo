@@ -1507,6 +1507,36 @@ describe('QueryLifecycleManager', () => {
       ).rejects.toBeInstanceOf(IdleRestartSupersededError);
     });
 
+    test('keeps the retry message when the helper started the query itself (B5e)', async () => {
+      const enqueueWithIdSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue();
+      let generation = 7;
+      mockContext = createMockContext({
+        queryPromise: null,
+      });
+      (mockContext.stateManager as unknown as { setQueued: unknown }).setQueued = mock(
+        async () => {}
+      );
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      const baseStartStreaming = mockContext.startStreamingQuery;
+      mockContext.startStreamingQuery = async () => {
+        startStreamingCalled = true;
+        generation = 8;
+        messageQueue.start();
+        mockContext.queryPromise = Promise.resolve();
+        await baseStartStreaming();
+      };
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.startQueryAndEnqueue('retry-msg-1', 'retry content', undefined, {
+        prepend: true,
+        queryGeneration: 7,
+      });
+
+      expect(enqueueWithIdSpy).toHaveBeenCalled();
+    });
+
     test('the depth-ceiling branch re-arms once for a fresh successor generation (B5e)', async () => {
       mockContext = createMockContext({
         pendingRestartReason: 'settings.local.json',

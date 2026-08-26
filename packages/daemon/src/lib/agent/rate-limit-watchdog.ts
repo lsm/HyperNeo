@@ -101,9 +101,8 @@ export class RateLimitWatchdog {
   private lastHint: LimitRetryHint | null = null;
   private billingPauseSurfaced = false;
   private retryCallbackInFlight = false;
-  private retryCallbackInFlightOwner: number | null = null;
-  private fallbackAttemptSeq = 0;
-  private cooldownRetryAttemptSeq = 0;
+  private retryCallbackAttemptSeq = 0;
+  private activePauseQueryGeneration?: number;
 
   constructor(
     sessionId: string,
@@ -436,6 +435,7 @@ export class RateLimitWatchdog {
       return false;
     }
 
+    this.activePauseQueryGeneration = queryGeneration;
     this.notifyPause({
       kind,
       resetAt: decision.retryAtMs,
@@ -474,22 +474,24 @@ export class RateLimitWatchdog {
         'Cooldown retry aborted at fire time: the originating query was superseded. ' +
           'Retiring its published pause.'
       );
-      this.notifyResume();
+      if (
+        this.activePauseQueryGeneration === undefined ||
+        this.activePauseQueryGeneration === this.cooldownQueryGeneration
+      ) {
+        this.notifyResume();
+        this.activePauseQueryGeneration = undefined;
+      }
       return;
     }
     const entryGeneration = this.generation;
     const armedQueryGeneration = this.cooldownQueryGeneration;
-    const attemptId = ++this.cooldownRetryAttemptSeq;
+    const attemptId = ++this.retryCallbackAttemptSeq;
     this.retryCallbackInFlight = true;
-    this.retryCallbackInFlightOwner = entryGeneration;
     try {
       await this.runCooldownRetry(errorMessage, entryGeneration, armedQueryGeneration);
     } finally {
-      if (this.cooldownRetryAttemptSeq === attemptId) {
+      if (this.retryCallbackAttemptSeq === attemptId) {
         this.retryCallbackInFlight = false;
-      }
-      if (this.retryCallbackInFlightOwner === entryGeneration) {
-        this.retryCallbackInFlightOwner = null;
       }
     }
   }
@@ -523,6 +525,7 @@ export class RateLimitWatchdog {
       this.startupRetries = 0;
       this.startupExhausted = false;
       this.notifyResume();
+      this.activePauseQueryGeneration = undefined;
       return;
     }
     const querySupersededAfterCallback =
@@ -533,7 +536,13 @@ export class RateLimitWatchdog {
       this.logger.info(
         'Cooldown retry failed but the originating query was superseded; retiring its pause.'
       );
-      this.notifyResume();
+      if (
+        this.activePauseQueryGeneration === undefined ||
+        this.activePauseQueryGeneration === this.cooldownQueryGeneration
+      ) {
+        this.notifyResume();
+        this.activePauseQueryGeneration = undefined;
+      }
       return;
     }
 
@@ -609,9 +618,8 @@ export class RateLimitWatchdog {
     }
 
     let ok = false;
-    const attemptId = ++this.fallbackAttemptSeq;
+    const attemptId = ++this.retryCallbackAttemptSeq;
     this.retryCallbackInFlight = true;
-    this.retryCallbackInFlightOwner = episodeGeneration;
     try {
       ok = await this.deps.switchAndRetry(
         lastUserMessage,
@@ -626,12 +634,9 @@ export class RateLimitWatchdog {
       );
       ok = false;
     } finally {
-      if (this.fallbackAttemptSeq === attemptId) {
+      if (this.retryCallbackAttemptSeq === attemptId) {
         this.retryCallbackInFlight = false;
         this.fallbackPending = false;
-      }
-      if (this.retryCallbackInFlightOwner === episodeGeneration) {
-        this.retryCallbackInFlightOwner = null;
       }
     }
 
@@ -688,6 +693,7 @@ export class RateLimitWatchdog {
               return;
             }
             this.startupExhausted = true;
+            this.activePauseQueryGeneration = queryGeneration;
             this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
             this.billingPauseSurfaced = true;
           } else {
