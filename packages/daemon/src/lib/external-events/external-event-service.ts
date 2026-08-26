@@ -1,5 +1,6 @@
 import type { InternalEventBus } from '../internal-event-bus.ts';
-import type { ExternalEventStore } from './external-event-store.ts';
+import { type ExternalEventStore, ExternalEventValidationError } from './external-event-store.ts';
+import { ingestExternalEvent } from './ingest-external-event-pipeline.ts';
 import type { ExternalEvent } from './types.ts';
 
 export type PublishOutcome = 'published' | 'duplicate_terminal' | 'retryable_duplicate';
@@ -37,16 +38,31 @@ export class ExternalEventService implements ExternalEventPublisher {
   ) {}
 
   async publish(event: ExternalEvent): Promise<PublishResult> {
-    const storeResult = this.store.store(event);
+    const outcome = ingestExternalEvent(
+      { store: (candidate) => this.store.store(candidate) },
+      event
+    );
 
-    if (storeResult.duplicate) {
-      if (storeResult.terminal) {
+    if (outcome.action === 'invalid') {
+      throw new ExternalEventValidationError(outcome.reason);
+    }
+    if (outcome.action === 'failed') {
+      throw outcome.error;
+    }
+    if (outcome.action === 'duplicate') {
+      if (outcome.terminal) {
         return {
           outcome: 'duplicate_terminal',
-          eventId: storeResult.event.id,
+          eventId: outcome.eventId,
         };
       }
-      return await this._handleRetryableDuplicate(storeResult.event);
+      const canonical = this.store.getById(outcome.eventId);
+      if (!canonical) {
+        throw new Error(
+          `ExternalEventService.publish: duplicate reported but canonical row missing (${outcome.eventId})`
+        );
+      }
+      return await this._handleRetryableDuplicate(canonical.event);
     }
 
     return await this._handleFirstObservation(event);
