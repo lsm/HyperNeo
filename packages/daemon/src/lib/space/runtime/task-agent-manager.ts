@@ -4812,6 +4812,15 @@ export class TaskAgentManager {
       }).workspacePath;
       if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
         existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+        await this.reinjectNodeAgentMcpServer(existing, {
+          taskId,
+          subSessionId: existingSessionId,
+          agentName: matchedSlot.name,
+          spaceId,
+          workflowRunId: task.workflowRunId ?? '',
+          workspacePath: reuseWorkspacePath,
+          workflowNodeId: matchedNodeId,
+        });
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
         const terminalStatus = task.workflowRunId

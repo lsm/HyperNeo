@@ -70,7 +70,7 @@ function makeDeps(overrides: {
         updatedAt: Date.now(),
       },
     ]),
-    getTask: mock(() => null),
+    getTask: mock(() => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID })),
   } as unknown as SpaceTaskRepository;
   const spaceManager = {
     getSpace: mock(async () => ({

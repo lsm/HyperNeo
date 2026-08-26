@@ -180,6 +180,9 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('reuses the target agent live session and injects the kickoff directly (no fresh session)', async () => {
     const tam = makeManager();
     seedLiveSession(tam);
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
     const injected: Array<{ sessionId: string; message: string }> = [];
     (
       tam as unknown as {
@@ -223,6 +226,14 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('live reuse syncs the session workspace to task.workspacePath before injection', async () => {
     const tam = makeManager();
     const live = seedLiveSession(tam);
+    const reinjectCtx: Array<Record<string, unknown>> = [];
+    (
+      tam as unknown as {
+        reinjectNodeAgentMcpServer: (s: unknown, ctx: Record<string, unknown>) => Promise<void>;
+      }
+    ).reinjectNodeAgentMcpServer = async (_s, ctx) => {
+      reinjectCtx.push(ctx);
+    };
     const injected: Array<{ sessionId: string; message: string }> = [];
     (
       tam as unknown as {
@@ -249,6 +260,8 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(injected).toHaveLength(1);
     expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/reuse-override' });
     expect(live.session.getSessionData().workspacePath).toBe('/task/reuse-override');
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/reuse-override' });
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
