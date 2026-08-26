@@ -4262,9 +4262,16 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
-    const ownerId = this.findParentTaskIdForSubSession(sessionId);
+    const ownerIds = [
+      taskIdFromSubSessionIdentity(sessionId),
+      this.findParentTaskIdForSubSession(sessionId),
+    ].filter((candidate): candidate is string => Boolean(candidate));
     const parentTask =
-      (ownerId ? tasks.find((candidate) => candidate.id === ownerId) : null) ?? tasks[0] ?? null;
+      ownerIds
+        .map((ownerId) => tasks.find((candidate) => candidate.id === ownerId))
+        .find((match) => match) ??
+      tasks[0] ??
+      null;
     if (!parentTask) {
       log.error(
         `TaskAgentManager.mcpSelfHeal: no parent task found for workflowRunId=${execution.workflowRunId} — cannot self-heal`
