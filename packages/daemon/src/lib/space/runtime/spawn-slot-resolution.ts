@@ -134,7 +134,9 @@ export function resolveSpawnWorkspace(input: {
 }
 
 export function explicitTaskWorkspace(task: Pick<SpaceTask, 'workspacePath'>): string | undefined {
-  return task.workspacePath?.trim() || undefined;
+  const raw = task.workspacePath;
+  if (raw === undefined || raw === null) return undefined;
+  return raw.trim() === '' ? undefined : raw;
 }
 
 export function resolveTaskWorkspace(

@@ -1677,7 +1677,9 @@ export class TaskAgentManager {
       ownedTask?.status === 'cancelled' ||
       ownedTask?.status === 'archived'
     ) {
-      return ownedTask?.status ?? guardTask?.status ?? guardRun?.status ?? 'terminal';
+      return ownedTask?.status === 'cancelled' || ownedTask?.status === 'archived'
+        ? ownedTask.status
+        : (guardTask?.status ?? guardRun?.status ?? ownedTask?.status ?? 'terminal');
     }
     return null;
   }

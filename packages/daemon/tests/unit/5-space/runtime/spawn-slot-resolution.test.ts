@@ -137,6 +137,14 @@ describe('resolveTaskWorkspace', () => {
       resolveTaskWorkspace({ workspacePath: '/space' }, { workspacePath: '   ' } as SpaceTask)
     ).toBe('/space');
   });
+
+  test('preserves nonblank paths with leading or trailing spaces verbatim', () => {
+    expect(
+      resolveTaskWorkspace({ workspacePath: '/space' }, {
+        workspacePath: '/repos/project ',
+      } as SpaceTask)
+    ).toBe('/repos/project ');
+  });
 });
 
 describe('resolveSpawnWorkspace', () => {
