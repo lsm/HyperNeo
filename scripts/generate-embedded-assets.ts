@@ -1,5 +1,5 @@
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, extname } from 'node:path';
+import { extname, join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const DIST_DIR = join(ROOT, 'packages/web/dist');

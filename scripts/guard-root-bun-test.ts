@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
-import { cwd, env, exit } from 'node:process';
 import { dirname, resolve } from 'node:path';
+import { cwd, env, exit } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
