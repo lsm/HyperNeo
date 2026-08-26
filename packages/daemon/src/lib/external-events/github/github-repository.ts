@@ -342,6 +342,25 @@ export class GitHubEventExtensionRepository {
     return rows.map((r) => this.rowToRepo(r));
   }
 
+  listWebhookEnabledPollingDisabledRepos(spaceId?: string): GitHubWatchedRepo[] {
+    const rows = spaceId
+      ? (this.db
+          .prepare(
+            `SELECT * FROM space_github_watched_repos
+             WHERE space_id = ? AND enabled = 1 AND webhook_enabled = 1 AND polling_enabled = 0
+             ORDER BY owner, repo`
+          )
+          .all(spaceId) as Record<string, unknown>[])
+      : (this.db
+          .prepare(
+            `SELECT * FROM space_github_watched_repos
+             WHERE enabled = 1 AND webhook_enabled = 1 AND polling_enabled = 0
+             ORDER BY space_id, owner, repo`
+          )
+          .all() as Record<string, unknown>[]);
+    return rows.map((r) => this.rowToRepo(r));
+  }
+
   listAllPollingConfiguredRepos(spaceId?: string): GitHubWatchedRepo[] {
     const rows = spaceId
       ? (this.db
