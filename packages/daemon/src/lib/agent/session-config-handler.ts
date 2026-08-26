@@ -62,9 +62,7 @@ export class SessionConfigHandler {
 
     if (updates.workspacePath !== undefined) {
       session.workspacePath = updates.workspacePath;
-      if (updates.workspacePath) {
-        this.ctx.settingsManager = new SettingsManager(db, updates.workspacePath);
-      }
+      this.ctx.settingsManager = new SettingsManager(db, updates.workspacePath || undefined);
     }
 
     if (updates.status) session.status = updates.status;

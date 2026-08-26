@@ -867,11 +867,13 @@ export class TaskAgentManager {
       resolveSpawnSessionId: (space, task, execution) =>
         this.resolveSessionId(buildExecutionBaseSessionId(space.id, task.id, execution.id)),
       resolveWorkspacePath: async (task, space) => {
+        const ownsSpace = task.spaceId === space.id;
+        const taskWorkspace = ownsSpace
+          ? (this.getTaskWorktreePath(task.id) ?? explicitTaskWorkspace(task))
+          : undefined;
         const workspace = resolveSpawnWorkspace({
-          cachedTaskWorktreePath: this.getTaskWorktreePath(task.id) ?? explicitTaskWorkspace(task),
-          hasWorktreeManager: explicitTaskWorkspace(task)
-            ? false
-            : Boolean(this.config.worktreeManager),
+          cachedTaskWorktreePath: taskWorkspace,
+          hasWorktreeManager: taskWorkspace ? false : Boolean(this.config.worktreeManager),
           spaceWorkspacePath: space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
@@ -3212,15 +3214,24 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(execution.workflowRunId);
+    const identitySpaceId = taskIdFromSubSessionIdentity(subSessionId, 'space');
     const ownerIds = [
       taskIdFromSubSessionIdentity(subSessionId),
       subSessionId ? this.findParentTaskIdForSubSession(subSessionId) : null,
     ].filter((candidate): candidate is string => Boolean(candidate));
     const parentTask =
       ownerIds
-        .map((ownerId) => tasks.find((candidate) => candidate.id === ownerId))
+        .map((ownerId) =>
+          tasks.find(
+            (candidate) =>
+              candidate.id === ownerId &&
+              (identitySpaceId === null || candidate.spaceId === identitySpaceId)
+          )
+        )
         .find((match) => match) ??
-      tasks[0] ??
+      tasks.find(
+        (candidate) => identitySpaceId === null || candidate.spaceId === identitySpaceId
+      ) ??
       null;
     if (!parentTask) {
       log.warn(
