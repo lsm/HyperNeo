@@ -1663,16 +1663,19 @@ export class TaskAgentManager {
     });
   }
 
-  private resolveTerminalInjectionStatus(workflowRunId: string): string | null {
+  private resolveTerminalInjectionStatus(workflowRunId: string, taskId?: string): string | null {
     const guardTask =
       this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
     const guardRun = this.config.workflowRunRepo?.getRun?.(workflowRunId) ?? null;
+    const ownedTask = taskId ? (this.config.taskRepo.getTask?.(taskId) ?? null) : null;
     if (
       guardTask?.status === 'cancelled' ||
       guardTask?.status === 'archived' ||
-      guardRun?.status === 'cancelled'
+      guardRun?.status === 'cancelled' ||
+      ownedTask?.status === 'cancelled' ||
+      ownedTask?.status === 'archived'
     ) {
-      return guardTask?.status ?? guardRun?.status ?? 'terminal';
+      return ownedTask?.status ?? guardTask?.status ?? guardRun?.status ?? 'terminal';
     }
     return null;
   }
@@ -4319,8 +4322,16 @@ export class TaskAgentManager {
       workflowNodeId: execution.workflowNodeId,
     };
     if (healWorkspacePath && agentSession.getSessionData().workspacePath !== healWorkspacePath) {
+      const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
       agentSession.updateMetadata({ workspacePath: healWorkspacePath });
-      await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
+      try {
+        await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
+      } catch (err) {
+        if (previousHealWorkspacePath !== null) {
+          agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
+        }
+        throw err;
+      }
     }
 
     await this.ensureRequiredMcpServersAttached(agentSession, {
@@ -4870,7 +4881,7 @@ export class TaskAgentManager {
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
         const terminalStatus = task.workflowRunId
-          ? this.resolveTerminalInjectionStatus(task.workflowRunId)
+          ? this.resolveTerminalInjectionStatus(task.workflowRunId, taskId)
           : null;
         if (terminalStatus) {
           log.warn(
