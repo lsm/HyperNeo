@@ -733,7 +733,9 @@ export class SDKMessageHandler {
     }
 
     if (isSDKStreamEvent(message)) {
-      await stateManager.detectPhaseFromMessage(message);
+      if (!this.isInvocationStale(invocationGeneration)) {
+        await stateManager.detectPhaseFromMessage(message);
+      }
       return;
     }
 
@@ -796,7 +798,9 @@ export class SDKMessageHandler {
       return;
     }
 
-    await stateManager.detectPhaseFromMessage(message);
+    if (!this.isInvocationStale(invocationGeneration)) {
+      await stateManager.detectPhaseFromMessage(message);
+    }
 
     if (isSDKRateLimitEvent(message) && !this.isInvocationStale(invocationGeneration)) {
       const info = message.rate_limit_info;
@@ -1001,7 +1005,10 @@ export class SDKMessageHandler {
       await this.handleModelRefusalFallbackMessage(message, invocationGeneration);
     }
 
-    if (isSDKModelRefusalNoFallbackMessage(message)) {
+    if (
+      isSDKModelRefusalNoFallbackMessage(message) &&
+      !this.isInvocationStale(invocationGeneration)
+    ) {
       await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     }
 

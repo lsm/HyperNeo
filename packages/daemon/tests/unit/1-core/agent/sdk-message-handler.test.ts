@@ -938,6 +938,44 @@ describe('SDKMessageHandler', () => {
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
+    it('a stale stream event does not touch the successor processing phase (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'stream_event',
+          event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'late' } },
+          uuid: 'stale-stream-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(detectPhaseFromMessageSpy).not.toHaveBeenCalled();
+    });
+
+    it('a stale model_refusal_no_fallback does not persist refusal rewind state (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'system',
+          subtype: 'model_refusal_no_fallback',
+          refused_user_message_uuid: 'refused-uuid',
+          uuid: 'no-fallback-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(mockSession.metadata?.refusalRewindTargetUuid).toBeUndefined();
+      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+    });
+
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
       const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
         ({

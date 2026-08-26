@@ -477,8 +477,8 @@ export class AgentSession
           return false;
         }
       },
-      switchAndRetry: (lastUserMessage, entry, episodeGeneration) =>
-        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration),
+      switchAndRetry: (lastUserMessage, entry, episodeGeneration, queryGeneration) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration, queryGeneration),
       resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
@@ -974,13 +974,16 @@ export class AgentSession
   private async switchAndRetryForFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Fallback switch skipped: no last user message available.');
       await this.stateManager.setIdle();
       return false;
     }
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration;
     try {
       if (this.queryPromise) {
         try {
@@ -988,7 +991,7 @@ export class AgentSession
         } catch {}
       }
 
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after teardown (episode superseded).');
         return false;
       }
@@ -1001,7 +1004,7 @@ export class AgentSession
       }
 
       const result = await this.handleModelSwitch(entry.model, entry.provider);
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after model switch (episode superseded).');
         return false;
       }

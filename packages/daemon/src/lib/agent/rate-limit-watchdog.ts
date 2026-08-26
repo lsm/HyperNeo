@@ -58,7 +58,8 @@ export interface RateLimitWatchdogDeps {
   switchAndRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<boolean>;
   resolveModelId?(provider: string, model: string): Promise<string>;
   getQueryGeneration?(): number;
@@ -222,7 +223,12 @@ export class RateLimitWatchdog {
             `(skipReason for prior candidates: ${sel.skipReason}).`
         );
         this.fallbackPending = true;
-        void this.fireImmediateFallback(lastUserMessage, sel.next, entryGeneration);
+        void this.fireImmediateFallback(
+          lastUserMessage,
+          sel.next,
+          entryGeneration,
+          queryGeneration
+        );
         return true;
       }
       this.logger.info(
@@ -293,6 +299,14 @@ export class RateLimitWatchdog {
     void classify(errorMessage)
       .then(async (result) => {
         if (entryGeneration !== this.generation || this.cooldownTimer !== timerAtFire) return;
+        if (
+          queryGeneration !== undefined &&
+          this.deps.getQueryGeneration != null &&
+          this.deps.getQueryGeneration() !== queryGeneration
+        ) {
+          this.logger.info('LLM refinement completed but the query was superseded; aborting.');
+          return;
+        }
         if (!result) return;
         const now = Date.now();
         const resetMs = refinedResetAtMs(result, now);
@@ -353,6 +367,14 @@ export class RateLimitWatchdog {
     displayRetryCount?: number,
     queryGeneration?: number
   ): Promise<boolean> {
+    if (
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration
+    ) {
+      this.logger.info('Cooldown scheduling aborted: the originating query was superseded.');
+      return false;
+    }
     const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
@@ -495,7 +517,8 @@ export class RateLimitWatchdog {
   private async fireImmediateFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<void> {
     if (episodeGeneration !== this.generation) {
       this.logger.info('Immediate fallback aborted before start (episode superseded).');
@@ -507,7 +530,12 @@ export class RateLimitWatchdog {
     this.retryCallbackInFlight = true;
     this.retryCallbackInFlightOwner = episodeGeneration;
     try {
-      ok = await this.deps.switchAndRetry(lastUserMessage, entry, episodeGeneration);
+      ok = await this.deps.switchAndRetry(
+        lastUserMessage,
+        entry,
+        episodeGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error(
         `Fallback switch to ${entry.provider}/${entry.model} threw; advancing to next entry:`,
@@ -546,7 +574,8 @@ export class RateLimitWatchdog {
         const scheduled = await this.scheduleRetry(
           this.lastErrorMessage,
           this.lastUserMessage,
-          this.lastHint ?? undefined
+          this.lastHint ?? undefined,
+          queryGeneration
         );
         if (!scheduled) {
           if (this.lastHint?.billingTerminal) {

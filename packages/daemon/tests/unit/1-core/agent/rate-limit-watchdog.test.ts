@@ -645,6 +645,8 @@ describe('RateLimitWatchdog', () => {
       await flush();
 
       expect(notifyPause).toHaveBeenCalledTimes(1);
+      const staleCalls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(staleCalls).toHaveLength(1);
       watchdog.cancel();
     });
 
@@ -1629,6 +1631,25 @@ describe('RateLimitWatchdog', () => {
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       expect(receivedGen).toBe(0);
+    });
+
+    it('threads the captured query generation into switchAndRetry (B5e)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let receivedQueryGen: number | undefined;
+      let queryGeneration = 3;
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.switchAndRetry = mock(async (_msg, _entry, _gen: number, qGen?: number) => {
+        receivedQueryGen = qGen;
+        return true;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      expect(receivedQueryGen).toBe(3);
     });
 
     it('threads the captured episode generation into the retry callback', async () => {
