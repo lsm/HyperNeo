@@ -433,6 +433,8 @@ export class MessageQueue {
       await this.deliveryGate.catch(() => {});
     }
 
+    if (!this.running) return null;
+
     const message = this.queue.shift() || null;
     if (message) {
       this.claimed.add(message);

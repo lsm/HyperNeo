@@ -1597,6 +1597,9 @@ export class SDKMessageHandler {
       }
     })();
     this.pendingContextRefresh = promise;
+    if (reason !== 'event-tick') {
+      this.ctx.messageQueue.setDeliveryGate(promise.catch(() => {}));
+    }
     return promise;
   }
 }
