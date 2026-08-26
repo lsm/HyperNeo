@@ -355,23 +355,8 @@ export function fallbackModelsFor(provider: Provider): ModelInfo[] {
 
 const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
 
-let providerCatalogEpoch = 0;
-
-const providerCatalogRevisions = new Map<string, number>();
-
-export function bumpProviderCatalogEpoch(providerId?: string): void {
-  providerCatalogEpoch += 1;
-  if (providerId) {
-    providerCatalogRevisions.set(providerId, (providerCatalogRevisions.get(providerId) ?? 0) + 1);
-  }
-}
-
-export function getProviderCatalogEpoch(providerId?: string): number {
-  if (providerId) {
-    return providerCatalogRevisions.get(providerId) ?? 0;
-  }
-  return providerCatalogEpoch;
-}
+export { bumpProviderCatalogEpoch, getProviderCatalogEpoch } from './providers/catalog-epoch.js';
+import { bumpProviderCatalogEpoch, getProviderCatalogEpoch } from './providers/catalog-epoch.js';
 
 export function peekProviderCatalogModels(
   providerId: string,
@@ -384,7 +369,7 @@ export function peekProviderCatalogModels(
   if (
     cached &&
     cached.curatedStamp === curatedStamp &&
-    cached.epoch === providerCatalogEpoch &&
+    cached.epoch === getProviderCatalogEpoch() &&
     Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
   ) {
     return cached.models;
@@ -503,12 +488,12 @@ export function getProviderCatalogModels(
   if (
     cached &&
     cached.curatedStamp === curatedStamp &&
-    cached.epoch === providerCatalogEpoch &&
+    cached.epoch === getProviderCatalogEpoch() &&
     Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
   ) {
     return Promise.resolve(cached.models);
   }
-  const inflightKey = `${curatedStamp ?? ''}|${providerCatalogEpoch}`;
+  const inflightKey = `${curatedStamp ?? ''}|${getProviderCatalogEpoch()}`;
   const existing = providerCatalogInFlight.get(provider);
   if (existing && existing.key === inflightKey) {
     return existing.promise;
@@ -536,12 +521,12 @@ async function loadProviderCatalogModels(
     if (
       cached &&
       cached.curatedStamp === curatedStamp &&
-      cached.epoch === providerCatalogEpoch &&
+      cached.epoch === getProviderCatalogEpoch() &&
       Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
     ) {
       return cached.models;
     }
-    const epochAtFetch = providerCatalogEpoch;
+    const epochAtFetch = getProviderCatalogEpoch();
     try {
       provider.clearModelCache?.();
       let timedOut = false;
@@ -580,7 +565,7 @@ async function loadProviderCatalogModels(
         discovered = false;
       }
     }
-    if (providerCatalogEpoch === epochAtFetch) {
+    if (getProviderCatalogEpoch() === epochAtFetch) {
       if (models.length > 0) {
         providerCatalogCache.set(provider, {
           models,
@@ -607,7 +592,7 @@ function isProviderCatalogDiscovered(providerId: string, provider: Provider): bo
     cached &&
       cached.discovered &&
       cached.curatedStamp === curatedStamp &&
-      cached.epoch === providerCatalogEpoch &&
+      cached.epoch === getProviderCatalogEpoch() &&
       Date.now() - cached.at < PROVIDER_CATALOG_CACHE_TTL_MS
   );
 }

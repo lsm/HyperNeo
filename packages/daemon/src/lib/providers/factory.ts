@@ -14,6 +14,7 @@ import {
 } from './custom-endpoint-provider.js';
 import type { CustomEndpointConfig } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
+import { bumpProviderCatalogEpoch } from './catalog-epoch.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -142,7 +143,6 @@ export async function syncCustomEndpointProviders(
   configs: CustomEndpointConfig[] | undefined
 ): Promise<void> {
   const registry = initializeProviders();
-  const { bumpProviderCatalogEpoch } = await import('../model-service.js');
   const wanted = new Map<string, CustomEndpointConfig>();
   for (const config of configs ?? []) {
     if (!config?.id || !config.baseUrl || !config.models?.length) continue;

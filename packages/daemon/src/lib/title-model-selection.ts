@@ -200,6 +200,15 @@ export async function routeThroughProviderSdkStage(
     const healed = await healFromCatalog(ctx);
     return healed ?? { ...ctx, providerModelId: undefined, sdkConfig: null, status: 'unavailable' };
   }
+  const registeredAfterCuration = ctx.registry.get(providerId);
+  if (!registeredAfterCuration || registeredAfterCuration !== provider) {
+    return {
+      ...ctx,
+      status: 'unavailable',
+      providerModelId: undefined,
+      sdkConfig: null,
+    };
+  }
   try {
     return { ...ctx, sdkConfig: provider.buildSdkConfig(modelId) };
   } catch (err) {
