@@ -1,16 +1,16 @@
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
-import type { QueryLike } from './query-like.ts';
 import type {
-  ContextInfo,
-  ContextCategoryBreakdown,
-  ContextMessageBreakdown,
   ContextAPIUsage,
+  ContextCategoryBreakdown,
+  ContextInfo,
+  ContextMessageBreakdown,
   ModelInfo,
 } from '@hyperneo/shared';
 import { AUTO_COMPACT_PERCENT_DEFAULT, resolveAutoCompactPercent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
+import type { QueryLike } from './query-like.ts';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
@@ -70,6 +70,8 @@ function resolveDisplayModel(
 export class ContextFetcher {
   private logger: Logger;
 
+  private inFlightUsage: Promise<SDKControlGetContextUsageResponse> | null = null;
+
   constructor(private sessionId: string) {
     this.logger = new Logger(`ContextFetcher ${sessionId}`);
   }
@@ -81,9 +83,12 @@ export class ContextFetcher {
     modelMetadata?: ContextMetadata
   ): Promise<ContextInfo | null> {
     if (!query?.getContextUsage) return null;
+    if (this.inFlightUsage) return null;
 
+    const request = query.getContextUsage();
+    this.inFlightUsage = request;
     try {
-      const response = await ContextFetcher.withUsageTimeout(query.getContextUsage());
+      const response = await ContextFetcher.withUsageTimeout(request);
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
         response,
         modelMetadata
@@ -96,6 +101,10 @@ export class ContextFetcher {
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
+    } finally {
+      if (this.inFlightUsage === request) {
+        this.inFlightUsage = null;
+      }
     }
   }
 

@@ -356,6 +356,27 @@ describe('MessageQueue', () => {
       await expect(messagePromise).resolves.toBeUndefined();
     });
 
+    it('hasOutstandingInternalCompaction tracks internal /compact entries across queue, claim, and yield', async () => {
+      queue.start();
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+
+      const firstFailure = queue.enqueue('/compact', true).catch((error: Error) => error);
+      const secondFailure = queue.enqueue('/compact', true).catch((error: Error) => error);
+      expect(queue.hasOutstandingInternalCompaction()).toBe(true);
+      expect(queue.removePendingInternalCompactions()).toBe(2);
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+
+      const yielded = queue.enqueue('/compact', true);
+      const generator = queue.messageGenerator(testSessionId);
+      await generator.next();
+      expect(queue.hasOutstandingInternalCompaction()).toBe(true);
+      queue.clear();
+      expect(queue.hasOutstandingInternalCompaction()).toBe(false);
+      await expect(yielded).resolves.toBeDefined();
+      expect((await firstFailure).message).toBe('compaction superseded by model switch');
+      expect((await secondFailure).message).toBe('compaction superseded by model switch');
+    });
+
     it('keeps consuming after the queue empties while a delivery gate is pending', async () => {
       queue.start();
 
@@ -365,7 +386,14 @@ describe('MessageQueue', () => {
       });
       queue.setDeliveryGate(gate);
 
-      const compacted = queue.enqueue('/compact', true).catch((error) => error);
+      let release: ((error: Error) => void) | undefined;
+      const compacted = queue.enqueue('/compact', true).catch((error: Error) => {
+        release?.(error);
+        throw error;
+      });
+      const superseded = new Promise<Error>((resolve) => {
+        release = resolve;
+      });
       const generator = queue.messageGenerator(testSessionId);
       const pending = generator.next();
 
@@ -379,6 +407,7 @@ describe('MessageQueue', () => {
       expect(result.value.message.message.content[0].text).toBe('Follow-up');
       result.value.onSent();
       await followUp;
+      expect((await superseded).message).toBe('compaction superseded by model switch');
       await expect(compacted).rejects.toThrow('compaction superseded by model switch');
     });
 

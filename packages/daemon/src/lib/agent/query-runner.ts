@@ -10,8 +10,8 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
-import type { Database } from '../../storage/database.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
@@ -1715,6 +1715,22 @@ export class QueryRunner {
       messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
+      const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;
+      const promptText =
+        typeof promptContent === 'string'
+          ? promptContent
+          : Array.isArray(promptContent) &&
+              promptContent.length === 1 &&
+              (promptContent[0] as { type?: unknown; text?: unknown } | undefined)?.type ===
+                'text' &&
+              typeof (promptContent[0] as { text?: unknown }).text === 'string'
+            ? ((promptContent[0] as { text: string }).text as string)
+            : undefined;
+      const isDaemonCompactCommand = isInternal && promptText === '/compact';
+
+      if (isDaemonCompactCommand) {
+        await stateManager.setProcessing(queuedMessage.uuid ?? 'unknown', 'initializing');
+      }
 
       if (!isInternal) {
         await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');

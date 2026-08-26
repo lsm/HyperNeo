@@ -37,9 +37,6 @@ import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
-  decideFallbackModelCuration,
-} from './fallback-model-curation.ts';
-import {
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
@@ -61,6 +58,7 @@ import {
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
 import {
@@ -223,10 +221,13 @@ export function buildProviderSettings(
   }
 
   const percent = resolveAutoCompactPercent(autoCompactPercent ?? undefined);
+  const scaled = Math.floor((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT);
   const autoCompactWindow =
-    percent > AUTO_COMPACT_PERCENT_DEFAULT
-      ? Math.ceil((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT)
-      : contextWindow;
+    percent >= AUTO_COMPACT_PERCENT_DEFAULT
+      ? percent > AUTO_COMPACT_PERCENT_DEFAULT
+        ? Math.ceil((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT)
+        : contextWindow
+      : Math.max(1, scaled);
 
   return {
     autoCompactEnabled: true,
@@ -238,7 +239,7 @@ export interface QueryOptionsBuilderContext {
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
-  midTurnContextBudgetCheck?(): void;
+  midTurnContextBudgetCheck?(): Promise<void>;
   consumePendingResumeSessionAt?(): string | undefined;
   peekPendingResumeSessionAt?(): string | undefined;
   readonly skillsManager?: SkillsManager;
@@ -1032,17 +1033,20 @@ CRITICAL RULES:
       hooks.PreToolUse = preToolUse;
     }
 
+    const budgetGuardHook = this.ctx.midTurnContextBudgetCheck
+      ? async (): Promise<Record<string, never>> => {
+          try {
+            await this.ctx.midTurnContextBudgetCheck?.();
+          } catch (error) {
+            log.warn('mid-turn context budget check failed:', error);
+          }
+          return {};
+        }
+      : null;
+
     const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [];
-    if (this.ctx.midTurnContextBudgetCheck) {
-      const budgetCheck = this.ctx.midTurnContextBudgetCheck.bind(this.ctx);
-      postHooks.push({
-        hooks: [
-          async (): Promise<Record<string, never>> => {
-            budgetCheck();
-            return {};
-          },
-        ],
-      });
+    if (budgetGuardHook) {
+      postHooks.push({ hooks: [budgetGuardHook] });
     }
     postHooks.push({ hooks: [loopDetectorHooks.postToolUse] });
     if (outputLimiterEnabled) {
@@ -1050,7 +1054,12 @@ CRITICAL RULES:
     }
     hooks.PostToolUse = postHooks;
 
-    hooks.PostToolUseFailure = [{ hooks: [loopDetectorHooks.postToolUseFailure] }];
+    const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
+    if (budgetGuardHook) {
+      postFailureHooks.push({ hooks: [budgetGuardHook] });
+    }
+    postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
+    hooks.PostToolUseFailure = postFailureHooks;
     return hooks;
   }
 

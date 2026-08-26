@@ -995,6 +995,13 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
+    it('should arm the SDK at the configured threshold for percents below the default', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 111_111,
+      });
+    });
+
     it('should not disable SDK auto-compaction when context window is unavailable (avoid dead zone)', () => {
       expect(buildProviderSettings('openrouter')).toBeUndefined();
     });
@@ -1082,6 +1089,26 @@ describe('QueryOptionsBuilder', () => {
       expect(budgetCheck).toHaveBeenCalledTimes(1);
     });
 
+    it('wires the mid-turn context budget check into PostToolUseFailure as well', async () => {
+      registerOpenRouterProvider();
+      setModelsCache(new Map());
+      const budgetCheck = mock(() => {});
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'any-model';
+      const options = await new QueryOptionsBuilder({
+        ...mockContext,
+        midTurnContextBudgetCheck: budgetCheck,
+      }).build();
+
+      const postToolUseFailure = options.hooks?.PostToolUseFailure;
+      expect(postToolUseFailure).toBeDefined();
+      const guardEntry = postToolUseFailure![0]!;
+      await guardEntry.hooks[0]!({ hook_event_name: 'PostToolUseFailure' } as never, undefined, {
+        signal: new AbortController().signal,
+      });
+      expect(budgetCheck).toHaveBeenCalledTimes(1);
+    });
+
     it('should enable SDK auto-compaction for OpenRouter models with their full context window (percent enforcement lives in the daemon backstop)', async () => {
       registerOpenRouterProvider();
       setModelsCache(
@@ -1120,7 +1147,7 @@ describe('QueryOptionsBuilder', () => {
       const pctOptions = await builder.build();
       expect(pctOptions.settings).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 1_000_000,
+        autoCompactWindow: 888_888,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });

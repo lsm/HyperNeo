@@ -61,10 +61,58 @@ export class MessageQueue {
     this.waiters = [];
   }
 
+  private internalCompactionsAwaitingBoundary = 0;
+
+  private nonCompactionSentSinceBoundary = false;
+
+  private recentSentPrompts = new Map<string, string | MessageContent[]>();
+
+  onDeliveredCompactionRevoked?: () => void;
+
+  noteInternalCompactionSent(message: QueuedMessage): void {
+    if (this.isInternalCompaction(message)) {
+      this.internalCompactionsAwaitingBoundary += 1;
+    } else {
+      this.nonCompactionSentSinceBoundary = true;
+      this.recentSentPrompts.set(message.id, message.content);
+      if (this.recentSentPrompts.size > 32) {
+        const oldest = this.recentSentPrompts.keys().next().value;
+        if (oldest !== undefined) {
+          this.recentSentPrompts.delete(oldest);
+        }
+      }
+    }
+  }
+
+  pruneSentPrompts(): void {
+    this.recentSentPrompts.clear();
+  }
+
+  getSentPromptContent(messageId: string): string | MessageContent[] | undefined {
+    return this.recentSentPrompts.get(messageId);
+  }
+
+  forgetSentPrompt(messageId: string): void {
+    this.recentSentPrompts.delete(messageId);
+  }
+
+  acknowledgeCompactionsAwaitingBoundary(): void {
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.recentSentPrompts.clear();
+  }
+
+  hasCompactionsAwaitingBoundary(): boolean {
+    return this.internalCompactionsAwaitingBoundary > 0;
+  }
+
+  clearNonCompactionSentSinceBoundary(): void {
+    this.nonCompactionSentSinceBoundary = false;
+  }
+
   removePendingInternalCompactions(): number {
     const stale: QueuedMessage[] = [];
     this.queue = this.queue.filter((queued) => {
-      if (queued.internal && typeof queued.content === 'string' && queued.content === '/compact') {
+      if (this.isInternalCompaction(queued)) {
         stale.push(queued);
         return false;
       }
@@ -77,6 +125,72 @@ export class MessageQueue {
       queued.reject(new Error('compaction superseded by model switch'));
     }
     return stale.length;
+  }
+
+  revokeAllInternalCompactions(): number {
+    const revoked = this.removePendingInternalCompactions();
+    let total = revoked;
+    this.internalCompactionsAwaitingBoundary = 0;
+    for (const message of [...this.claimed]) {
+      if (this.isInternalCompaction(message)) {
+        this.claimed.delete(message);
+        if (message.timeoutId) {
+          clearTimeout(message.timeoutId);
+        }
+        message.reject(new Error('compaction superseded by model switch'));
+        total += 1;
+      }
+    }
+    for (const message of [...this.yielded]) {
+      if (this.isInternalCompaction(message)) {
+        this.yielded.delete(message);
+        if (message.timeoutId) {
+          clearTimeout(message.timeoutId);
+        }
+        message.reject(new Error('compaction superseded by model switch'));
+        total += 1;
+      }
+    }
+    return total;
+  }
+
+  hasQueuedInternalCompaction(): boolean {
+    return this.queue.some((message) => this.isInternalCompaction(message));
+  }
+
+  hasInFlightInternalCompaction(): boolean {
+    for (const message of this.claimed) {
+      if (this.isInternalCompaction(message)) return true;
+    }
+    for (const message of this.yielded) {
+      if (this.isInternalCompaction(message)) return true;
+    }
+    return false;
+  }
+
+  private isInternalCompaction(message: QueuedMessage): boolean {
+    return (
+      message.internal === true &&
+      typeof message.content === 'string' &&
+      message.content === '/compact'
+    );
+  }
+
+  hasOutstandingInternalCompaction(): boolean {
+    if (this.internalCompactionsAwaitingBoundary > 0) return true;
+    return this.hasQueuedInternalCompaction() || this.hasInFlightInternalCompaction();
+  }
+
+  hasOutstandingNonCompactionMessages(): boolean {
+    if (this.nonCompactionSentSinceBoundary) return true;
+    if (this.queue.some((message) => !this.isInternalCompaction(message))) return true;
+    for (const message of this.claimed) {
+      if (!this.isInternalCompaction(message)) return true;
+    }
+    for (const message of this.yielded) {
+      if (!this.isInternalCompaction(message)) return true;
+    }
+    return false;
   }
 
   setDeliveryGate(gate: Promise<void>): void {
@@ -198,6 +312,9 @@ export class MessageQueue {
 
   clear(): void {
     this.clearEpoch += 1;
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.nonCompactionSentSinceBoundary = false;
+    this.recentSentPrompts.clear();
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -277,6 +394,7 @@ export class MessageQueue {
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
+      this.noteInternalCompactionSent(message);
       message.resolve(message.id);
       return true;
     }
@@ -343,6 +461,14 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
+    const hadDeliveredAwaitingBoundary = this.internalCompactionsAwaitingBoundary > 0;
+    this.revokeAllInternalCompactions();
+    this.internalCompactionsAwaitingBoundary = 0;
+    if (hadDeliveredAwaitingBoundary && this.onDeliveredCompactionRevoked) {
+      this.onDeliveredCompactionRevoked();
+    }
+    this.nonCompactionSentSinceBoundary = false;
+    this.recentSentPrompts.clear();
     this.wakeWaiters();
   }
 
@@ -417,6 +543,7 @@ export class MessageQueue {
         message: sdkUserMessage,
         onSent: () => {
           if (this.yielded.delete(queuedMessage)) {
+            this.noteInternalCompactionSent(queuedMessage);
             queuedMessage.resolve(queuedMessage.id);
           }
         },

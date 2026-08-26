@@ -2,18 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
+import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -197,6 +197,12 @@ describe('SDKMessageHandler', () => {
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
       setDeliveryGate: mock(() => {}),
+      hasQueuedMessages: mock(() => false),
+      hasOutstandingInternalCompaction: mock(() => false),
+      hasCompactionsAwaitingBoundary: mock(() => false),
+      acknowledgeCompactionsAwaitingBoundary: mock(() => {}),
+      pruneSentPrompts: mock(() => {}),
+      clearNonCompactionSentSinceBoundary: mock(() => {}),
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});
@@ -4247,6 +4253,144 @@ describe('SDKMessageHandler', () => {
         expect(clearSpy).toHaveBeenCalledTimes(1);
       });
 
+      it('keeps the pending post-compaction resume while a daemon compaction is queued or running', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 950_000 }],
+          totalTokens: 950_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 95,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          autoCompactThreshold: undefined,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+
+        (
+          mockContext as {
+            messageQueue: { hasOutstandingInternalCompaction: () => boolean };
+          }
+        ).messageQueue.hasOutstandingInternalCompaction = () => true;
+
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+
+        const h = new SDKMessageHandler(mockContext);
+
+        const resultMessage: SDKMessage = {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+
+        await h.handleMessage(resultMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).not.toHaveBeenCalled();
+      });
+
+      it('arms the delivery gate for an enforcement-capable event-tick refresh while prompts are queued', async () => {
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: 'deepseek-v4',
+                  name: 'DeepSeek V4',
+                  provider: 'openrouter',
+                  contextWindow: 1_000_000,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: 950_000 }],
+          totalTokens: 950_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 95,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          autoCompactThreshold: undefined,
+          apiUsage: null,
+        }));
+
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = 'openrouter';
+        mockContext.session.config.model = 'deepseek-v4';
+
+        const setGateSpy = mock(() => {});
+        (mockMessageQueue as unknown as { setDeliveryGate: () => void }).setDeliveryGate =
+          setGateSpy;
+        (mockMessageQueue as unknown as { hasQueuedMessages: () => boolean }).hasQueuedMessages =
+          () => true;
+
+        const h = new SDKMessageHandler(mockContext);
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalled();
+        expect(setGateSpy).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
       it('does not enqueue /compact for a custom provider below its budget even when the SDK reports disabled auto-compact', async () => {
         setModelsCache(
           new Map([
@@ -4969,7 +5113,7 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('drops the compaction decision when the session model changes mid-refresh', async () => {
+      it('drops the compaction decision when the session model changes during usage sampling', async () => {
         setModelsCache(
           new Map([
             [
@@ -4987,21 +5131,26 @@ describe('SDKMessageHandler', () => {
           ])
         );
 
-        let resolvePublish: (() => void) | undefined;
-        const getContextUsageSpy = mock(async () => ({
-          categories: [{ name: 'Messages', tokens: 950_000 }],
-          totalTokens: 950_000,
-          maxTokens: 1_000_000,
-          rawMaxTokens: 1_000_000,
-          percentage: 95,
-          gridRows: [],
-          model: 'deepseek-v4',
-          memoryFiles: [],
-          mcpTools: [],
-          agents: [],
-          isAutoCompactEnabled: true,
-          apiUsage: null,
-        }));
+        let resolveSampling: (() => void) | undefined;
+        const getContextUsageSpy = mock(() => {
+          return new Promise<Record<string, unknown>>((resolve) => {
+            resolveSampling = () =>
+              resolve({
+                categories: [{ name: 'Messages', tokens: 950_000 }],
+                totalTokens: 950_000,
+                maxTokens: 1_000_000,
+                rawMaxTokens: 1_000_000,
+                percentage: 95,
+                gridRows: [],
+                model: 'deepseek-v4',
+                memoryFiles: [],
+                mcpTools: [],
+                agents: [],
+                isAutoCompactEnabled: true,
+                apiUsage: null,
+              });
+          });
+        });
 
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
         mockContext.session.config.provider = 'openrouter';
@@ -5033,7 +5182,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         mockContext.session.config.model = 'switched-model';
-        resolvePublish?.();
+        resolveSampling?.();
         await handled;
         await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -5141,7 +5290,7 @@ describe('SDKMessageHandler', () => {
         });
       });
 
-      it('drops the compaction decision when the query is replaced during context publication', async () => {
+      it('enqueues /compact without waiting for a stalled context.updated publication', async () => {
         setModelsCache(
           new Map([
             [
@@ -5203,15 +5352,19 @@ describe('SDKMessageHandler', () => {
 
         const handled = h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
-
-        mockContext.queryObject = { getContextUsage: mock(async () => ({})) } as never;
-        resolvePublish?.();
-        await handled;
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+        expect(mockContextTracker.markCompactionTriggered).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        resolvePublish?.();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
       });
     });
 

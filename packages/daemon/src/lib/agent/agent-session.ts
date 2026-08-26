@@ -144,10 +144,11 @@ import {
   contextBudgetThreshold,
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
+import { ContextFetcher } from './context-fetcher.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
-  runDeliveryTurnAdmission,
   type DeliveryTurnAdmissionDeps,
+  runDeliveryTurnAdmission,
 } from './delivery-turn-admission-pipeline.ts';
 import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
@@ -196,6 +197,10 @@ import {
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
+
+const MID_TURN_USAGE_TIMEOUT_MS = 2_500;
+const MID_TURN_INTERRUPT_TIMEOUT_MS = 5_000;
+
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
@@ -528,7 +533,7 @@ export class AgentSession
       this.restoredBudgetEnforcement = this.enforceRestoredContextBudget().catch((error) => {
         this.logger.warn('restored context budget enforcement failed:', error);
       });
-      this.messageQueue.setDeliveryGate(this.restoredBudgetEnforcement);
+      this.messageQueue.setDeliveryGate(this.boundedEnforcement(this.restoredBudgetEnforcement));
     }
     this.stateManager.restoreFromDatabase();
 
@@ -1218,8 +1223,28 @@ export class AgentSession
 
   private restoredBudgetEnforcement: Promise<void> = Promise.resolve();
   private pendingResumeAfterCompaction = false;
+  private midTurnBudgetCheckInFlight = false;
+  private midTurnRecheckPending = false;
+  private contextBudgetFetcher: ContextFetcher | null = null;
 
-  midTurnContextBudgetCheck(): void {
+  async midTurnContextBudgetCheck(): Promise<void> {
+    if (this.midTurnBudgetCheckInFlight) {
+      this.midTurnRecheckPending = true;
+      return;
+    }
+    this.midTurnBudgetCheckInFlight = true;
+    try {
+      await this.runMidTurnContextBudgetCheck();
+      while (this.midTurnRecheckPending) {
+        this.midTurnRecheckPending = false;
+        await this.runMidTurnContextBudgetCheck();
+      }
+    } finally {
+      this.midTurnBudgetCheckInFlight = false;
+    }
+  }
+
+  private async runMidTurnContextBudgetCheck(): Promise<void> {
     if (this.pendingResumeAfterCompaction) return;
     const providerId = this.session.config.provider;
     if (!providerId || providerId === 'acp') {
@@ -1230,44 +1255,203 @@ export class AgentSession
     }
     const queryObject = this.queryObject;
     if (!queryObject?.interrupt) return;
-    const info = this.contextTracker.getContextInfo();
+    const info = await this.refreshMidTurnContextInfo(queryObject);
     if (!info || info.totalUsed <= 0) return;
     const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
     const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
+    const compactionQueued = this.messageQueue.hasOutstandingInternalCompaction();
     const decision = decideContextBudgetCompaction({
       totalUsed: info.totalUsed,
       configuredWindow,
       autoCompactPercent: info.autoCompactPercent,
       sdkAutoCompactEnabled: info.isAutoCompactEnabled,
       sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
-      cooldownActive: this.contextTracker.isCoolingDown(budgetKey),
+      cooldownActive: this.contextTracker.isCoolingDown(budgetKey) && !compactionQueued,
       compactingActive: this.stateManager.getIsCompacting(),
     });
     if (decision.action !== 'compact') {
       return;
     }
     this.pendingResumeAfterCompaction = true;
+    this.messageQueue.clearNonCompactionSentSinceBoundary();
     this.logger.info(
       `Daemon mid-turn context-budget interrupt for session ${this.session.id} ` +
         `(provider=${providerId}, ${info.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
     );
-    void Promise.resolve(queryObject.interrupt()).catch((error) => {
+    const interruptPromise = Promise.resolve().then(() => queryObject.interrupt());
+    let receipt: { still_queued?: string[] } | undefined;
+    let timedOut = false;
+    try {
+      receipt = (await Promise.race([
+        interruptPromise,
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => {
+            timedOut = true;
+            reject(new Error('mid-turn context-budget interrupt not acknowledged in time'));
+          }, MID_TURN_INTERRUPT_TIMEOUT_MS);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ])) as { still_queued?: string[] } | undefined;
+    } catch (error) {
+      if (timedOut) {
+        this.logger.warn(
+          `mid-turn context-budget interrupt for session ${this.session.id} is slow to ` +
+            `acknowledge; retaining post-compaction resume state`
+        );
+      } else {
+        this.pendingResumeAfterCompaction = false;
+        this.logger.warn(
+          `mid-turn context-budget interrupt failed for session ${this.session.id}:`,
+          error
+        );
+      }
+    }
+    void interruptPromise.catch((error) => {
+      if (!this.pendingResumeAfterCompaction) return;
       this.pendingResumeAfterCompaction = false;
       this.logger.warn(
-        `mid-turn context-budget interrupt failed for session ${this.session.id}:`,
+        `late mid-turn context-budget interrupt failure for session ${this.session.id}:`,
         error
       );
     });
+    const survivors = receipt?.still_queued ?? [];
+    let unconfirmedSurvivor = false;
+    if (
+      survivors.length > 0 &&
+      typeof queryObject.cancelAsyncMessage === 'function' &&
+      !this.messageQueue.hasOutstandingInternalCompaction()
+    ) {
+      for (const uuid of survivors) {
+        try {
+          const cancelled = await Promise.race([
+            Promise.resolve(queryObject.cancelAsyncMessage(uuid)),
+            new Promise<boolean>((resolve) => {
+              const timer = setTimeout(() => resolve(false), MID_TURN_INTERRUPT_TIMEOUT_MS);
+              if (typeof timer.unref === 'function') {
+                timer.unref();
+              }
+            }),
+          ]);
+          if (!cancelled) {
+            unconfirmedSurvivor = true;
+            this.logger.warn(
+              `cancel_async_message did not confirm cancellation of ${uuid} for ` +
+                `session ${this.session.id}; restarting the query so the survivor cannot ` +
+                `run ahead of the pending compaction`
+            );
+            break;
+          }
+          const content = this.messageQueue.getSentPromptContent(uuid);
+          if (content !== undefined) {
+            this.messageQueue.forgetSentPrompt(uuid);
+            void this.messageQueue
+              .enqueueWithId(uuid, content, false, { durable: true })
+              .catch((error) => {
+                this.logger.warn(
+                  `requeue of cancelled survivor ${uuid} failed for session ${this.session.id}:`,
+                  error
+                );
+              });
+            this.logger.info(
+              `requeued cancelled survivor ${uuid} for session ${this.session.id} ` +
+                `to run after the pending compaction`
+            );
+          }
+        } catch (error) {
+          unconfirmedSurvivor = true;
+          this.logger.warn(
+            `cancel_async_message failed for ${uuid} on session ${this.session.id}:`,
+            error
+          );
+          break;
+        }
+      }
+      if (unconfirmedSurvivor && this.lifecycleManager) {
+        void this.lifecycleManager.restart().catch((error) => {
+          this.logger.warn(
+            `query restart after unconfirmed survivor cancellation failed for ` +
+              `session ${this.session.id}:`,
+            error
+          );
+        });
+      }
+    }
+  }
+
+  private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {
+    const fenceModel = this.session.config.model;
+    const fenceProvider = this.session.config.provider;
+    const stale = this.contextTracker.getContextInfo();
+    try {
+      const modelInfo = await getSessionModelInfo(this.session);
+      if (
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      const fetched = await Promise.race([
+        this.getBudgetFetcher().fetch(queryObject, modelInfo),
+        new Promise<undefined>((resolve) => {
+          const timer = setTimeout(() => resolve(undefined), MID_TURN_USAGE_TIMEOUT_MS);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      if (fetched) {
+        if (
+          this.queryObject !== queryObject ||
+          this.session.config.model !== fenceModel ||
+          this.session.config.provider !== fenceProvider
+        ) {
+          return null;
+        }
+        this.contextTracker.updateWithDetailedBreakdown(fetched);
+        return fetched;
+      }
+      if (
+        this.queryObject !== queryObject ||
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      return stale;
+    } catch (error) {
+      this.logger.warn(
+        `mid-turn context usage refresh failed for session ${this.session.id}:`,
+        error
+      );
+      if (
+        this.queryObject !== queryObject ||
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      return stale;
+    }
+  }
+
+  private getBudgetFetcher(): ContextFetcher {
+    if (!this.contextBudgetFetcher) {
+      this.contextBudgetFetcher = new ContextFetcher(this.session.id);
+    }
+    return this.contextBudgetFetcher;
   }
 
   resumePendingWorkAfterCompaction(): void {
     if (!this.pendingResumeAfterCompaction) return;
     this.pendingResumeAfterCompaction = false;
-    if (this.messageQueue.hasQueuedMessages()) return;
+    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
     void this.messageQueue
       .enqueue(
         'Context was compacted to stay within the configured window. Continue the task you were working on.',
-        true
+        false,
+        { durable: true }
       )
       .catch((error) => {
         this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
@@ -1283,15 +1467,29 @@ export class AgentSession
     );
   }
 
-  async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
-    const enforcement = this.enforceRestoredContextBudget().catch((error) => {
+  async reevaluateContextBudgetAfterModelSwitch(opts?: {
+    supersededQueued?: boolean;
+  }): Promise<void> {
+    const enforcement = this.enforceRestoredContextBudget(opts).catch((error) => {
       this.logger.warn('post-switch context budget evaluation failed:', error);
     });
-    this.messageQueue.setDeliveryGate(enforcement);
+    this.messageQueue.setDeliveryGate(this.boundedEnforcement(enforcement));
     await enforcement;
   }
 
-  private async enforceRestoredContextBudget(): Promise<void> {
+  private boundedEnforcement(promise: Promise<void>): Promise<void> {
+    return Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), 5000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+  }
+
+  private async enforceRestoredContextBudget(opts?: { supersededQueued?: boolean }): Promise<void> {
     let enqueuedCompaction = false;
     try {
       const providerId = this.session.config.provider;
@@ -1306,7 +1504,16 @@ export class AgentSession
         return;
       }
       const sessionModel = this.session.config.model;
-      const modelInfo = await getSessionModelInfo(this.session);
+      let modelInfo = await getSessionModelInfo(this.session);
+      if (!modelInfo) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 150);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        });
+        modelInfo = await getSessionModelInfo(this.session);
+      }
       if (
         this.session.config.model !== sessionModel ||
         this.session.config.provider !== providerId
@@ -1322,20 +1529,46 @@ export class AgentSession
       const autoCompactPercent = modelInfo
         ? modelInfo.autoCompactPercent
         : restored.autoCompactPercent;
+      const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, autoCompactPercent);
+      if (
+        this.stateManager.getIsCompacting() ||
+        this.messageQueue.hasInFlightInternalCompaction()
+      ) {
+        return;
+      }
+      const supersededQueued =
+        opts?.supersededQueued === true || this.messageQueue.removePendingInternalCompactions() > 0;
+      if (supersededQueued) {
+        this.contextTracker.clearCompactionCooldown();
+      }
       const decision = decideContextBudgetCompaction({
         totalUsed: restored.totalUsed,
         configuredWindow,
         autoCompactPercent,
         sdkAutoCompactEnabled: restored.isAutoCompactEnabled,
         sdkAutoCompactThreshold: restored.sdkAutoCompactThreshold,
-        cooldownActive: false,
-        compactingActive: false,
+        cooldownActive: this.contextTracker.isCoolingDown(budgetKey),
+        compactingActive: this.stateManager.getIsCompacting(),
       });
       if (decision.action !== 'compact') {
+        if (supersededQueued && this.pendingResumeAfterCompaction) {
+          this.pendingResumeAfterCompaction = false;
+          void this.messageQueue
+            .enqueue(
+              'Context was compacted to stay within the configured window. Continue the task you were working on.',
+              false,
+              { durable: true }
+            )
+            .catch((error) => {
+              this.logger.warn(
+                `post-cancellation continuation enqueue failed for session ${this.session.id}:`,
+                error
+              );
+            });
+        }
         return;
       }
       enqueuedCompaction = true;
-      const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, autoCompactPercent);
       this.contextTracker.markCompactionTriggered(budgetKey);
       this.logger.info(
         `Daemon context-budget compaction for restored session ${this.session.id} ` +
@@ -1345,6 +1578,9 @@ export class AgentSession
       void this.messageQueue
         .enqueue('/compact', true, { durable: true, prepend: true })
         .catch((error) => {
+          if (this.messageQueue.hasOutstandingInternalCompaction()) {
+            return;
+          }
           this.logger.warn(
             `restored compaction enqueue failed for session ${this.session.id}:`,
             error
@@ -1353,7 +1589,7 @@ export class AgentSession
           this.clearPendingResumeAfterCompaction();
         });
     } finally {
-      if (!enqueuedCompaction) {
+      if (!enqueuedCompaction && !this.messageQueue.hasOutstandingInternalCompaction()) {
         this.clearPendingResumeAfterCompaction();
       }
     }
@@ -1394,18 +1630,17 @@ export class AgentSession
             .join(', ')}]: ${error instanceof Error ? error.message : String(error)}`
         );
       });
-    this.messageQueue.setDeliveryGate(
-      Promise.race([
-        enforcement,
-        new Promise<void>((resolve) => {
-          const timer = setTimeout(() => resolve(), 5000);
-          if (typeof timer.unref === 'function') {
-            timer.unref();
-          }
-        }),
-      ])
-    );
-    return enforcement;
+    const bounded = Promise.race([
+      enforcement,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), 5000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+    this.messageQueue.setDeliveryGate(bounded);
+    return bounded;
   }
 
   private emitMcpAttachLog(action: 'merge' | 'detach' | 'replace', servers: string[]): void {

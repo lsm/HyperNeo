@@ -1,31 +1,30 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { disposeAcpSessions } from '../../../../src/lib/acp/acp-model-fetcher';
+import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
 } from '../../../../src/lib/agent/model-switch-handler';
-import type { Session, ModelInfo } from '@hyperneo/shared';
-import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { Database } from '../../../../src/storage/database';
-import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
-import { generateUUID } from '@hyperneo/shared';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
+import type { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import {
-  resetProviderFactory,
-  initializeProviders,
-  waitForOptionalProviderRegistration,
   getProviderRegistry,
+  initializeProviders,
+  resetProviderFactory,
+  waitForOptionalProviderRegistration,
 } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
-import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
-import { disposeAcpSessions } from '../../../../src/lib/acp/acp-model-fetcher';
+import type { Database } from '../../../../src/storage/database';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 const TEST_MODELS: ModelInfo[] = [
   {
@@ -260,6 +259,7 @@ describe('ModelSwitchHandler', () => {
       messageQueue: {
         isRunning: mock(() => false),
         removePendingInternalCompactions: mock(() => 0),
+        revokeAllInternalCompactions: mock(() => 0),
       } as unknown as MessageQueue,
       disposeAcpSessions: mock(async () => {}) as typeof disposeAcpSessions,
       firstMessageReceived: true,

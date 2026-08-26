@@ -1,27 +1,27 @@
 import type {
+  CurrentModelInfo,
+  MessageHub,
   Provider,
   Session,
   SessionConfig,
-  CurrentModelInfo,
-  MessageHub,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
+import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import type { ErrorManager } from '../error-manager.ts';
 import { ErrorCategory } from '../error-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
-import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service.ts';
+import { getModelInfo, isValidModel, resolveModelAlias } from '../model-service.ts';
+import { AcpProvider } from '../providers/acp-provider.ts';
 import { getProviderRegistry } from '../providers/factory.js';
-import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { inferProviderForModel } from '../providers/registry.ts';
 import { stripThinkingBlocksFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { ContextTracker } from './context-tracker.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
-import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
-import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
-import { AcpProvider } from '../providers/acp-provider.ts';
 import type { QueryLike } from './query-like.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
@@ -52,7 +52,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
-  reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
+  reevaluateContextBudgetAfterModelSwitch?(opts?: { supersededQueued?: boolean }): Promise<void>;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
 }
 
@@ -298,8 +298,10 @@ export class ModelSwitchHandler {
 
       const selectedModel = session.config.model;
       contextTracker.setModel(selectedModel);
-      this.ctx.messageQueue.removePendingInternalCompactions();
-      await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+      const revokedCompactions = this.ctx.messageQueue.revokeAllInternalCompactions();
+      await this.ctx.reevaluateContextBudgetAfterModelSwitch?.({
+        supersededQueued: revokedCompactions > 0,
+      });
 
       messageHub.event(
         'session.model-switched',

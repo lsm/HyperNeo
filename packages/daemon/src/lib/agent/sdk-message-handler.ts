@@ -37,7 +37,6 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
@@ -47,6 +46,7 @@ import {
 } from './context-budget-decision.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -56,7 +56,6 @@ import type { QueryLike } from './query-like.ts';
 import {
   getBuiltFallbackIdentity,
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
-  shouldUseHyperNeoCompactFallback,
 } from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
@@ -98,6 +97,8 @@ export interface SDKMessageHandlerContext {
   resumePendingWorkAfterCompaction?(): void;
 
   clearPendingResumeAfterCompaction?(): void;
+
+  reevaluateContextBudgetAfterModelSwitch?(opts?: { supersededQueued?: boolean }): Promise<void>;
 
   onResultLimitError?(
     errorText: string,
@@ -943,6 +944,9 @@ export class SDKMessageHandler {
         }
       }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
+      if (this.ctx.stateManager.getIsCompacting()) {
+        await this.ctx.stateManager.setCompacting(false);
+      }
       await this.refreshContextUsage('turn-end');
       return;
     }
@@ -1412,6 +1416,16 @@ export class SDKMessageHandler {
       source: 'model-refusal-fallback',
       session: { config: session.config },
     });
+    if (this.ctx.reevaluateContextBudgetAfterModelSwitch) {
+      try {
+        await this.ctx.reevaluateContextBudgetAfterModelSwitch();
+      } catch (error) {
+        this.logger.warn(
+          `post-fallback context budget evaluation failed for ${session.id}:`,
+          error
+        );
+      }
+    }
   }
 
   private async resolveConfiguredFallbackModel(
@@ -1510,7 +1524,9 @@ export class SDKMessageHandler {
         ? undefined
         : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
     );
+    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
     this.ctx.resumePendingWorkAfterCompaction?.();
+    this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
     void this.refreshContextUsage('compact-boundary');
   }
@@ -1532,6 +1548,14 @@ export class SDKMessageHandler {
       this.ctx.session.config.model !== model ||
       this.ctx.session.config.provider !== provider
     );
+  }
+
+  private isDaemonCompactionPending(): boolean {
+    const { session, messageQueue, stateManager } = this.ctx;
+    const providerId = session.config.provider;
+    if (!providerId || providerId === 'acp') return false;
+    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+    return messageQueue.hasOutstandingInternalCompaction() || stateManager.getIsCompacting();
   }
 
   refreshContextUsage(
@@ -1557,7 +1581,7 @@ export class SDKMessageHandler {
     const fenceProvider = session.config.provider;
 
     const promise = (async () => {
-      let enqueuedCompaction = false;
+      let sampled = false;
       try {
         const modelInfo = await getSessionModelInfo(session);
         if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
@@ -1567,15 +1591,19 @@ export class SDKMessageHandler {
         );
         if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
         if (!contextInfo) return;
+        sampled = true;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
-        try {
-          await internalEventBus.publish('context.updated', {
+        const publishProjection = internalEventBus
+          .publish('context.updated', {
             sessionId: session.id,
             contextInfo,
+          })
+          .catch((error) => {
+            this.logger.warn(
+              `context.updated publication failed for session ${session.id}:`,
+              error
+            );
           });
-        } catch (error) {
-          this.logger.warn(`context.updated publication failed for session ${session.id}:`, error);
-        }
         if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
 
         const providerId = session.config.provider;
@@ -1586,10 +1614,27 @@ export class SDKMessageHandler {
         ) {
           return;
         }
+        const deadDeliveredCompaction =
+          reason === 'turn-end' &&
+          this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+          !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
+          !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
+          !this.ctx.stateManager.getIsCompacting();
+        if (deadDeliveredCompaction) {
+          this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+          contextTracker.clearCompactionCooldown();
+          this.logger.info(
+            `clearing stale compaction cooldown for session ${session.id} after a ` +
+              `delivered /compact ended without a compact boundary`
+          );
+        }
         const effectiveWindow =
           contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
         const effectivePercent = contextInfo.autoCompactPercent;
         const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
+        if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
+          return;
+        }
         const decision = decideContextBudgetCompaction({
           totalUsed: contextInfo.totalUsed,
           configuredWindow: effectiveWindow,
@@ -1600,7 +1645,6 @@ export class SDKMessageHandler {
           compactingActive: this.ctx.stateManager.getIsCompacting(),
         });
         if (decision.action === 'compact') {
-          enqueuedCompaction = true;
           contextTracker.markCompactionTriggered(budgetKey);
           this.logger.info(
             `Daemon context-budget compaction for session ${session.id} ` +
@@ -1610,22 +1654,35 @@ export class SDKMessageHandler {
           void this.ctx.messageQueue
             .enqueue('/compact', true, { durable: true, prepend: true })
             .catch((error) => {
+              if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
+                return;
+              }
               this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
               contextTracker.clearCompactionCooldown();
               this.ctx.clearPendingResumeAfterCompaction?.();
             });
         }
+        await publishProjection;
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
         this.pendingContextRefresh = null;
-        if (reason === 'turn-end' && !enqueuedCompaction) {
-          this.ctx.clearPendingResumeAfterCompaction?.();
+        if (reason === 'turn-end' && !this.isDaemonCompactionPending()) {
+          if (!sampled) {
+            this.ctx.resumePendingWorkAfterCompaction?.();
+          } else {
+            this.ctx.clearPendingResumeAfterCompaction?.();
+          }
+          this.ctx.messageQueue.pruneSentPrompts();
         }
       }
     })();
     this.pendingContextRefresh = promise;
-    if (reason !== 'event-tick') {
+    const enforcesBudget =
+      !!session.config.provider &&
+      session.config.provider !== 'acp' &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(session.config.provider);
+    if (reason !== 'event-tick' || enforcesBudget) {
       this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(promise.catch(() => {})));
     }
     return promise;

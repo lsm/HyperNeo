@@ -1,40 +1,23 @@
-import { homedir } from 'os';
-import { parsePositiveInt, type Config } from './config.ts';
-import type { WebSocketData } from './types/websocket.ts';
-import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
-import { Database } from './storage/database.ts';
-import {
-  prefetchAgentMemoryEmbeddingModel,
-  abortAgentMemoryEmbeddingModelPrefetch,
-} from './storage/repositories/agent-memory-transformers.ts';
-import { SessionManager } from './lib/session-manager.ts';
-import { AuthManager } from './lib/auth-manager.ts';
-import { SettingsManager } from './lib/settings-manager.ts';
-import { StateProjectionService } from './lib/state-projection-service.ts';
-import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
   MAX_GITHUB_POLLING_INTERVAL_SECONDS,
   MessageHub,
   MessageHubRouter,
 } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
+import { homedir } from 'os';
+import { type Config, parsePositiveInt } from './config.ts';
+import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
+import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
+import { AuthManager } from './lib/auth-manager.ts';
+import { createClientEventBridge } from './lib/client-event-bridge.ts';
 import {
-  createDaemonInternalEventBus,
-  type DaemonInternalEventMap,
-  type InternalEventBus,
-} from './lib/internal-event-bus.ts';
-import {
-  createInternalCommandBus,
-  type DaemonCommandMap,
-  type InternalCommandBus,
-} from './lib/internal-command-bus.ts';
-import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
-import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
-import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
-import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
-import { createWebSocketHandlers } from './routes/setup-websocket.ts';
-import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
-import { ExternalEventService, ExternalEventStore } from './lib/external-events/index.ts';
+  backfillDeepSeekProvider,
+  migrateProvidersIfNeeded,
+  refreshGlmDisplayName,
+} from './lib/credential-discovery.ts';
+import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
+import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
+import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { ExternalEventExtensionConfigStore } from './lib/external-events/extension-config-store.ts';
 import {
   ExternalEventExtensionManager,
@@ -42,45 +25,34 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager.ts';
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
+import { ExternalEventService, ExternalEventStore } from './lib/external-events/index.ts';
+import { FileIndex } from './lib/file-index.ts';
+import { createGitHubService, type GitHubService } from './lib/github/github-service.ts';
 import {
-  initializeProviders,
-  waitForOptionalProviderRegistration,
-  markBuiltInProviderDisabled,
-} from './lib/providers/factory.js';
-import { getProviderRegistry } from './lib/providers/registry.js';
-import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
-import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
-import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
-import { syncAllProviders } from './lib/providers/provider-sync.js';
+  createInternalCommandBus,
+  type DaemonCommandMap,
+  type InternalCommandBus,
+} from './lib/internal-command-bus.ts';
 import {
-  clearProviderFailureRecords,
-  subscribeProviderFailureChanges,
-} from './lib/providers/provider-failure-store.js';
-import {
-  backfillDeepSeekProvider,
-  migrateProvidersIfNeeded,
-  refreshGlmDisplayName,
-} from './lib/credential-discovery.ts';
-import { createReactiveDatabase } from './storage/reactive-database.ts';
-import { LiveQueryEngine } from './storage/live-query.ts';
-import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
-import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
-import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
-import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
-import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentManager } from './lib/space/managers/space-agent-manager.ts';
-import { SpaceManager } from './lib/space/managers/space-manager.ts';
-import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
-import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
-import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager.ts';
-import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
-import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
+  createDaemonInternalEventBus,
+  type DaemonInternalEventMap,
+  type InternalEventBus,
+} from './lib/internal-event-bus.ts';
+import { createInternalQueryBus, type DaemonQueryMap } from './lib/internal-query-bus.ts';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
+import {
+  backfillLongHorizonAgentReminderNextRunAt,
+  enqueueLongHorizonAgentReminderScanIfMissing,
+  handleLongHorizonAgentReminderFire,
+} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
 import {
   createMemoryConsolidationHandler,
   enqueueMemoryConsolidationIfMissing,
 } from './lib/job-handlers/memory-consolidation.handler.ts';
+import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
+import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler.ts';
+import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler.ts';
 import {
   JOB_QUEUE_CLEANUP,
   LONG_HORIZON_AGENT_REMINDER_FIRE,
@@ -89,37 +61,65 @@ import {
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
-import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
-import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
-import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
-import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
-import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler.ts';
-import {
-  backfillLongHorizonAgentReminderNextRunAt,
-  enqueueLongHorizonAgentReminderScanIfMissing,
-  handleLongHorizonAgentReminderFire,
-} from './lib/job-handlers/long-horizon-agent-reminder-fire.handler.ts';
-import { longTermAgentSessionId } from './lib/space/long-term-agent-session.ts';
-import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
-import { SpaceRepository } from './storage/repositories/space-repository.ts';
-import { SpaceTaskRepository } from './storage/repositories/space-task-repository.ts';
-import { SpaceGoalRepository } from './storage/repositories/space-goal-repository.ts';
+import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import {
   AppMcpLifecycleManager,
   McpImportService,
   seedDefaultMcpEntries,
 } from './lib/mcp/index.ts';
-import { FileIndex } from './lib/file-index.ts';
-import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
-import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
-import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
-import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service.ts';
-import { SkillsManager } from './lib/skills-manager.ts';
+import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
 import {
   cleanupSuspiciousProcesses,
-  ProcessWatchdog,
   type ProcessSnapshot,
+  ProcessWatchdog,
 } from './lib/process-watchdog.ts';
+import {
+  initializeProviders,
+  markBuiltInProviderDisabled,
+  waitForOptionalProviderRegistration,
+} from './lib/providers/factory.js';
+import {
+  clearProviderFailureRecords,
+  subscribeProviderFailureChanges,
+} from './lib/providers/provider-failure-store.js';
+import { syncAllProviders } from './lib/providers/provider-sync.js';
+import { getProviderRegistry } from './lib/providers/registry.js';
+import { setupRPCHandlers } from './lib/rpc-handlers/index.ts';
+import { applyProviderModelAllowlistsToEnv } from './lib/rpc-handlers/settings-handlers.ts';
+import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
+import { SessionManager } from './lib/session-manager.ts';
+import { SettingsManager } from './lib/settings-manager.ts';
+import { SkillsManager } from './lib/skills-manager.ts';
+import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service.ts';
+import { longTermAgentSessionId } from './lib/space/long-term-agent-session.ts';
+import { SpaceAgentManager } from './lib/space/managers/space-agent-manager.ts';
+import { SpaceManager } from './lib/space/managers/space-manager.ts';
+import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager.ts';
+import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
+import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
+import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
+import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
+import { StateProjectionService } from './lib/state-projection-service.ts';
+import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
+import { WebSocketServerTransport } from './lib/websocket-server-transport.ts';
+import { createWebSocketHandlers } from './routes/setup-websocket.ts';
+import { Database } from './storage/database.ts';
+import { applyStaleReclaimJitter, JobQueueProcessor } from './storage/job-queue-processor.ts';
+import { LiveQueryEngine } from './storage/live-query.ts';
+import { createReactiveDatabase } from './storage/reactive-database.ts';
+import {
+  abortAgentMemoryEmbeddingModelPrefetch,
+  prefetchAgentMemoryEmbeddingModel,
+} from './storage/repositories/agent-memory-transformers.ts';
+import { JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
+import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
+import { SpaceGoalRepository } from './storage/repositories/space-goal-repository.ts';
+import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceRepository } from './storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from './storage/repositories/space-task-repository.ts';
+import { TaskScheduleRepository } from './storage/repositories/task-schedule-repository.ts';
+import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
+import type { WebSocketData } from './types/websocket.ts';
 
 async function applyStoredProviderCredentials(
   providers: Provider[],
@@ -653,6 +653,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         })();
       },
       { subscriberName: 'github-polling-settings' }
+    );
+
+    internalEventBus.subscribe(
+      'providers.changed',
+      () => {
+        for (const agentSession of sessionManager?.getCachedSessions() ?? []) {
+          void agentSession.reevaluateContextBudgetAfterModelSwitch().catch(() => {});
+        }
+      },
+      { subscriberName: 'providers-changed-context-budget' }
     );
 
     startupTimer.start('external event extensions');

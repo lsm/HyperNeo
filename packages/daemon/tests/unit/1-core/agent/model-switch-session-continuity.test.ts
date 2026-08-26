@@ -1,37 +1,36 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
 } from '../../../../src/lib/agent/model-switch-handler';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import type { QueryLifecycleManager as QLMType } from '../../../../src/lib/agent/query-lifecycle-manager';
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from '../../../../src/lib/agent/query-lifecycle-manager';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { Session, ModelInfo } from '@hyperneo/shared';
-import type { MessageHub } from '@hyperneo/shared';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { Database } from '../../../../src/storage/database';
-import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { QueryLifecycleManager as QLMType } from '../../../../src/lib/agent/query-lifecycle-manager';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { Logger } from '../../../../src/lib/logger';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
-import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
-import { generateUUID } from '@hyperneo/shared';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { Logger } from '../../../../src/lib/logger';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import {
-  resetProviderFactory,
   initializeProviders,
+  resetProviderFactory,
   waitForOptionalProviderRegistration,
 } from '../../../../src/lib/providers/factory';
 import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-service';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import type { Database } from '../../../../src/storage/database';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 const TEST_MODELS: ModelInfo[] = [
   {
@@ -220,6 +219,7 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
       messageQueue: {
         isRunning: mock(() => false),
         removePendingInternalCompactions: mock(() => 0),
+        revokeAllInternalCompactions: mock(() => 0),
       } as unknown as MessageQueue,
       firstMessageReceived: true,
       ...overrides,
