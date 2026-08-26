@@ -285,12 +285,12 @@ export class QueryLifecycleManager {
 
       await this.stop();
 
+      await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      reachedSuppressedIdle = true;
+
       if (options?.beforeStart) {
         await options.beforeStart();
       }
-
-      await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
-      reachedSuppressedIdle = true;
 
       if (session.config.provider !== 'acp' && session.sdkSessionId) {
         const isValid = this.validateAndRepairWithMigration();

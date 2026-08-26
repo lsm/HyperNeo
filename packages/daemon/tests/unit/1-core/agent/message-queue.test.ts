@@ -987,6 +987,48 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('sent prompt retention across compaction boundaries', () => {
+    it('forgets only prompts sent before the compact command at boundary acknowledgement', () => {
+      queue.noteInternalCompactionSent({
+        id: 'before-compact',
+        content: 'early work',
+        internal: false,
+      } as never);
+      queue.noteInternalCompactionSent({
+        id: 'compact-1',
+        content: '/compact',
+        internal: true,
+      } as never);
+      queue.noteInternalCompactionSent({
+        id: 'after-compact',
+        content: 'later work',
+        internal: false,
+      } as never);
+
+      queue.acknowledgeCompactionsAwaitingBoundary();
+
+      expect(queue.getSentPromptContent('before-compact')).toBeUndefined();
+      expect(queue.getSentPromptContent('after-compact')).toBe('later work');
+    });
+
+    it('retains prompts noted before a compaction when the boundary is revoked by stop', () => {
+      queue.noteInternalCompactionSent({
+        id: 'early',
+        content: 'early work',
+        internal: false,
+      } as never);
+      queue.noteInternalCompactionSent({
+        id: 'compact-1',
+        content: '/compact',
+        internal: true,
+      } as never);
+
+      queue.stop();
+
+      expect(queue.getSentPromptContent('early')).toBe('early work');
+    });
+  });
+
   describe('durable delivery feeds — TTL bypass (#3742616720)', () => {
     it('a yielded-but-unacknowledged DURABLE feed RESOLVES on timeout (no duplicate re-feed)', async () => {
       const q = new MessageQueue();

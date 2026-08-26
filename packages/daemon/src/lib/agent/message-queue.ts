@@ -67,11 +67,16 @@ export class MessageQueue {
 
   private recentSentPrompts = new Map<string, string | MessageContent[]>();
 
+  private sentPromptsBeforeCompaction = new Set<string>();
+
   onDeliveredCompactionRevoked?: () => void;
 
   noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
       this.internalCompactionsAwaitingBoundary += 1;
+      for (const id of this.recentSentPrompts.keys()) {
+        this.sentPromptsBeforeCompaction.add(id);
+      }
     } else {
       this.nonCompactionSentSinceBoundary = true;
       this.recentSentPrompts.set(message.id, message.content);
@@ -88,7 +93,10 @@ export class MessageQueue {
 
   acknowledgeCompactionsAwaitingBoundary(): void {
     this.internalCompactionsAwaitingBoundary = 0;
-    this.recentSentPrompts.clear();
+    for (const id of this.sentPromptsBeforeCompaction) {
+      this.recentSentPrompts.delete(id);
+      this.sentPromptsBeforeCompaction.delete(id);
+    }
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -303,6 +311,7 @@ export class MessageQueue {
   clear(): void {
     this.clearEpoch += 1;
     this.internalCompactionsAwaitingBoundary = 0;
+    this.sentPromptsBeforeCompaction.clear();
     this.nonCompactionSentSinceBoundary = false;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
@@ -453,6 +462,7 @@ export class MessageQueue {
     const hadDeliveredAwaitingBoundary = this.internalCompactionsAwaitingBoundary > 0;
     this.revokeAllInternalCompactions();
     this.internalCompactionsAwaitingBoundary = 0;
+    this.sentPromptsBeforeCompaction.clear();
     if (hadDeliveredAwaitingBoundary && this.onDeliveredCompactionRevoked) {
       this.onDeliveredCompactionRevoked();
     }

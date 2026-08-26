@@ -1366,7 +1366,10 @@ export class AgentSession
   ): Promise<boolean> {
     const survivors = receipt?.still_queued ?? [];
     if (survivors.length === 0) return false;
-    if (typeof queryObject.cancelAsyncMessage !== 'function') return false;
+    if (typeof queryObject.cancelAsyncMessage !== 'function') {
+      await this.finishSurvivorTeardownWithRestart();
+      return true;
+    }
     let unconfirmedSurvivor = false;
     for (const uuid of survivors) {
       try {
@@ -1519,6 +1522,7 @@ export class AgentSession
   }
 
   private enqueueMidTurnCompaction(budgetKey: number | undefined, reason: string): void {
+    if (this.messageQueue.hasOutstandingInternalCompaction()) return;
     this.contextTracker.markCompactionTriggered(budgetKey);
     this.messageQueue.clearNonCompactionSentSinceBoundary();
     this.logger.info(

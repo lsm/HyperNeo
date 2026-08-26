@@ -154,6 +154,25 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(enqueueSpy).toHaveBeenCalledWith('uuid-c', 'ship the release', false, {
       durable: true,
     });
+    expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+  });
+
+  it('restarts when the query cannot cancel survivors', async () => {
+    const session = createAgentSession();
+    const noCancelQuery = {
+      async *[Symbol.asyncIterator]() {},
+      interrupt: async () => ({ still_queued: ['uuid-n'] }),
+      getContextUsage: async () => makeUsageResponse(),
+      close: () => {},
+    } as unknown as QueryLike;
+    session.queryObject = noCancelQuery;
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    const restartSpy = spyOn(session.lifecycleManager, 'restart').mockResolvedValue(undefined);
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+    expect(enqueueSpy).not.toHaveBeenCalled();
   });
 
   it('awaits a bounded query restart after an unconfirmed survivor cancellation', async () => {
