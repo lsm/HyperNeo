@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -8,7 +9,6 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 export type FlakySuite = 'daemon-unit' | 'daemon-online' | 'web' | 'cli' | 'e2e';
 

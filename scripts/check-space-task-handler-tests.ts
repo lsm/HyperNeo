@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 
 const handlerFile = 'packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts';
 const testFile = 'packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts';

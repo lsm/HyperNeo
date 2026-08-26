@@ -23,6 +23,7 @@
     "test:strip-comments": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/strip-comments.test.ts",
     "test:ci-balance-report": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/ci-balance-report.test.ts",
     "test:generate-shard-weights": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test scripts/generate-shard-weights.test.ts",
+    "test:rebuild-daemon-db": "HYPERNEO_ALLOW_ROOT_TEST=1 bun test --timeout=60000 scripts/rebuild-daemon-db.test.ts",
     "ci:balance-report": "bun run scripts/ci-balance-report.ts",
     "check:db-schema-parity": "tsx scripts/check-db-schema-parity.ts",
     "check:test-quality": "bun scripts/check-test-quality.ts",

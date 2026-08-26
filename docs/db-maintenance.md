@@ -7,7 +7,9 @@ long-lived daemon databases (default location: `~/.hyperneo/data/daemon.db`, ove
 Use this runbook when:
 
 - The DB file is much larger than its live data (deleted/moved rows leave free pages that
-  SQLite only reuses lazily — the file never shrinks on its own).
+  SQLite only reuses lazily — the file never shrinks on its own). For a large freelist where
+  you also want the original file kept untouched as the backup (or want to opt the DB into
+  `auto_vacuum=INCREMENTAL`), prefer the [full rebuild](#full-rebuild-export-and-swap).
 - Queries pick bad plans after large data changes (planner statistics in `sqlite_stat1` are
   missing or stale).
 - You want to know what the automatic migration backups cost on disk, or shrink a DB whose
@@ -129,6 +131,169 @@ Expect `freelist_count` = 0 and the file size to drop by roughly freelist × pag
 Start the daemon as usual and check startup succeeds. Once you are confident, delete the
 pre-vacuum backup copy to reclaim its disk.
 
+## Full rebuild (export-and-swap)
+
+`scripts/rebuild-daemon-db.ts` reclaims freelist space by rebuilding the database into a
+fresh file instead of running VACUUM in place. Prefer it when:
+
+- The freelist is large but an in-place VACUUM is unattractive: VACUUM needs up to 2× the
+  DB size in free space and overwrites the original file, while the rebuild keeps the
+  original untouched as the backup until the new file has proven itself.
+- You want the database to opt into `auto_vacuum=INCREMENTAL`, which lets a later
+  `PRAGMA incremental_vacuum` return trailing free pages on demand (see the caveat below).
+  That setting must be applied before a database is populated (or followed by a full
+  rebuild anyway) — exactly what this does.
+
+The incident that motivated it (2026-08-23 forensics): the production daemon.db was
+28.9 GiB with 1,537,196 freelist pages (~5.9 GiB, 20 % of the file). Two startup freezes
+that day (137 s in the db.initialize region; a 145.7 s event-loop stall) were aggravated by
+every boot, checkpoint, and page-cache warm-up paying the dead-pages tax.
+
+### What the script does
+
+1. Acquires the daemon PID lock (`<db>.lock`) and holds it for the whole rebuild — a daemon
+   (or second rebuild) started mid-run reads the live PID and refuses to open the database.
+   Refuses to start itself while the lock names a live PID unless `--force` is passed.
+   Reclaiming a stale lock is serialized with an exclusive `<db>.lock.takeover` marker so
+   only one contender ever removes it; a leaked marker (crash mid-takeover) makes further
+   acquires fail with its path so an operator can verify and remove it — no process ever
+   deletes another's marker.
+2. If `<db>-wal` is non-empty (killed daemon), checkpoints it into the main file first —
+   committed WAL frames are data and must not be lost.
+3. Creates `<db>.rebuild-<timestamp>.db` with `auto_vacuum = INCREMENTAL` and WAL enabled
+   before any object exists, attaches the original (the script never writes to it), and:
+   - recreates every table in foreign-key dependency order (virtual tables after their
+     content tables),
+   - copies every row of every table, passing an explicit `rowid` for tables without an
+     `INTEGER PRIMARY KEY` alias so rowid cursors stay stable; `WITHOUT ROWID` tables and
+     generated columns are handled,
+   - reconciles `sqlite_sequence` with max-semantics so AUTOINCREMENT tables never reissue
+     ids even when the sequence is ahead of the max rowid,
+   - rebuilds each FTS5 index from its content table (the `'rebuild'` command — shadow
+     tables reject direct writes),
+   - recreates indexes, views, and triggers after the data copy so triggers do not fire
+     during import, and copies `PRAGMA user_version`.
+4. Verifies before any swap: `PRAGMA quick_check` (or `integrity_check` with
+   `--full-integrity`), `PRAGMA foreign_key_check`, per-table row counts (source vs
+   rebuilt), schema-object parity for tables/indexes/triggers/views, the FTS5
+   `'integrity-check'` command with `rank = 1` (which compares index postings against the
+   external content table, not just internal structure), `user_version`, a zero freelist,
+   and `auto_vacuum = INCREMENTAL`. Any failure removes the partial rebuild file and leaves
+   the original untouched — zero rows are ever deleted by this procedure.
+5. Swaps crash-safely: the rebuilt file first receives the original's ownership and
+   permission bits (so a rebuild run under a different account cannot strand the daemon
+   with a file it cannot write), the original is preserved under
+   `<db>.pre-rebuild-<timestamp>` via a hard link, and the rebuilt file then atomically
+   replaces the canonical path — the canonical path never goes missing, even if the
+   process dies between the two steps, and a failure after promotion keeps the backup
+   rather than deleting it. Non-empty WAL sidecars travel with their database; empty
+   sidecars are dropped. Every checkpoint verifies it was not blocked by a foreign reader
+   and fails closed when it was.
+
+`sqlite_stat1` cannot be created or copied into a fresh database (the name is reserved), so
+the rebuilt DB starts without planner statistics. The daemon's regular shutdown
+`PRAGMA optimize` rebuilds them; if plans look bad immediately after a swap, run the
+one-shot `PRAGMA optimize=0x10002` from step 5 of the VACUUM procedure above.
+
+A caveat on `auto_vacuum = INCREMENTAL`: it does **not** shrink the file by itself. Deletes
+still leave freelist pages that SQLite first reuses for new writes; trailing free pages are
+returned to the filesystem only when `PRAGMA incremental_vacuum` runs (it can be given a
+page budget and called periodically, and it never moves pages stranded mid-file). To shrink
+the rebuilt DB during future maintenance windows:
+
+```bash
+sqlite3 "$DB" "PRAGMA incremental_vacuum;"
+```
+
+A caveat on POSIX ACLs and extended attributes: the rebuild copies ownership, group, and
+mode bits, but Node/Bun do not expose portable ACL/xattr APIs. If the original database
+relies on a per-file POSIX ACL (for example, a root-owned file whose ACL grants the daemon
+account access) or on extended security attributes, the freshly created rebuild inherits
+directory defaults and `chmod`/`chown` alone do not restore them. The original database is
+kept as `$DB.pre-rebuild-<timestamp>` after a successful swap, so always read the metadata
+from that retained backup and apply it to the swapped-in path. Note that `setfattr --restore`
+applies the dump to the path recorded in its `# file:` header (the backup), not to the
+target — rewrite the header or apply attributes explicitly:
+
+```bash
+BACKUP=$(ls -1t "$DB".pre-rebuild-* | head -1)
+getfacl "$BACKUP" > /tmp/db.acl && setfacl -M /tmp/db.acl "$DB"
+getfattr -d -m - "$BACKUP" 2>/dev/null \
+  | sed "s|^# file: .*|# file: $DB|" > /tmp/db.attr \
+  && setfattr --restore=/tmp/db.attr
+# Fallback: apply each attribute explicitly when the dump format is not rewriteable.
+getfattr -d -m - --absolute-names "$BACKUP" 2>/dev/null \
+  | awk -v target="$DB" '/^#/ {next} NF {print target; print; print ""}' \
+  | setfattr -h -S -
+```
+
+Alternatively, use the `--no-swap` flag, copy the rebuilt file into place with `cp -a`
+(preserves ACLs and xattrs on filesystems that support them), then verify and let the next
+daemon restart pick it up.
+
+### Running it
+
+```bash
+DB=~/.hyperneo/data/daemon.db
+
+df -h "$(dirname "$DB")"
+bun run scripts/rebuild-daemon-db.ts --db-path "$DB"
+```
+
+Free-space budget: the new file (roughly the live-data size) exists on disk in addition to
+the original until the backup is archived — for the 28.9 GiB production DB with a ~5.9 GiB
+freelist that meant ~30 GiB free required; the script refuses to start with less than
+(original size + 2 GiB) available. The import copies rowid tables in bounded batches of
+50,000 rows and checkpoints after every batch, so the WAL never grows beyond one batch and
+peak usage stays near original + rebuilt — except that each FTS5 index rebuild is a single
+internal transaction whose WAL transiently holds the whole index; if an index is expected
+to exceed the headroom, provision additional free space equal to its projected rebuilt
+size. `WITHOUT ROWID` tables have no rowid cursor and are copied in a single transaction,
+so the same provision applies if one of them is unusually large (the daemon schema keeps
+such tables small).
+
+The confirmation prompt must be answered with `rebuild` (pass `-y` to skip). `--no-swap`
+builds and verifies but leaves both files in place, printing the commands for a manual
+swap — they move the original's `-wal`/`-shm` sidecars aside first (so a leftover source
+WAL is never applied to the rebuilt file), preserve the original via hard link, and
+promote the rebuilt file with an atomic rename, keeping the canonical path present at
+every step. The rebuilt snapshot only reflects the original as of that moment, so keep
+the daemon stopped, swap immediately, and if anything wrote to the original in the
+meantime, discard the rebuilt file and re-run; never promote a snapshot across a daemon
+boot. `--full-integrity` switches verification to the slower `PRAGMA integrity_check`.
+
+Downtime = import + verification, the same order of magnitude as a VACUUM (minutes to tens
+of minutes for a ~29 GiB file). The original file is only touched by the initial WAL
+checkpoint (when one is pending) and the final rename.
+
+### After the swap
+
+1. Start the daemon and confirm a clean boot: startup log, session list, message search.
+2. Keep the `<db>.pre-rebuild-<timestamp>` backup until the rebuilt database has run for a
+   while; archive or delete it at the operator's discretion — the script never does.
+3. To roll back, stop the daemon, then preserve the rebuilt database via a hard link and
+   restore the backup with an atomic rename, so the canonical path holds a complete
+   database at every instant; move a rebuilt `<db>-wal` aside first, since SQLite would
+   otherwise apply its frames to the wrong database and corrupt it:
+
+   ```bash
+   mv <db>-wal <db>.failed-rebuild-wal   # only if present
+   mv <db>-shm <db>.failed-rebuild-shm   # only if present
+   rm -f <db>.failed-rebuild && ln <db> <db>.failed-rebuild
+   mv -f <db>.pre-rebuild-<timestamp> <db>
+   mv <db>.pre-rebuild-<timestamp>-wal <db>-wal   # only if the backup has one
+   ```
+
+   On a filesystem without hard links (the script falls back to `cp` there too), replace
+   the `rm -f ... && ln ...` line with `cp <db> <db>.failed-rebuild`.
+
+### Scheduling
+
+Run the one-time rebuild after the index audit (#1403) and migration-hygiene (#1404)
+changes land, so the database is compacted once at the end instead of rewriting indexes
+that are about to be dropped. The procedure itself is repeatable at any time — for example
+after a future batch of rewrite migrations leaves a large freelist again.
+
 ## What is handled automatically
 
 - **Rewrite migrations:** migrations that rebuild tables are declared with `rewrite(...)` in the
@@ -148,8 +313,13 @@ pre-vacuum backup copy to reclaim its disk.
   file grows again. The daemon never runs `VACUUM` automatically; shrinking the file is always
   the manual procedure above.
 
-`auto_vacuum` is deliberately not enabled: it must be set before the DB is populated (or
-followed by a full VACUUM anyway), only returns trailing pages, and adds write overhead.
+`auto_vacuum` is not enabled on databases the daemon creates: it must be set before the DB
+is populated (or followed by a full rebuild anyway), adds write overhead, and without an
+explicit `PRAGMA incremental_vacuum` it never shrinks the file at all. The one-time
+[full rebuild](#full-rebuild-export-and-swap) opts the production database into
+`auto_vacuum = INCREMENTAL`, so future maintenance windows can return trailing free pages
+with `PRAGMA incremental_vacuum` instead of a full VACUUM; pages stranded mid-file still
+need a rebuild.
 
 ## Migration backups
 

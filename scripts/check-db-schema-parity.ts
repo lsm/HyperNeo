@@ -1,10 +1,10 @@
-import { Database } from '../packages/daemon/src/storage/sqlite-compat';
 import {
   getAccessibleTableNames,
   getExcludedTableNames,
   getScopeConfig,
 } from '../packages/daemon/src/lib/db-query/scope-config';
 import { createTables, runMigrations } from '../packages/daemon/src/storage/schema';
+import { Database } from '../packages/daemon/src/storage/sqlite-compat';
 import { createSpaceTables } from '../packages/daemon/tests/unit/helpers/space-test-db';
 
 type ColumnRow = {

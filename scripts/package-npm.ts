@@ -1,4 +1,4 @@
-import { mkdirSync, copyFileSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
