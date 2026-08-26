@@ -170,8 +170,11 @@ The launcher contract extends the owner-review contract with:
 - **Keep one leading goal.** At least one goal always has an active or triggerable task;
   if every goal is waiting on another, pause the dependent goals and escalate (§6).
 - **Correct on drift.** When a gating goal's later outcome invalidates dependent work:
-  **validate the decision first** — re-read A (`get_goal`) and acknowledge A's
-  notification **with** a small goal-state update (a bare acknowledge skips the revision
+  **validate the decision first** — re-read A (`get_goal`) and drain **all** of A's
+  pending outcomes, consolidating them into one update-bearing review (an ordinary
+  active task and a pointerless Forge task can terminalize concurrently; deciding on
+  the wake-causing notification alone misses the other result, and the first review
+  leaves the rest stale) — a bare acknowledge skips the revision
   gate — `applyRevisionMatchGate` only checks when an update is present — and pausing B
   before this check would leave an unjustified cross-goal mutation with no rollback if
   the review returns `stale_revision`). Then drain B's own pending outcomes — a
@@ -249,11 +252,13 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 **Gate setup and release protocol** (applies to every soft-gate row, and to the hard
 gate's hold lifecycle):
 
-- **Setup:** drain B's pending outcomes first — settling B's active task (its terminal
-  state reached or forced) before the final drain, and reconciling any completion
-  racing the pause, since the pause is itself a revision-changing mutation; an outcome
-  that still races the pause is resubmitted against the post-pause revision through the
-  documented stale-review resubmission path. Then persist the hold
+- **Setup:** drain B's pending outcomes first — settling only the tasks the hold must
+  stop (their terminal state reached or forced) before the final drain, and reconciling
+  any completion racing the pause, since the pause is itself a revision-changing
+  mutation; an outcome that still races the pause is resubmitted against the
+  post-pause revision through the documented stale-review resubmission path. Tasks the
+  hold deliberately retains (durable-wait independence) are not settled here — their
+  races are handled by the release step's pre-resume review. Then persist the hold
   identity and intended ownership in **agent memory — before the pause mutation** (a
   crash between the pause and the write would leave B durably paused with no record of
   who may resume it; update or remove the record if the pause fails), with the
@@ -261,8 +266,12 @@ gate's hold lifecycle):
   replace `nextSteps` wholesale, so a marker recorded only there is erased before
   release revalidates it). Operational state lives as **one keyed record per goal**
   (holds and saved cadence values in a single payload), refreshed as a whole on every
-  change — separately keyed similar memories get merged or TTL-pruned by the
-  consolidation job, losing holds or making a deleted cadence unrecoverable. Then
+  change. **Storage gap, stated honestly:** agent memory does not currently qualify —
+  the consolidation job's duplicate admission compares content regardless of key (so
+  structurally similar per-goal records can merge and lose one goal's state) and its
+  TTL prunes a long-lived hold record — so the launcher template slice must add a
+  consolidation exemption or a dedicated non-consolidated store for this state
+  (§7 records the revisit trigger). Then
   pause — `pause_goal` only if B is active; an
   already-paused goal instead records the additional hold and marks that this sequence
   does **not** own the pause. Then cancel what
@@ -422,6 +431,10 @@ ADR 0004 applies to new combinators.
 6. **Revision CAS on `update_goal`** (observed-revision parameter, so dependent-goal
    updates get the same staleness protection outcome reviews already have, §6) —
    revisit when concurrent human/agent goal edits cause a real lost update.
+7. **Consolidation-exempt operational state store** for launcher hold records and
+   saved cadence values (§5's storage gap: agent memory's duplicate admission compares
+   content regardless of key and its TTL prunes long-lived holds) — needed by the
+   launcher template slice unless an exemption lands there first.
 
 **Rejected alternatives.**
 
