@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   _setStartupEnvBaselineForTesting,
+  buildClassifierSdkEnv,
   buildCommandEnv,
   buildDialogEnv,
   buildGitCommandEnv,
@@ -303,6 +304,26 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
     expect(env.GIT_CONFIG_VALUE_0).toBe('/mnt/trusted-repo');
+  });
+});
+
+describe('buildClassifierSdkEnv', () => {
+  test('carries proxy and SDK config inputs but no Git auth capabilities for one-turn classifiers', () => {
+    const env = buildClassifierSdkEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraHeader',
+      GIT_CONFIG_VALUE_0: 'Authorization: Bearer extra-secret',
+    });
+    expect(env.HTTPS_PROXY).toBe(SOURCE.HTTPS_PROXY);
+    expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
+    expect(env.NODE_ENV).toBe(SOURCE.NODE_ENV);
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.GIT_SSH_COMMAND).toBeUndefined();
+    expect(env.GIT_AUTHOR_NAME).toBeUndefined();
+    expect(env.EMAIL).toBeUndefined();
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(JSON.stringify(env)).not.toContain('extra-secret');
   });
 });
 

@@ -4,7 +4,7 @@ import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt.ts';
 import { Logger } from '../logger.ts';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.ts';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
-import { buildSdkRuntimeEnv } from '../spawn-env.ts';
+import { buildClassifierSdkEnv } from '../spawn-env.ts';
 
 const logger = new Logger('security-agent');
 
@@ -175,7 +175,7 @@ export class SecurityAgent {
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
-        env: { ...buildSdkRuntimeEnv(), ...credentialEnv },
+        env: { ...buildClassifierSdkEnv(), ...credentialEnv },
       },
     });
 

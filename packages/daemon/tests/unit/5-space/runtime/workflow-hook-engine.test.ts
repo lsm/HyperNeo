@@ -2356,6 +2356,49 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     expect(result.result.message).toBe('production');
   });
 
+  test('windows installation roots stay available to hook scripts', async () => {
+    _setStartupEnvBaselineForTesting({
+      ...process.env,
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+    });
+    const executor = new HookExecutor({ workspacePath: '/tmp' });
+    const result = await executor.execute(
+      makeHook({
+        id: 'hook-script',
+        classification: 'validation',
+        validator: {
+          kind: 'script',
+          interpreter: 'bash',
+          source:
+            'echo "{ \"type\": \"allow\", \"message\": \"${ProgramFiles:-missing}|$(printenv "ProgramFiles(x86)" || echo missing)|${ProgramW6432:-missing}\" }"',
+        },
+      }),
+      {
+        workspacePath: '/tmp',
+        runId: 'run-1',
+        hookId: 'hook-script',
+        methodName: 'send_message',
+        params: {},
+        nodeId: 'node-1',
+        nodeName: 'Coding',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        hookLocalState: {},
+        currentArtifacts: [],
+        permittedExternalLookups: [],
+      }
+    );
+
+    _setStartupEnvBaselineForTesting(process.env);
+
+    expect(result.result.type).toBe('allow');
+    expect(result.result.message).toBe(
+      'C:\\Program Files|C:\\Program Files (x86)|C:\\Program Files'
+    );
+  });
+
   test('process group is killed after successful script exit', async () => {
     const originalKill = process.kill;
     const killCalls: Array<{ pid: number; signal: string | number }> = [];

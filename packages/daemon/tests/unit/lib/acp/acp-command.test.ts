@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildAcpClientEnv,
+  buildAcpDiscoveryEnv,
   buildAcpSafeEnv,
   getAcpCommandIdentity,
   parseAcpCommand,
@@ -110,6 +111,29 @@ describe('buildAcpClientEnv', () => {
 
       expect(env.MY_ACP_TOKEN).toBeUndefined();
       expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
+});
+
+describe('buildAcpDiscoveryEnv', () => {
+  test('stays credential-free even when HYPERNEO_ACP_ENV_KEYS selects credentials', () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN',
+      MY_ACP_TOKEN: 'custom-token',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      REQUESTS_CA_BUNDLE: '/tmp/requests-ca.pem',
+    });
+    try {
+      const env = buildAcpDiscoveryEnv();
+
+      expect(env.MY_ACP_TOKEN).toBeUndefined();
+      expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+      expect(env.HTTPS_PROXY).toBe('http://proxy.internal:8080');
+      expect(env.REQUESTS_CA_BUNDLE).toBe('/tmp/requests-ca.pem');
     } finally {
       _setStartupEnvBaselineForTesting(previousBaseline);
     }

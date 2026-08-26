@@ -94,7 +94,7 @@ describe('fetchAcpModels', () => {
     expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['configured-model']);
   });
 
-  test('carries selected credentials and TLS inputs into the discovery client env', async () => {
+  test('keeps RPC-triggered model discovery credential-free while retaining TLS inputs', async () => {
     const previousBaseline: Record<string, string | undefined> = { ...process.env };
     _setStartupEnvBaselineForTesting({
       ...previousBaseline,
@@ -106,7 +106,7 @@ describe('fetchAcpModels', () => {
     provider.setAcpCommand('devin acp');
     try {
       await fetchAcpModels(provider, { command: 'devin acp', cwd: '/tmp' });
-      expect(clientOptions?.env?.MY_ACP_TOKEN).toBe('acp-token');
+      expect(clientOptions?.env?.MY_ACP_TOKEN).toBeUndefined();
       expect(clientOptions?.env?.REQUESTS_CA_BUNDLE).toBe('/tmp/requests-ca.pem');
     } finally {
       _setStartupEnvBaselineForTesting(previousBaseline);

@@ -78,6 +78,13 @@ function definedEnvEntries(
   return env;
 }
 
+export function buildAcpDiscoveryEnv(): Record<string, string> {
+  return {
+    ...buildAcpSafeEnv(),
+    ...buildCommandEnv(),
+  };
+}
+
 export function buildAcpClientEnv(): Record<string, string> {
   return {
     ...buildAcpSafeEnv(),

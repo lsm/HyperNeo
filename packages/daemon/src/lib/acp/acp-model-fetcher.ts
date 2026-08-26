@@ -4,7 +4,7 @@ import {
   flattenModelChoices,
 } from '../providers/acp-provider.ts';
 import { AcpClient } from './acp-client.ts';
-import { buildAcpClientEnv, parseAcpCommand } from './acp-command.ts';
+import { buildAcpClientEnv, buildAcpDiscoveryEnv, parseAcpCommand } from './acp-command.ts';
 import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
 
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
@@ -62,7 +62,7 @@ export async function fetchAcpModels(
     command,
     args,
     cwd: workspace,
-    env: buildAcpClientEnv(),
+    env: buildAcpDiscoveryEnv(),
     replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner,

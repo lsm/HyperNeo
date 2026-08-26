@@ -303,6 +303,15 @@ export function buildSdkRuntimeEnv(
   };
 }
 
+export function buildClassifierSdkEnv(
+  source: EnvSource = STARTUP_ENV_BASELINE
+): Record<string, string> {
+  return {
+    ...buildOsBaselineEnv(source),
+    ...pickKeys([...PROXY_TLS_ENV_KEYS, ...SDK_USER_CONFIG_ENV_KEYS], source),
+  };
+}
+
 export function buildWorkflowConditionEnv(
   allowedEnv: readonly string[] | undefined,
   source: EnvSource = STARTUP_ENV_BASELINE
